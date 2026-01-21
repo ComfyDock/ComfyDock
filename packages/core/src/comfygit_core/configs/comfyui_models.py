@@ -28,6 +28,7 @@ COMFYUI_MODELS_CONFIG = {
         "clip_vision",
         "configs",
         "controlnet",
+        "t2i_adapter",
         "diffusers",
         "diffusion_models",
         "embeddings",
