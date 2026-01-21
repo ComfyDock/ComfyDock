@@ -144,14 +144,14 @@ create_fixture() {
     mkdir -p "$FIXTURES_DIR"
 
     # Initialize workspace
-    cg init "$fixture_path"
+    cg init "$fixture_path" --yes
 
     # Pre-populate ComfyUI cache
     populate_comfyui_cache "$fixture_path"
 
     # Create default environment with shared UV cache
     log_info "Creating 'default' environment (this may take a while on first run)..."
-    UV_CACHE_DIR="$UV_CACHE_DIR" cg -H "$fixture_path" create default \
+    UV_CACHE_DIR="$UV_CACHE_DIR" COMFYGIT_HOME="$fixture_path" cg create default \
         --comfyui "$COMFYUI_VERSION" \
         --python "$PYTHON_VERSION" \
         --yes

@@ -133,10 +133,11 @@ def cg(workspace, shared_uv_cache):
         Raises:
             subprocess.CalledProcessError: If check=True and command fails
         """
-        cmd = ["cg", "-H", str(workspace)] + list(args)
+        cmd = ["cg"] + list(args)
 
-        # Set up environment with shared UV cache
+        # Set up environment with workspace and shared UV cache
         env = os.environ.copy()
+        env["COMFYGIT_HOME"] = str(workspace)
         env["UV_CACHE_DIR"] = str(shared_uv_cache)
 
         result = subprocess.run(
