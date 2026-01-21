@@ -143,8 +143,8 @@ class WorkflowManager:
         else:
             criticality = self._get_default_criticality(category)
 
-        # NEW: Handle download intent case
-        if resolved.match_type == "download_intent":
+        # NEW: Handle download intent case (both from pyproject and from node properties)
+        if resolved.match_type in ("download_intent", "property_download_intent"):
             manifest_model = ManifestWorkflowModel(
                 filename=model_ref.widget_value,
                 category=category,
@@ -243,8 +243,8 @@ class WorkflowManager:
         else:
             criticality = self._get_default_criticality(category)
 
-        # Handle download intent case
-        if resolved.match_type == "download_intent":
+        # Handle download intent case (both from pyproject and from node properties)
+        if resolved.match_type in ("download_intent", "property_download_intent"):
             manifest_model = ManifestWorkflowModel(
                 filename=primary_ref.widget_value,
                 category=category,
@@ -1252,8 +1252,8 @@ class WorkflowManager:
                 if model_hash not in hash_to_refs:
                     hash_to_refs[model_hash] = []
                 hash_to_refs[model_hash].append(resolved.reference)
-            elif resolved.match_type == "download_intent":
-                # Download intent from previous session - preserve it in manifest
+            elif resolved.match_type in ("download_intent", "property_download_intent"):
+                # Download intent (from pyproject or node properties) - preserve it in manifest
                 category = self._get_category_for_node_ref(resolved.reference)
                 manifest_model = ManifestWorkflowModel(
                     filename=resolved.reference.widget_value,
@@ -1886,8 +1886,11 @@ class WorkflowManager:
         """
         from ..models.workflow import DownloadResult
 
-        # Collect download intents
-        intents = [r for r in result.models_resolved if r.match_type == "download_intent"]
+        # Collect download intents (both from pyproject and from node properties)
+        intents = [
+            r for r in result.models_resolved
+            if r.match_type in ("download_intent", "property_download_intent")
+        ]
 
         if not intents:
             return []
