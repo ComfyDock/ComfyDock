@@ -79,8 +79,8 @@ class TestModelConfigCecPathLoading:
 
         config = ModelConfig.load(cec_path=cec_path)
 
-        # CLIPLoader maps to text_encoders in static config,
-        # which should now expand to include clip
+        # CLIPLoader maps to ["clip"] in static config, and "clip" appears
+        # in folder_mappings["text_encoders"], so it should expand
         clip_dirs = config.get_directories_for_node("CLIPLoader")
         assert set(clip_dirs) == {"text_encoders", "clip"}
 
