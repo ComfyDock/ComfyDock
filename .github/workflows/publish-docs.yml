@@ -34,7 +34,7 @@ jobs:
 
     - name: Clone Pages repository
       run: |
-        git clone https://${{ secrets.DOCS_PUBLISH_TOKEN }}@github.com/comfyhub-org/comfyhub-org.github.io.git pages-repo
+        git clone https://${{ secrets.DOCS_PUBLISH_TOKEN }}@github.com/comfygit-ai/comfygit.github.io.git pages-repo
         echo "✓ Pages repository cloned"
 
     - name: Deploy to /comfygit/ subdirectory
@@ -55,7 +55,7 @@ jobs:
 
         # Ensure CNAME exists at root (for custom domain)
         if [ ! -f CNAME ]; then
-          echo "docs.comfyhub.org" > CNAME
+          echo "docs.comfygit.org" > CNAME
           echo "✓ Created CNAME file"
         fi
 
@@ -74,7 +74,7 @@ jobs:
         else
           git commit -m "Deploy ComfyGit docs from ${{ github.sha }}
 
-          Source: comfyhub-org/comfygit
+          Source: comfygit-ai/comfygit
           Branch: ${{ github.ref_name }}
           Commit: ${{ github.sha }}
 
@@ -89,11 +89,11 @@ jobs:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ ComfyGit Documentation Deployed"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "📍 Live URL: https://docs.comfyhub.org/comfygit/"
+        echo "📍 Live URL: https://docs.comfygit.org/comfygit/"
         echo "📦 Source: docs/comfygit-docs/"
-        echo "🎯 Target: comfyhub-org.github.io/comfygit/"
+        echo "🎯 Target: comfygit-ai.github.io/comfygit/"
         echo "📝 Commit: ${{ github.sha }}"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "Allow 1-2 minutes for GitHub Pages to rebuild."
-        echo "Visit https://docs.comfyhub.org/comfygit/ to view."
+        echo "Visit https://docs.comfygit.org/comfygit/ to view."
