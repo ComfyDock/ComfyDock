@@ -82,9 +82,14 @@ populate_comfyui_cache() {
     local commit_sha
     commit_sha=$(git -C "$content_dir" rev-parse HEAD)
 
-    # Calculate size
+    # Calculate size (portable: works on both GNU and BSD/macOS)
     local size_bytes
-    size_bytes=$(du -sb "$content_dir" | cut -f1)
+    if du -sb "$content_dir" &>/dev/null; then
+        size_bytes=$(du -sb "$content_dir" | cut -f1)
+    else
+        # macOS/BSD: du -sk gives KB, multiply by 1024
+        size_bytes=$(($(du -sk "$content_dir" | cut -f1) * 1024))
+    fi
 
     # Create metadata.json
     local cached_at

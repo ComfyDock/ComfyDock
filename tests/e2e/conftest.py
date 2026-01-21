@@ -164,7 +164,7 @@ def cg(workspace, shared_uv_cache):
 
 
 @pytest.fixture
-def fresh_workspace(tmp_path, shared_uv_cache):
+def fresh_workspace(tmp_path):
     """Provides a fresh empty path for workspace initialization tests.
 
     Use this for tests that need to test `cg init` or require a completely
