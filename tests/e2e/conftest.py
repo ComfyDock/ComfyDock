@@ -5,7 +5,7 @@ Provides fixtures for testing against real ComfyUI installations.
 
 Usage:
     Run setup first: ./scripts/setup-fixtures.sh
-    Then run tests:  uv run pytest tests/e2e/tests/smoke/ -v
+    Then run tests:  uv run pytest tests/e2e/tests/ -v
 """
 
 import os
@@ -13,6 +13,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+# ============================================================================
+# Pytest Collection Configuration
+# ============================================================================
+
+# Ignore directories that contain third-party tests (e.g., UV cache, fixtures)
+collect_ignore_glob = [
+    "fixtures/*",
+    ".cache/*",
+]
 
 # ============================================================================
 # Configuration Loading
