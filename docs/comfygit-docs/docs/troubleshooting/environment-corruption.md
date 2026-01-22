@@ -113,7 +113,7 @@ Environment: my-env (on main)
       2 missing models
 
 ⚠️  Environment needs repair:
-  • 1 nodes in pyproject.toml not installed
+  • 1 node in pyproject.toml not installed
   • 2 untracked nodes on filesystem:
     - comfyui-manager
     - comfyui-custom-scripts
@@ -192,7 +192,7 @@ cg repair
 
 ```
 This will apply the following changes:
-  • Install 1 missing nodes:
+  • Install 1 missing node:
     - comfyui-manager
 
   • Remove 2 extra nodes:
