@@ -6,6 +6,7 @@ This is functionally different from path_sync issues - category mismatch means
 ComfyUI cannot load the model at runtime.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -335,7 +336,6 @@ class TestModelCategoryMismatchDetection:
         since folder_mappings indicates they're equivalent directories.
         """
         # ARRANGE: Create dynamic config mapping text_encoders and clip together
-        import json
         cec_path = test_env.path / ".cec"
         folder_paths_data = {
             "metadata": {
@@ -401,7 +401,6 @@ class TestModelCategoryMismatchDetection:
         Verifies the reverse case: clip/ directory is also valid for CLIPLoader.
         """
         # ARRANGE: Create dynamic config
-        import json
         cec_path = test_env.path / ".cec"
         folder_paths_data = {
             "metadata": {},
@@ -456,7 +455,6 @@ class TestModelCategoryMismatchDetection:
         Ensures that dynamic config doesn't break normal mismatch detection.
         """
         # ARRANGE: Create dynamic config
-        import json
         cec_path = test_env.path / ".cec"
         folder_paths_data = {
             "metadata": {},
@@ -514,7 +512,6 @@ class TestModelCategoryMismatchDetection:
         should also accept unet/ directory.
         """
         # ARRANGE: Create dynamic config
-        import json
         cec_path = test_env.path / ".cec"
         folder_paths_data = {
             "metadata": {},
@@ -575,7 +572,6 @@ class TestModelCategoryMismatchDetection:
         Verifies traditional directory still works with dynamic config.
         """
         # ARRANGE: Create dynamic config
-        import json
         cec_path = test_env.path / ".cec"
         folder_paths_data = {
             "metadata": {},
