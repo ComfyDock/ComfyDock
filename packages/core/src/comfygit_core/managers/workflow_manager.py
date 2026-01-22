@@ -85,7 +85,10 @@ class WorkflowManager:
 
         # Create repository and inject into resolver
         self.global_node_resolver = GlobalNodeResolver(self.node_mapping_repository)
-        self.model_resolver = ModelResolver(model_repository=self.model_repository)
+        self.model_resolver = ModelResolver(
+            model_repository=self.model_repository,
+            cec_path=self.cec_path
+        )
 
         # Use injected model downloader from workspace
         self.downloader = model_downloader
