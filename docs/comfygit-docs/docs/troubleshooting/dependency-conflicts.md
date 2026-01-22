@@ -346,7 +346,7 @@ Try suggestions in order - they're ranked by likelihood of success.
 
 ```bash
 # Add constraint for the conflicting package
-cg constraint add "<package>>=<min-version>,<<max-version>"
+cg constraint add "<package>>=<min-version>,<max-version>"
 
 # Retry installation
 cg node add new-node
