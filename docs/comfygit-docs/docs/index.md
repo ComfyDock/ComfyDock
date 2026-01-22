@@ -25,7 +25,7 @@ Git for your ComfyUI environments — version control, package management, and r
     PS> uv tool install comfygit
     ```
 
-Then, check out the [quickstart](./getting-started/quickstart.md) or read on for a brief overview.
+Then, check out the [installation guide](./getting-started/installation.md) or read on for a brief overview.
 
 !!! tip
 
@@ -57,7 +57,7 @@ $ cg run
 Starting ComfyUI at http://localhost:8188
 ```
 
-See the [quickstart guide](./getting-started/quickstart.md) to get started.
+See the [installation guide](./getting-started/installation.md) to get started.
 
 ## Version Control
 

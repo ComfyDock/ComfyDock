@@ -289,7 +289,6 @@ Then try the installation again.
 
 Now that ComfyGit is installed:
 
-* [Quickstart guide](quickstart.md) — Create your first environment in 5 minutes
 * [Core concepts](concepts.md) — Understand workspaces, environments, and .cec
 * [CLI reference](../cli-reference/environment-commands.md) — Explore all available commands
 

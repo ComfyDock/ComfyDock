@@ -441,7 +441,6 @@ http://<your-ip>:8188
 
 Now that ComfyUI is running:
 
-* **[Check environment status](../../getting-started/quickstart.md#step-4-check-environment-status)** — Monitor changes
 * **[Add custom nodes](../custom-nodes/adding-nodes.md)** — Extend functionality
 * **[Manage workflows](../workflows/workflow-tracking.md)** — Track and version workflows
 * **[Commit changes](version-control.md)** — Save your configuration
