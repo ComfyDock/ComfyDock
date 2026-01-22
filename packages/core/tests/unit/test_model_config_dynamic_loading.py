@@ -309,3 +309,128 @@ class TestModelConfigMergeFolderMappings:
             "text_encoders",
             "clip",
         }
+
+
+class TestModelConfigReconstructModelPath:
+    """Tests for ModelConfig.reconstruct_model_path() with equivalent directories."""
+
+    def test_reconstruct_model_path_with_static_config(self):
+        """Test reconstruct_model_path without dynamic config uses static mappings."""
+        config = ModelConfig.load()
+
+        # CLIPLoader maps to ["clip"] in static config
+        paths = config.reconstruct_model_path("CLIPLoader", "model.safetensors")
+        assert paths == ["clip/model.safetensors"]
+
+    def test_reconstruct_model_path_clip_loader_with_dynamic_config(self, tmp_path):
+        """Test CLIPLoader reconstruct_model_path returns both text_encoders and clip paths."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        config = ModelConfig.load(cec_path=cec_path)
+
+        # Should return paths for BOTH equivalent directories
+        paths = config.reconstruct_model_path("CLIPLoader", "model.safetensors")
+        assert set(paths) == {
+            "text_encoders/model.safetensors",
+            "clip/model.safetensors",
+        }
+
+    def test_reconstruct_model_path_unet_loader_with_dynamic_config(self, tmp_path):
+        """Test UNETLoader reconstruct_model_path returns both unet and diffusion_models paths."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "diffusion_models": ["unet", "diffusion_models"],
+            },
+            "legacy_aliases": {},
+        }
+
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        config = ModelConfig.load(cec_path=cec_path)
+
+        # Should return paths for BOTH equivalent directories
+        paths = config.reconstruct_model_path("UNETLoader", "flux_dev.safetensors")
+        assert set(paths) == {
+            "unet/flux_dev.safetensors",
+            "diffusion_models/flux_dev.safetensors",
+        }
+
+    def test_reconstruct_model_path_with_subdirectories(self, tmp_path):
+        """Test reconstruct_model_path handles widget values with subdirectories."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        config = ModelConfig.load(cec_path=cec_path)
+
+        # Widget value can contain subdirectories
+        paths = config.reconstruct_model_path("CLIPLoader", "sd3/clip_l.safetensors")
+        assert set(paths) == {
+            "text_encoders/sd3/clip_l.safetensors",
+            "clip/sd3/clip_l.safetensors",
+        }
+
+    def test_reconstruct_model_path_unknown_node_type(self):
+        """Test reconstruct_model_path returns empty list for unknown node types."""
+        config = ModelConfig.load()
+
+        paths = config.reconstruct_model_path("UnknownNode", "model.safetensors")
+        assert paths == []
+
+    def test_reconstruct_model_path_preserves_order(self, tmp_path):
+        """Test that reconstruct_model_path returns paths in a consistent manner."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        config = ModelConfig.load(cec_path=cec_path)
+
+        # Call multiple times to ensure consistency
+        paths1 = config.reconstruct_model_path("CLIPLoader", "model.safetensors")
+        paths2 = config.reconstruct_model_path("CLIPLoader", "model.safetensors")
+
+        # Should return the same paths in the same order
+        assert paths1 == paths2
+        # Should have both paths
+        assert len(paths1) == 2
