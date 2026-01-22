@@ -723,5 +723,8 @@ class TestModelCategoryMismatchDetection:
 
         # ASSERT: Should NOT be flagged
         assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
         resolved_model = test_wf.resolution.models_resolved[0]
         assert resolved_model.has_category_mismatch is False
+        assert test_wf.has_category_mismatch_issues is False
