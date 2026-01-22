@@ -2340,7 +2340,7 @@ class Environment:
             result["builtins_count"] = output.get("metadata", {}).get("total_nodes", 0)
             logger.info(f"Refreshed comfyui_builtins.json ({result['builtins_count']} nodes)")
         except Exception as e:
-            logger.warning(f"Failed to refresh builtins: {e}")
+            logger.warning(f"Failed to refresh builtins: {e}", exc_info=True)
 
         # Re-extract folder paths
         folder_paths_path = self.cec_path / "comfyui_folder_paths.json"
@@ -2350,6 +2350,6 @@ class Environment:
             result["folder_mappings_count"] = output.get("metadata", {}).get("total_folder_types", 0)
             logger.info(f"Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
         except Exception as e:
-            logger.warning(f"Failed to refresh folder paths: {e}")
+            logger.warning(f"Failed to refresh folder paths: {e}", exc_info=True)
 
         return result
