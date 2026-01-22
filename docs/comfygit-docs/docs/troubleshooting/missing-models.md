@@ -414,7 +414,7 @@ When prompted for ambiguous models, select from available options or provide dow
 Models must be in the correct category directory:
 
 ```
-✗ 1 models in wrong directory
+✗ 1 model in wrong directory
 
   • sd_xl_base_1.0.safetensors
     Expected: checkpoints/
