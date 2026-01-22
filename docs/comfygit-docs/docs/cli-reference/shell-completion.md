@@ -11,7 +11,59 @@ ComfyGit supports tab completion for bash, zsh, and fish shells. Tab completion 
 - Autocomplete node names
 - Autocomplete workflow names
 
-## Installation
+## Command Reference
+
+### `completion`
+
+Manage shell tab completion.
+
+**Usage:**
+
+```bash
+cg completion [-h] {install,uninstall,status} ...
+```
+
+#### Subcommands
+
+#### `install`
+
+Install tab completion for your shell.
+
+**Usage:**
+
+```bash
+cg completion install [-h]
+```
+
+Automatically detects your shell (bash or zsh) and installs the appropriate completion script to your shell configuration file. If argcomplete is not available, it will be installed automatically using `uv tool install`.
+
+#### `uninstall`
+
+Remove tab completion from your shell.
+
+**Usage:**
+
+```bash
+cg completion uninstall [-h]
+```
+
+Removes the completion configuration from your shell configuration file.
+
+#### `status`
+
+Show tab completion installation status.
+
+**Usage:**
+
+```bash
+cg completion status [-h]
+```
+
+Displays the current shell, configuration file location, argcomplete availability, and installation status.
+
+## Quick Start
+
+### Installation
 
 Install tab completion for your current shell:
 
@@ -21,7 +73,7 @@ cg completion install
 
 This will detect your shell automatically and install the appropriate completion script.
 
-## Check Status
+### Check Status
 
 Check if tab completion is installed:
 
@@ -29,7 +81,7 @@ Check if tab completion is installed:
 cg completion status
 ```
 
-## Uninstall
+### Uninstall
 
 Remove tab completion:
 
