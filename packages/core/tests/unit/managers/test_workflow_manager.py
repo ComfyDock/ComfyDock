@@ -381,6 +381,42 @@ class TestStripBaseDirectoryForNode:
 
         assert result == "style/detail_tweaker.safetensors"
 
+    def test_clip_loader_text_encoders_prefix(self, workflow_manager):
+        """CLIPLoader should strip 'text_encoders/' prefix (equivalent to 'clip/')."""
+        node_type = "CLIPLoader"
+        relative_path = "text_encoders/clip_model.safetensors"
+
+        result = workflow_manager._strip_base_directory_for_node(node_type, relative_path)
+
+        assert result == "clip_model.safetensors"
+
+    def test_clip_loader_clip_prefix(self, workflow_manager):
+        """CLIPLoader should strip 'clip/' prefix (equivalent to 'text_encoders/')."""
+        node_type = "CLIPLoader"
+        relative_path = "clip/clip_model.safetensors"
+
+        result = workflow_manager._strip_base_directory_for_node(node_type, relative_path)
+
+        assert result == "clip_model.safetensors"
+
+    def test_unet_loader_unet_prefix(self, workflow_manager):
+        """UNETLoader should strip 'unet/' prefix (equivalent to 'diffusion_models/')."""
+        node_type = "UNETLoader"
+        relative_path = "unet/model.safetensors"
+
+        result = workflow_manager._strip_base_directory_for_node(node_type, relative_path)
+
+        assert result == "model.safetensors"
+
+    def test_unet_loader_diffusion_models_prefix(self, workflow_manager):
+        """UNETLoader should strip 'diffusion_models/' prefix (equivalent to 'unet/')."""
+        node_type = "UNETLoader"
+        relative_path = "diffusion_models/model.safetensors"
+
+        result = workflow_manager._strip_base_directory_for_node(node_type, relative_path)
+
+        assert result == "model.safetensors"
+
 
 class TestOptionalUnresolvedModelPersistence:
     """Test that optional unresolved models persist through resolution cycles.
