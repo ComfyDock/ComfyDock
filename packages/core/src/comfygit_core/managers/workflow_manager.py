@@ -1686,12 +1686,10 @@ class WorkflowManager:
         """
         from difflib import SequenceMatcher
 
-        from ..configs.model_config import ModelConfig
-
         # If node_type provided, filter by category
         if node_type:
-            model_config = ModelConfig.load()
-            directories = model_config.get_directories_for_node(node_type)
+            # Use model_config from model_resolver (includes dynamic folder mappings from cec_path)
+            directories = self.model_resolver.model_config.get_directories_for_node(node_type)
 
             if directories:
                 # Get models from all relevant categories
