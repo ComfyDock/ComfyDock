@@ -57,17 +57,94 @@ cg delete [-h] [-y] name
 - `-y, --yes` - Skip confirmation (default: `False`)
 
 
+## `env-config`
+
+Manage environment-specific configuration.
+
+**Usage:**
+
+```bash
+cg env-config [-h] {torch-backend} ...
+```
+
+### Subcommands
+
+
+### `torch-backend`
+
+Manage PyTorch backend settings for this environment.
+
+**Usage:**
+
+```bash
+cg env-config torch-backend [-h] {show,set,detect} ...
+```
+
+#### `show`
+
+Show current PyTorch backend setting.
+
+**Usage:**
+
+```bash
+cg env-config torch-backend show [-h]
+```
+
+#### `set`
+
+Set PyTorch backend for this environment.
+
+**Usage:**
+
+```bash
+cg env-config torch-backend set [-h] backend
+```
+
+**Arguments:**
+
+- `backend` - Backend to set (e.g., cu128, cpu, rocm6.3, xpu)
+
+#### `detect`
+
+Auto-detect and show recommended backend using uv probe.
+
+**Usage:**
+
+```bash
+cg env-config torch-backend detect [-h]
+```
+
+
 ## `run`
 
 **Usage:**
 
 ```bash
-cg run [-h] [--no-sync]
+cg run [-h] [--no-sync] [--torch-backend BACKEND] [-- COMFYUI_ARGS...]
 ```
 
 **Options:**
 
 - `--no-sync` - Skip environment sync before running (default: `False`)
+- `--torch-backend BACKEND` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128, cu126, rocm6.3, xpu. Reads from .pytorch-backend file if not specified.
+
+**Note:** Arguments after `--` are passed directly to ComfyUI (e.g., `cg run -- --port 8189`)
+
+
+## `sync`
+
+Sync environment packages and dependencies to match pyproject.toml.
+
+**Usage:**
+
+```bash
+cg sync [-h] [--torch-backend BACKEND] [-v]
+```
+
+**Options:**
+
+- `--torch-backend BACKEND` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128, cu126, rocm6.3, xpu. Reads from .pytorch-backend file if not specified.
+- `-v, --verbose` - Show full UV output during sync (default: `False`)
 
 
 ## `status`
@@ -184,6 +261,83 @@ cg push [-h] [-r REMOTE] [--force]
 
 - `-r, --remote` - Git remote name (default: origin) (default: `origin`)
 - `--force` - Force push using --force-with-lease (overwrite remote) (default: `False`)
+
+
+## `reset`
+
+Reset current HEAD to specified state.
+
+**Usage:**
+
+```bash
+cg reset [-h] [--hard] [--mixed] [--soft] [-y] [ref]
+```
+
+**Arguments:**
+
+- `ref` - Commit to reset to (default: HEAD)
+
+**Options:**
+
+- `--hard` - Discard all changes (hard reset) (default: `False`)
+- `--mixed` - Keep changes in working tree, unstage (default) (default: `False`)
+- `--soft` - Keep changes staged (default: `False`)
+- `-y, --yes` - Skip confirmation (default: `False`)
+
+
+## `switch`
+
+Switch to a branch.
+
+**Usage:**
+
+```bash
+cg switch [-h] [-c] branch
+```
+
+**Arguments:**
+
+- `branch` - Branch name to switch to
+
+**Options:**
+
+- `-c, --create` - Create branch if it doesn't exist (default: `False`)
+
+
+## `merge`
+
+Merge branch into current.
+
+**Usage:**
+
+```bash
+cg merge [-h] [-m MESSAGE] [--preview] [--auto-resolve {mine,theirs}] branch
+```
+
+**Arguments:**
+
+- `branch` - Branch to merge
+
+**Options:**
+
+- `-m, --message` - Merge commit message
+- `--preview` - Preview changes without applying (read-only diff with conflict detection) (default: `False`)
+- `--auto-resolve` - Auto-resolve conflicts: 'mine' keeps local, 'theirs' takes incoming (choices: `mine`, `theirs`)
+
+
+## `revert`
+
+Create new commit that undoes previous commit.
+
+**Usage:**
+
+```bash
+cg revert [-h] commit
+```
+
+**Arguments:**
+
+- `commit` - Commit to revert
 
 
 ## `remote`
