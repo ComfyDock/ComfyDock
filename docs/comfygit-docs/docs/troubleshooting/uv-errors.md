@@ -480,7 +480,7 @@ cg sync
 cg export -o backup.tar.gz
 
 # Create fresh environment
-cg env-create fresh-env
+cg create fresh-env
 
 # Import config
 cg -e fresh-env import backup.tar.gz
@@ -504,7 +504,7 @@ If you're still stuck after trying these solutions:
 3. **Gather environment info**:
    ```bash
    cg status
-   uv --version
+   cg py uv --version
    python --version
    ```
 
