@@ -398,7 +398,6 @@ rm -rf ~/comfygit/environments/my-env
 After creating an environment:
 
 * **[Run ComfyUI](running-comfyui.md)** — Start the web interface
-* **[Check status](../../../getting-started/quickstart.md#step-4-check-environment-status)** — Verify environment is ready
 * **[Add custom nodes](../custom-nodes/adding-nodes.md)** — Install extensions
 * **[Version control](version-control.md)** — Commit your configuration
 
