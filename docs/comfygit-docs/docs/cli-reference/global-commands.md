@@ -229,12 +229,13 @@ cg registry update [-h]
 **Usage:**
 
 ```bash
-cg config [-h] [--civitai-key CIVITAI_KEY] [--show]
+cg config [-h] [--civitai-key CIVITAI_KEY] [--uv-cache UV_CACHE] [--show]
 ```
 
 **Options:**
 
 - `--civitai-key` - Set Civitai API key (use empty string to clear)
+- `--uv-cache` - Set external UV cache path (use empty string to clear)
 - `--show` - Show current configuration (default: `False`)
 
 
@@ -253,3 +254,122 @@ cg debug [-h] [-n LINES] [--level {DEBUG,INFO,WARNING,ERROR}] [--full]
 - `--level` - Filter by log level (choices: `DEBUG`, `INFO`, `WARNING`, `ERROR`)
 - `--full` - Show all logs (no line limit) (default: `False`)
 - `--workspace` - Show workspace logs instead of environment logs (default: `False`)
+
+
+## `orch` (alias: `orchestrator`)
+
+Manage the ComfyUI orchestrator process.
+
+**Usage:**
+
+```bash
+cg orch [-h] {status,restart,kill,clean,logs} ...
+```
+
+### Subcommands
+
+
+### `status`
+
+Show orchestrator status.
+
+**Usage:**
+
+```bash
+cg orch status [-h] [--json]
+```
+
+**Options:**
+
+- `--json` - Output as JSON (default: `False`)
+
+
+### `restart`
+
+Restart ComfyUI.
+
+**Usage:**
+
+```bash
+cg orch restart [-h] [--wait]
+```
+
+**Options:**
+
+- `--wait` - Wait for restart to complete (default: `False`)
+
+
+### `kill`
+
+Shutdown orchestrator.
+
+**Usage:**
+
+```bash
+cg orch kill [-h] [--force]
+```
+
+**Options:**
+
+- `--force` - Force kill (bypass command queue) (default: `False`)
+
+
+### `clean`
+
+Clean orchestrator state.
+
+**Usage:**
+
+```bash
+cg orch clean [-h] [--dry-run] [--force] [--kill]
+```
+
+**Options:**
+
+- `--dry-run` - Show what would be deleted (default: `False`)
+- `--force` - Skip confirmation (default: `False`)
+- `--kill` - Also kill orchestrator process (default: `False`)
+
+
+### `logs`
+
+Show orchestrator logs.
+
+**Usage:**
+
+```bash
+cg orch logs [-h] [-f] [-n LINES]
+```
+
+**Options:**
+
+- `-f, --follow` - Follow logs in real-time (default: `False`)
+- `-n, --lines` - Number of lines to show (default: 50) (default: `50`)
+
+
+## `workspace`
+
+Workspace management operations.
+
+**Usage:**
+
+```bash
+cg workspace [-h] {cleanup} ...
+```
+
+### Subcommands
+
+
+### `cleanup`
+
+Remove legacy workspace artifacts.
+
+**Usage:**
+
+```bash
+cg workspace cleanup [-h] [--force]
+```
+
+**Options:**
+
+- `--force` - Skip verification and force cleanup (default: `False`)
