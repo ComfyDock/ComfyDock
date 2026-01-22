@@ -831,6 +831,18 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     manager_update_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts")
     manager_update_parser.set_defaults(func=env_cmds.manager_update)
 
+    # Metadata subcommands (environment metadata management)
+    metadata_parser = subparsers.add_parser("metadata", help="Manage environment metadata")
+    metadata_subparsers = metadata_parser.add_subparsers(dest="metadata_command", help="Metadata commands")
+    metadata_parser.set_defaults(func=_make_help_func(metadata_parser))
+
+    # metadata refresh
+    metadata_refresh_parser = metadata_subparsers.add_parser(
+        "refresh",
+        help="Refresh extracted metadata from ComfyUI installation"
+    )
+    metadata_refresh_parser.set_defaults(func=env_cmds.metadata_refresh)
+
 
 if __name__ == "__main__":
     main()

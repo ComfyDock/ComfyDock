@@ -3038,3 +3038,46 @@ class EnvironmentCommands:
             if logger:
                 logger.error(f"Manager update failed: {e}", exc_info=True)
             sys.exit(1)
+
+    # ================================================================================
+    # Metadata Commands - Environment metadata management
+    # ================================================================================
+
+    @with_env_logging("metadata refresh")
+    def metadata_refresh(self, args: argparse.Namespace, logger: Any = None) -> None:
+        """Refresh extracted metadata from ComfyUI installation.
+
+        Re-extracts builtins and folder paths for the current environment.
+        Useful after upgrading ComfyUI or to fix missing metadata files.
+        """
+        env = self._get_env(args)
+
+        print(f"Refreshing metadata for environment '{env.name}'...")
+
+        try:
+            result = env.refresh_metadata()
+
+            if result["builtins_refreshed"]:
+                print(f"   Refreshed comfyui_builtins.json ({result['builtins_count']} nodes)")
+            else:
+                print("   Failed to refresh comfyui_builtins.json")
+
+            if result["folder_paths_refreshed"]:
+                print(f"   Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
+            else:
+                print("   Failed to refresh comfyui_folder_paths.json")
+
+            if result["builtins_refreshed"] or result["folder_paths_refreshed"]:
+                print("\nMetadata refreshed successfully")
+            else:
+                print("\nNo metadata was refreshed", file=sys.stderr)
+                sys.exit(1)
+
+        except ValueError as e:
+            print(f"   Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"   Failed to refresh metadata: {e}", file=sys.stderr)
+            if logger:
+                logger.error(f"Metadata refresh failed: {e}", exc_info=True)
+            sys.exit(1)

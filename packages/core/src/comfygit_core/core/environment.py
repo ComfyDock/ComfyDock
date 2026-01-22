@@ -2297,3 +2297,59 @@ class Environment:
             # Untrack without deleting the file
             _git(["rm", "--cached", "uv.lock"], self.cec_path, check=False)
             logger.info("Untracked uv.lock (now gitignored)")
+
+    # =====================================================
+    # Metadata Management
+    # =====================================================
+
+    def refresh_metadata(self) -> dict:
+        """Refresh extracted metadata from ComfyUI installation.
+
+        Re-extracts builtins and folder paths for the current environment.
+        Useful after upgrading ComfyUI or to fix missing metadata files
+        for environments created before v0.3.12.
+
+        Returns:
+            dict with keys:
+                - builtins_refreshed: bool
+                - folder_paths_refreshed: bool
+                - builtins_count: int (number of builtin nodes)
+                - folder_mappings_count: int (number of folder mappings)
+
+        Raises:
+            ValueError: If ComfyUI installation is missing or invalid
+        """
+        from ..utils.builtin_extractor import extract_comfyui_builtins
+        from ..utils.folder_paths_extractor import extract_folder_paths
+
+        if not self.comfyui_path.exists():
+            raise ValueError(f"ComfyUI not found at {self.comfyui_path}")
+
+        result = {
+            "builtins_refreshed": False,
+            "folder_paths_refreshed": False,
+            "builtins_count": 0,
+            "folder_mappings_count": 0,
+        }
+
+        # Re-extract builtins
+        builtins_path = self.cec_path / "comfyui_builtins.json"
+        try:
+            output = extract_comfyui_builtins(self.comfyui_path, builtins_path)
+            result["builtins_refreshed"] = True
+            result["builtins_count"] = output.get("metadata", {}).get("total_nodes", 0)
+            logger.info(f"Refreshed comfyui_builtins.json ({result['builtins_count']} nodes)")
+        except Exception as e:
+            logger.warning(f"Failed to refresh builtins: {e}")
+
+        # Re-extract folder paths
+        folder_paths_path = self.cec_path / "comfyui_folder_paths.json"
+        try:
+            output = extract_folder_paths(self.comfyui_path, folder_paths_path)
+            result["folder_paths_refreshed"] = True
+            result["folder_mappings_count"] = output.get("metadata", {}).get("total_folder_types", 0)
+            logger.info(f"Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
+        except Exception as e:
+            logger.warning(f"Failed to refresh folder paths: {e}")
+
+        return result
