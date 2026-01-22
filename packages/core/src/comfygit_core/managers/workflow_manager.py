@@ -1643,13 +1643,11 @@ class WorkflowManager:
             >>> _strip_base_directory_for_node("CheckpointLoaderSimple", "checkpoints/a/b/c/model.ckpt")
             "a/b/c/model.ckpt"  # Subdirectories preserved
         """
-        from ..configs.model_config import ModelConfig
-
         # Normalize to forward slashes for cross-platform compatibility (Windows uses backslashes)
         relative_path = relative_path.replace('\\', '/')
 
-        model_config = ModelConfig.load()
-        base_dirs = model_config.get_directories_for_node(node_type)
+        # Use model_config from model_resolver (includes dynamic folder mappings from cec_path)
+        base_dirs = self.model_resolver.model_config.get_directories_for_node(node_type)
 
         # Warn if called for custom node (should be skipped in caller)
         if not base_dirs:
