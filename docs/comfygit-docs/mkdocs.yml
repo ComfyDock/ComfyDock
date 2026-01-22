@@ -1,6 +1,6 @@
 site_name: ComfyGit Documentation
 site_description: Version control for ComfyUI environments
-site_url: https://docs.comfygit.org/comfygit/
+site_url: https://docs.comfygit.org/
 repo_url: https://github.com/comfygit-ai/comfygit
 repo_name: comfygit-ai/comfygit
 edit_uri: edit/main/docs/comfygit-docs/docs/

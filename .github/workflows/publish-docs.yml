@@ -37,31 +37,30 @@ jobs:
         git clone https://${{ secrets.DOCS_PUBLISH_TOKEN }}@github.com/comfygit-ai/comfygit.github.io.git pages-repo
         echo "✓ Pages repository cloned"
 
-    - name: Deploy to /comfygit/ subdirectory
+    - name: Deploy to root
       run: |
         # Configure git for the Pages repo
         cd pages-repo
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
-        # Remove old comfygit docs
-        rm -rf comfygit/
-        echo "✓ Removed old comfygit/ directory"
+        # Preserve CNAME and README.md, remove everything else
+        mv CNAME ../CNAME.bak 2>/dev/null || true
+        mv README.md ../README.bak 2>/dev/null || true
+        rm -rf *
+        rm -rf .nojekyll 2>/dev/null || true
+        mv ../CNAME.bak CNAME 2>/dev/null || true
+        mv ../README.bak README.md 2>/dev/null || true
+        echo "✓ Cleaned old content"
 
-        # Create comfygit directory and copy new docs
-        mkdir -p comfygit/
-        cp -r ../build-output/* comfygit/
-        echo "✓ Copied new documentation to comfygit/"
+        # Copy new docs to root
+        cp -r ../build-output/* .
+        echo "✓ Copied documentation to root"
 
-        # Ensure CNAME exists at root (for custom domain)
+        # Ensure CNAME exists (for custom domain)
         if [ ! -f CNAME ]; then
           echo "docs.comfygit.org" > CNAME
           echo "✓ Created CNAME file"
-        fi
-
-        # Ensure hub index.html exists at root (will be added manually first time)
-        if [ ! -f index.html ]; then
-          echo "⚠ Warning: index.html not found at root - hub landing page missing"
         fi
 
     - name: Commit and push changes
@@ -89,11 +88,11 @@ jobs:
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "✅ ComfyGit Documentation Deployed"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo "📍 Live URL: https://docs.comfygit.org/comfygit/"
+        echo "📍 Live URL: https://docs.comfygit.org/"
         echo "📦 Source: docs/comfygit-docs/"
-        echo "🎯 Target: comfygit-ai.github.io/comfygit/"
+        echo "🎯 Target: comfygit-ai.github.io"
         echo "📝 Commit: ${{ github.sha }}"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
         echo "Allow 1-2 minutes for GitHub Pages to rebuild."
-        echo "Visit https://docs.comfygit.org/comfygit/ to view."
+        echo "Visit https://docs.comfygit.org/ to view."
