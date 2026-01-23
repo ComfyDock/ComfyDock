@@ -136,6 +136,12 @@ class Environment:
         return ResolutionTester(self.workspace_paths.root)
 
     @cached_property
+    def package_config(self):
+        """Get package configuration manager for substitutions and exclusions."""
+        from ..configs.package_config import PackageConfigManager
+        return PackageConfigManager(self.cec_path)
+
+    @cached_property
     def node_manager(self) -> NodeManager:
         return NodeManager(
             self.pyproject,
@@ -144,7 +150,8 @@ class Environment:
             self.resolution_tester,
             self.custom_nodes_path,
             self.node_mapping_repository,
-            self.pytorch_manager
+            self.pytorch_manager,
+            self.package_config,
         )
 
     @cached_property
@@ -570,6 +577,9 @@ class Environment:
         # Migrate schema v1 → v2 if needed (strips embedded PyTorch config)
         # This ensures old environments get migrated on first sync with new code
         self._ensure_schema_migrated()
+
+        # Ensure package config exists (migration for existing envs)
+        self.package_config.ensure_exists()
 
         logger.info("Syncing environment...")
 
