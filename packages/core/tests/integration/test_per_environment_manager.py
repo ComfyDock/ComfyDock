@@ -122,7 +122,7 @@ class TestUpdateManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: []
+            lambda path, **kwargs: []
         )
 
         # ACT
@@ -185,7 +185,7 @@ class TestUpdateManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: ["comfygit-core>=0.3.0"]
+            lambda path, **kwargs: ["comfygit-core>=0.3.0"]
         )
 
         # ACT
@@ -304,7 +304,7 @@ class TestNodeManagerAllowsManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: []
+            lambda path, **kwargs: []
         )
 
         # Create dummy cache source
