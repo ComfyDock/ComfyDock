@@ -1011,6 +1011,27 @@ class UVConfigHandler(BaseHandler):
             group_deps.append(package)
             logger.info(f"Added '{package}' to group '{group}'")
 
+    def ensure_exclude_dependencies(self, packages: list[str]) -> None:
+        """Ensure packages are in exclude-dependencies list.
+
+        Called during sync to ensure exclusions are applied even for
+        environments created before this feature.
+
+        Args:
+            packages: List of package names to exclude
+        """
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        current = set(config['tool']['uv'].get('exclude-dependencies', []))
+        to_add = set(packages) - current
+
+        if to_add:
+            all_exclusions = sorted(list(current | set(packages)))
+            config['tool']['uv']['exclude-dependencies'] = all_exclusions
+            self.save(config)
+            logger.info(f"Added package exclusions: {sorted(to_add)}")
+
 
 class NodeHandler(BaseHandler):
     """Handles custom node management."""

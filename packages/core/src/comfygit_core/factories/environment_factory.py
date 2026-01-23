@@ -228,6 +228,12 @@ class EnvironmentFactory:
         )
         env.pyproject.save(config)
 
+        # Create package configuration (git-tracked)
+        from ..configs.package_config import PackageConfigManager
+        pkg_config = PackageConfigManager(cec_path)
+        pkg_config.ensure_exists()
+        logger.info("Created package configuration")
+
         # Add ComfyUI requirements
         comfyui_reqs = env.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
@@ -465,6 +471,7 @@ class EnvironmentFactory:
         not through dependency-groups.system-nodes (that was legacy schema).
         """
         from ..constants import PYPROJECT_SCHEMA_VERSION
+        from ..configs.package_config import DEFAULT_EXCLUDE_PACKAGES
 
         config = {
             "project": {
@@ -481,6 +488,9 @@ class EnvironmentFactory:
                     "comfyui_commit_sha": comfyui_commit_sha,
                     "python_version": python_version,
                     "nodes": {}
+                },
+                "uv": {
+                    "exclude-dependencies": DEFAULT_EXCLUDE_PACKAGES
                 }
             }
         }
