@@ -577,3 +577,103 @@ index = "pytorch-cu129"
         assert 'index = [{' not in content, (
             f"Should not use inline array format after strip-and-readd, got:\n{content}"
         )
+
+
+class TestInitialPyprojectConfig:
+    """Test initial pyproject.toml configuration."""
+
+    def test_initial_pyproject_has_exclude_dependencies(self):
+        """Test that newly created pyproject.toml includes exclude-dependencies."""
+        from comfygit_core.factories.environment_factory import EnvironmentFactory
+
+        # Create initial pyproject config
+        config = EnvironmentFactory._create_initial_pyproject(
+            name="test-env",
+            python_version="3.11",
+            comfyui_version="v0.3.60",
+            comfyui_version_type="tag",
+            comfyui_commit_sha="abc123"
+        )
+
+        # Verify exclude-dependencies exists
+        assert "tool" in config
+        assert "uv" in config["tool"]
+        assert "exclude-dependencies" in config["tool"]["uv"]
+
+        # Verify it includes opencv-python
+        exclusions = config["tool"]["uv"]["exclude-dependencies"]
+        assert "opencv-python" in exclusions
+
+
+class TestExcludeDependencies:
+    """Test exclude-dependencies handling in UV config."""
+
+    def test_ensure_exclude_dependencies_adds_new(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies adds new packages."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add exclude dependencies
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "some-other-package"])
+
+        # Read config
+        with open(temp_pyproject) as f:
+            content = f.read()
+
+        # Verify exclusions added
+        assert "[tool.uv]" in content
+        assert "exclude-dependencies" in content
+        assert "opencv-python" in content
+        assert "some-other-package" in content
+
+    def test_ensure_exclude_dependencies_idempotent(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies is idempotent."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add exclusions twice
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
+
+        # Load config
+        config = manager.load()
+        exclusions = config['tool']['uv'].get('exclude-dependencies', [])
+
+        # Should only appear once
+        assert exclusions.count("opencv-python") == 1
+
+    def test_ensure_exclude_dependencies_merges_with_existing(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies merges with existing exclusions."""
+        # Manually create config with existing exclusions
+        initial_config = {
+            "project": {
+                "name": "test-project",
+                "version": "0.1.0",
+                "requires-python": ">=3.11",
+                "dependencies": [],
+            },
+            "tool": {
+                "comfygit": {
+                    "comfyui_version": "v0.3.60",
+                    "python_version": "3.11",
+                },
+                "uv": {
+                    "exclude-dependencies": ["existing-package"]
+                }
+            }
+        }
+
+        with open(temp_pyproject, 'w') as f:
+            tomlkit.dump(initial_config, f)
+
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add new exclusions
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "existing-package"])
+
+        # Load config
+        config = manager.load()
+        exclusions = config['tool']['uv']['exclude-dependencies']
+
+        # Should have both, no duplicates
+        assert len(exclusions) == 2
+        assert "existing-package" in exclusions
+        assert "opencv-python" in exclusions
