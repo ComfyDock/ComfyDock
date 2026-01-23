@@ -13,12 +13,11 @@ Key v2.0 Changes:
 import json
 import tempfile
 from pathlib import Path
-import pytest
 
-from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
-from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
-from comfygit_core.models.workflow import WorkflowNode, NodeResolutionContext
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.models.workflow import NodeResolutionContext, WorkflowNode
+from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
+from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
 
 
 class TestSchemaV2Loading:
@@ -420,14 +419,123 @@ class TestWorkflowManagerDisambiguation:
     """Test workflow_manager correctly distinguishes registry vs fuzzy search ambiguity."""
 
     def test_registry_multi_package_auto_resolves(self):
-        """Registry mapping with multiple packages should auto-resolve to best match."""
-        # This tests the workflow_manager.resolve_workflow() logic
-        # We'll need to mock the global resolver to return ranked packages
-        pytest.skip("Integration test - will implement after unit tests pass")
+        """Registry mapping with multiple packages should auto-resolve to best match.
 
-    def test_fuzzy_search_creates_ambiguous_list(self):
-        """Fuzzy search results without ranks should go to ambiguous list."""
-        pytest.skip("Integration test - will implement after unit tests pass")
+        When auto_select_ambiguous=True (default), the resolver should automatically
+        pick the highest-ranked package instead of returning all candidates.
+        """
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-1", "versions": ["1.0"], "rank": 1},
+                    {"package_id": "pkg-2", "versions": ["1.0"], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-1": {
+                    "id": "pkg-1",
+                    "display_name": "Package 1",
+                    "repository": "https://github.com/test/pkg1",
+                    "versions": {}
+                },
+                "pkg-2": {
+                    "id": "pkg-2",
+                    "display_name": "Package 2",
+                    "repository": "https://github.com/test/pkg2",
+                    "versions": {}
+                }
+            },
+            "stats": {}
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mappings_path = Path(tmpdir) / "mappings.json"
+            with open(mappings_path, 'w') as f:
+                json.dump(mappings_data, f)
+
+            from unittest.mock import Mock
+            mock_data_manager = Mock()
+            mock_data_manager.get_mappings_path.return_value = mappings_path
+
+            repository = NodeMappingsRepository(data_manager=mock_data_manager)
+            resolver = GlobalNodeResolver(repository)
+
+            # Context with auto_select_ambiguous=True (should auto-pick best)
+            context = NodeResolutionContext(
+                installed_packages={},
+                workflow_name="test",
+                auto_select_ambiguous=True
+            )
+
+            node = WorkflowNode(id="1", type="TestNode")
+            result = resolver.resolve_single_node_with_context(node, context)
+
+            # Should auto-select single best package (rank 1)
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].package_id == "pkg-1"
+            assert result[0].rank == 1
+
+    def test_fuzzy_search_creates_ambiguous_list(self, test_env, monkeypatch):
+        """When resolver returns multiple packages, workflow_manager puts them in ambiguous list.
+
+        This tests the workflow_manager.resolve_workflow() logic: when the resolver
+        returns multiple packages (e.g., from fuzzy search with no clear ranking),
+        they should be placed in nodes_ambiguous rather than nodes_resolved.
+        """
+        from comfygit_core.models.workflow import (
+            ResolvedNodePackage,
+            WorkflowDependencies,
+        )
+
+        # Create minimal workflow dependencies with one unknown node
+        unknown_node = WorkflowNode(id="1", type="UnknownCustomNode")
+        deps = WorkflowDependencies(
+            workflow_name="test-workflow",
+            builtin_nodes=[],
+            non_builtin_nodes=[unknown_node],
+            found_models=[]
+        )
+
+        # Mock the resolver to return 2 packages with rank=None (simulates fuzzy search)
+        # The key is that returning multiple packages should trigger ambiguity handling
+        def mock_resolve(node, _ctx):
+            if node.type == "UnknownCustomNode":
+                return [
+                    ResolvedNodePackage(
+                        node_type="UnknownCustomNode",
+                        package_id="fuzzy-match-1",
+                        match_type="fuzzy",
+                        match_confidence=0.7,
+                        rank=None  # No registry rank (fuzzy search result)
+                    ),
+                    ResolvedNodePackage(
+                        node_type="UnknownCustomNode",
+                        package_id="fuzzy-match-2",
+                        match_type="fuzzy",
+                        match_confidence=0.65,
+                        rank=None  # No registry rank (fuzzy search result)
+                    )
+                ]
+            return None
+
+        # Patch the resolver on the workflow_manager
+        monkeypatch.setattr(
+            test_env.workflow_manager.global_node_resolver,
+            "resolve_single_node_with_context",
+            mock_resolve
+        )
+
+        # Run resolution
+        result = test_env.workflow_manager.resolve_workflow(deps)
+
+        # Multiple packages should go to nodes_ambiguous, not nodes_resolved
+        assert len(result.nodes_resolved) == 0, "Should not have resolved nodes"
+        assert len(result.nodes_ambiguous) == 1, "Should have one ambiguous node group"
+        assert len(result.nodes_ambiguous[0]) == 2, "Ambiguous group should have 2 packages"
+        assert result.nodes_ambiguous[0][0].package_id == "fuzzy-match-1"
+        assert result.nodes_ambiguous[0][1].package_id == "fuzzy-match-2"
 
 
 class TestRankFieldPersistence:
