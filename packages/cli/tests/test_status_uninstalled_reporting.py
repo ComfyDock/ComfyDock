@@ -3,10 +3,6 @@
 Tests the _print_workflow_issues() method to ensure it correctly reports
 uninstalled packages after resolution.
 """
-
-import sys
-import io
-
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.models.workflow import (
     WorkflowAnalysisStatus,
@@ -18,7 +14,7 @@ from comfygit_core.models.workflow import (
 class TestStatusUninstalledReporting:
     """Test that CLI status correctly reports uninstalled nodes."""
 
-    def test_print_workflow_issues_shows_uninstalled_packages(self):
+    def test_print_workflow_issues_shows_uninstalled_packages(self, capsys):
         """
         Test _print_workflow_issues() reports uninstalled nodes correctly.
 
@@ -36,21 +32,15 @@ class TestStatusUninstalledReporting:
 
         # ACT: Call _print_workflow_issues
         env_commands = EnvironmentCommands()
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
+        env_commands._print_workflow_issues(wf_status)
 
-        try:
-            env_commands._print_workflow_issues(wf_status)
-        finally:
-            sys.stdout = sys.__stdout__
-
-        output = captured_output.getvalue()
+        output = capsys.readouterr().out
 
         # ASSERT: Should report 1 package needed
         assert "1 packages needed for installation" in output, \
             f"Output should show 1 package needed, got: {output}"
 
-    def test_print_workflow_issues_shows_nothing_when_all_installed(self):
+    def test_print_workflow_issues_shows_nothing_when_all_installed(self, capsys):
         """Test _print_workflow_issues() shows nothing when all nodes installed."""
         # ARRANGE: Create a WorkflowAnalysisStatus with no issues
         wf_status = WorkflowAnalysisStatus(
@@ -63,15 +53,9 @@ class TestStatusUninstalledReporting:
 
         # ACT: Call _print_workflow_issues
         env_commands = EnvironmentCommands()
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
+        env_commands._print_workflow_issues(wf_status)
 
-        try:
-            env_commands._print_workflow_issues(wf_status)
-        finally:
-            sys.stdout = sys.__stdout__
-
-        output = captured_output.getvalue()
+        output = capsys.readouterr().out
 
         # ASSERT: Should not mention packages needed
         assert "packages needed" not in output, \

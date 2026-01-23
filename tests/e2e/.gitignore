@@ -1,0 +1,17 @@
+# E2E Test Artifacts (generated, not committed)
+
+# Fixture workspaces (created by setup-fixtures.sh)
+fixtures/
+
+# Shared caches (UV packages, ComfyUI base clone)
+.cache/
+
+# Local environment configuration
+.env
+
+# ComfyUI PID file (if running during tests)
+.comfyui-pid
+
+# pytest cache
+__pycache__/
+.pytest_cache/

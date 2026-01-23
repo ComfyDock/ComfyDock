@@ -10,6 +10,7 @@ Tests workflow analysis caching including:
 - Cache persistence
 """
 import json
+import os
 import time
 from pathlib import Path
 import pytest
@@ -234,9 +235,9 @@ class TestCacheMissAfterMtimeChange:
             dependencies=sample_dependencies
         )
 
-        # Touch file to change mtime
-        time.sleep(0.01)  # Ensure mtime changes
-        sample_workflow_file.touch()
+        # Bump mtime deterministically
+        new_mtime = sample_workflow_file.stat().st_mtime + 2
+        os.utime(sample_workflow_file, (new_mtime, new_mtime))
 
         # Clear session cache to force SQLite lookup
         cache_db._session_cache.clear()
@@ -478,7 +479,6 @@ class TestSessionCacheInvalidationOnFileChange:
         assert result1.dependencies.builtin_nodes[0].type == "CheckpointLoaderSimple"
 
         # Modify workflow file (simulating user edit in ComfyUI)
-        time.sleep(0.01)  # Ensure mtime changes
         workflow_v2 = {
             "nodes": [
                 {"id": 1, "type": "CheckpointLoaderSimple", "widgets_values": ["model1.safetensors"]},
@@ -487,6 +487,9 @@ class TestSessionCacheInvalidationOnFileChange:
         }
         with open(workflow_path, 'w') as f:
             json.dump(workflow_v2, f)
+        # Bump mtime deterministically
+        new_mtime = workflow_path.stat().st_mtime + 2
+        os.utime(workflow_path, (new_mtime, new_mtime))
 
         # Second get WITHOUT clearing session cache (simulates long-running server)
         # This should detect file change and return None (cache miss)

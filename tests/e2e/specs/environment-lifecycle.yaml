@@ -1,0 +1,126 @@
+version: "1.0"
+feature: environment-lifecycle
+description: |
+  Tests the core environment lifecycle: fixture validation, status commands,
+  and running ComfyUI. These are the fundamental operations every user performs.
+
+# Map to implementing work items for traceability
+beads:
+  e2e-infrastructure: cg-i7s
+
+scenarios:
+  # ============================================================================
+  # Scenario 1: Environment Basics
+  # ============================================================================
+  - id: environment-basics
+    description: |
+      Validates that a pre-built fixture environment has the expected structure
+      and that basic CLI commands work against it.
+    beads: [cg-i7s.1, cg-i7s.2, cg-i7s.3, cg-i7s.4]
+
+    tests:
+      - id: fixture-structure
+        name: Fixture has expected directory structure
+        command: null  # Filesystem check, not CLI
+        setup:
+          - Fixture created via setup-fixtures.sh
+        expect:
+          exists:
+            - .metadata/
+            - environments/default/
+            - environments/default/ComfyUI/
+            - environments/default/.venv/
+        why: |
+          The fixture is the foundation for all other E2E tests. If the structure
+          is wrong, tests will fail for the wrong reasons (missing dirs vs bugs).
+          This catches setup-fixtures.sh regressions early.
+
+      - id: status-basic
+        name: cg status shows environment info
+        command: cg -e default status
+        setup:
+          - COMFYGIT_HOME points to fixture
+        expect:
+          exit_code: 0
+          stdout_contains:
+            - "default"
+        why: |
+          Status is the most common command users run. It should work on a fresh
+          environment without errors. Verifies workspace discovery and env lookup.
+
+      - id: status-verbose
+        name: cg status -v shows detailed info
+        command: cg -e default status -v
+        setup:
+          - COMFYGIT_HOME points to fixture
+        expect:
+          exit_code: 0
+          stdout_contains:
+            - "default"
+        why: |
+          Verbose mode shows additional details (custom nodes, models, etc.).
+          Tests that the verbose flag is wired up correctly.
+
+      - id: list-environments
+        name: cg list shows all environments
+        command: cg list
+        setup:
+          - COMFYGIT_HOME points to fixture
+        expect:
+          exit_code: 0
+          stdout_contains:
+            - "default"
+        why: |
+          Users need to see what environments exist. This tests workspace-level
+          environment enumeration works correctly.
+
+  # ============================================================================
+  # Scenario 2: ComfyUI Lifecycle
+  # ============================================================================
+  - id: comfyui-lifecycle
+    description: |
+      Tests starting and stopping ComfyUI. This is the critical path - if users
+      can't run ComfyUI, nothing else matters.
+    beads: [cg-i7s]
+
+    tests:
+      - id: run-comfyui-cpu
+        name: cg run starts ComfyUI and responds to health check
+        command: |
+          # Start ComfyUI in background, wait for health, then kill
+          cg -e default run --torch-backend cpu --port 18188 &
+          PID=$!
+          # Wait up to 120s for server to be ready (first run can be slow)
+          for i in {1..120}; do
+            if curl -s http://localhost:18188/system_stats > /dev/null 2>&1; then
+              kill $PID 2>/dev/null
+              wait $PID 2>/dev/null
+              exit 0
+            fi
+            sleep 1
+          done
+          kill $PID 2>/dev/null
+          wait $PID 2>/dev/null
+          exit 1
+        setup:
+          - COMFYGIT_HOME points to fixture
+          - Port 18188 is available
+          - curl is installed
+        expect:
+          exit_code: 0
+        why: |
+          Running ComfyUI is the entire point of comfygit. This verifies:
+          1. Python venv activation works
+          2. ComfyUI dependencies are installed
+          3. --torch-backend cpu override works
+          4. Arguments pass through to ComfyUI (--port)
+          5. Server actually starts and responds to HTTP
+
+          Port 18188 avoids conflicts with dev ports (8188-8190).
+          120s timeout accommodates slow first-run initialization.
+
+# Notes for test implementation:
+# - Use pytest fixtures for COMFYGIT_HOME setup
+# - Use subprocess.Popen for background process management
+# - Clean up processes in test teardown (fixture or try/finally)
+# - Consider pytest-timeout for long-running tests

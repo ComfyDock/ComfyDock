@@ -1,7 +1,7 @@
 # ComfyUI Node Loader Base Directories
 
 **Context Document**
-**Last Updated**: 2025-01-06
+**Last Updated**: 2026-01-22
 **Importance**: Critical for workflow portability and import/export
 
 ---
@@ -11,6 +11,82 @@
 ComfyUI's built-in model loader nodes (CheckpointLoaderSimple, LoraLoader, VAELoader, etc.) have **hardcoded base directories** that they automatically prepend to the model paths in workflow JSON files.
 
 **This means**: The path stored in the workflow JSON widget value should **NOT** include the base directory prefix, because the node will add it automatically.
+
+---
+
+## Dynamic Folder Path Extraction (v0.3.12+)
+
+As of ComfyUI v0.4+, some node loaders support **multiple equivalent directories**. For example:
+
+- `CLIPLoader` accepts models from both `text_encoders/` (modern) and `clip/` (legacy)
+- `UNETLoader` accepts models from both `diffusion_models/` (modern) and `unet/` (legacy)
+
+### The Problem with Static Mappings
+
+Previously, comfygit-core used a static configuration that hardcoded which directories each node loader searches:
+
+```python
+# Old static mapping in comfyui_models.py
+"node_directory_mappings": {
+    "CLIPLoader": ["clip"],              # ← Only knew about legacy directory
+    "UNETLoader": ["diffusion_models"],  # ← Missing "unet" alias
+}
+```
+
+This caused **false positive "wrong directory" warnings** when models were correctly placed in modern locations like `text_encoders/`.
+
+### The Solution: Dynamic Extraction
+
+comfygit-core now extracts folder mappings directly from ComfyUI's `folder_paths.py` at environment creation time using AST parsing (no code execution).
+
+**What gets extracted:**
+
+1. **Folder mappings**: Which directories are equivalent for each folder type
+   ```json
+   {
+     "text_encoders": ["text_encoders", "clip"],
+     "diffusion_models": ["unet", "diffusion_models"],
+     "controlnet": ["controlnet", "t2i_adapter"]
+   }
+   ```
+
+2. **Legacy aliases**: Old directory names mapped to their modern equivalents
+   ```json
+   {
+     "clip": "text_encoders",
+     "unet": "diffusion_models"
+   }
+   ```
+
+### How It Works
+
+1. **At environment creation** (`cg create`):
+   - `folder_paths_extractor.py` parses ComfyUI's `folder_paths.py`
+   - Saves extracted mappings to `.cec/comfyui_folder_paths.json`
+
+2. **At runtime**:
+   - `ModelConfig.load(cec_path=...)` reads the JSON file
+   - Merges dynamic mappings into the static config via `_merge_folder_mappings()`
+   - `get_directories_for_node("CLIPLoader")` now returns `["text_encoders", "clip"]`
+
+3. **Result**:
+   - Models in `text_encoders/` are valid for `CLIPLoader` ✅
+   - Models in `clip/` are still valid for `CLIPLoader` ✅
+   - Models in `loras/` still flagged as wrong directory ✅
+
+### Equivalent Directories Table
+
+| Node Type | Equivalent Directories |
+|-----------|----------------------|
+| `CLIPLoader` | `text_encoders`, `clip` |
+| `DualCLIPLoader` | `text_encoders`, `clip` |
+| `TripleCLIPLoader` | `text_encoders`, `clip` |
+| `UNETLoader` | `diffusion_models`, `unet` |
+| `ControlNetLoader` | `controlnet`, `t2i_adapter` |
+
+### Fallback Behavior
+
+If `.cec/comfyui_folder_paths.json` doesn't exist (older environments or extraction failure), the system falls back to the static configuration in `comfyui_models.py`.
 
 ---
 
@@ -139,10 +215,11 @@ def _strip_base_directory_for_node(node_type: str, relative_path: str) -> str:
     Returns:
         Path without base directory prefix (e.g., "sd15/model.ckpt")
     """
-    # Get base directory for this node type from model config
-    # CheckpointLoaderSimple → ["checkpoints"]
-    # LoraLoader → ["loras"]
-    base_dirs = ModelConfig.get_directories_for_node(node_type)
+    # Get base directories for this node type from model config
+    # With dynamic extraction, this returns ALL equivalent directories:
+    # CLIPLoader → ["text_encoders", "clip"]
+    # UNETLoader → ["diffusion_models", "unet"]
+    base_dirs = self.model_resolver.model_config.get_directories_for_node(node_type)
 
     for base_dir in base_dirs:
         prefix = base_dir + "/"
@@ -153,6 +230,8 @@ def _strip_base_directory_for_node(node_type: str, relative_path: str) -> str:
     # If path doesn't have expected prefix, return unchanged
     return relative_path
 ```
+
+**Note**: With dynamic folder path extraction, `get_directories_for_node()` returns all equivalent directories. This means stripping works correctly for both modern (`text_encoders/`) and legacy (`clip/`) paths.
 
 ### Examples
 
@@ -172,6 +251,19 @@ strip("CheckpointLoaderSimple", "sd15/model.ckpt")
 # Different node type
 strip("VAELoader", "vae/vae-ft-mse.safetensors")
 → "vae-ft-mse.safetensors"
+
+# Equivalent directories (with dynamic extraction)
+strip("CLIPLoader", "text_encoders/qwen_clip.safetensors")
+→ "qwen_clip.safetensors"  # Modern location stripped
+
+strip("CLIPLoader", "clip/sd15_clip.safetensors")
+→ "sd15_clip.safetensors"  # Legacy location also stripped
+
+strip("UNETLoader", "unet/flux_dev.safetensors")
+→ "flux_dev.safetensors"  # Legacy "unet" stripped
+
+strip("UNETLoader", "diffusion_models/flux_dev.safetensors")
+→ "flux_dev.safetensors"  # Modern "diffusion_models" stripped
 ```
 
 ---
@@ -298,14 +390,30 @@ ComfyUI/models/checkpoints/checkpoints/sd15/model.ckpt
 
 1. **`workflow_manager.py`**:
    - `_strip_base_directory_for_node()`: Core stripping logic
+   - `_check_category_mismatch()`: Validates model directories against equivalent dirs
    - `update_workflow_model_paths()`: Apply stripping after resolution
    - `apply_resolution()`: Orchestrates workflow JSON updates
 
 2. **`model_config.py`**:
    - `node_directory_mappings`: Maps node types to base directories
    - `get_directories_for_node()`: Returns base dirs for a node type
+   - `load(cec_path=...)`: Loads with optional dynamic folder mappings
+   - `_merge_folder_mappings()`: Merges extracted mappings into static config
 
-3. **`pyproject_manager.py`**:
+3. **`folder_paths_extractor.py`** (new in v0.3.12):
+   - `extract_folder_paths()`: Parses ComfyUI's folder_paths.py via AST
+   - Extracts `folder_mappings` and `legacy_aliases`
+   - Saves to `.cec/comfyui_folder_paths.json`
+
+4. **`environment_factory.py`**:
+   - Calls `extract_folder_paths()` during environment creation
+   - Creates `.cec/comfyui_folder_paths.json` alongside `comfyui_builtins.json`
+
+5. **`model_resolver.py`**:
+   - Accepts `cec_path` parameter
+   - Passes `cec_path` to `ModelConfig.load()` for dynamic loading
+
+6. **`pyproject_manager.py`**:
    - Stores full paths with base directory included
    - Used for model index lookups and reproducibility
 
@@ -316,6 +424,9 @@ ComfyUI/models/checkpoints/checkpoints/sd15/model.ckpt
 3. **Idempotent stripping**: Safe to call multiple times on same path
 4. **Preserve subdirectories**: Only strip the type-level base directory
 5. **Fail on invalid organization**: Better than silent failures
+6. **Dynamic extraction via AST**: Safe parsing without executing ComfyUI code
+7. **Graceful fallback**: Missing JSON falls back to static config
+8. **Per-environment mappings**: Each environment can have different ComfyUI versions
 
 ---
 
@@ -338,6 +449,24 @@ def test_strip_idempotent():
     """Already stripped paths return unchanged."""
     result = strip("CheckpointLoaderSimple", "sd15/model.ckpt")
     assert result == "sd15/model.ckpt"
+
+def test_strip_equivalent_directories():
+    """With dynamic config, equivalent directories are all stripped."""
+    # Modern location
+    result = strip("CLIPLoader", "text_encoders/model.safetensors")
+    assert result == "model.safetensors"
+
+    # Legacy location
+    result = strip("CLIPLoader", "clip/model.safetensors")
+    assert result == "model.safetensors"
+
+def test_category_mismatch_respects_equivalent_dirs():
+    """Model in text_encoders/ should NOT be flagged for CLIPLoader."""
+    # With dynamic config loaded
+    config = ModelConfig.load(cec_path=env.cec_path)
+    dirs = config.get_directories_for_node("CLIPLoader")
+    assert "text_encoders" in dirs
+    assert "clip" in dirs
 ```
 
 ### Integration Tests
@@ -397,9 +526,13 @@ workflow.update(stripped)
 
 ## References
 
-- ComfyUI source: `folder_paths.py` (defines model folder mappings)
-- Our implementation: `workflow_manager.py`, `model_config.py`
-- Configuration: `comfyui_models.py` (node type → directory mappings)
+- ComfyUI source: `folder_paths.py` (defines model folder mappings, `map_legacy()` function)
+- Dynamic extraction: `utils/folder_paths_extractor.py`
+- Configuration loading: `configs/model_config.py` (`load()`, `_merge_folder_mappings()`)
+- Static fallback: `configs/comfyui_models.py` (node type → directory mappings)
+- Wiring: `factories/environment_factory.py`, `resolvers/model_resolver.py`
+- Core logic: `managers/workflow_manager.py` (`_strip_base_directory_for_node()`, `_check_category_mismatch()`)
+- Generated config: `.cec/comfyui_folder_paths.json` (per-environment)
 
 ---
 
@@ -412,5 +545,7 @@ workflow.update(stripped)
 **The Consequence**: Models must be organized under type-specific directories.
 
 **The Benefit**: Workflows are portable across different user model organizations.
+
+**The Enhancement (v0.3.12+)**: Dynamic extraction from ComfyUI's `folder_paths.py` enables support for equivalent directories (`text_encoders`/`clip`, `unet`/`diffusion_models`), eliminating false positive warnings.
 
 **Remember**: Symlinks and path stripping are complementary, not alternatives!

@@ -85,7 +85,10 @@ class WorkflowManager:
 
         # Create repository and inject into resolver
         self.global_node_resolver = GlobalNodeResolver(self.node_mapping_repository)
-        self.model_resolver = ModelResolver(model_repository=self.model_repository)
+        self.model_resolver = ModelResolver(
+            model_repository=self.model_repository,
+            cec_path=self.cec_path
+        )
 
         # Use injected model downloader from workspace
         self.downloader = model_downloader
@@ -143,8 +146,8 @@ class WorkflowManager:
         else:
             criticality = self._get_default_criticality(category)
 
-        # NEW: Handle download intent case
-        if resolved.match_type == "download_intent":
+        # NEW: Handle download intent case (both from pyproject and from node properties)
+        if resolved.match_type in ("download_intent", "property_download_intent"):
             manifest_model = ManifestWorkflowModel(
                 filename=model_ref.widget_value,
                 category=category,
@@ -243,8 +246,8 @@ class WorkflowManager:
         else:
             criticality = self._get_default_criticality(category)
 
-        # Handle download intent case
-        if resolved.match_type == "download_intent":
+        # Handle download intent case (both from pyproject and from node properties)
+        if resolved.match_type in ("download_intent", "property_download_intent"):
             manifest_model = ManifestWorkflowModel(
                 filename=primary_ref.widget_value,
                 category=category,
@@ -1252,8 +1255,8 @@ class WorkflowManager:
                 if model_hash not in hash_to_refs:
                     hash_to_refs[model_hash] = []
                 hash_to_refs[model_hash].append(resolved.reference)
-            elif resolved.match_type == "download_intent":
-                # Download intent from previous session - preserve it in manifest
+            elif resolved.match_type in ("download_intent", "property_download_intent"):
+                # Download intent (from pyproject or node properties) - preserve it in manifest
                 category = self._get_category_for_node_ref(resolved.reference)
                 manifest_model = ManifestWorkflowModel(
                     filename=resolved.reference.widget_value,
@@ -1640,13 +1643,11 @@ class WorkflowManager:
             >>> _strip_base_directory_for_node("CheckpointLoaderSimple", "checkpoints/a/b/c/model.ckpt")
             "a/b/c/model.ckpt"  # Subdirectories preserved
         """
-        from ..configs.model_config import ModelConfig
-
         # Normalize to forward slashes for cross-platform compatibility (Windows uses backslashes)
         relative_path = relative_path.replace('\\', '/')
 
-        model_config = ModelConfig.load()
-        base_dirs = model_config.get_directories_for_node(node_type)
+        # Use model_config from model_resolver (includes dynamic folder mappings from cec_path)
+        base_dirs = self.model_resolver.model_config.get_directories_for_node(node_type)
 
         # Warn if called for custom node (should be skipped in caller)
         if not base_dirs:
@@ -1685,12 +1686,10 @@ class WorkflowManager:
         """
         from difflib import SequenceMatcher
 
-        from ..configs.model_config import ModelConfig
-
         # If node_type provided, filter by category
         if node_type:
-            model_config = ModelConfig.load()
-            directories = model_config.get_directories_for_node(node_type)
+            # Use model_config from model_resolver (includes dynamic folder mappings from cec_path)
+            directories = self.model_resolver.model_config.get_directories_for_node(node_type)
 
             if directories:
                 # Get models from all relevant categories
@@ -1886,8 +1885,11 @@ class WorkflowManager:
         """
         from ..models.workflow import DownloadResult
 
-        # Collect download intents
-        intents = [r for r in result.models_resolved if r.match_type == "download_intent"]
+        # Collect download intents (both from pyproject and from node properties)
+        intents = [
+            r for r in result.models_resolved
+            if r.match_type in ("download_intent", "property_download_intent")
+        ]
 
         if not intents:
             return []

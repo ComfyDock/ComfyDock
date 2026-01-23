@@ -14,6 +14,7 @@ help:
 	@echo "  make install      - Install all packages in development mode"
 	@echo "  make dev          - Start development environment"
 	@echo "  make test         - Run all tests (local)"
+	@echo "  make test-e2e     - Run E2E tests (requires fixtures)"
 	@echo "  make lint         - Run linting"
 	@echo "  make format       - Format code"
 	@echo "  make clean        - Clean build artifacts"
@@ -74,8 +75,12 @@ dev: docker-up
 # Run all tests (local)
 test:
 	uv run pytest packages/core/tests
-	uv run pytest packages/cec/tests
-	uv run pytest packages/server/tests
+	uv run pytest packages/cli/tests
+	uv run pytest packages/deploy/tests
+
+# Run E2E tests (requires fixtures)
+test-e2e:
+	uv run pytest tests/e2e/tests -v
 
 # Cross-platform testing
 test-cross-platform:

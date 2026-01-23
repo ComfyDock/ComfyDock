@@ -58,6 +58,46 @@ class WorkflowBuilder:
         self.next_node_id += 1
         return self
 
+    def add_clip_loader(self, clip_file: str) -> "WorkflowBuilder":
+        """Add CLIPLoader node."""
+        node = {
+            "id": str(self.next_node_id),
+            "type": "CLIPLoader",
+            "pos": [100 + len(self.nodes) * 50, 250],
+            "size": [315, 58],
+            "flags": {},
+            "order": len(self.nodes),
+            "mode": 0,
+            "outputs": [
+                {"name": "CLIP", "type": "CLIP", "links": []}
+            ],
+            "properties": {},
+            "widgets_values": [clip_file]
+        }
+        self.nodes.append(node)
+        self.next_node_id += 1
+        return self
+
+    def add_unet_loader(self, unet_file: str) -> "WorkflowBuilder":
+        """Add UNETLoader node."""
+        node = {
+            "id": str(self.next_node_id),
+            "type": "UNETLoader",
+            "pos": [100 + len(self.nodes) * 50, 300],
+            "size": [315, 82],
+            "flags": {},
+            "order": len(self.nodes),
+            "mode": 0,
+            "outputs": [
+                {"name": "MODEL", "type": "MODEL", "links": []}
+            ],
+            "properties": {},
+            "widgets_values": [unet_file]
+        }
+        self.nodes.append(node)
+        self.next_node_id += 1
+        return self
+
     def add_custom_node(self, node_type: str, widgets: list[Any] | None = None) -> "WorkflowBuilder":
         """Add custom node with specified type."""
         node = {

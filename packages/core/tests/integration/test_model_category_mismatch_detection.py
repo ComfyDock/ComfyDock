@@ -6,6 +6,7 @@ This is functionally different from path_sync issues - category mismatch means
 ComfyUI cannot load the model at runtime.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -327,3 +328,403 @@ class TestModelCategoryMismatchDetection:
 
         assert test_wf_2.has_category_mismatch_issues is False, \
             "Workflow should NOT have category mismatch issues when correct location exists"
+
+    def test_clip_loader_accepts_text_encoders_with_dynamic_config(self, test_env, test_workspace):
+        """Test CLIPLoader accepts model in text_encoders/ when dynamic config maps both.
+
+        With dynamic config, CLIPLoader should accept models in BOTH text_encoders/ and clip/
+        since folder_mappings indicates they're equivalent directories.
+        """
+        # ARRANGE: Create dynamic config mapping text_encoders and clip together
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {
+                "extraction_date": "2026-01-21T12:00:00",
+                "comfyui_version": "v0.3.68",
+            },
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {
+                "clip": "text_encoders",
+            },
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in text_encoders/ directory
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="clip_model.safetensors",
+            relative_path="text_encoders",
+            category="text_encoders"
+        )
+        model_builder.index_all()
+
+        # Create workflow with CLIPLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_clip_loader("clip_model.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "clip_workflow", workflow)
+
+        # ACT: Get workflow status (ModelResolver should reload config with cec_path)
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "clip_workflow"),
+            None
+        )
+
+        # ASSERT: Model in text_encoders/ should NOT be flagged as mismatch
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False, \
+            f"CLIPLoader should accept text_encoders/ with dynamic config. " \
+            f"Got actual_category={resolved_model.actual_category}, " \
+            f"expected_categories={resolved_model.expected_categories}"
+
+        # Verify expected_categories contains both directories
+        assert "text_encoders" in resolved_model.expected_categories, \
+            "Expected categories should include text_encoders"
+        assert "clip" in resolved_model.expected_categories, \
+            "Expected categories should include clip (from dynamic config)"
+
+        assert test_wf.has_category_mismatch_issues is False
+
+    def test_clip_loader_accepts_clip_with_dynamic_config(self, test_env, test_workspace):
+        """Test CLIPLoader accepts model in clip/ when dynamic config maps both.
+
+        Verifies the reverse case: clip/ directory is also valid for CLIPLoader.
+        """
+        # ARRANGE: Create dynamic config
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in clip/ directory
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="clip_v2.safetensors",
+            relative_path="clip",
+            category="clip"
+        )
+        model_builder.index_all()
+
+        # Create workflow with CLIPLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_clip_loader("clip_v2.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "clip_v2_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "clip_v2_workflow"),
+            None
+        )
+
+        # ASSERT: Model in clip/ should NOT be flagged as mismatch
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False, \
+            f"CLIPLoader should accept clip/ with dynamic config. " \
+            f"Got actual_category={resolved_model.actual_category}, " \
+            f"expected_categories={resolved_model.expected_categories}"
+
+        assert test_wf.has_category_mismatch_issues is False
+
+    def test_clip_loader_still_flags_wrong_directory_with_dynamic_config(self, test_env, test_workspace):
+        """Test CLIPLoader still flags model in loras/ as mismatch even with dynamic config.
+
+        Ensures that dynamic config doesn't break normal mismatch detection.
+        """
+        # ARRANGE: Create dynamic config
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in loras/ (WRONG for CLIPLoader)
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="misplaced_clip.safetensors",
+            relative_path="loras",
+            category="loras"
+        )
+        model_builder.index_all()
+
+        # Create workflow with CLIPLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_clip_loader("misplaced_clip.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "misplaced_clip_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "misplaced_clip_workflow"),
+            None
+        )
+
+        # ASSERT: Model in loras/ SHOULD be flagged as mismatch
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is True, \
+            "CLIPLoader should flag model in loras/ as mismatch"
+
+        assert resolved_model.actual_category == "loras"
+        assert "loras" not in resolved_model.expected_categories, \
+            "loras should not be in expected categories for CLIPLoader"
+
+        assert test_wf.has_category_mismatch_issues is True
+
+    def test_unet_loader_accepts_unet_with_dynamic_config(self, test_env, test_workspace):
+        """Test UNETLoader accepts model in unet/ when dynamic config maps it.
+
+        UNETLoader traditionally uses diffusion_models/, but with dynamic config
+        should also accept unet/ directory.
+        """
+        # ARRANGE: Create dynamic config
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "diffusion_models": ["unet", "diffusion_models"],
+            },
+            "legacy_aliases": {
+                "unet": "diffusion_models",
+            },
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in unet/ directory
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="flux_unet.safetensors",
+            relative_path="unet",
+            category="unet"
+        )
+        model_builder.index_all()
+
+        # Create workflow with UNETLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_unet_loader("flux_unet.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "unet_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "unet_workflow"),
+            None
+        )
+
+        # ASSERT: Model in unet/ should NOT be flagged as mismatch
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False, \
+            f"UNETLoader should accept unet/ with dynamic config. " \
+            f"Got actual_category={resolved_model.actual_category}, " \
+            f"expected_categories={resolved_model.expected_categories}"
+
+        # Verify both directories are in expected_categories
+        assert "unet" in resolved_model.expected_categories
+        assert "diffusion_models" in resolved_model.expected_categories
+
+        assert test_wf.has_category_mismatch_issues is False
+
+    def test_unet_loader_accepts_diffusion_models_with_dynamic_config(self, test_env, test_workspace):
+        """Test UNETLoader accepts model in diffusion_models/ with dynamic config.
+
+        Verifies traditional directory still works with dynamic config.
+        """
+        # ARRANGE: Create dynamic config
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "diffusion_models": ["unet", "diffusion_models"],
+            },
+            "legacy_aliases": {},
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in diffusion_models/ directory
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="sd3_unet.safetensors",
+            relative_path="diffusion_models",
+            category="diffusion_models"
+        )
+        model_builder.index_all()
+
+        # Create workflow with UNETLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_unet_loader("sd3_unet.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "diffusion_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "diffusion_workflow"),
+            None
+        )
+
+        # ASSERT: Model in diffusion_models/ should NOT be flagged as mismatch
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False, \
+            "UNETLoader should accept diffusion_models/ with dynamic config"
+
+        assert test_wf.has_category_mismatch_issues is False
+
+    def test_clip_model_in_text_encoders_not_flagged(self, test_env, test_workspace):
+        """Test that CLIPLoader accepts models in text_encoders/ directory.
+
+        Regression test for false positive where:
+        - Model correctly placed in text_encoders/ (modern ComfyUI convention)
+        - Static config only knew about clip/ directory
+        - System incorrectly flagged as "wrong directory"
+
+        With dynamic folder_paths extraction, CLIPLoader should accept both
+        text_encoders/ and clip/ as valid directories.
+        """
+        # ARRANGE: Create dynamic config mapping text_encoders and clip together
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {
+                "extraction_date": "2026-01-21T12:00:00",
+                "comfyui_version": "v0.3.68",
+            },
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {
+                "clip": "text_encoders",
+            },
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in text_encoders/ (CORRECT modern location)
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            relative_path="text_encoders",  # Modern location
+            category="text_encoders"
+        )
+        model_builder.index_all()
+
+        # Create workflow with CLIPLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_clip_loader("qwen_2.5_vl_7b_fp8_scaled.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "text_encoder_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "text_encoder_workflow"),
+            None
+        )
+
+        # ASSERT: Should NOT be flagged as wrong directory
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False, \
+            f"Model in text_encoders/ should be valid for CLIPLoader. " \
+            f"Expected: {resolved_model.expected_categories}, Actual: {resolved_model.actual_category}"
+
+        assert test_wf.has_category_mismatch_issues is False
+
+    def test_clip_model_in_legacy_clip_not_flagged(self, test_env, test_workspace):
+        """Test that CLIPLoader still accepts models in clip/ directory (legacy)."""
+        # ARRANGE: Create dynamic config
+        cec_path = test_env.path / ".cec"
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "text_encoders": ["text_encoders", "clip"],
+            },
+            "legacy_aliases": {},
+        }
+        folder_paths_file = cec_path / "comfyui_folder_paths.json"
+        with open(folder_paths_file, "w") as f:
+            json.dump(folder_paths_data, f)
+
+        # Create model in clip/ (legacy location)
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="legacy_clip_model.safetensors",
+            relative_path="clip",  # Legacy location
+            category="clip"
+        )
+        model_builder.index_all()
+
+        # Create workflow with CLIPLoader
+        workflow = (
+            WorkflowBuilder()
+            .add_clip_loader("legacy_clip_model.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "legacy_clip_workflow", workflow)
+
+        # ACT
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_wf = next(
+            (wf for wf in workflow_status.analyzed_workflows if wf.name == "legacy_clip_workflow"),
+            None
+        )
+
+        # ASSERT: Should NOT be flagged
+        assert test_wf is not None
+        assert len(test_wf.resolution.models_resolved) == 1
+
+        resolved_model = test_wf.resolution.models_resolved[0]
+        assert resolved_model.has_category_mismatch is False
+        assert test_wf.has_category_mismatch_issues is False

@@ -29,17 +29,20 @@ class ModelResolver:
     def __init__(
         self,
         model_repository: ModelRepository,
-        model_config: ModelConfig | None = None, 
+        model_config: ModelConfig | None = None,
+        cec_path: Path | None = None,
         download_manager=None,
     ):
         """Initialize ModelResolver.
 
         Args:
-            index_manager: ModelIndexManager for lookups
+            model_repository: ModelRepository for model lookups
+            model_config: Optional pre-loaded ModelConfig instance
+            cec_path: Optional path to comfy_execution_config.yaml for dynamic loading
             download_manager: Optional ModelDownloadManager for downloading
         """
         self.model_repository = model_repository
-        self.model_config = model_config or ModelConfig.load()
+        self.model_config = model_config or ModelConfig.load(cec_path=cec_path)
         self.download_manager = download_manager
 
     def resolve_model(

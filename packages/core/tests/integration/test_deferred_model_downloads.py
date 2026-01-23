@@ -552,3 +552,208 @@ class TestSchemaChanges:
         callbacks_empty = BatchDownloadCallbacks()
         assert callbacks_empty.on_batch_start is None
         assert callbacks_empty.on_file_start is None
+
+
+class TestPropertyDownloadIntentRegression:
+    """Regression tests for property_download_intent handling.
+
+    Bug: Workflows with models that have download URLs embedded in node properties
+    (match_type="property_download_intent") were incorrectly not counted as having
+    download intents, because only "download_intent" was being checked.
+
+    This caused:
+    - has_download_intents to return False
+    - has_issues to return False
+    - download_intents_count to return 0
+    - Status showing "No issues" when there were pending downloads
+    """
+
+    def test_has_download_intents_includes_property_download_intent(self):
+        """ResolutionResult.has_download_intents should return True for property_download_intent."""
+        from comfygit_core.models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+
+        # ARRANGE - Create result with property_download_intent (from node properties)
+        ref = WorkflowNodeWidgetRef(
+            node_id="1",
+            node_type="VAELoader",
+            widget_index=0,
+            widget_value="qwen_image_vae.safetensors",
+            property_url="https://huggingface.co/example/model.safetensors"
+        )
+
+        property_intent = ResolvedModel(
+            workflow="test",
+            reference=ref,
+            resolved_model=None,
+            model_source="https://huggingface.co/example/model.safetensors",
+            is_optional=False,
+            match_type="property_download_intent",  # From node properties, not pyproject
+            target_path=Path("vae/qwen_image_vae.safetensors")
+        )
+
+        # ACT
+        result = ResolutionResult(
+            workflow_name="test",
+            models_resolved=[property_intent]
+        )
+
+        # ASSERT - property_download_intent should be counted as a download intent
+        assert result.has_download_intents is True, \
+            "has_download_intents should return True for property_download_intent"
+
+    def test_has_download_intents_includes_both_intent_types(self):
+        """ResolutionResult.has_download_intents should return True for either intent type."""
+        from comfygit_core.models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+
+        ref1 = WorkflowNodeWidgetRef(
+            node_id="1", node_type="CheckpointLoaderSimple",
+            widget_index=0, widget_value="model1.safetensors"
+        )
+        ref2 = WorkflowNodeWidgetRef(
+            node_id="2", node_type="VAELoader",
+            widget_index=0, widget_value="model2.safetensors",
+            property_url="https://example.com/model2.safetensors"
+        )
+
+        # Standard download_intent (from pyproject)
+        standard_intent = ResolvedModel(
+            workflow="test", reference=ref1, resolved_model=None,
+            model_source="https://civitai.com/api/download/123",
+            match_type="download_intent", target_path=Path("checkpoints/model1.safetensors")
+        )
+
+        # Property download_intent (from node properties)
+        property_intent = ResolvedModel(
+            workflow="test", reference=ref2, resolved_model=None,
+            model_source="https://example.com/model2.safetensors",
+            match_type="property_download_intent", target_path=Path("vae/model2.safetensors")
+        )
+
+        # Test with only standard intent
+        result_standard = ResolutionResult(workflow_name="test", models_resolved=[standard_intent])
+        assert result_standard.has_download_intents is True
+
+        # Test with only property intent
+        result_property = ResolutionResult(workflow_name="test", models_resolved=[property_intent])
+        assert result_property.has_download_intents is True
+
+        # Test with both
+        result_both = ResolutionResult(workflow_name="test", models_resolved=[standard_intent, property_intent])
+        assert result_both.has_download_intents is True
+
+    def test_workflow_analysis_status_has_issues_for_property_download_intent(self):
+        """WorkflowAnalysisStatus.has_issues should return True for property_download_intent."""
+        from comfygit_core.models.workflow import (
+            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
+            WorkflowNodeWidgetRef, WorkflowDependencies
+        )
+
+        ref = WorkflowNodeWidgetRef(
+            node_id="1", node_type="UNETLoader",
+            widget_index=0, widget_value="qwen_model.safetensors",
+            property_url="https://huggingface.co/qwen/model.safetensors"
+        )
+
+        property_intent = ResolvedModel(
+            workflow="test", reference=ref, resolved_model=None,
+            model_source="https://huggingface.co/qwen/model.safetensors",
+            match_type="property_download_intent",
+            target_path=Path("unet/qwen_model.safetensors")
+        )
+
+        resolution = ResolutionResult(
+            workflow_name="test",
+            models_resolved=[property_intent]
+        )
+
+        dependencies = WorkflowDependencies(
+            workflow_name="test",
+            found_models=[]
+        )
+
+        # ACT
+        status = WorkflowAnalysisStatus(
+            name="test",
+            sync_state="new",
+            dependencies=dependencies,
+            resolution=resolution,
+            uninstalled_nodes=[]
+        )
+
+        # ASSERT - has_issues should be True due to property_download_intent
+        assert status.has_issues is True, \
+            "has_issues should return True for workflows with property_download_intent"
+
+    def test_download_intents_count_includes_property_download_intent(self):
+        """WorkflowAnalysisStatus.download_intents_count should count property_download_intent."""
+        from comfygit_core.models.workflow import (
+            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
+            WorkflowNodeWidgetRef, WorkflowDependencies
+        )
+
+        refs = [
+            WorkflowNodeWidgetRef(node_id=str(i), node_type="Loader", widget_index=0, widget_value=f"model{i}.safetensors")
+            for i in range(4)
+        ]
+
+        # Mix of intent types
+        models = [
+            ResolvedModel(workflow="test", reference=refs[0], resolved_model=None,
+                          model_source="https://a.com", match_type="download_intent",
+                          target_path=Path("a.safetensors")),
+            ResolvedModel(workflow="test", reference=refs[1], resolved_model=None,
+                          model_source="https://b.com", match_type="property_download_intent",
+                          target_path=Path("b.safetensors")),
+            ResolvedModel(workflow="test", reference=refs[2], resolved_model=None,
+                          model_source="https://c.com", match_type="property_download_intent",
+                          target_path=Path("c.safetensors")),
+            ResolvedModel(workflow="test", reference=refs[3], resolved_model=None,
+                          model_source=None, match_type="exact",  # Not a download intent
+                          target_path=None),
+        ]
+
+        resolution = ResolutionResult(workflow_name="test", models_resolved=models)
+        dependencies = WorkflowDependencies(workflow_name="test", found_models=[])
+
+        status = WorkflowAnalysisStatus(
+            name="test", sync_state="new",
+            dependencies=dependencies, resolution=resolution,
+            uninstalled_nodes=[]
+        )
+
+        # ASSERT - Should count both download_intent (1) and property_download_intent (2) = 3
+        assert status.download_intents_count == 3, \
+            f"download_intents_count should be 3, got {status.download_intents_count}"
+
+    def test_issue_summary_includes_property_download_intents(self):
+        """WorkflowAnalysisStatus.issue_summary should mention pending downloads for property_download_intent."""
+        from comfygit_core.models.workflow import (
+            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
+            WorkflowNodeWidgetRef, WorkflowDependencies
+        )
+
+        ref = WorkflowNodeWidgetRef(
+            node_id="1", node_type="VAELoader",
+            widget_index=0, widget_value="model.safetensors",
+            property_url="https://example.com/model.safetensors"
+        )
+
+        property_intent = ResolvedModel(
+            workflow="test", reference=ref, resolved_model=None,
+            model_source="https://example.com/model.safetensors",
+            match_type="property_download_intent",
+            target_path=Path("vae/model.safetensors")
+        )
+
+        resolution = ResolutionResult(workflow_name="test", models_resolved=[property_intent])
+        dependencies = WorkflowDependencies(workflow_name="test", found_models=[])
+
+        status = WorkflowAnalysisStatus(
+            name="test", sync_state="new",
+            dependencies=dependencies, resolution=resolution,
+            uninstalled_nodes=[]
+        )
+
+        # ASSERT - issue_summary should mention pending downloads
+        assert "pending download" in status.issue_summary.lower(), \
+            f"issue_summary should mention pending downloads, got: {status.issue_summary}"

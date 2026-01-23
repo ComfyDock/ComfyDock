@@ -311,7 +311,7 @@ wheels = [
 
 [[package]]
 name = "comfygit"
-version = "0.3.11"
+version = "0.3.12"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "argcomplete" },
@@ -326,7 +326,7 @@ requires-dist = [
 
 [[package]]
 name = "comfygit-core"
-version = "0.3.11"
+version = "0.3.12"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "aiohttp" },
@@ -365,7 +365,7 @@ dev = [{ name = "pytest", specifier = ">=8.4.1" }]
 
 [[package]]
 name = "comfygit-deploy"
-version = "0.3.11"
+version = "0.3.12"
 source = { editable = "packages/deploy" }
 dependencies = [
     { name = "aiohttp" },

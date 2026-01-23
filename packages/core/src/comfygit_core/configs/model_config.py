@@ -22,19 +22,23 @@ class ModelConfig:
     node_widget_indices: dict[str, int]
 
     @classmethod
-    def load(cls, config_path: Path | None = None) -> "ModelConfig":
-        """Load model configuration from file.
+    def load(
+        cls, config_path: Path | None = None, cec_path: Path | None = None
+    ) -> "ModelConfig":
+        """Load model configuration, optionally with environment-specific overrides.
 
         Args:
-            config_path: Path to config file, or None to use default
+            config_path: Path to explicit config file (for testing)
+            cec_path: Path to environment's .cec directory. If provided and
+                      comfyui_folder_paths.json exists, merges dynamic folder
+                      mappings into the configuration.
 
         Returns:
             ModelConfig instance
         """
-        data = {}
+        # Load base config (static or explicit)
         if config_path is None:
-            # Load hardcoded config (fallback)
-            data = COMFYUI_MODELS_CONFIG
+            data = dict(COMFYUI_MODELS_CONFIG)  # Make a copy
         else:
             if not config_path.exists():
                 raise FileNotFoundError(f"Model config file not found: {config_path}")
@@ -45,6 +49,22 @@ class ModelConfig:
                 logger.error(f"Failed to load model config from {config_path}: {e}")
                 raise
 
+        # Apply environment-specific folder mappings if available
+        if cec_path:
+            folder_paths_file = cec_path / "comfyui_folder_paths.json"
+            if folder_paths_file.exists():
+                try:
+                    with open(folder_paths_file, 'r', encoding='utf-8') as f:
+                        folder_data = json.load(f)
+
+                    # Merge folder_mappings into node_directory_mappings
+                    data = cls._merge_folder_mappings(data, folder_data)
+                    logger.debug(
+                        f"Loaded dynamic folder mappings from {folder_paths_file.name}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to load folder mappings: {e}")
+
         return cls(
             version=data.get("version", "unknown"),
             default_extensions=data.get("default_extensions", []),
@@ -53,6 +73,59 @@ class ModelConfig:
             node_directory_mappings=data.get("node_directory_mappings", {}),
             node_widget_indices=data.get("node_widget_indices", {})
         )
+
+    @staticmethod
+    def _merge_folder_mappings(base_config: dict, folder_data: dict) -> dict:
+        """Merge extracted folder mappings into base config.
+
+        The folder_data contains:
+        - folder_mappings: {folder_key: [dir1, dir2, ...]}
+        - legacy_aliases: {old_key: new_key}
+
+        We update node_directory_mappings to expand each directory to include
+        all related directories from folder_mappings.
+
+        For example, if CLIPLoader currently maps to ["clip"], and
+        folder_mappings["text_encoders"] = ["text_encoders", "clip"],
+        then CLIPLoader should get ["text_encoders", "clip"] because
+        "clip" appears in that folder mapping.
+
+        Args:
+            base_config: The base model config dictionary
+            folder_data: The extracted folder_paths data
+
+        Returns:
+            New config dict with expanded node_directory_mappings
+        """
+        config = dict(base_config)
+        folder_mappings = folder_data.get("folder_mappings", {})
+
+        # Build reverse index: directory -> all directories in same folder group
+        dir_to_group: dict[str, set[str]] = {}
+        for directories in folder_mappings.values():
+            dir_set = set(directories)
+            for dir_name in directories:
+                if dir_name in dir_to_group:
+                    # Merge with existing group
+                    dir_to_group[dir_name].update(dir_set)
+                else:
+                    dir_to_group[dir_name] = set(dir_set)
+
+        # Update node_directory_mappings to use all valid directories
+        node_mappings = dict(config.get("node_directory_mappings", {}))
+
+        for node_type, current_dirs in node_mappings.items():
+            # Expand each directory to include all related directories
+            expanded_dirs = set()
+            for dir_name in current_dirs:
+                if dir_name in dir_to_group:
+                    expanded_dirs.update(dir_to_group[dir_name])
+                else:
+                    expanded_dirs.add(dir_name)
+            node_mappings[node_type] = list(expanded_dirs)
+
+        config["node_directory_mappings"] = node_mappings
+        return config
 
     def get_extensions_for_directory(self, directory: str) -> list[str]:
         """Get file extensions for a specific directory.

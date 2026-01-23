@@ -742,8 +742,16 @@ class ResolutionResult:
 
     @property
     def has_download_intents(self) -> bool:
-        """Check if any models have download intents pending."""
-        return any(m.match_type == "download_intent" for m in self.models_resolved)
+        """Check if any models have download intents pending.
+
+        Includes both:
+        - download_intent: from pyproject.toml (previously saved download intent)
+        - property_download_intent: from node properties (auto-detected URL)
+        """
+        return any(
+            m.match_type in ("download_intent", "property_download_intent")
+            for m in self.models_resolved
+        )
 
     @property
     def summary(self) -> str:
@@ -826,22 +834,19 @@ class WorkflowAnalysisStatus:
 
         Includes:
         - Unresolved/ambiguous nodes and models
-        - Pending download intents
+        - Pending download intents (both download_intent and property_download_intent)
         - Category mismatches (model in wrong directory for loader)
 
         Note: Path sync issues are NOT included here as they're auto-fixable
         and don't prevent commits. They're tracked separately via has_path_sync_issues.
         """
-        has_download_intents = any(
-            m.match_type == "download_intent" for m in self.resolution.models_resolved
-        )
         has_category_mismatch = any(
             m.has_category_mismatch for m in self.resolution.models_resolved
         )
         return (
             self.resolution.has_issues
             or bool(self.uninstalled_nodes)
-            or has_download_intents
+            or self.resolution.has_download_intents
             or has_category_mismatch
         )
 
@@ -906,8 +911,14 @@ class WorkflowAnalysisStatus:
 
     @property
     def download_intents_count(self) -> int:
-        """Number of models queued for download."""
-        return sum(1 for m in self.resolution.models_resolved if m.match_type == "download_intent")
+        """Number of models queued for download.
+
+        Includes both download_intent and property_download_intent match types.
+        """
+        return sum(
+            1 for m in self.resolution.models_resolved
+            if m.match_type in ("download_intent", "property_download_intent")
+        )
 
     @property
     def models_needing_path_sync_count(self) -> int:
