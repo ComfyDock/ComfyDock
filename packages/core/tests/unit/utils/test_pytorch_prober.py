@@ -100,28 +100,31 @@ Would install 15 packages
 class TestProbePyTorchVersions:
     """Tests for probe_pytorch_versions function.
 
-    Note: These tests require mocking subprocess.run which is challenging due to
-    module import caching. They are skipped in environments where mocking fails.
-    The underlying _parse_dry_run_output function is tested separately above.
+    These tests mock run_command (not subprocess.run) since that's what the
+    production code uses. Also mocks tempfile.mkdtemp and shutil.rmtree for
+    deterministic temp dir handling.
     """
 
-    @pytest.mark.skip(reason="Mocking subprocess.run fails in this environment - covered by parsing tests")
-    def test_probe_returns_versions_and_backend(self, monkeypatch):
+    @pytest.mark.skipif(
+        "COMFYGIT_INTEGRATION" in __import__("os").environ,
+        reason="Probe tests use mocking that conflicts with integration environment"
+    )
+    def test_probe_returns_versions_and_backend(self, monkeypatch, tmp_path):
         """Should return tuple of (versions_dict, resolved_backend)."""
-        import subprocess
+        from comfygit_core.utils import pytorch_prober
         from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
 
-        def mock_subprocess_run(cmd, *args, **kwargs):
+        def mock_run_command(cmd, *args, **kwargs):
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
             cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
 
-            if "python" in cmd_str and "find" in cmd_str:
+            if "uv python find" in cmd_str:
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "venv" in cmd_str:
+            elif "uv venv" in cmd_str:
                 result.stdout = "Using CPython 3.12.11\nCreated venv"
-            elif "pip" in cmd_str and "install" in cmd_str and "--dry-run" in cmd_str:
+            elif "uv pip install" in cmd_str:
                 result.stdout = """Resolved 30 packages in 500ms
 Would install 30 packages
  + torch==2.9.1+cu128
@@ -132,8 +135,12 @@ Would install 30 packages
                 result.stdout = ""
             return result
 
-        monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
-        monkeypatch.setattr("shutil.rmtree", lambda *a, **kw: None)
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", lambda *a, **k: None)
 
         versions, backend = probe_pytorch_versions("3.12.11", "cu128")
 
@@ -143,23 +150,26 @@ Would install 30 packages
         assert versions["torchaudio"] == "2.9.1+cu128"
         assert backend == "cu128"
 
-    @pytest.mark.skip(reason="Mocking subprocess.run fails in this environment - covered by parsing tests")
-    def test_probe_with_auto_detects_backend(self, monkeypatch):
+    @pytest.mark.skipif(
+        "COMFYGIT_INTEGRATION" in __import__("os").environ,
+        reason="Probe tests use mocking that conflicts with integration environment"
+    )
+    def test_probe_with_auto_detects_backend(self, monkeypatch, tmp_path):
         """Probe with 'auto' should detect and return resolved backend."""
-        import subprocess
+        from comfygit_core.utils import pytorch_prober
         from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
 
-        def mock_subprocess_run(cmd, *args, **kwargs):
+        def mock_run_command(cmd, *args, **kwargs):
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
             cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
 
-            if "python" in cmd_str and "find" in cmd_str:
+            if "uv python find" in cmd_str:
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "venv" in cmd_str:
+            elif "uv venv" in cmd_str:
                 result.stdout = "Created venv"
-            elif "pip" in cmd_str and "install" in cmd_str and "--dry-run" in cmd_str:
+            elif "uv pip install" in cmd_str:
                 result.stdout = """ + torch==2.9.1+cu128
  + torchvision==0.24.1+cu128
  + torchaudio==2.9.1+cu128
@@ -168,34 +178,40 @@ Would install 30 packages
                 result.stdout = ""
             return result
 
-        monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
-        monkeypatch.setattr("shutil.rmtree", lambda *a, **kw: None)
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", lambda *a, **k: None)
 
         versions, backend = probe_pytorch_versions("3.12", "auto")
 
         assert backend == "cu128"  # Auto-detected from version suffix
         assert versions["torch"] == "2.9.1+cu128"
 
-    @pytest.mark.skip(reason="Mocking subprocess.run fails in this environment - covered by parsing tests")
-    def test_probe_cleans_up_temp_dir(self, monkeypatch):
+    @pytest.mark.skipif(
+        "COMFYGIT_INTEGRATION" in __import__("os").environ,
+        reason="Probe tests use mocking that conflicts with integration environment"
+    )
+    def test_probe_cleans_up_temp_dir(self, monkeypatch, tmp_path):
         """Probe should clean up temporary venv directory."""
-        import subprocess
-        import shutil
+        from comfygit_core.utils import pytorch_prober
         from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
 
         cleanup_called = []
 
-        def mock_subprocess_run(cmd, *args, **kwargs):
+        def mock_run_command(cmd, *args, **kwargs):
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
             cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
 
-            if "python" in cmd_str and "find" in cmd_str:
+            if "uv python find" in cmd_str:
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "venv" in cmd_str:
+            elif "uv venv" in cmd_str:
                 result.stdout = "Created venv"
-            elif "pip" in cmd_str and "install" in cmd_str and "--dry-run" in cmd_str:
+            elif "uv pip install" in cmd_str:
                 result.stdout = " + torch==2.9.1+cu128"
             else:
                 result.stdout = ""
@@ -204,8 +220,12 @@ Would install 30 packages
         def mock_rmtree(path, *args, **kwargs):
             cleanup_called.append(path)
 
-        monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
-        monkeypatch.setattr(shutil, "rmtree", mock_rmtree)
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", mock_rmtree)
 
         probe_pytorch_versions("3.12", "cu128")
 

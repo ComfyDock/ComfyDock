@@ -337,7 +337,7 @@ class TestPyprojectCaching:
 
     def test_mtime_change_invalidates_cache(self, temp_pyproject):
         """Changing file mtime should invalidate cache."""
-        import time
+        import os
 
         PyprojectManager.reset_load_stats()
         manager = PyprojectManager(temp_pyproject)
@@ -350,11 +350,11 @@ class TestPyprojectCaching:
         manager.load()
         assert manager.get_load_stats()['instance_loads'] == 1
 
-        # Touch file to change mtime
-        time.sleep(0.01)  # Ensure mtime changes
-        temp_pyproject.touch()
+        # Bump mtime deterministically
+        new_mtime = temp_pyproject.stat().st_mtime + 2
+        os.utime(temp_pyproject, (new_mtime, new_mtime))
 
-        # Load after touch - should reload
+        # Load after mtime change - should reload
         manager.load()
         assert manager.get_load_stats()['instance_loads'] == 2, "Mtime change should trigger reload"
 

@@ -45,8 +45,20 @@ class TestCacheInvalidationOnNodeVersionChange:
         workflow_config = test_env.pyproject.workflows.get_all_with_resolutions()
         workflow_nodes = workflow_config.get("test_workflow", {}).get("nodes", [])
 
+        # If no custom nodes, inject a deterministic fake node for testing
         if not workflow_nodes:
-            pytest.skip("Test workflow has no custom nodes")
+            config = test_env.pyproject.load()
+            config.setdefault("tool", {}).setdefault("comfygit", {}).setdefault("nodes", {})
+            config["tool"]["comfygit"]["nodes"]["fake-node"] = {
+                "name": "fake-node",
+                "version": "0.1.0",
+                "source": "git",
+                "repository": "https://github.com/test/fake-node",
+            }
+            config["tool"]["comfygit"].setdefault("workflows", {}).setdefault("test_workflow", {})
+            config["tool"]["comfygit"]["workflows"]["test_workflow"]["nodes"] = ["fake-node"]
+            test_env.pyproject.save(config)
+            workflow_nodes = ["fake-node"]
 
         # Pick first package to update
         test_package = workflow_nodes[0]
@@ -151,8 +163,20 @@ class TestCacheContextHashUsesWorkflowNodesList:
         workflow_config = test_env.pyproject.workflows.get_all_with_resolutions()
         workflow_nodes = set(workflow_config.get("test_workflow", {}).get("nodes", []))
 
+        # If no custom nodes, inject a deterministic fake node for testing
         if not workflow_nodes:
-            pytest.skip("Test workflow has no custom nodes")
+            config = test_env.pyproject.load()
+            config.setdefault("tool", {}).setdefault("comfygit", {}).setdefault("nodes", {})
+            config["tool"]["comfygit"]["nodes"]["fake-node"] = {
+                "name": "fake-node",
+                "version": "0.1.0",
+                "source": "git",
+                "repository": "https://github.com/test/fake-node",
+            }
+            config["tool"]["comfygit"].setdefault("workflows", {}).setdefault("test_workflow", {})
+            config["tool"]["comfygit"]["workflows"]["test_workflow"]["nodes"] = ["fake-node"]
+            test_env.pyproject.save(config)
+            workflow_nodes = {"fake-node"}
 
         # Compute context hash
         cache = test_env.workflow_manager.workflow_cache

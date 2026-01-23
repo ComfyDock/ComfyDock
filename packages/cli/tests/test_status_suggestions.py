@@ -1,6 +1,4 @@
 """Test status suggestion logic for different scenarios."""
-import sys
-from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +20,7 @@ def mock_env():
     return env
 
 
-def test_missing_models_with_workflow_nodes_only(env_commands, mock_env):
+def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys):
     """Test suggestion when missing models + all missing nodes are workflow-related.
 
     Scenario: Git pull adds nodes used by workflow + model changes.
@@ -47,21 +45,16 @@ def test_missing_models_with_workflow_nodes_only(env_commands, mock_env):
 
     # Mock _get_env to return our mock
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        # Capture output
-        captured_output = StringIO()
-        sys.stdout = captured_output
-
         env_commands._show_smart_suggestions(status)
 
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
+    output = capsys.readouterr().out
 
     # Should suggest workflow resolve (not repair first)
     assert 'workflow resolve "default"' in output
     assert 'cg repair' not in output
 
 
-def test_missing_models_with_orphan_nodes(env_commands, mock_env):
+def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
     """Test suggestion when missing models + orphan nodes not in workflow.
 
     Scenario: Git pull adds nodes (some not in workflow) + model changes.
@@ -81,20 +74,16 @@ def test_missing_models_with_orphan_nodes(env_commands, mock_env):
     status.workflow.analyzed_workflows = [MagicMock(name='default')]
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        captured_output = StringIO()
-        sys.stdout = captured_output
-
         env_commands._show_smart_suggestions(status)
 
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
+    output = capsys.readouterr().out
 
     # Should suggest repair first, then workflow resolve
     assert 'cg repair' in output
     assert 'Then resolve workflow: cg workflow resolve "default"' in output
 
 
-def test_missing_models_with_extra_nodes(env_commands, mock_env):
+def test_missing_models_with_extra_nodes(env_commands, mock_env, capsys):
     """Test suggestion when missing models + extra nodes on filesystem.
 
     Scenario: Git pull with model changes, but user has untracked nodes.
@@ -114,20 +103,16 @@ def test_missing_models_with_extra_nodes(env_commands, mock_env):
     status.workflow.analyzed_workflows = [MagicMock(name='default')]
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        captured_output = StringIO()
-        sys.stdout = captured_output
-
         env_commands._show_smart_suggestions(status)
 
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
+    output = capsys.readouterr().out
 
     # Should suggest repair first (to remove extra nodes), then workflow resolve
     assert 'cg repair' in output
     assert 'Then resolve workflow: cg workflow resolve "default"' in output
 
 
-def test_environment_drift_only(env_commands, mock_env):
+def test_environment_drift_only(env_commands, mock_env, capsys):
     """Test suggestion when only environment drift (no workflow issues).
 
     Scenario: Missing/extra nodes but no workflow issues.
@@ -144,13 +129,9 @@ def test_environment_drift_only(env_commands, mock_env):
     status.workflow.analyzed_workflows = []
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        captured_output = StringIO()
-        sys.stdout = captured_output
-
         env_commands._show_smart_suggestions(status)
 
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
+    output = capsys.readouterr().out
 
     # Should only suggest repair
     assert 'cg repair' in output

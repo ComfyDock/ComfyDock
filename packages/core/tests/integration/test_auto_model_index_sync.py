@@ -1,9 +1,16 @@
 """Integration tests for automatic model index syncing during workflow resolution."""
 
-import time
+import os
 from pathlib import Path
 
 import pytest
+
+
+def _bump_mtime(path: Path, seconds: float = 2.0) -> None:
+    """Bump mtime deterministically to avoid sleep-based flakiness."""
+    current = path.stat().st_mtime
+    new_mtime = current + seconds
+    os.utime(path, (new_mtime, new_mtime))
 
 
 class TestAutoModelIndexSync:
@@ -32,8 +39,8 @@ class TestAutoModelIndexSync:
         # ARRANGE: Initial state - empty model index
         test_workspace.sync_model_directory()  # Creates baseline
 
-        # Wait to ensure timestamp difference
-        time.sleep(0.01)
+        # Bump mtime deterministically after sync
+        _bump_mtime(models_dir)
 
         # Create checkpoint directory
         checkpoints_dir = models_dir / "checkpoints"
@@ -116,8 +123,8 @@ class TestAutoModelIndexSync:
         # ARRANGE: Initial sync
         test_workspace.sync_model_directory()
 
-        # Wait to ensure timestamp difference
-        time.sleep(0.01)
+        # Bump mtime deterministically after sync
+        _bump_mtime(models_dir)
 
         # Create new subdirectory
         loras_dir = models_dir / "loras"
@@ -172,8 +179,8 @@ class TestAutoModelIndexSync:
         results_before = test_workspace.model_repository.find_by_filename(model_filename)
         assert len(results_before) == 1, "Model should be in index"
 
-        # Wait to ensure timestamp difference
-        time.sleep(0.01)
+        # Bump mtime deterministically after sync
+        _bump_mtime(models_dir)
 
         # Delete the model file (changes directory mtime)
         model_path.unlink()
@@ -210,8 +217,8 @@ class TestAutoModelIndexSync:
         initial_config = test_workspace.workspace_config_manager.load()
         initial_sync_time = initial_config.global_model_directory.last_sync
 
-        # Wait to ensure timestamp difference
-        time.sleep(0.01)
+        # Bump mtime deterministically after sync
+        _bump_mtime(models_dir)
 
         # Add model (should work on all platforms)
         checkpoints_dir = models_dir / "checkpoints"

@@ -87,11 +87,90 @@ version = "0.1.0"
 class TestPrepareImportModels:
     """Test model download intent preparation for import."""
 
-    def test_prepare_import_converts_missing_models(self, tmp_path, test_workspace):
-        """Test that prepare_import converts missing models to download intents."""
-        # This would require a full environment setup
-        # For MVP, we'll keep this as a placeholder for future enhancement
-        pytest.skip("Requires full environment setup - future enhancement")
+    def test_prepare_import_converts_missing_models(self, test_env):
+        """Test that prepare_import converts missing models to download intents.
+
+        When a manifest model exists in pyproject but the actual file is missing,
+        prepare_import should convert it to an unresolved state with download sources
+        preserved so the user can download it.
+        """
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+        from conftest import simulate_comfyui_save_workflow
+
+        # Create a minimal workflow that references a model
+        workflow = {
+            "id": "test",
+            "nodes": [
+                {
+                    "id": "1",
+                    "type": "CheckpointLoaderSimple",
+                    "widgets_values": ["model.safetensors"],
+                    "inputs": [],
+                    "outputs": [],
+                    "properties": {}
+                }
+            ],
+            "links": [],
+            "groups": [],
+            "config": {},
+            "extra": {}
+        }
+        simulate_comfyui_save_workflow(test_env, "test", workflow)
+
+        # Add a model to the manifest with sources (simulating an imported env)
+        manifest_model = ManifestModel(
+            hash="abc123",
+            filename="model.safetensors",
+            size=123,
+            relative_path="checkpoints/model.safetensors",
+            category="checkpoints",
+            sources=["https://example.com/model.safetensors"]
+        )
+        test_env.pyproject.models.add_model(manifest_model)
+
+        # Add the model reference to the workflow
+        wf_model = ManifestWorkflowModel(
+            filename="model.safetensors",
+            category="checkpoints",
+            criticality="required",
+            status="resolved",
+            nodes=[WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="model.safetensors"
+            )],
+            hash="abc123",
+        )
+        test_env.pyproject.workflows.set_workflow_models("test", [wf_model])
+
+        # Verify model is NOT in the repository (missing locally)
+        found = test_env.model_repository.get_model("abc123")
+        assert found is None, "Model should not exist locally"
+
+        # ACT: Run prepare_import - should convert missing models to download intents
+        workflows_affected = test_env.model_manager.prepare_import_with_model_strategy("all")
+
+        # ASSERT: The workflow should be affected
+        assert workflows_affected == ["test"], f"Expected ['test'], got {workflows_affected}"
+
+        # The model entry should now be unresolved with sources preserved
+        updated_models = test_env.pyproject.workflows.get_workflow_models("test")
+        assert len(updated_models) == 1
+        updated_model = updated_models[0]
+
+        # Status should be "unresolved" since the file is missing
+        assert updated_model.status == "unresolved", \
+            f"Expected unresolved status, got {updated_model.status}"
+
+        # Hash should be cleared (unknown until downloaded)
+        assert updated_model.hash is None, \
+            f"Expected hash to be None, got {updated_model.hash}"
+
+        # Sources should be preserved for download
+        assert updated_model.sources == ["https://example.com/model.safetensors"], \
+            f"Expected sources to be preserved, got {updated_model.sources}"
 
 
 class TestExportWithWorkflows:
