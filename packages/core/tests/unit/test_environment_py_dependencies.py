@@ -21,6 +21,11 @@ def mock_env():
         env.uv_manager = MagicMock()
         env.pyproject = MagicMock()
 
+        # Mock package_config to return packages unchanged (no substitutions)
+        mock_pkg_config = MagicMock()
+        mock_pkg_config.apply_substitution.side_effect = lambda x: x  # Return unchanged
+        env.package_config = mock_pkg_config
+
         yield env
 
 
@@ -42,7 +47,8 @@ class TestAddDependencies:
             editable=False,
             bounds=None
         )
-        assert result == "Added: requests"
+        assert result["output"] == "Added: requests"
+        assert result["substitutions"] == {}
 
     def test_add_multiple_dependencies(self, mock_env):
         """Should call uv_manager.add_dependency with multiple packages."""
@@ -60,7 +66,7 @@ class TestAddDependencies:
             editable=False,
             bounds=None
         )
-        assert result == "Added: 3 packages"
+        assert result["output"] == "Added: 3 packages"
 
     def test_add_dependencies_with_upgrade_flag(self, mock_env):
         """Should pass upgrade=True when upgrade flag is set."""
@@ -77,7 +83,7 @@ class TestAddDependencies:
             editable=False,
             bounds=None
         )
-        assert result == "Upgraded: requests"
+        assert result["output"] == "Upgraded: requests"
 
     def test_add_dependencies_handles_uv_error(self, mock_env):
         """Should propagate UVCommandError from uv_manager."""

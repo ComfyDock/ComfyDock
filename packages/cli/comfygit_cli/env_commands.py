@@ -1527,7 +1527,7 @@ class EnvironmentCommands:
             print(f"📦 Adding {len(args.packages)} package(s){upgrade_text}...")
 
         try:
-            env.add_dependencies(
+            result = env.add_dependencies(
                 packages=args.packages or None,
                 requirements_file=requirements_file,
                 upgrade=args.upgrade,
@@ -1547,6 +1547,13 @@ class EnvironmentCommands:
             else:
                 print(f"   {e}", file=sys.stderr)
             sys.exit(1)
+
+        # Display any package substitutions that were applied
+        substitutions = result.get("substitutions", {})
+        if substitutions:
+            print()
+            for original, substituted in substitutions.items():
+                print(f"  ℹ️  {original} → {substituted} (per package_config.toml)")
 
         if requirements_file:
             print(f"\n✓ Added packages from {args.requirements}")

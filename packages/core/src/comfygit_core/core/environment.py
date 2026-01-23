@@ -1729,10 +1729,12 @@ class Environment:
         dev: bool = False,
         editable: bool = False,
         bounds: str | None = None
-    ) -> str:
+    ) -> dict:
         """Add Python dependencies to the environment.
 
         Uses uv add to add packages to [project.dependencies] and install them.
+        Applies package substitutions from package_config.toml (e.g., opencv-python
+        is automatically replaced with opencv-python-headless).
 
         Args:
             packages: List of package specifications (e.g., ['requests>=2.0.0', 'pillow'])
@@ -1744,7 +1746,9 @@ class Environment:
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
 
         Returns:
-            UV command output
+            Dict with:
+                - output: UV command output
+                - substitutions: Dict of {original: substituted} for any packages that were replaced
 
         Raises:
             UVCommandError: If uv add fails
@@ -1753,15 +1757,68 @@ class Environment:
         if not packages and not requirements_file:
             raise ValueError("Either packages or requirements_file must be provided")
 
-        return self.uv_manager.add_dependency(
-            packages=packages,
-            requirements_file=requirements_file,
+        substitutions: dict[str, str] = {}
+        final_packages: list[str] | None = None
+
+        # If requirements file provided, read and parse it
+        if requirements_file:
+            final_packages = self._read_requirements_file(requirements_file)
+        elif packages:
+            final_packages = list(packages)
+
+        # Apply package substitutions
+        if final_packages:
+            transformed_packages = []
+            for pkg in final_packages:
+                substituted = self.package_config.apply_substitution(pkg)
+                if substituted != pkg:
+                    substitutions[pkg] = substituted
+                    logger.info(f"Package substitution: {pkg} → {substituted}")
+                transformed_packages.append(substituted)
+            final_packages = transformed_packages
+
+        output = self.uv_manager.add_dependency(
+            packages=final_packages,
+            requirements_file=None,  # We've already parsed it
             upgrade=upgrade,
             group=group,
             dev=dev,
             editable=editable,
             bounds=bounds
         )
+
+        return {"output": output, "substitutions": substitutions}
+
+    def _read_requirements_file(self, requirements_file: Path) -> list[str]:
+        """Read and parse a requirements.txt file.
+
+        Strips comments and handles basic formatting.
+
+        Args:
+            requirements_file: Path to requirements.txt
+
+        Returns:
+            List of requirement strings
+        """
+        requirements = []
+        with open(requirements_file, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                # Skip -r includes (recursive requirements)
+                if line.startswith('-r '):
+                    continue
+                # Skip other pip flags
+                if line.startswith('-'):
+                    continue
+                # Strip inline comments
+                if '#' in line:
+                    line = line.split('#', 1)[0].strip()
+                if line:
+                    requirements.append(line)
+        return requirements
 
     def remove_dependencies(self, packages: list[str]) -> dict:
         """Remove Python dependencies from the environment.
