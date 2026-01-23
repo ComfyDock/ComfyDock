@@ -28,6 +28,7 @@ from ..utils.git import git_clone, is_github_url, normalize_github_url
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
+    from ..configs.package_config import PackageConfigManager
     from ..managers.pytorch_backend_manager import PyTorchBackendManager
     from ..repositories.node_mappings_repository import NodeMappingsRepository
 
@@ -46,6 +47,7 @@ class NodeManager:
         custom_nodes_path: Path,
         node_repository: NodeMappingsRepository,
         pytorch_manager: PyTorchBackendManager | None = None,
+        package_config: "PackageConfigManager | None" = None,
     ):
         self.pyproject = pyproject
         self.uv = uv
@@ -54,6 +56,7 @@ class NodeManager:
         self.custom_nodes_path = custom_nodes_path
         self.node_repository = node_repository
         self.pytorch_manager = pytorch_manager
+        self.package_config = package_config
 
     def _find_node_by_name(self, name: str) -> tuple[str, NodeInfo] | None:
         """Find a node by name across all identifiers (case-insensitive).
@@ -92,7 +95,7 @@ class NodeManager:
             raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
 
         # Scan requirements from cached directory
-        requirements = self.node_lookup.scan_requirements(cache_path)
+        requirements = self.node_lookup.scan_requirements(cache_path, package_config=self.package_config)
 
         # Create node package
         node_package = NodePackage(node_info=node_info, requirements=requirements)
@@ -366,7 +369,7 @@ class NodeManager:
             raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
 
         # Scan requirements from cached directory
-        requirements = self.node_lookup.scan_requirements(cache_path)
+        requirements = self.node_lookup.scan_requirements(cache_path, package_config=self.package_config)
 
         # Create node package
         node_package = NodePackage(node_info=node_info, requirements=requirements)
@@ -1038,7 +1041,7 @@ class NodeManager:
                 )
 
         # Scan for requirements
-        requirements = self.node_lookup.scan_requirements(node_path)
+        requirements = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
         # Create as development node
         node_info = NodeInfo(name=node_name, version='dev', source='development')
@@ -1151,7 +1154,7 @@ class NodeManager:
                 changes.append("commit")
 
         # Scan current requirements
-        current_reqs = self.node_lookup.scan_requirements(node_path)
+        current_reqs = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
         # Get stored requirements from dependency group
         group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
@@ -1465,7 +1468,7 @@ class NodeManager:
                 continue
 
             # Scan current requirements
-            current_reqs = self.node_lookup.scan_requirements(node_path)
+            current_reqs = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
             # Get stored requirements from dependency group
             group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
