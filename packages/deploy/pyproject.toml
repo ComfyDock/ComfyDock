@@ -1,11 +1,11 @@
 [project]
 name = "comfygit-deploy"
-version = "0.3.12"
+version = "0.3.13"
 description = "ComfyGit Deploy - Remote deployment and worker management CLI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "comfygit==0.3.12",
+    "comfygit==0.3.13",
     "aiohttp>=3.9.0",
     "zeroconf>=0.131.0",
 ]
