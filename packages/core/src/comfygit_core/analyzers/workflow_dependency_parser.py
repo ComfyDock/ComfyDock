@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List
+from typing import Any, List
 
 from comfygit_core.repositories.workflow_repository import WorkflowRepository
 
@@ -11,6 +11,7 @@ from .node_classifier import NodeClassifier
 from ..configs.model_config import ModelConfig
 from ..configs.comfyui_models import MULTI_MODEL_WIDGET_CONFIGS
 from ..models.workflow import (
+    Workflow,
     WorkflowNodeWidgetRef,
     WorkflowNode,
     WorkflowDependencies,
@@ -23,20 +24,23 @@ class WorkflowDependencyParser:
 
     def __init__(
         self,
-        workflow_path: Path,
+        workflow: Workflow | Path,
+        workflow_name: str | None = None,
         model_config: ModelConfig | None = None,
         cec_path: Path | None = None
     ):
-
         self.model_config = model_config or ModelConfig.load()
         self.cec_path = cec_path
 
-        # Load workflow
-        self.workflow = WorkflowRepository.load(workflow_path)
-        logger.debug(f"Loaded workflow '{workflow_path.stem}' with {len(self.workflow.nodes)} nodes")
-
-        # Store workflow name for pyproject lookup
-        self.workflow_name = workflow_path.stem
+        # Accept either Workflow object or Path
+        if isinstance(workflow, Path):
+            self.workflow = WorkflowRepository.load(workflow)
+            self.workflow_name = workflow_name or workflow.stem
+            logger.debug(f"Loaded workflow '{self.workflow_name}' from path with {len(self.workflow.nodes)} nodes")
+        else:
+            self.workflow = workflow
+            self.workflow_name = workflow_name or "unnamed"
+            logger.debug(f"Loaded workflow '{self.workflow_name}' from object with {len(self.workflow.nodes)} nodes")
 
     def analyze_dependencies(self) -> WorkflowDependencies:
         """Analyze workflow for model information and node types"""

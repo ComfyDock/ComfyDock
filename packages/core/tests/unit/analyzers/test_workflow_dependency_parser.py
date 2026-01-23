@@ -1,11 +1,10 @@
 """Tests for WorkflowDependencyParser multi-model extraction."""
 import pytest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 import json
 
 from comfygit_core.analyzers.workflow_dependency_parser import WorkflowDependencyParser
-from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+from comfygit_core.models.workflow import Workflow, WorkflowNode, WorkflowNodeWidgetRef
 
 
 class TestMultiModelExtraction:
@@ -253,3 +252,88 @@ class TestWorkflowNodeWidgetRefEquality:
 
         ref_set = {ref1, ref2}
         assert len(ref_set) == 1
+
+
+class TestWorkflowObjectInput:
+    """Tests for WorkflowDependencyParser accepting Workflow object directly."""
+
+    def test_workflow_object_input_with_name(self):
+        """Parser should accept Workflow object and use provided name."""
+        # Create workflow object directly (no file I/O)
+        workflow = Workflow(
+            nodes={
+                "1": WorkflowNode(
+                    id="1",
+                    type="DualCLIPLoader",
+                    widgets_values=["clip1.safetensors", "clip2.safetensors", "flux"]
+                )
+            }
+        )
+
+        parser = WorkflowDependencyParser(workflow, workflow_name="my_workflow")
+        deps = parser.analyze_dependencies()
+
+        assert deps.workflow_name == "my_workflow"
+        assert len(deps.found_models) == 2
+        values = {m.widget_value for m in deps.found_models}
+        assert values == {"clip1.safetensors", "clip2.safetensors"}
+
+    def test_workflow_object_input_defaults_to_unnamed(self):
+        """Parser should default workflow_name to 'unnamed' when not provided."""
+        workflow = Workflow(
+            nodes={
+                "1": WorkflowNode(
+                    id="1",
+                    type="CheckpointLoaderSimple",
+                    widgets_values=["model.safetensors"]
+                )
+            }
+        )
+
+        parser = WorkflowDependencyParser(workflow)
+        deps = parser.analyze_dependencies()
+
+        assert deps.workflow_name == "unnamed"
+        assert len(deps.found_models) == 1
+
+    def test_path_input_still_works(self, tmp_path):
+        """Path input should continue to work as before (backward compat)."""
+        workflow_data = {
+            "nodes": [{
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets_values": ["test_model.safetensors"]
+            }],
+            "links": [],
+            "groups": [],
+            "version": 0.4
+        }
+        wf_path = tmp_path / "backward_compat_test.json"
+        wf_path.write_text(json.dumps(workflow_data))
+
+        parser = WorkflowDependencyParser(wf_path)
+        deps = parser.analyze_dependencies()
+
+        # Should use filename stem as workflow name
+        assert deps.workflow_name == "backward_compat_test"
+        assert len(deps.found_models) == 1
+
+    def test_path_input_with_custom_name(self, tmp_path):
+        """Path input should allow overriding workflow_name."""
+        workflow_data = {
+            "nodes": [{
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets_values": ["model.safetensors"]
+            }],
+            "links": [],
+            "groups": [],
+            "version": 0.4
+        }
+        wf_path = tmp_path / "file_name.json"
+        wf_path.write_text(json.dumps(workflow_data))
+
+        parser = WorkflowDependencyParser(wf_path, workflow_name="custom_name")
+        deps = parser.analyze_dependencies()
+
+        assert deps.workflow_name == "custom_name"
