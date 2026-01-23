@@ -441,8 +441,8 @@ def auto_mock_pytorch_probe_for_integration(request, monkeypatch):
     This fixture automatically mocks probe_pytorch_versions for any test
     in the integration/ directory to avoid real UV dry-run probes.
     """
-    # Only apply to integration tests
-    if "integration" in str(request.fspath):
+    # Only apply to integration tests (check for tests/integration/ directory, not just "integration" anywhere)
+    if "/tests/integration/" in str(request.fspath) or "\\tests\\integration\\" in str(request.fspath):
         monkeypatch.setattr(
             "comfygit_core.utils.pytorch_prober.probe_pytorch_versions",
             _fake_probe_pytorch_versions
