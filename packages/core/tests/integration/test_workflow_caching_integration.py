@@ -197,40 +197,45 @@ class TestResolveCommandUsesCache:
 class TestCachePerformanceWithManyWorkflows:
     """Test cache performance improvements with many workflows."""
 
-    @pytest.mark.skip(reason="Flaky on fast hardware (M-series Macs, NVMe SSDs) - timing assumptions are hardware-dependent")
     def test_cache_performance_with_20_workflows(
         self,
         test_env,
         workflow_fixtures,
-        test_models
+        test_models,
+        monkeypatch
     ):
-        """Create 20 workflows - warm cache should be much faster than cold."""
+        """Create 20 workflows - second status should hit cache for all workflows."""
         # Create 20 workflows
         workflow = load_workflow_fixture(workflow_fixtures, "simple_txt2img")
         for i in range(20):
             simulate_comfyui_save_workflow(test_env, f"workflow_{i:02d}", workflow)
 
-        # First status (cold cache)
-        start_time = time.perf_counter()
+        # First status (cold cache) - populates cache
         status1 = test_env.status()
-        cold_time = time.perf_counter() - start_time
-
         assert len(status1.workflow.analyzed_workflows) == 20
 
-        # Second status (warm cache)
-        start_time = time.perf_counter()
-        status2 = test_env.status()
-        warm_time = time.perf_counter() - start_time
+        # Instrument cache to count hits/misses
+        cache = test_env.workflow_manager.workflow_cache
+        hits = {"hit": 0, "miss": 0}
+        orig_get = cache.get
 
+        def wrapped_get(*args, **kwargs):
+            result = orig_get(*args, **kwargs)
+            if result is None:
+                hits["miss"] += 1
+            else:
+                hits["hit"] += 1
+            return result
+
+        monkeypatch.setattr(cache, "get", wrapped_get)
+
+        # Second status (warm cache) - should hit cache for all workflows
+        status2 = test_env.status()
         assert len(status2.workflow.analyzed_workflows) == 20
 
-        # Warm cache should be at least 10x faster
-        # This is the key performance win from caching
-        assert warm_time < cold_time / 10, (
-            f"Cache not providing expected speedup: "
-            f"cold={cold_time:.3f}s, warm={warm_time:.3f}s, "
-            f"speedup={cold_time/warm_time:.1f}x (expected >10x)"
-        )
+        # All 20 workflows should be cache hits, no misses
+        assert hits["miss"] == 0, f"Expected no cache misses, got {hits['miss']}"
+        assert hits["hit"] >= 20, f"Expected at least 20 cache hits, got {hits['hit']}"
 
 
 class TestWorkflowDeletion:
@@ -348,11 +353,12 @@ class TestPyprojectMtimeUpdateAfterContextCheck:
         status1 = test_env.status()
         assert len(status1.workflow.analyzed_workflows) == 1
 
-        # Modify pyproject.toml (touch it to change mtime without affecting this workflow's context)
+        # Modify pyproject.toml (change mtime without affecting this workflow's context)
         # This simulates user editing the file (e.g., adding a comment or unrelated package)
-        import time
-        time.sleep(0.01)  # Ensure mtime changes
-        test_env.pyproject_path.touch()  # Change mtime but not content that affects this workflow
+        import os
+        current_mtime = test_env.pyproject_path.stat().st_mtime
+        new_mtime = current_mtime + 2  # Bump mtime forward by 2 seconds
+        os.utime(test_env.pyproject_path, (new_mtime, new_mtime))
 
         # Clear session cache to simulate new CLI invocation
         test_env.workflow_manager.workflow_cache._session_cache.clear()
