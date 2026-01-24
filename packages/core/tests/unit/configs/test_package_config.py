@@ -6,7 +6,6 @@ from pathlib import Path
 from comfygit_core.configs.package_config import (
     PackageConfigManager,
     DEFAULT_PACKAGE_SUBSTITUTIONS,
-    DEFAULT_EXCLUDE_PACKAGES,
 )
 
 
@@ -18,18 +17,14 @@ class TestPackageConfigManagerDefaults:
         assert "opencv-python" in DEFAULT_PACKAGE_SUBSTITUTIONS
         assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-python"] == "opencv-python-headless"
 
-    def test_default_exclusions_include_opencv(self):
-        """Default exclusions should include opencv-python."""
-        assert "opencv-python" in DEFAULT_EXCLUDE_PACKAGES
-
     def test_create_default_config_structure(self, tmp_path: Path):
-        """Default config should have substitutions and exclude sections."""
+        """Default config should have substitutions section (exclude is commented out)."""
         manager = PackageConfigManager(tmp_path)
         config = manager._create_default_config()
 
         assert "substitutions" in config
-        assert "exclude" in config
-        assert "packages" in config["exclude"]
+        # exclude section is commented out by default
+        assert "exclude" not in config
 
 
 class TestPackageConfigLoadSave:
@@ -48,7 +43,8 @@ class TestPackageConfigLoadSave:
         config = manager.load()
 
         assert "substitutions" in config
-        assert "exclude" in config
+        # exclude section is commented out by default
+        assert "exclude" not in config
 
     def test_load_reads_saved_config(self, tmp_path: Path):
         """Load should read previously saved config."""
@@ -156,12 +152,12 @@ class TestPackageConfigProperties:
         assert "opencv-python" in subs
 
     def test_exclude_packages_property(self, tmp_path: Path):
-        """exclude_packages property should return list."""
+        """exclude_packages property should return empty list by default."""
         manager = PackageConfigManager(tmp_path)
 
         excludes = manager.exclude_packages
         assert isinstance(excludes, list)
-        assert "opencv-python" in excludes
+        assert excludes == []  # exclude section is commented out by default
 
 
 class TestPackageConfigCacheInvalidation:

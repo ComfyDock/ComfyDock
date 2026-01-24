@@ -46,13 +46,6 @@ def test_environment(tmp_path, test_workspace, mock_comfyui_clone, mock_github_a
 class TestOpencvConflictResolution:
     """Test that opencv package conflicts are properly resolved."""
 
-    def test_package_config_excludes_opencv_python(self, test_environment):
-        """Verify opencv-python is in exclude-dependencies."""
-        config = test_environment.pyproject.load()
-        excludes = config.get("tool", {}).get("uv", {}).get("exclude-dependencies", [])
-
-        assert "opencv-python" in excludes, "opencv-python should be in exclude-dependencies"
-
     def test_package_config_file_exists(self, test_environment):
         """Verify package_config.toml was created."""
         config_path = test_environment.cec_path / "package_config.toml"
@@ -120,13 +113,13 @@ class TestPackageSubstitutionConfig:
         assert subs["pillow"] == "pillow-simd", "Custom substitution should persist"
         assert subs["opencv-python"] == "opencv-python-headless", "Default substitutions should remain"
 
-    def test_exclude_packages_list(self, test_environment):
-        """Verify excluded packages list is accessible."""
+    def test_exclude_packages_list_empty_by_default(self, test_environment):
+        """Verify excluded packages list is empty by default (exclude section commented out)."""
         pkg_config = test_environment.package_config
         excludes = pkg_config.exclude_packages
 
-        assert "opencv-python" in excludes, "opencv-python should be in exclude list"
         assert isinstance(excludes, list), "exclude_packages should return a list"
+        assert excludes == [], "exclude_packages should be empty by default"
 
     def test_package_config_structure(self, test_environment):
         """Verify package_config.toml has expected structure."""
@@ -136,13 +129,10 @@ class TestPackageSubstitutionConfig:
         with open(config_path, encoding="utf-8") as f:
             config = tomlkit.load(f)
 
-        # Check sections exist
+        # Check substitutions section exists
         assert "substitutions" in config, "Should have substitutions section"
-        assert "exclude" in config, "Should have exclude section"
-
-        # Check exclude structure
-        assert "packages" in config["exclude"], "exclude should have packages list"
-        assert isinstance(config["exclude"]["packages"], list), "packages should be a list"
+        # exclude section is commented out by default
+        assert "exclude" not in config, "exclude section should be commented out by default"
 
     def test_case_insensitive_substitution(self, test_environment):
         """Verify substitution works case-insensitively."""

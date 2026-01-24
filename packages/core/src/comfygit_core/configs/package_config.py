@@ -14,13 +14,6 @@ DEFAULT_PACKAGE_SUBSTITUTIONS = {
     "opencv-python": "opencv-python-headless",
 }
 
-# Default excluded packages - these are NEVER installed
-# Used in conjunction with substitutions to prevent conflicts
-DEFAULT_EXCLUDE_PACKAGES = [
-    "opencv-python",  # Always use headless version instead
-]
-
-
 class PackageConfigManager:
     """Manages package_config.toml for an environment."""
 
@@ -84,12 +77,12 @@ class PackageConfigManager:
 
         doc.add(tomlkit.nl())
 
-        # Exclusions section
+        # Exclusions section (commented out by default)
         doc.add(tomlkit.comment("Packages to exclude - these will NEVER be installed"))
         doc.add(tomlkit.comment("Use with substitutions to prevent conflicting packages"))
-        exclude = tomlkit.table()
-        exclude["packages"] = DEFAULT_EXCLUDE_PACKAGES
-        doc["exclude"] = exclude
+        doc.add(tomlkit.nl())
+        doc.add(tomlkit.comment("[exclude]"))
+        doc.add(tomlkit.comment('packages = ["opencv-python"]'))
 
         return doc
 
