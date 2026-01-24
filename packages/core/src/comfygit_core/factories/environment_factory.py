@@ -469,9 +469,10 @@ class EnvironmentFactory:
         It's stored in .pytorch-backend file which is gitignored.
         Note: comfygit-manager is installed as a tracked node separately,
         not through dependency-groups.system-nodes (that was legacy schema).
+        Note: exclude-dependencies is set by first sync() from package_config.toml,
+        not hardcoded here.
         """
         from ..constants import PYPROJECT_SCHEMA_VERSION
-        from ..configs.package_config import DEFAULT_EXCLUDE_PACKAGES
 
         config = {
             "project": {
@@ -489,9 +490,7 @@ class EnvironmentFactory:
                     "python_version": python_version,
                     "nodes": {}
                 },
-                "uv": {
-                    "exclude-dependencies": DEFAULT_EXCLUDE_PACKAGES
-                }
+                "uv": {}
             }
         }
 

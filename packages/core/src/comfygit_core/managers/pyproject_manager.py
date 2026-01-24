@@ -1032,6 +1032,29 @@ class UVConfigHandler(BaseHandler):
             self.save(config)
             logger.info(f"Added package exclusions: {sorted(to_add)}")
 
+    def set_exclude_dependencies(self, packages: list[str]) -> None:
+        """Set exclude-dependencies list, replacing any existing values.
+
+        This is the primary method for syncing exclusions from package_config.toml.
+        If packages list is empty, removes the exclude-dependencies key entirely.
+
+        Args:
+            packages: List of package names to exclude (replaces existing)
+        """
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        if packages:
+            config['tool']['uv']['exclude-dependencies'] = sorted(packages)
+            self.save(config)
+            logger.debug(f"Set package exclusions: {sorted(packages)}")
+        else:
+            # Empty list = remove the key entirely
+            if 'exclude-dependencies' in config['tool']['uv']:
+                del config['tool']['uv']['exclude-dependencies']
+                self.save(config)
+                logger.debug("Removed package exclusions (empty list)")
+
 
 class NodeHandler(BaseHandler):
     """Handles custom node management."""

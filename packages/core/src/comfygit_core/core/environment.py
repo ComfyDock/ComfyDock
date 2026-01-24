@@ -581,6 +581,12 @@ class Environment:
         # Ensure package config exists (migration for existing envs)
         self.package_config.ensure_exists()
 
+        # Sync exclude-dependencies from package_config.toml to pyproject.toml
+        # This ensures user edits to package_config.toml take effect
+        self.pyproject.uv_config.set_exclude_dependencies(
+            self.package_config.exclude_packages
+        )
+
         logger.info("Syncing environment...")
 
         # Sync packages with UV - progressive installation with PyTorch injection

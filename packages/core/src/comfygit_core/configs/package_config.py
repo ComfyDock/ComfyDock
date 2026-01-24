@@ -30,17 +30,21 @@ class PackageConfigManager:
         self.cec_path = cec_path
         self.config_path = cec_path / self.CONFIG_FILENAME
         self._config: dict | None = None
+        self._cache_mtime: float | None = None
 
     def load(self) -> dict:
-        """Load config from file or return defaults."""
-        if self._config is not None:
-            return self._config
-
+        """Load config from file or return defaults (with mtime-based cache)."""
         if self.config_path.exists():
+            current_mtime = self.config_path.stat().st_mtime
+            if self._config is not None and self._cache_mtime == current_mtime:
+                return self._config  # Cache hit
+
             with open(self.config_path, encoding="utf-8") as f:
                 self._config = tomlkit.load(f)
+            self._cache_mtime = current_mtime
         else:
-            self._config = self._create_default_config()
+            if self._config is None:
+                self._config = self._create_default_config()
 
         return self._config
 

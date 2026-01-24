@@ -582,8 +582,12 @@ index = "pytorch-cu129"
 class TestInitialPyprojectConfig:
     """Test initial pyproject.toml configuration."""
 
-    def test_initial_pyproject_has_exclude_dependencies(self):
-        """Test that newly created pyproject.toml includes exclude-dependencies."""
+    def test_initial_pyproject_has_empty_uv_section(self):
+        """Test that newly created pyproject.toml has empty uv section.
+
+        exclude-dependencies is set by first sync() from package_config.toml,
+        not hardcoded in initial config.
+        """
         from comfygit_core.factories.environment_factory import EnvironmentFactory
 
         # Create initial pyproject config
@@ -595,14 +599,10 @@ class TestInitialPyprojectConfig:
             comfyui_commit_sha="abc123"
         )
 
-        # Verify exclude-dependencies exists
+        # Verify uv section exists but is empty (sync will populate it)
         assert "tool" in config
         assert "uv" in config["tool"]
-        assert "exclude-dependencies" in config["tool"]["uv"]
-
-        # Verify it includes opencv-python
-        exclusions = config["tool"]["uv"]["exclude-dependencies"]
-        assert "opencv-python" in exclusions
+        assert config["tool"]["uv"] == {}
 
 
 class TestExcludeDependencies:
@@ -703,4 +703,5 @@ class TestExcludeDependencies:
         # Set empty list
         manager.uv_config.set_exclude_dependencies([])
         config = manager.load(force_reload=True)
-        assert "exclude-dependencies" not in config["tool"]["uv"]
+        # Key should be removed (or uv section might not exist if it was the only key)
+        assert "exclude-dependencies" not in config.get("tool", {}).get("uv", {})
