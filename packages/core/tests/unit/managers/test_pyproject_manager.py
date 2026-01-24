@@ -677,3 +677,30 @@ class TestExcludeDependencies:
         assert len(exclusions) == 2
         assert "existing-package" in exclusions
         assert "opencv-python" in exclusions
+
+    def test_set_exclude_dependencies_replaces_existing(self, temp_pyproject):
+        """set_exclude_dependencies should replace, not merge."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Set initial exclusions
+        manager.uv_config.set_exclude_dependencies(["pkg-a", "pkg-b"])
+        config = manager.load(force_reload=True)
+        assert config["tool"]["uv"]["exclude-dependencies"] == ["pkg-a", "pkg-b"]
+
+        # Replace with different list
+        manager.uv_config.set_exclude_dependencies(["pkg-c"])
+        config = manager.load(force_reload=True)
+        assert config["tool"]["uv"]["exclude-dependencies"] == ["pkg-c"]
+
+    def test_set_exclude_dependencies_empty_removes_key(self, temp_pyproject):
+        """Empty list should remove exclude-dependencies entirely."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Set some exclusions first
+        manager.uv_config.set_exclude_dependencies(["pkg-a"])
+        assert "exclude-dependencies" in manager.load(force_reload=True)["tool"]["uv"]
+
+        # Set empty list
+        manager.uv_config.set_exclude_dependencies([])
+        config = manager.load(force_reload=True)
+        assert "exclude-dependencies" not in config["tool"]["uv"]

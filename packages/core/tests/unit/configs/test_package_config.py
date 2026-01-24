@@ -162,3 +162,34 @@ class TestPackageConfigProperties:
         excludes = manager.exclude_packages
         assert isinstance(excludes, list)
         assert "opencv-python" in excludes
+
+
+class TestPackageConfigCacheInvalidation:
+    """Test mtime-based cache invalidation."""
+
+    def test_load_detects_external_file_changes(self, tmp_path: Path):
+        """load() should detect when file changed externally via mtime."""
+        import os
+        import time
+
+        manager = PackageConfigManager(tmp_path)
+        manager.save()  # Create initial file
+
+        # Load and cache
+        config1 = manager.load()
+        assert config1["substitutions"]["opencv-python"] == "opencv-python-headless"
+
+        # Modify file externally with different mtime
+        time.sleep(0.01)  # Ensure mtime differs
+        manager.config_path.write_text("""
+[substitutions]
+custom-pkg = "replacement"
+""")
+        # Bump mtime deterministically to ensure change is detected
+        new_mtime = manager.config_path.stat().st_mtime + 2
+        os.utime(manager.config_path, (new_mtime, new_mtime))
+
+        # Load should detect change via mtime
+        config2 = manager.load()
+        assert "custom-pkg" in config2.get("substitutions", {})
+        assert config2["substitutions"]["custom-pkg"] == "replacement"
