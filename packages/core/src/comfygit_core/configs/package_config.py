@@ -57,6 +57,9 @@ class PackageConfigManager:
 
         with open(self.config_path, "w", encoding="utf-8") as f:
             tomlkit.dump(self._config, f)
+
+        # Invalidate cache to ensure fresh reads pick up new mtime
+        self._cache_mtime = None
         logger.debug(f"Saved package config to {self.config_path}")
 
     def ensure_exists(self) -> None:
