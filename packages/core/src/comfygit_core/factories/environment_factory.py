@@ -234,6 +234,10 @@ class EnvironmentFactory:
         pkg_config.ensure_exists()
         logger.info("Created package configuration")
 
+        # Sync package exclusions from package_config.toml to pyproject.toml
+        # This ensures exclude-dependencies is set before first uv sync
+        env.pyproject.uv_config.set_exclude_dependencies(pkg_config.exclude_packages)
+
         # Add ComfyUI requirements
         comfyui_reqs = env.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
@@ -469,7 +473,7 @@ class EnvironmentFactory:
         It's stored in .pytorch-backend file which is gitignored.
         Note: comfygit-manager is installed as a tracked node separately,
         not through dependency-groups.system-nodes (that was legacy schema).
-        Note: exclude-dependencies is set by first sync() from package_config.toml,
+        Note: exclude-dependencies is synced from package_config.toml after creation,
         not hardcoded here.
         """
         from ..constants import PYPROJECT_SCHEMA_VERSION
