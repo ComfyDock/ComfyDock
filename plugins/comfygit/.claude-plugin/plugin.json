@@ -1,0 +1,19 @@
+{
+  "name": "comfygit",
+  "description": "CLI and library for managing ComfyUI environments with version control and dependency management",
+  "version": "1.0.0",
+  "author": {
+    "name": "Alex Katz"
+  },
+  "homepage": "https://github.com/akatz-ai/comfygit",
+  "repository": "https://github.com/akatz-ai/comfygit",
+  "license": "MIT",
+  "keywords": [
+    "comfyui",
+    "environment",
+    "version-control",
+    "dependency-management",
+    "custom-nodes",
+    "workflows"
+  ]
+}
