@@ -8,6 +8,33 @@ description: |
   Triggers: "cg", "comfygit", "ComfyUI environment", "custom nodes", "workflow sync", "model download".
 ---
 
+## First-Time Setup Check
+
+**When this skill is activated, ALWAYS run this check first:**
+
+```bash
+cg --version
+```
+
+- **If command succeeds**: ComfyGit is installed. Proceed with the user's request.
+- **If command fails** ("command not found"): Guide installation before proceeding:
+
+```bash
+# Install with uv (recommended)
+uv tool install comfygit
+
+# Or with pip
+pip install comfygit
+```
+
+After installation, verify with `cg --version`, then help initialize:
+```bash
+cg init                    # Initialize workspace (defaults to ~/comfygit)
+cg create <env-name>       # Create first environment
+```
+
+---
+
 # ComfyGit CLI Reference
 
 ComfyGit manages ComfyUI environments with git-based version control, automatic dependency resolution, and portable workflows.
