@@ -554,3 +554,97 @@ class TestModelDownloader:
             call_kwargs = mock_get.call_args[1]
             assert call_kwargs['headers'] == {'Authorization': 'Bearer test_key'}
             assert result.success is True
+
+
+class TestModelDownloaderPathValidation:
+    """Tests for target path validation in ModelDownloader."""
+
+    def test_rejects_directory_as_target_path(self, tmp_path):
+        """Test that download rejects target path if it's a directory."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        # Create a directory at the target path
+        target_dir = tmp_path / "checkpoints"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        request = DownloadRequest(
+            url="https://example.com/model.safetensors",
+            target_path=target_dir  # This is a directory, not a file
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "directory" in result.error.lower()
+
+    def test_rejects_target_path_without_extension(self, tmp_path):
+        """Test that download rejects target path without file extension."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://example.com/model.safetensors",
+            target_path=tmp_path / "checkpoints" / "model_without_extension"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "file path" in result.error.lower() or "filename" in result.error.lower()
+
+
+class TestModelDownloaderHuggingFaceValidation:
+    """Tests for HuggingFace URL validation in ModelDownloader."""
+
+    def test_rejects_hf_repo_url_with_helpful_error(self, tmp_path):
+        """Test that HF repo browser URLs (/tree/main) are rejected with guidance."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/microsoft/VibeVoice-1.5B/tree/main",
+            target_path=tmp_path / "checkpoints" / "model.safetensors"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "repository" in result.error.lower() or "repo" in result.error.lower()
+        # Should mention using file browser or /resolve/ URL
+        assert "/resolve/" in result.error or "file" in result.error.lower()
+
+    def test_rejects_hf_base_repo_url(self, tmp_path):
+        """Test that HF base repo URLs (no /tree/) are rejected."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+            target_path=tmp_path / "checkpoints" / "model.safetensors"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "repository" in result.error.lower() or "repo" in result.error.lower()
