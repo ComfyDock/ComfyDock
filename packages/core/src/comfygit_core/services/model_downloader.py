@@ -181,7 +181,6 @@ class ModelDownloader:
             return api_key is not None and api_key.strip() != ""
         elif provider == "huggingface":
             # Check HF_TOKEN environment variable
-            import os
             token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             return token is not None and token.strip() != ""
         else:
