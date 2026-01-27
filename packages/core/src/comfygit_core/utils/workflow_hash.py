@@ -24,7 +24,7 @@ def compute_workflow_hash(workflow_path: Path) -> str:
     Returns:
         16-character hex hash string
     """
-    with open(workflow_path, 'r', encoding='utf-8') as f:
+    with open(workflow_path, encoding='utf-8') as f:
         workflow = json.load(f)
 
     # Normalize to remove volatile fields

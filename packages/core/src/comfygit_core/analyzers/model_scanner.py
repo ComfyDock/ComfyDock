@@ -4,12 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..configs.model_config import ModelConfig
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
-from ..models.shared import ModelInfo
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..repositories.model_repository import ModelRepository

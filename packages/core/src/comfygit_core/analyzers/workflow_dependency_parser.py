@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 
 from comfygit_core.repositories.workflow_repository import WorkflowRepository
 
-from ..logging.logging_config import get_logger
-from .node_classifier import NodeClassifier
-from ..configs.model_config import ModelConfig
 from ..configs.comfyui_models import MULTI_MODEL_WIDGET_CONFIGS
+from ..configs.model_config import ModelConfig
+from ..logging.logging_config import get_logger
 from ..models.workflow import (
     Workflow,
-    WorkflowNodeWidgetRef,
-    WorkflowNode,
     WorkflowDependencies,
+    WorkflowNode,
+    WorkflowNodeWidgetRef,
 )
+from .node_classifier import NodeClassifier
 
 logger = get_logger(__name__)
 
@@ -50,7 +50,7 @@ class WorkflowDependencyParser:
             if not nodes_data:
                 logger.warning("No nodes found in workflow")
                 return WorkflowDependencies(workflow_name=self.workflow_name)
-            
+
             found_models: list[WorkflowNodeWidgetRef] = []
             builtin_nodes: list[WorkflowNode] = []
             missing_nodes: list[WorkflowNode] = []
@@ -63,14 +63,14 @@ class WorkflowDependencyParser:
             for node_id, node_info in nodes_data.items():
                 node_classification = classifier.classify_single_node(node_info)
                 model_refs = self._extract_model_node_refs(node_id, node_info)
-                
+
                 found_models.extend(model_refs)
-                
+
                 if node_classification == 'builtin':
                     builtin_nodes.append(node_info)
                 else:
                     missing_nodes.append(node_info)
-                    
+
             # Log results
             if found_models:
                 logger.debug(f"Found {len(found_models)} model references in workflow")
@@ -78,7 +78,7 @@ class WorkflowDependencyParser:
                 logger.debug(f"Found {len(builtin_nodes)} builtin nodes in workflow")
             if missing_nodes:
                 logger.debug(f"Found {len(missing_nodes)} missing nodes in workflow")
-                
+
             return WorkflowDependencies(
                 workflow_name=self.workflow_name,
                 found_models=found_models,
@@ -90,7 +90,7 @@ class WorkflowDependencyParser:
             logger.error(f"Failed to analyze workflow dependencies: {e}")
             return WorkflowDependencies(workflow_name=self.workflow_name)
 
-    def _extract_model_node_refs(self, node_id: str, node_info: WorkflowNode) -> List["WorkflowNodeWidgetRef"]:
+    def _extract_model_node_refs(self, node_id: str, node_info: WorkflowNode) -> list[WorkflowNodeWidgetRef]:
         """Extract possible model references from a single node.
 
         Uses a two-pronged approach:
@@ -238,7 +238,7 @@ class WorkflowDependencyParser:
                 merged.append(ref)
 
         return merged
-    
+
     def _looks_like_model(self, value: Any) -> bool:
         """Check if value looks like a model path"""
         if not isinstance(value, str):

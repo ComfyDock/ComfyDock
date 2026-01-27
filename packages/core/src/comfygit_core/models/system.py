@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from .exceptions import ComfyDockError
 
+
 @dataclass
 class Package:
     """Represents an installed Python package."""

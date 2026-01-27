@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..analyzers.node_git_analyzer import get_node_git_info
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
@@ -22,7 +23,6 @@ from ..services.node_lookup_service import NodeLookupService
 from ..strategies.confirmation import AutoConfirmStrategy, ConfirmationStrategy
 from ..utils.conflict_parser import extract_conflicting_packages
 from ..utils.dependency_parser import parse_dependency_string
-from ..analyzers.node_git_analyzer import get_node_git_info
 from ..utils.filesystem import rmtree
 from ..utils.git import git_clone, is_github_url, normalize_github_url
 from ..validation.resolution_tester import ResolutionTester
@@ -47,7 +47,7 @@ class NodeManager:
         custom_nodes_path: Path,
         node_repository: NodeMappingsRepository,
         pytorch_manager: PyTorchBackendManager | None = None,
-        package_config: "PackageConfigManager | None" = None,
+        package_config: PackageConfigManager | None = None,
     ):
         self.pyproject = pyproject
         self.uv = uv

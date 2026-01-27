@@ -7,10 +7,10 @@ from pathlib import Path
 import xxhash
 from blake3 import blake3
 
+from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
 from ..models.shared import ModelWithLocation
-from ..infrastructure.sqlite_manager import SQLiteManager
 
 logger = get_logger(__name__)
 
@@ -251,7 +251,7 @@ class ModelRepository:
         """
         result = self.find_model_by_hash(hash)
         return result[0] if result else None
-        
+
     def has_model(self, hash: str) -> bool:
         """Check if model exists by hash.
 

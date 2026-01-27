@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass(repr=False)
 class APICredentials:
     """Secure storage for external API credentials."""

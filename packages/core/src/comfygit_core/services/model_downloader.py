@@ -43,7 +43,7 @@ class DownloadResult:
     success: bool
     model: ModelWithLocation | None = None
     error: str | None = None
-    error_context: "DownloadErrorContext | None" = None  # Structured error info
+    error_context: DownloadErrorContext | None = None  # Structured error info
 
 
 class ModelDownloader:
@@ -204,8 +204,8 @@ class ModelDownloader:
         Returns:
             DownloadErrorContext with classification
         """
-        from urllib.error import URLError
         from socket import timeout as SocketTimeout
+        from urllib.error import URLError
 
         http_status = None
         error_category = "unknown"

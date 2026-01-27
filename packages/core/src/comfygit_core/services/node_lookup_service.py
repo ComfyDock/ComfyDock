@@ -183,7 +183,7 @@ class NodeLookupService:
     def scan_requirements(
         self,
         node_path: Path,
-        package_config: "PackageConfigManager | None" = None,
+        package_config: PackageConfigManager | None = None,
     ) -> list[str]:
         """Scan a node directory for Python requirements.
 

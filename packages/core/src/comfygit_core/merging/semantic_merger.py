@@ -5,7 +5,6 @@ handling the derived nature of most pyproject sections.
 """
 
 import re
-from typing import Literal
 
 from ..models.merge_plan import Resolution
 

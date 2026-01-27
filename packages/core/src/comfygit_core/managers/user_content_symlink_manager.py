@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Tuple
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDEnvironmentError
 from ..utils.filesystem import rmtree
 from ..utils.symlink_utils import (
-    is_link,
     create_platform_link,
+    is_link,
     is_safe_to_delete,
 )
 
@@ -185,7 +184,7 @@ class UserContentSymlinkManager:
         # Migrate input
         if self.input_link.exists() and not is_link(self.input_link):
             if not is_safe_to_delete(self.input_link, self.safe_files):
-                logger.info(f"Migrating existing input/ directory to workspace...")
+                logger.info("Migrating existing input/ directory to workspace...")
                 stats["input_files_moved"] = self._migrate_directory(
                     self.input_link,
                     self.input_target,
@@ -198,7 +197,7 @@ class UserContentSymlinkManager:
         # Migrate output
         if self.output_link.exists() and not is_link(self.output_link):
             if not is_safe_to_delete(self.output_link, self.safe_files):
-                logger.info(f"Migrating existing output/ directory to workspace...")
+                logger.info("Migrating existing output/ directory to workspace...")
                 stats["output_files_moved"] = self._migrate_directory(
                     self.output_link,
                     self.output_target,
@@ -328,7 +327,7 @@ class UserContentSymlinkManager:
         link_path.unlink()
         logger.info(f"Removed {name} link: {link_path}")
 
-    def get_user_data_size(self) -> dict[str, Tuple[int, int]]:
+    def get_user_data_size(self) -> dict[str, tuple[int, int]]:
         """Get size of user content for deletion warnings.
 
         Returns:
@@ -343,7 +342,7 @@ class UserContentSymlinkManager:
             "output": self._get_directory_size(self.output_target),
         }
 
-    def _get_directory_size(self, path: Path) -> Tuple[int, int]:
+    def _get_directory_size(self, path: Path) -> tuple[int, int]:
         """Get file count and total size for directory."""
         if not path.exists():
             return (0, 0)

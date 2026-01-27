@@ -1,13 +1,13 @@
 """Node classification service for workflow analysis."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..logging.logging_config import get_logger
 from ..configs.comfyui_builtin_nodes import COMFYUI_BUILTIN_NODES
+from ..logging.logging_config import get_logger
 
 if TYPE_CHECKING:
     from ..configs.model_config import ModelConfig
@@ -40,7 +40,7 @@ class NodeClassifier:
             builtins_file = cec_path / "comfyui_builtins.json"
             if builtins_file.exists():
                 try:
-                    with open(builtins_file, 'r', encoding='utf-8') as f:
+                    with open(builtins_file, encoding='utf-8') as f:
                         data = json.load(f)
                         nodes = set(data["all_builtin_nodes"])
                         version = data.get('metadata', {}).get('comfyui_version', 'unknown')
@@ -66,7 +66,7 @@ class NodeClassifier:
     def get_model_loader_nodes(self, workflow: Workflow, model_config: ModelConfig) -> list[WorkflowNode]:
         """Get model loader nodes from workflow."""
         return [node for node in workflow.nodes.values() if model_config.is_model_loader_node(node.type)]
-    
+
     def classify_single_node(self, node: WorkflowNode) -> str:
         """Classify a single node by type using environment-specific builtins."""
         if node.type in self.builtin_nodes:

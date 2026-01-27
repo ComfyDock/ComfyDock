@@ -1,6 +1,5 @@
 """Common utilities for ComfyUI Environment Capture."""
 
-import re
 import subprocess
 from pathlib import Path
 

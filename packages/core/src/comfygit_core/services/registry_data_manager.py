@@ -2,10 +2,8 @@
 import json
 import time
 from pathlib import Path
-from typing import Optional
-from urllib.request import urlopen, Request
 from urllib.error import URLError
-import socket
+from urllib.request import Request, urlopen
 
 from ..constants import GITHUB_NODE_MAPPINGS_URL, MAX_REGISTRY_DATA_AGE_HOURS
 from ..logging.logging_config import get_logger
@@ -104,7 +102,7 @@ class RegistryDataManager:
 
             return True
 
-        except (URLError, socket.timeout) as e:
+        except (TimeoutError, URLError) as e:
             logger.debug(f"Network error fetching registry data: {e}")
             return False
         except json.JSONDecodeError as e:

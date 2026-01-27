@@ -7,8 +7,8 @@ from ..logging.logging_config import get_logger
 from ..models.exceptions import CDEnvironmentError
 from ..utils.filesystem import rmtree
 from ..utils.symlink_utils import (
-    is_link,
     create_platform_link,
+    is_link,
     is_safe_to_delete,
 )
 

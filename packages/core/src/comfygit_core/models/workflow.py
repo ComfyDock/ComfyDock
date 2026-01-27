@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from ..services.model_downloader import ModelDownloader
 from ..models.node_mapping import (
     GlobalNodePackage,
 )
+from ..services.model_downloader import ModelDownloader
 from ..utils.uuid import is_uuid
 
 if TYPE_CHECKING:
@@ -51,7 +52,7 @@ class NodeResolutionContext:
 
     # Auto-selection configuration (post-MVP: make this configurable via config file)
     auto_select_ambiguous: bool = True  # Auto-select best package from registry mappings
-    
+
 @dataclass
 class WorkflowModelNodeMapping:
     nodes: list[WorkflowNodeWidgetRef]
@@ -611,9 +612,9 @@ class InstalledPackageInfo:
     """Information about an already-installed package."""
 
     package_id: str
-    display_name: Optional[str]
+    display_name: str | None
     installed_version: str
-    suggested_version: Optional[str] = None
+    suggested_version: str | None = None
 
     @property
     def version_mismatch(self) -> bool:
@@ -664,7 +665,7 @@ class WorkflowDependencies:
     def total_models(self) -> int:
         """Total number of model references found."""
         return len(self.found_models) + len(self.found_models)
-    
+
 @dataclass
 class ResolvedNodePackage:
     """A potential match for an unknown node."""
@@ -714,21 +715,21 @@ class DownloadResult:
     """Result of a single model download attempt."""
     success: bool
     filename: str
-    model: Optional[ModelWithLocation] = None
-    error: Optional[str] = None
+    model: ModelWithLocation | None = None
+    error: str | None = None
     reused: bool = False
 
 @dataclass
 class ResolutionResult:
     """Result of resolution check or application."""
     workflow_name: str
-    nodes_resolved: List[ResolvedNodePackage] = field(default_factory=list)  # Nodes resolved/added
-    nodes_unresolved: List[WorkflowNode] = field(default_factory=list)  # Nodes not found
-    nodes_ambiguous: List[List[ResolvedNodePackage]] = field(default_factory=list)  # Nodes with multiple matches
-    models_resolved: List[ResolvedModel] = field(default_factory=list)  # Models resolved (or candidates)
-    models_unresolved: List[WorkflowNodeWidgetRef] = field(default_factory=list)  # Models not found
-    models_ambiguous: List[List[ResolvedModel]] = field(default_factory=list)  # Models with multiple matches
-    download_results: List[DownloadResult] = field(default_factory=list)  # Results from model downloads
+    nodes_resolved: list[ResolvedNodePackage] = field(default_factory=list)  # Nodes resolved/added
+    nodes_unresolved: list[WorkflowNode] = field(default_factory=list)  # Nodes not found
+    nodes_ambiguous: list[list[ResolvedNodePackage]] = field(default_factory=list)  # Nodes with multiple matches
+    models_resolved: list[ResolvedModel] = field(default_factory=list)  # Models resolved (or candidates)
+    models_unresolved: list[WorkflowNodeWidgetRef] = field(default_factory=list)  # Models not found
+    models_ambiguous: list[list[ResolvedModel]] = field(default_factory=list)  # Models with multiple matches
+    download_results: list[DownloadResult] = field(default_factory=list)  # Results from model downloads
 
     @property
     def has_issues(self) -> bool:
@@ -776,8 +777,8 @@ class ResolutionResult:
 @dataclass
 class CommitAnalysis:
     """Analysis of all workflows for commit."""
-    workflows_copied: Dict[str, str] = field(default_factory=dict)  # name -> status
-    analyses: List[WorkflowDependencies] = field(default_factory=list)
+    workflows_copied: dict[str, str] = field(default_factory=dict)  # name -> status
+    analyses: list[WorkflowDependencies] = field(default_factory=list)
     has_git_changes: bool = False  # Whether there are actual git changes to commit
 
     @property

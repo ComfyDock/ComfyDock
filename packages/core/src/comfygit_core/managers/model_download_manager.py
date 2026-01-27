@@ -2,16 +2,15 @@
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
-
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..repositories.model_repository import ModelRepository
     from ..models.shared import ModelWithLocation
+    from ..repositories.model_repository import ModelRepository
 
 
 logger = get_logger(__name__)

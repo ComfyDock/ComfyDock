@@ -2,23 +2,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-
+from ..configs.model_config import ModelConfig
 from ..logging.logging_config import get_logger
 from ..models.workflow import (
     ModelResolutionContext,
-    WorkflowNodeWidgetRef,
-    WorkflowNode,
     ResolvedModel,
-    WorkflowDependencies,
+    WorkflowNodeWidgetRef,
 )
-from ..configs.model_config import ModelConfig
 
 if TYPE_CHECKING:
-    from ..managers.pyproject_manager import PyprojectManager
-    from ..repositories.model_repository import ModelRepository
     from ..models.shared import ModelWithLocation
+    from ..repositories.model_repository import ModelRepository
 
 logger = get_logger(__name__)
 
@@ -190,19 +186,19 @@ class ModelResolver:
             return directories[0]  # Use first directory as default
         return "models"
 
-    def _try_exact_match(self, path: str, all_models: list[ModelWithLocation] | None =None) -> list["ModelWithLocation"]:
+    def _try_exact_match(self, path: str, all_models: list[ModelWithLocation] | None =None) -> list[ModelWithLocation]:
         """Try exact path match"""
         if all_models is None:
             all_models = self.model_repository.get_all_models()
         return [m for m in all_models if m.relative_path == path]
 
-    def _try_case_insensitive_match(self, path: str, all_models: list[ModelWithLocation] | None =None) -> list["ModelWithLocation"]:
+    def _try_case_insensitive_match(self, path: str, all_models: list[ModelWithLocation] | None =None) -> list[ModelWithLocation]:
         """Try case-insensitive path match"""
         if all_models is None:
             all_models = self.model_repository.get_all_models()
         path_lower = path.lower()
         return [m for m in all_models if m.relative_path.lower() == path_lower]
-    
+
     def _try_context_resolution(self, context: ModelResolutionContext, widget_ref: WorkflowNodeWidgetRef) -> ResolvedModel | None:
         """Check if this ref was previously resolved using context lookup.
 

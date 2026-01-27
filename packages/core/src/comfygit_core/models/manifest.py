@@ -48,7 +48,7 @@ class ManifestWorkflowModel:
             result["relative_path"] = self.relative_path
 
         return result
-    
+
     @classmethod
     def from_toml_dict(cls, data: dict) -> "ManifestWorkflowModel":
         """Deserialize from TOML dict."""
@@ -82,7 +82,7 @@ class ManifestModel:
     relative_path: str
     category: str
     sources: list[str] = field(default_factory=list)
-    
+
     def to_toml_dict(self) -> dict:
         """Serialize to TOML-compatible dict."""
         result = {
@@ -120,7 +120,6 @@ class ManifestModel:
         Returns:
             ManifestModel ready for TOML serialization
         """
-        from comfygit_core.models.shared import ModelWithLocation
 
         return cls(
             hash=model.hash,

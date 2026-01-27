@@ -206,7 +206,7 @@ class PyprojectManager:
         for prop in cached_props:
             if prop in self.__dict__:
                 del self.__dict__[prop]
-                
+
         # Invalidate cache after save to ensure fresh reads
         self._config_cache = None
         self._cache_mtime = None
