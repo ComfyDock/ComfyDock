@@ -483,8 +483,8 @@ class TestModelDownloader:
         assert result.success is True
 
     @patch('requests.get')
-    def test_non_civitai_url_no_auth_header_even_with_api_key(self, mock_get, tmp_path):
-        """Test that non-Civitai URLs don't get auth header even when API key is configured."""
+    def test_custom_url_no_auth_header_even_with_civitai_api_key(self, mock_get, tmp_path):
+        """Test that custom URLs don't get Civitai auth header even when API key is configured."""
         # Setup mock response
         mock_response = Mock()
         mock_response.status_code = 200
@@ -492,7 +492,7 @@ class TestModelDownloader:
         mock_response.iter_content = Mock(return_value=[b"test" * 256])
         mock_get.return_value = mock_response
 
-        # Workspace config with API key
+        # Workspace config with Civitai API key
         workspace_config = Mock()
         workspace_config.get_models_directory.return_value = tmp_path
         workspace_config.get_civitai_token.return_value = "test_api_key_12345"
@@ -503,13 +503,13 @@ class TestModelDownloader:
 
         downloader = ModelDownloader(repo, workspace_config)
         request = DownloadRequest(
-            url="https://huggingface.co/user/model/blob/main/file.safetensors",
+            url="https://example.com/models/file.safetensors",
             target_path=tmp_path / "checkpoints/model.safetensors"
         )
 
         result = downloader.download(request)
 
-        # Verify no Authorization header for non-Civitai URL
+        # Verify no Authorization header for custom URL (not Civitai)
         mock_get.assert_called_once()
         call_kwargs = mock_get.call_args[1]
         assert 'headers' in call_kwargs

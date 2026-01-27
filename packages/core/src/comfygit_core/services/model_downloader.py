@@ -2,20 +2,25 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+from uuid import uuid4
 
 import requests
 from blake3 import blake3
+from huggingface_hub import hf_hub_download
+from tqdm.auto import tqdm
 
 from ..configs.model_config import ModelConfig
 from ..logging.logging_config import get_logger
 from ..models.exceptions import DownloadErrorContext
 from ..models.shared import ModelWithLocation
 from ..utils.model_categories import get_model_category
+from .huggingface_url import parse_huggingface_url
 
 if TYPE_CHECKING:
     from ..repositories.model_repository import ModelRepository
@@ -242,6 +247,155 @@ class ModelDownloader:
             raw_error=raw_error
         )
 
+    def _download_huggingface(
+        self,
+        request: DownloadRequest,
+        target_path: Path,
+        progress_callback=None
+    ) -> DownloadResult:
+        """Download a model from HuggingFace using hf_hub_download.
+
+        Args:
+            request: Download request
+            target_path: Validated target path
+            progress_callback: Optional progress callback
+
+        Returns:
+            DownloadResult with model or error
+        """
+        parsed = parse_huggingface_url(request.url)
+
+        # Reject repo URLs with helpful message
+        if parsed.kind == "repo":
+            return DownloadResult(
+                success=False,
+                error=(
+                    "This HuggingFace URL points to a repository page (e.g. /tree/main). "
+                    "Use the HuggingFace repo browser in the UI to select files, "
+                    "or provide a direct /resolve/ URL."
+                )
+            )
+
+        if parsed.kind != "file" or not parsed.repo_id or not parsed.path_in_repo:
+            return DownloadResult(
+                success=False,
+                error="Invalid HuggingFace file URL."
+            )
+
+        # Get HF token from environment
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+
+        # Custom tqdm class for progress callback
+        def _make_tqdm_class(cb):
+            class _CbTqdm(tqdm):
+                def __init__(self, *args, **kwargs):
+                    kwargs.setdefault("disable", True)  # No console output
+                    super().__init__(*args, **kwargs)
+
+                def update(self, n=1):
+                    super().update(n)
+                    if cb and self.total:
+                        cb(int(self.n), int(self.total))
+
+            return _CbTqdm
+
+        try:
+            # Download to HF cache (Xet-enabled when available)
+            cache_path_str = hf_hub_download(
+                repo_id=parsed.repo_id,
+                filename=parsed.path_in_repo,
+                revision=parsed.revision or "main",
+                token=token if token else None,
+                tqdm_class=_make_tqdm_class(progress_callback) if progress_callback else None,
+            )
+
+            cache_path = Path(cache_path_str).resolve()
+
+            # Stage in same dir for atomic replace
+            temp_path = target_path.with_name(f".{target_path.name}.tmp-{uuid4().hex}")
+            try:
+                # Hardlink if possible (fast, no extra disk usage on same filesystem)
+                try:
+                    os.link(str(cache_path), str(temp_path))
+                    # Hash from temp_path
+                    hasher = blake3()
+                    file_size = 0
+                    with open(temp_path, "rb") as f:
+                        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                            hasher.update(chunk)
+                            file_size += len(chunk)
+                except OSError:
+                    # Fall back to copy+hash (different filesystem)
+                    hasher = blake3()
+                    file_size = 0
+                    with open(cache_path, "rb") as src, open(temp_path, "wb") as dst:
+                        for chunk in iter(lambda: src.read(1024 * 1024), b""):
+                            dst.write(chunk)
+                            hasher.update(chunk)
+                            file_size += len(chunk)
+
+                temp_path.replace(target_path)
+                temp_path = None  # Clear since file moved
+            finally:
+                if temp_path and temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except Exception:
+                        pass
+
+            # Register in repository
+            short_hash = self.repository.calculate_short_hash(target_path)
+            blake3_hash = hasher.hexdigest()
+            relative_path = target_path.relative_to(self.models_dir)
+            mtime = target_path.stat().st_mtime
+
+            self.repository.ensure_model(
+                hash=short_hash,
+                file_size=file_size,
+                blake3_hash=blake3_hash
+            )
+
+            self.repository.add_location(
+                model_hash=short_hash,
+                base_directory=self.models_dir,
+                relative_path=relative_path.as_posix(),
+                filename=target_path.name,
+                mtime=mtime
+            )
+
+            self.repository.add_source(
+                model_hash=short_hash,
+                source_type="huggingface",
+                source_url=request.url
+            )
+
+            model = ModelWithLocation(
+                hash=short_hash,
+                file_size=file_size,
+                blake3_hash=blake3_hash,
+                sha256_hash=None,
+                relative_path=relative_path.as_posix(),
+                filename=target_path.name,
+                mtime=mtime,
+                last_seen=int(mtime),
+                metadata={}
+            )
+
+            logger.info(f"Successfully downloaded and indexed: {relative_path}")
+            return DownloadResult(success=True, model=model)
+
+        except Exception as e:
+            has_auth = self._check_provider_auth("huggingface")
+            error_context = self._classify_download_error(e, request.url, "huggingface", has_auth)
+            user_message = error_context.get_user_message()
+            logger.error(f"HuggingFace download failed: {user_message}")
+
+            return DownloadResult(
+                success=False,
+                error=user_message,
+                error_context=error_context
+            )
+
     def download(
         self,
         request: DownloadRequest,
@@ -275,10 +429,47 @@ class ModelDownloader:
                 return DownloadResult(success=True, model=existing)
 
             # Step 2: Validate target path
-            request.target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path = request.target_path
+
+            # Guard: target path must be within models dir
+            try:
+                models_root = self.models_dir.resolve()
+                resolved_target = target_path.resolve()
+                if models_root != resolved_target and models_root not in resolved_target.parents:
+                    return DownloadResult(
+                        success=False,
+                        error="Target path must be within the models directory."
+                    )
+            except FileNotFoundError:
+                pass  # resolve() can fail if parent doesn't exist; handled after mkdir
+
+            # Guard: user gave a directory -> error
+            if target_path.exists() and target_path.is_dir():
+                return DownloadResult(
+                    success=False,
+                    error=(
+                        f"Target path '{target_path}' is a directory. "
+                        "Please include a filename (e.g. checkpoints/model.safetensors)."
+                    )
+                )
+            if target_path.suffix == "":
+                return DownloadResult(
+                    success=False,
+                    error=(
+                        f"Target path '{target_path}' does not look like a file path. "
+                        "Please include a filename (e.g. checkpoints/model.safetensors)."
+                    )
+                )
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Step 3-4: Download with streaming hash calculation
             logger.info(f"Downloading from {request.url}")
+            url_type = self.detect_url_type(request.url)
+
+            # HuggingFace URL handling
+            if url_type == "huggingface":
+                return self._download_huggingface(request, target_path, progress_callback)
 
             # Add Civitai auth header if URL is from Civitai and we have an API key
             headers = {}
