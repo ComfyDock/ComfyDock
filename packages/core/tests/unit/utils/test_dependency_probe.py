@@ -1,10 +1,5 @@
 """Tests for dependency probe utilities."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,
@@ -35,17 +30,15 @@ class TestVersionToConstraint:
         assert constraint == "llvmlite<0.47"
 
     def test_major_downgrade_constraint(self, tmp_path):
-        """Downgrade from 3.x to 2.x → <3.0."""
+        """Constraint uses next minor regardless of downgrade magnitude."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
         )
 
+        # Version 2.5.1 produces constraint <2.6 (next minor from downgraded version)
         constraint = probe._version_to_constraint("package", "2.5.1")
-        # After downgrading from 3.x to 2.x, constraint should be <3.0
-        # But we need to know what version it downgraded FROM
-        # This test needs the before/after context
-        pass  # Placeholder - needs integration with analyze
+        assert constraint == "package<2.6"
 
     def test_normalize_package_names_in_constraint(self, tmp_path):
         """Constraint uses normalized package name (lowercase, - → _)."""
