@@ -13,7 +13,7 @@ from uuid import uuid4
 import requests
 from blake3 import blake3
 from huggingface_hub import hf_hub_download
-from tqdm.auto import tqdm
+from tqdm.std import tqdm
 
 from ..configs.model_config import ModelConfig
 from ..logging.logging_config import get_logger
@@ -285,16 +285,27 @@ class ModelDownloader:
         token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
 
         # Custom tqdm class for progress callback
+        # HF hub's tqdm_class must handle: (1) 'name' kwarg that vanilla tqdm rejects,
+        # (2) disabled progress bar while still tracking progress, (3) thread-safe _lock deletion
         def _make_tqdm_class(cb):
             class _CbTqdm(tqdm):
                 def __init__(self, *args, **kwargs):
-                    kwargs.setdefault("disable", True)  # No console output
+                    # HF passes 'name' kwarg but vanilla tqdm doesn't accept it
+                    kwargs.pop("name", None)
+                    kwargs["disable"] = True  # Suppress console output
                     super().__init__(*args, **kwargs)
+                    self._progress = 0  # Manual tracking since disabled tqdm doesn't update self.n
 
                 def update(self, n=1):
-                    super().update(n)
+                    self._progress += n
                     if cb and self.total:
-                        cb(int(self.n), int(self.total))
+                        cb(int(self._progress), int(self.total))
+
+                def __delattr__(self, name: str):
+                    # Thread safety fix: _lock may already be deleted during cleanup
+                    if name == "_lock" and not hasattr(self, "_lock"):
+                        return
+                    super().__delattr__(name)
 
             return _CbTqdm
 
