@@ -733,7 +733,7 @@ class NodeManager:
             existing_nodes: Dict of node_name -> Path for nodes on filesystem
             callbacks: Optional callbacks for progress feedback
         """
-        for identifier, node_info in expected_nodes.items():
+        for _identifier, node_info in expected_nodes.items():
             if node_info.source != 'development':
                 continue
 
@@ -1032,12 +1032,12 @@ class NodeManager:
                     raise CDNodeNotFoundError(
                         f"Cannot download from GitHub URL: {identifier}\n"
                         f"Ensure the URL is accessible and correctly formatted"
-                    )
+                    ) from None
                 else:
                     raise CDNodeNotFoundError(
                         f"Node '{identifier}' not found in registry or filesystem.\n"
                         f"Provide a GitHub URL or ensure the directory exists in custom_nodes/"
-                    )
+                    ) from None
 
             node_name = node_info.name
             node_path = self.custom_nodes_path / node_name
