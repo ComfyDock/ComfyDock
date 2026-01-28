@@ -128,11 +128,18 @@ class DependencyProbe:
         return f"{sys.version_info.major}.{sys.version_info.minor}"
 
     def _detect_torch_backend(self) -> str | None:
-        """Detect PyTorch backend from .cec/.pytorch-backend file."""
+        """Detect PyTorch backend from .cec/.pytorch-backend file.
+
+        The file may contain additional lines (torch version info), so we only
+        read the first line which contains the backend identifier (e.g., 'cu129').
+        """
         backend_file = self.cec_path / ".pytorch-backend"
         if backend_file.exists():
             try:
-                return backend_file.read_text(encoding="utf-8").strip()
+                content = backend_file.read_text(encoding="utf-8").strip()
+                # Only take the first line - the backend identifier
+                first_line = content.split("\n")[0].strip()
+                return first_line if first_line else None
             except Exception as e:
                 logger.debug(f"Could not read pytorch-backend file: {e}")
         return None
