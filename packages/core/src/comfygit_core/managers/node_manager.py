@@ -224,6 +224,7 @@ class NodeManager:
         no_test: bool = False,
         force: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
+        strict: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -233,6 +234,7 @@ class NodeManager:
             no_test: Skip testing the node
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
+            strict: If True, fail on dependency conflicts instead of auto-resolving
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -374,12 +376,44 @@ class NodeManager:
         # Create node package
         node_package = NodePackage(node_info=node_info, requirements=requirements)
 
-        # TEST DEPENDENCIES FIRST (before any filesystem or pyproject changes)
+        # DEPENDENCY PREFLIGHT (before filesystem install)
+        # Default: probe and discover needed constraints
+        # Strict mode: old behavior (fail on conflicts)
+        discovered_constraints: list[str] = []
+
         if not no_test and node_package.requirements:
-            logger.info(f"Testing dependency resolution for '{node_package.name}' before installation")
-            test_result = self._test_requirements_in_isolation(node_package.requirements)
-            if not test_result.success:
-                self._raise_dependency_conflict(node_package.name, test_result)
+            if strict:
+                # Old behavior - fail on conflict
+                logger.info(f"Testing dependency resolution for '{node_package.name}' (strict mode)")
+                test_result = self._test_requirements_in_isolation(node_package.requirements)
+                if not test_result.success:
+                    self._raise_dependency_conflict(node_package.name, test_result)
+            else:
+                # New behavior - probe and discover needed constraints
+                logger.info(f"Probing dependencies for '{node_package.name}'")
+                from ..utils.dependency_probe import DependencyProbe
+
+                probe = DependencyProbe(
+                    cec_path=self.pyproject.path.parent,
+                    workspace_path=self.resolution_tester.workspace_path,
+                )
+                probe_result = probe.run(node_package.requirements)
+
+                # If one-by-one installs fail, we can't safely infer constraints
+                if probe_result.install_failures:
+                    self._raise_probe_install_failures(node_package.name, probe_result)
+
+                # If the probe would change protected packages, bail out
+                if probe_result.protected_changes:
+                    self._raise_probe_protected_changes(node_package.name, probe_result)
+
+                discovered_constraints = probe_result.suggested_constraints
+
+                if discovered_constraints:
+                    logger.info(
+                        f"Probe discovered {len(discovered_constraints)} constraint(s): "
+                        + ", ".join(discovered_constraints)
+                    )
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
@@ -389,6 +423,11 @@ class NodeManager:
         disabled_existed = disabled_path.exists()
 
         try:
+            # STEP 0: Apply auto-discovered constraints (transactional)
+            for constraint in discovered_constraints:
+                self.pyproject.uv_config.add_constraint(constraint)
+                logger.info(f"Auto-applied constraint: {constraint}")
+
             # STEP 1: Filesystem changes
             if disabled_existed:
                 logger.info(f"Removing old disabled version of {node_info.name}")
@@ -1541,4 +1580,77 @@ class NodeManager:
         raise CDDependencyConflictError(
             f"Cannot add '{node_name}' due to dependency conflicts",
             context=context
+        )
+
+    def _raise_probe_install_failures(self, node_name: str, probe_result) -> None:
+        """Raise a dependency conflict when probe couldn't install some requirements.
+
+        Args:
+            node_name: Name of the node being installed
+            probe_result: ProbeResult from dependency probing
+        """
+        from ..utils.dependency_probe import ProbeResult
+
+        result: ProbeResult = probe_result
+
+        suggestions = [
+            NodeAction(
+                action_type="add_node_force",
+                node_identifier=node_name,
+                description="Install with --no-test flag (skip dependency check)",
+            ),
+        ]
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[],
+            conflict_descriptions=[
+                f"Probe failed to install requirement: {req}"
+                for req in result.install_failures
+            ],
+            raw_stderr="",
+            suggested_actions=suggestions,
+        )
+
+        raise CDDependencyConflictError(
+            f"Node '{node_name}' dependencies could not be probed (install failures)",
+            context=context,
+        )
+
+    def _raise_probe_protected_changes(self, node_name: str, probe_result) -> None:
+        """Raise a dependency conflict if probe would change protected packages.
+
+        Args:
+            node_name: Name of the node being installed
+            probe_result: ProbeResult from dependency probing
+        """
+        from ..utils.dependency_probe import ProbeResult
+
+        result: ProbeResult = probe_result
+
+        suggestions = [
+            NodeAction(
+                action_type="skip_node",
+                description=f"Skip installing '{node_name}'",
+            ),
+            NodeAction(
+                action_type="add_node_force",
+                node_identifier=node_name,
+                description="Install with --no-test flag (skip dependency check, risk breaking environment)",
+            ),
+        ]
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[(pkg, "") for pkg in result.protected_changes],
+            conflict_descriptions=[
+                f"Would change protected package: {pkg}" for pkg in result.protected_changes
+            ],
+            raw_stderr="",
+            suggested_actions=suggestions,
+        )
+
+        raise CDDependencyConflictError(
+            f"Node '{node_name}' would change protected packages: {', '.join(result.protected_changes)}",
+            context=context,
         )

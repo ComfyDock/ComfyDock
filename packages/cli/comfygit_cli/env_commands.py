@@ -1166,7 +1166,8 @@ class EnvironmentCommands:
                 is_development=args.dev,
                 no_test=args.no_test,
                 force=args.force,
-                confirmation_strategy=confirmation_strategy
+                confirmation_strategy=confirmation_strategy,
+                strict=getattr(args, "strict", False),
             )
         except CDRegistryDataError as e:
             # Registry data unavailable

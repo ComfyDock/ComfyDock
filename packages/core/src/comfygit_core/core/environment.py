@@ -1249,7 +1249,8 @@ class Environment:
         is_development: bool = False,
         no_test: bool = False,
         force: bool = False,
-        confirmation_strategy: ConfirmationStrategy | None = None
+        confirmation_strategy: ConfirmationStrategy | None = None,
+        strict: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1259,13 +1260,21 @@ class Environment:
             no_test: Skip dependency resolution testing
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
+            strict: If True, fail on dependency conflicts instead of auto-resolving
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDNodeConflictError: If node has dependency conflicts
             CDEnvironmentError: If node with same name already exists
         """
-        return self.node_manager.add_node(identifier, is_development, no_test, force, confirmation_strategy)
+        return self.node_manager.add_node(
+            identifier,
+            is_development=is_development,
+            no_test=no_test,
+            force=force,
+            confirmation_strategy=confirmation_strategy,
+            strict=strict,
+        )
 
     def install_nodes_with_progress(
         self,
