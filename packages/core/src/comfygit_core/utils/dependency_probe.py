@@ -48,11 +48,6 @@ class DependencyProbe:
         "torchvision",
         "torchaudio",
         "torchsde",
-        "transformers",
-        "safetensors",
-        "kornia",
-        "comfyui_frontend_package",
-        "comfyui_embedded_docs",
     }
 
     def __init__(
