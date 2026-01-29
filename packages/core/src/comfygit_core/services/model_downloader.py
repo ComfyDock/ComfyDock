@@ -180,8 +180,10 @@ class ModelDownloader:
             api_key = self.workspace_config.get_civitai_token()
             return api_key is not None and api_key.strip() != ""
         elif provider == "huggingface":
-            # Check HF_TOKEN environment variable
-            token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            # Check via workspace config (handles env var fallback)
+            if not self.workspace_config:
+                return False
+            token = self.workspace_config.get_huggingface_token()
             return token is not None and token.strip() != ""
         else:
             return False
@@ -281,8 +283,8 @@ class ModelDownloader:
                 error="Invalid HuggingFace file URL."
             )
 
-        # Get HF token from environment
-        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+        # Get HF token from workspace config (handles env var > config priority)
+        token = self.workspace_config.get_huggingface_token() if self.workspace_config else None
 
         # Custom tqdm class for progress callback
         # HF hub's tqdm_class must handle: (1) 'name' kwarg that vanilla tqdm rejects,
