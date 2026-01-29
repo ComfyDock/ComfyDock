@@ -1564,8 +1564,6 @@ class NodeManager:
             test_result: ResolutionResult from dependency testing
             package_spec: Package being installed (e.g., "depthflow==0.9.1") for deep analysis
         """
-        from pathlib import Path
-
         # Extract conflicting package pairs
         conflict_pairs = extract_conflicting_packages(test_result.stderr)
 

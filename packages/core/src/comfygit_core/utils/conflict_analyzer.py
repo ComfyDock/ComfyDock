@@ -247,10 +247,7 @@ def _get_new_package_chains(
         return []
 
 
-def _generate_suggestions(
-    analysis: ConflictAnalysis,
-    stderr: str,
-) -> list[str]:
+def _generate_suggestions(analysis: ConflictAnalysis) -> list[str]:
     """Generate actionable suggestions based on the conflict analysis."""
     suggestions = []
 
@@ -329,7 +326,7 @@ def analyze_conflict(
     )
 
     # Generate suggestions
-    analysis.suggestions = _generate_suggestions(analysis, stderr)
+    analysis.suggestions = _generate_suggestions(analysis)
 
     return analysis
 
