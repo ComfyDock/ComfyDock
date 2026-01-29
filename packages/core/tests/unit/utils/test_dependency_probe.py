@@ -179,15 +179,15 @@ class TestAnalyzeProtectedPackages:
             workspace_path=tmp_path / "workspace",
         )
 
-        # Test that transformers and safetensors are protected
-        before = {"transformers": "4.40.0", "safetensors": "0.4.0"}
-        after = {"transformers": "4.35.0", "safetensors": "0.3.5"}
+        # Test that torch-related packages are protected (MVP: torch-only)
+        before = {"torch": "2.4.0", "torchvision": "0.19.0"}
+        after = {"torch": "2.3.0", "torchvision": "0.18.0"}
         failures = []
 
         result = probe._analyze(before, after, failures)
 
-        assert "transformers" in result.protected_changes
-        assert "safetensors" in result.protected_changes
+        assert "torch" in result.protected_changes
+        assert "torchvision" in result.protected_changes
 
 
 class TestAnalyzeFailures:
