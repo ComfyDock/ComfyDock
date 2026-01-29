@@ -418,6 +418,14 @@ class NodeManager:
                         + ", ".join(discovered_constraints)
                     )
 
+                    # Validate constraints don't conflict with existing environment
+                    # This catches issues BEFORE modifying pyproject.toml
+                    self._validate_constraints_against_environment(
+                        node_package.name,
+                        discovered_constraints,
+                        node_package.requirements,
+                    )
+
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
         pyproject_snapshot = self.pyproject.snapshot()
@@ -1717,5 +1725,138 @@ class NodeManager:
 
         raise CDDependencyConflictError(
             f"Node '{node_name}' would change protected packages: {', '.join(result.protected_changes)}",
+            context=context,
+        )
+
+    def _validate_constraints_against_environment(
+        self,
+        node_name: str,
+        constraints: list[str],
+        requirements: list[str],
+    ) -> None:
+        """Validate discovered constraints don't conflict with installed packages.
+
+        Uses UV's resolver to check if each constraint is compatible with the
+        existing environment. This catches conflicts BEFORE applying constraints.
+
+        Args:
+            node_name: Name of the node being installed
+            constraints: List of discovered constraints (e.g., ["huggingface_hub<0.37"])
+            requirements: Original requirements from the node (for error context)
+
+        Raises:
+            CDDependencyConflictError: If any constraint conflicts with installed packages
+        """
+        from ..utils.conflict_analyzer import (
+            check_specifier_compatibility,
+            get_existing_requirements,
+            parse_constraint_string,
+        )
+
+        venv_python = self.uv.python_executable
+        uv_path = Path(self.uv.binary)
+
+        for constraint in constraints:
+            # Parse the constraint string
+            parsed = parse_constraint_string(constraint)
+            if not parsed:
+                continue
+
+            pkg_name, constraint_spec = parsed
+            new_spec = f"{pkg_name}{constraint_spec}"
+
+            # Get existing requirements for this package from the environment
+            existing_reqs = get_existing_requirements(pkg_name, venv_python, uv_path)
+            if not existing_reqs:
+                continue  # No existing requirements, no conflict possible
+
+            # Check each existing requirement for compatibility
+            for requiring_pkg, existing_spec in existing_reqs:
+                is_compatible, stderr = check_specifier_compatibility(
+                    existing_spec, new_spec, uv_path
+                )
+
+                if not is_compatible:
+                    self._raise_constraint_conflict(
+                        node_name=node_name,
+                        pkg_name=pkg_name,
+                        constraint_spec=constraint_spec,
+                        requiring_pkg=requiring_pkg,
+                        existing_spec=existing_spec,
+                        requirements=requirements,
+                        stderr=stderr,
+                    )
+
+    def _raise_constraint_conflict(
+        self,
+        node_name: str,
+        pkg_name: str,
+        constraint_spec: str,
+        requiring_pkg: str,
+        existing_spec: str,
+        requirements: list[str],
+        stderr: str,
+    ) -> None:
+        """Build and raise a detailed conflict error.
+
+        Args:
+            node_name: Name of the node being installed
+            pkg_name: Normalized name of conflicting package
+            constraint_spec: Version specifier from node (e.g., "<0.37")
+            requiring_pkg: Package that requires the existing spec
+            existing_spec: Full existing requirement (e.g., "huggingface-hub>=1.1.0")
+            requirements: Original requirements from the node
+            stderr: UV stderr output
+        """
+        from ..utils.conflict_analyzer import (
+            ConflictAnalysis,
+            ConflictChain,
+            format_conflict_report,
+        )
+
+        logger.warning(
+            f"Constraint conflict detected: '{pkg_name}{constraint_spec}' "
+            f"conflicts with '{requiring_pkg}' which requires '{existing_spec}'"
+        )
+
+        analysis = ConflictAnalysis(
+            conflicting_package=pkg_name,
+            existing_constraints=[(requiring_pkg, existing_spec)],
+            new_package_chains=[
+                ConflictChain(
+                    root_package=requirements[0].split("==")[0] if requirements else node_name,
+                    chain=[node_name, "...", pkg_name],
+                    constraint=f"{pkg_name}{constraint_spec}",
+                    constraint_source="transitive dependency",
+                )
+            ],
+            suggestions=[
+                f"The node's dependencies require {pkg_name}{constraint_spec}, "
+                f"but {requiring_pkg} requires {existing_spec}",
+                "These version ranges have no overlap and cannot be satisfied together",
+                f"Consider checking if {requiring_pkg} has a newer version with relaxed constraints",
+            ],
+        )
+
+        logger.error(format_conflict_report(analysis))
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[(pkg_name, requiring_pkg)],
+            conflict_descriptions=[
+                f"Node requires {pkg_name}{constraint_spec} but {requiring_pkg} requires {existing_spec}"
+            ],
+            raw_stderr=stderr,
+            suggested_actions=[
+                NodeAction(
+                    action_type='skip_node',
+                    description=f"Skip installing '{node_name}'"
+                ),
+            ],
+            conflict_analysis=analysis,
+        )
+
+        raise CDDependencyConflictError(
+            f"Cannot add '{node_name}': dependency {pkg_name} has conflicting requirements",
             context=context,
         )

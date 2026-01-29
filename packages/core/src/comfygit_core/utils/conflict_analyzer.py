@@ -4,6 +4,7 @@ This module provides detailed analysis of dependency conflicts, including:
 - Parsing UV error output to identify conflicting packages
 - Tracing dependency chains using uv pip tree and uv pip compile
 - Generating user-friendly reports with actionable suggestions
+- Checking specifier compatibility using UV's resolver
 """
 
 import re
@@ -15,6 +16,46 @@ from pathlib import Path
 from ..logging.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# Timeout for UV subprocess calls (seconds)
+UV_TIMEOUT = 30
+
+
+def normalize_package_name_pep503(name: str) -> str:
+    """Normalize package name per PEP 503.
+
+    Replaces underscores, dots, and runs of separators with single dashes,
+    and lowercases the result.
+
+    Args:
+        name: Package name to normalize
+
+    Returns:
+        Normalized package name (e.g., "Hugging_Face.Hub" -> "hugging-face-hub")
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def parse_constraint_string(constraint: str) -> tuple[str, str] | None:
+    """Parse a constraint string into package name and version specifier.
+
+    Args:
+        constraint: Constraint string like "huggingface_hub<0.37" or "attrs>=17.3.0"
+
+    Returns:
+        Tuple of (normalized_package_name, version_specifier) or None if invalid
+    """
+    match = re.match(r"^([a-zA-Z0-9._-]+)(.*)$", constraint)
+    if not match:
+        return None
+
+    pkg_name = normalize_package_name_pep503(match.group(1))
+    version_spec = match.group(2).strip()
+
+    if not version_spec:
+        return None
+
+    return pkg_name, version_spec
 
 
 @dataclass
@@ -92,17 +133,25 @@ def parse_conflict_from_stderr(stderr: str) -> tuple[str | None, list[dict]]:
     return None, []
 
 
-def _get_existing_requirements(
+def get_existing_requirements(
     pkg: str,
     venv_python: Path,
     uv_path: Path,
 ) -> list[tuple[str, str]]:
-    """Get existing packages that require the conflicting package.
+    """Get existing packages that directly require the specified package.
 
     Uses: uv pip tree --python {venv} --invert --show-version-specifiers --package {pkg}
 
+    Only returns first-level dependents (not nested transitive dependencies).
+
+    Args:
+        pkg: Package name to query
+        venv_python: Path to the Python executable in the venv
+        uv_path: Path to the UV binary
+
     Returns:
-        List of (package_name, constraint) tuples
+        List of (requiring_package_name, requirement_spec) tuples.
+        The requirement_spec includes the package name (e.g., "huggingface-hub>=1.1.0").
     """
     try:
         result = subprocess.run(
@@ -119,28 +168,84 @@ def _get_existing_requirements(
             ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=UV_TIMEOUT,
         )
 
         if result.returncode != 0:
-            logger.debug(f"uv pip tree failed: {result.stderr}")
+            logger.debug(f"uv pip tree failed for {pkg}: {result.stderr}")
             return []
 
         requirements = []
         # Parse output like:
         # huggingface-hub v1.1.0
         # └── comfygit-core v0.3.13 [requires: huggingface-hub>=1.1.0]
-        req_pattern = r"[└├]── (\S+) v[\d.]+ \[requires: ([^\]]+)\]"
-        for match in re.finditer(req_pattern, result.stdout):
+        #     └── nested-pkg v1.0.0 [requires: comfygit-core>=0.3.0]  <- skip nested
+        #
+        # Use ^ anchor to only match first-level dependents (no leading spaces)
+        req_pattern = r"^[└├]── (\S+) v[\d.]+ \[requires: ([^\]]+)\]"
+        for match in re.finditer(req_pattern, result.stdout, re.MULTILINE):
             pkg_name = match.group(1)
-            constraint = match.group(2)
-            requirements.append((pkg_name, constraint))
+            requirement_spec = match.group(2)
+            # Skip wildcard specs like "pkg *" - they mean "any version" and
+            # aren't valid for uv pip compile
+            if requirement_spec.strip().endswith(" *") or requirement_spec.strip().endswith("*"):
+                continue
+            requirements.append((pkg_name, requirement_spec))
 
         return requirements
 
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logger.debug(f"Failed to get existing requirements: {e}")
+        logger.debug(f"Failed to get existing requirements for {pkg}: {e}")
         return []
+
+
+# Keep old name as alias for backwards compatibility within this module
+_get_existing_requirements = get_existing_requirements
+
+
+def check_specifier_compatibility(
+    existing_spec: str,
+    new_spec: str,
+    uv_path: Path,
+) -> tuple[bool, str]:
+    """Check if two version specifiers for the same package are compatible.
+
+    Uses UV's resolver to check if both constraints can be satisfied simultaneously.
+
+    Args:
+        existing_spec: Full requirement spec from environment (e.g., "huggingface-hub>=1.1.0")
+        new_spec: New requirement spec to check (e.g., "huggingface-hub<0.37")
+        uv_path: Path to UV binary
+
+    Returns:
+        Tuple of (is_compatible, error_message).
+        If compatible, returns (True, "").
+        If incompatible, returns (False, stderr_from_uv).
+    """
+    # Combine both specs - UV will try to find a version satisfying both
+    combined_reqs = f"{existing_spec}\n{new_spec}"
+
+    try:
+        result = subprocess.run(
+            [str(uv_path), "pip", "compile", "--quiet", "-"],
+            input=combined_reqs,
+            capture_output=True,
+            text=True,
+            timeout=UV_TIMEOUT,
+        )
+
+        if result.returncode == 0:
+            return True, ""
+        else:
+            return False, result.stderr
+
+    except subprocess.TimeoutExpired:
+        logger.debug(f"Timeout checking compatibility: {existing_spec} vs {new_spec}")
+        # On timeout, assume compatible to avoid false positives
+        return True, ""
+    except FileNotFoundError as e:
+        logger.debug(f"UV not found: {e}")
+        return True, ""
 
 
 def _get_new_package_chains(
