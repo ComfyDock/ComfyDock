@@ -105,7 +105,9 @@ class NodeManager:
             logger.info(f"Testing dependency resolution for '{node_package.name}' before installation")
             test_result = self._test_requirements_in_isolation(node_package.requirements)
             if not test_result.success:
-                self._raise_dependency_conflict(node_package.name, test_result)
+                # Pass first requirement as package_spec for conflict analysis
+                pkg_spec = node_package.requirements[0] if node_package.requirements else None
+                self._raise_dependency_conflict(node_package.name, test_result, package_spec=pkg_spec)
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
@@ -387,7 +389,8 @@ class NodeManager:
                 logger.info(f"Testing dependency resolution for '{node_package.name}' (strict mode)")
                 test_result = self._test_requirements_in_isolation(node_package.requirements)
                 if not test_result.success:
-                    self._raise_dependency_conflict(node_package.name, test_result)
+                    pkg_spec = node_package.requirements[0] if node_package.requirements else None
+                    self._raise_dependency_conflict(node_package.name, test_result, package_spec=pkg_spec)
             else:
                 # New behavior - probe and discover needed constraints
                 logger.info(f"Probing dependencies for '{node_package.name}'")
@@ -1238,7 +1241,9 @@ class NodeManager:
         if not no_test and reqs_changed:
             resolution_result = self.resolution_tester.test_resolution(self.pyproject.path)
             if not resolution_result.success:
-                self._raise_dependency_conflict(node_info.name, resolution_result)
+                # Pass first added requirement as package_spec for conflict analysis
+                pkg_spec = next(iter(added), None) if added else None
+                self._raise_dependency_conflict(node_info.name, resolution_result, package_spec=pkg_spec)
 
         result.requirements_added = list(added)
         result.requirements_removed = list(removed)
@@ -1546,27 +1551,51 @@ class NodeManager:
             group_name=None  # Test as main dependencies for broadest compatibility check
         )
 
-    def _raise_dependency_conflict(self, node_name: str, test_result) -> None:
+    def _raise_dependency_conflict(
+        self,
+        node_name: str,
+        test_result,
+        package_spec: str | None = None,
+    ) -> None:
         """Raise enhanced dependency conflict error with actionable suggestions.
 
         Args:
             node_name: Name of the node being installed
             test_result: ResolutionResult from dependency testing
+            package_spec: Package being installed (e.g., "depthflow==0.9.1") for deep analysis
         """
+        from pathlib import Path
+
         # Extract conflicting package pairs
         conflict_pairs = extract_conflicting_packages(test_result.stderr)
 
-        # Build simple, honest suggestions
-        suggestions = [
-            NodeAction(
-                action_type='skip_node',
-                description=f"Skip installing '{node_name}'"
-            ),
-            NodeAction(
-                action_type='add_constraint',
-                description="Add version constraint to override (see --verbose for details)"
-            )
-        ]
+        # Run deep conflict analysis if possible
+        analysis = None
+        if package_spec:
+            try:
+                from ..utils.conflict_analyzer import (
+                    analyze_conflict,
+                    format_conflict_report,
+                )
+
+                venv_python = self.uv.python_executable
+                uv_path = Path(self.uv.binary)
+
+                analysis = analyze_conflict(
+                    stderr=test_result.stderr,
+                    new_package=package_spec,
+                    venv_python=venv_python,
+                    uv_path=uv_path,
+                )
+
+                if analysis:
+                    # Log the detailed report for visibility
+                    logger.error(format_conflict_report(analysis))
+            except Exception as e:
+                logger.debug(f"Conflict analysis failed: {e}")
+
+        # Build suggestions (enhanced with analysis if available)
+        suggestions = self._build_conflict_suggestions(node_name, analysis)
 
         # Create enhanced context
         context = DependencyConflictContext(
@@ -1574,13 +1603,51 @@ class NodeManager:
             conflicting_packages=conflict_pairs,
             conflict_descriptions=test_result.conflicts,
             raw_stderr=test_result.stderr,
-            suggested_actions=suggestions
+            suggested_actions=suggestions,
+            conflict_analysis=analysis,
         )
 
         raise CDDependencyConflictError(
             f"Cannot add '{node_name}' due to dependency conflicts",
             context=context
         )
+
+    def _build_conflict_suggestions(
+        self,
+        node_name: str,
+        analysis,
+    ) -> list[NodeAction]:
+        """Build actionable suggestions from conflict analysis.
+
+        Args:
+            node_name: Name of the node being installed
+            analysis: ConflictAnalysis or None
+
+        Returns:
+            List of suggested actions
+        """
+        suggestions = [
+            NodeAction(
+                action_type='skip_node',
+                description=f"Skip installing '{node_name}'"
+            ),
+        ]
+
+        # Enhanced suggestions from analysis
+        if analysis and analysis.suggestions:
+            for suggestion in analysis.suggestions:
+                suggestions.append(NodeAction(
+                    action_type='add_constraint',
+                    description=suggestion
+                ))
+        else:
+            # Fallback suggestion if no analysis
+            suggestions.append(NodeAction(
+                action_type='add_constraint',
+                description="Add version constraint to override (see --verbose for details)"
+            ))
+
+        return suggestions
 
     def _raise_probe_install_failures(self, node_name: str, probe_result) -> None:
         """Raise a dependency conflict when probe couldn't install some requirements.

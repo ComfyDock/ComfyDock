@@ -1,7 +1,10 @@
 # models/exceptions.py
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from ..utils.conflict_analyzer import ConflictAnalysis
 
 
 class ComfyDockError(Exception):
@@ -134,6 +137,9 @@ class DependencyConflictContext:
 
     # Suggested resolutions
     suggested_actions: list[NodeAction] = field(default_factory=list)
+
+    # Deep conflict analysis (optional - only populated when analysis succeeds)
+    conflict_analysis: "ConflictAnalysis | None" = None
 
 
 class CDDependencyConflictError(ComfyDockError):
