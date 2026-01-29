@@ -350,11 +350,18 @@ class DownloadErrorContext:
                 return f"CivitAI model not found (HTTP {self.http_status}). The URL may be incorrect or the model was removed."
 
         elif self.provider == "huggingface":
-            if self.error_category in ("auth_missing", "auth_invalid"):
+            if self.error_category == "auth_missing":
                 return (
                     f"HuggingFace model requires authentication (HTTP {self.http_status}). "
-                    "Set the HF_TOKEN environment variable with your HuggingFace token. "
-                    "Get your token from: https://huggingface.co/settings/tokens"
+                    f"Configure your token in Settings → API Credentials, or set the HF_TOKEN environment variable. "
+                    f"Get your token from: https://huggingface.co/settings/tokens"
+                )
+            elif self.error_category == "auth_invalid":
+                return (
+                    f"HuggingFace authentication failed (HTTP {self.http_status}). "
+                    f"Your token may be invalid or expired. Update it in Settings → API Credentials, "
+                    f"or check your HF_TOKEN environment variable. "
+                    f"Get a new token from: https://huggingface.co/settings/tokens"
                 )
             elif self.error_category == "not_found":
                 return f"HuggingFace model not found (HTTP {self.http_status}). Check the URL is correct."
