@@ -245,6 +245,143 @@ class TestPyTorchInjectionEdgeCases:
                 pass
 
 
+class TestInjectionStripsExistingConfig:
+    """Test that injection handles polluted pyproject.toml."""
+
+    @pytest.fixture
+    def temp_env(self):
+        """Create a temporary environment with polluted PyTorch config."""
+        with TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir)
+            cec_path = env_path / ".cec"
+            cec_path.mkdir()
+
+            # Create pyproject.toml with cu121 config (pollution)
+            pyproject_path = cec_path / "pyproject.toml"
+            polluted_config = {
+                "project": {
+                    "name": "test-env",
+                    "version": "0.1.0",
+                    "requires-python": ">=3.11",
+                    "dependencies": ["numpy>=1.0"],
+                },
+                "tool": {
+                    "comfygit": {
+                        "comfyui_version": "v0.3.60",
+                        "python_version": "3.11",
+                    },
+                    "uv": {
+                        "index": [
+                            {"name": "pytorch-cu121", "url": "https://download.pytorch.org/whl/cu121", "explicit": True}
+                        ],
+                        "sources": {
+                            "torch": {"index": "pytorch-cu121"},
+                            "torchvision": {"index": "pytorch-cu121"},
+                            "torchaudio": {"index": "pytorch-cu121"},
+                        },
+                        "constraint-dependencies": [
+                            "torch==2.5.0+cu121",
+                            "numpy>=1.20.0",  # Non-PyTorch constraint
+                        ]
+                    }
+                }
+            }
+            with open(pyproject_path, 'w') as f:
+                tomlkit.dump(polluted_config, f)
+
+            # Create .pytorch-backend file with different backend
+            backend_file = cec_path / ".pytorch-backend"
+            backend_file.write_text("cu128")
+
+            yield {
+                "cec_path": cec_path,
+                "pyproject_path": pyproject_path,
+                "backend_file": backend_file,
+            }
+
+    def test_injection_strips_conflicting_pytorch_config(self, temp_env):
+        """Injection should strip existing PyTorch config before adding new."""
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        pytorch_manager = PyTorchBackendManager(temp_env["cec_path"])
+
+        # Verify polluted state before injection
+        config = pyproject.load()
+        indexes = config.get("tool", {}).get("uv", {}).get("index", [])
+        cu121_indexes = [i for i in indexes if "cu121" in i.get("name", "")]
+        assert len(cu121_indexes) == 1, "Should have cu121 pollution before test"
+
+        # ACT - Use injection context
+        with pyproject.pytorch_injection_context(pytorch_manager):
+            # Inside context, check injected config
+            injected_config = pyproject.load(force_reload=True)
+            indexes = injected_config.get("tool", {}).get("uv", {}).get("index", [])
+
+            # Old cu121 config should be stripped
+            cu121_indexes = [i for i in indexes if "cu121" in i.get("name", "")]
+            assert len(cu121_indexes) == 0, "Old cu121 indexes should be stripped"
+
+            # New cu128 config should be injected
+            cu128_indexes = [i for i in indexes if "cu128" in i.get("name", "")]
+            assert len(cu128_indexes) == 1, "New cu128 index should be added"
+
+            # Sources should point to new index
+            sources = injected_config.get("tool", {}).get("uv", {}).get("sources", {})
+            assert sources.get("torch", {}).get("index") == "pytorch-cu128"
+
+            # Non-PyTorch constraints should be preserved
+            constraints = injected_config.get("tool", {}).get("uv", {}).get("constraint-dependencies", [])
+            numpy_constraints = [c for c in constraints if "numpy" in c]
+            assert len(numpy_constraints) == 1, "Non-PyTorch constraints should be preserved"
+
+    def test_injection_is_idempotent(self, temp_env):
+        """Multiple injections should produce same result."""
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        pytorch_manager = PyTorchBackendManager(temp_env["cec_path"])
+
+        # First injection
+        with pyproject.pytorch_injection_context(pytorch_manager):
+            first_content = temp_env["pyproject_path"].read_text()
+
+        # Reload the polluted state
+        polluted_config = {
+            "project": {
+                "name": "test-env",
+                "version": "0.1.0",
+                "requires-python": ">=3.11",
+                "dependencies": ["numpy>=1.0"],
+            },
+            "tool": {
+                "comfygit": {
+                    "comfyui_version": "v0.3.60",
+                    "python_version": "3.11",
+                },
+                "uv": {
+                    "index": [
+                        {"name": "pytorch-cu121", "url": "https://download.pytorch.org/whl/cu121", "explicit": True}
+                    ],
+                    "sources": {
+                        "torch": {"index": "pytorch-cu121"},
+                    },
+                }
+            }
+        }
+        with open(temp_env["pyproject_path"], 'w') as f:
+            tomlkit.dump(polluted_config, f)
+
+        # Second injection on polluted file
+        with pyproject.pytorch_injection_context(pytorch_manager):
+            second_config = pyproject.load(force_reload=True)
+            indexes = second_config.get("tool", {}).get("uv", {}).get("index", [])
+
+            # Should still have exactly one cu128 index
+            cu128_indexes = [i for i in indexes if "cu128" in i.get("name", "")]
+            assert len(cu128_indexes) == 1, "Should have exactly one cu128 index"
+
+            # No cu121 leftovers
+            cu121_indexes = [i for i in indexes if "cu121" in i.get("name", "")]
+            assert len(cu121_indexes) == 0, "Old config should be fully stripped"
+
+
 class TestSyncProjectWithPyTorchManager:
     """Tests for sync_project with pytorch_manager parameter."""
 

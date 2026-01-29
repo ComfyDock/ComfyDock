@@ -523,9 +523,9 @@ explicit = true
     def test_strip_and_readd_index_produces_array_of_tables(self, temp_pyproject):
         """Test that stripping indexes with list comprehension and re-adding preserves format.
 
-        This is the critical bug scenario: after checkout, _override_pytorch_config_from_installed
-        strips PyTorch indexes with a list comprehension, which creates a plain Python list.
-        Then add_index appends to it, producing inline format instead of array-of-tables.
+        This tests the TOML formatting behavior: when indexes are stripped via list
+        comprehension, add_index should still produce array-of-tables format ([[tool.uv.index]])
+        instead of inline format (index = [{...}]).
         """
         # Start with uv-formatted content (array-of-tables)
         uv_format = '''[project]
@@ -554,7 +554,7 @@ index = "pytorch-cu129"
 
         manager = PyprojectManager(temp_pyproject)
 
-        # Simulate _override_pytorch_config_from_installed stripping with list comprehension
+        # Simulate stripping PyTorch indexes with list comprehension
         config = manager.load()
         indexes = config['tool']['uv'].get('index', [])
         config['tool']['uv']['index'] = [

@@ -549,10 +549,45 @@ class PyprojectManager:
     def _inject_pytorch_config(self, config: dict, pytorch_config: dict) -> None:
         """Inject PyTorch-specific configuration into pyproject.toml config.
 
+        IMPORTANT: This method first strips any existing PyTorch config to handle
+        "polluted" pyproject.toml files that may have been committed with embedded
+        PyTorch configuration from other machines.
+
         Args:
             config: The pyproject.toml config dict to modify
             pytorch_config: PyTorch config from PyTorchBackendManager.get_pytorch_config()
         """
+        from ..constants import PYTORCH_CORE_PACKAGES
+
+        # FIRST: Strip any existing PyTorch config (handles polluted commits)
+        if 'tool' in config and 'uv' in config['tool']:
+            uv_config = config['tool']['uv']
+
+            # Remove PyTorch indexes
+            if 'index' in uv_config:
+                indexes = uv_config.get('index', [])
+                if isinstance(indexes, list):
+                    uv_config['index'] = [
+                        idx for idx in indexes
+                        if not any(p in idx.get('name', '').lower() for p in ['pytorch-', 'torch-'])
+                    ]
+
+            # Remove PyTorch sources
+            if 'sources' in uv_config:
+                sources = uv_config['sources']
+                for pkg in PYTORCH_CORE_PACKAGES:
+                    sources.pop(pkg, None)
+
+            # Remove PyTorch constraints
+            if 'constraint-dependencies' in uv_config:
+                constraints = uv_config['constraint-dependencies']
+                if isinstance(constraints, list):
+                    uv_config['constraint-dependencies'] = [
+                        c for c in constraints
+                        if not any(pkg in c for pkg in PYTORCH_CORE_PACKAGES)
+                    ]
+
+        # THEN: Inject the correct config
         # Ensure tool.uv section exists
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
@@ -598,9 +633,8 @@ class PyprojectManager:
             uv_config['sources'] = tomlkit.table()
 
         for package_name, source in pytorch_config.get('sources', {}).items():
-            # Only add if not already present
-            if package_name not in uv_config['sources']:
-                uv_config['sources'][package_name] = source
+            # Always set/overwrite sources (we've already stripped old ones)
+            uv_config['sources'][package_name] = source
 
         # Inject constraints (if any)
         constraints = pytorch_config.get('constraints', [])
