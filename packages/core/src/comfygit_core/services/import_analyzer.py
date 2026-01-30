@@ -166,7 +166,7 @@ class ImportAnalyzer:
 
         # Analyze each model
         for model_hash, model_data in global_models.items():
-            sources = model_data.get("sources", [])
+            sources = list(model_data.get("sources", []))
 
             # Check local availability
             existing = self.model_repository.get_model(model_hash)

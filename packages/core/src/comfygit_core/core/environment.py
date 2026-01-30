@@ -2148,6 +2148,17 @@ class Environment:
             logger.warning(f"Failed to extract builtin nodes: {e}")
             logger.warning("Workflow resolution will fall back to global static config")
 
+        # Extract folder paths from ComfyUI installation
+        from ..utils.folder_paths_extractor import extract_folder_paths
+
+        try:
+            folder_paths_json = self.cec_path / "comfyui_folder_paths.json"
+            extract_folder_paths(self.comfyui_path, folder_paths_json)
+            logger.info(f"Extracted folder paths to {folder_paths_json.name}")
+        except Exception as e:
+            logger.warning(f"Failed to extract folder paths: {e}")
+            logger.warning("Model category validation will fall back to static config")
+
         # Remove ComfyUI's default models directory (will be replaced with symlink)
         models_dir = self.comfyui_path / "models"
         if models_dir.exists() and not models_dir.is_symlink():
