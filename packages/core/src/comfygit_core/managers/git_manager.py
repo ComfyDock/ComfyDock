@@ -252,11 +252,12 @@ uv.lock
         logger.info("Discarding uncommitted changes")
         git_checkout(self.repo_path, "HEAD", files=["."])
 
-    def get_version_history(self, limit: int = 10) -> list[dict]:
+    def get_version_history(self, limit: int = 10, rev_range: str | None = None) -> list[dict]:
         """Get commit history with short hashes and branch references.
 
         Args:
             limit: Maximum number of commits to return
+            rev_range: Git revision range (e.g. "origin/main..HEAD")
 
         Returns:
             List of commit dicts with keys: hash, refs, message, date, date_relative
@@ -266,7 +267,8 @@ uv.lock
         result = git_history(
             self.repo_path,
             max_count=limit,
-            pretty="format:%h|%D|%s|%ai|%cr"
+            pretty="format:%h|%D|%s|%ai|%cr",
+            rev_range=rev_range,
         )
 
         commits = []

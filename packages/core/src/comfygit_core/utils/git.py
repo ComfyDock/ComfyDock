@@ -380,6 +380,7 @@ def git_history(
     max_count: int | None = None,
     follow: bool = False,
     oneline: bool = False,
+    rev_range: str | None = None,
 ) -> str:
     """Get git history for a specific file.
 
@@ -390,6 +391,7 @@ def git_history(
         follow: Whether to follow renames
         max_count: Maximum number of commits to return
         pretty: Git pretty format
+        rev_range: Git revision range (e.g. "origin/main..HEAD")
 
     Returns:
         Git log output as string
@@ -406,6 +408,8 @@ def git_history(
         cmd.append(f"--max-count={max_count}")
     if pretty:
         cmd.append(f"--pretty={pretty}")
+    if rev_range:
+        cmd.append(rev_range)
     if file_path:
         cmd.append("--")
         cmd.append(str(file_path))
