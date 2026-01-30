@@ -9,7 +9,10 @@ from comfygit_core.utils.conflict_analyzer import (
     ConflictAnalysis,
     ConflictChain,
     analyze_conflict,
+    check_specifier_compatibility,
     format_conflict_report,
+    get_existing_requirements,
+    parse_constraint_string,
     parse_conflict_from_stderr,
 )
 
@@ -265,3 +268,110 @@ class TestFormatConflictReport:
         report = format_conflict_report(analysis)
 
         assert "version override" in report.lower() or "override" in report.lower()
+
+
+class TestParseConstraintString:
+    def test_normalizes_name_and_strips_input(self):
+        parsed = parse_constraint_string("  huggingface_hub<0.37  ")
+        assert parsed == ("huggingface-hub", "<0.37")
+
+    def test_returns_none_for_name_only(self):
+        assert parse_constraint_string("numpy") is None
+
+    def test_returns_none_for_wildcard_spec(self):
+        assert parse_constraint_string("numpy *") is None
+
+
+class TestGetExistingRequirements:
+    @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
+    def test_parses_first_level_deps_with_non_numeric_versions(self, mock_run):
+        mock_tree_result = MagicMock()
+        mock_tree_result.returncode = 0
+        mock_tree_result.stdout = """huggingface-hub v1.1.0
+└── comfygit-core v0.3.13rc1 [requires: huggingface-hub>=1.1.0]
+    └── nested-pkg v1.0.0 [requires: comfygit-core>=0.3.0]
+"""
+        mock_run.return_value = mock_tree_result
+
+        reqs = get_existing_requirements(
+            "huggingface-hub", Path("/fake/venv/bin/python"), Path("/fake/uv")
+        )
+        assert ("comfygit-core", "huggingface-hub>=1.1.0") in reqs
+
+    @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
+    def test_skips_any_version_wildcard_but_not_pep440_wildcards(self, mock_run):
+        mock_tree_result = MagicMock()
+        mock_tree_result.returncode = 0
+        mock_tree_result.stdout = """huggingface-hub v1.1.0
+└── any-version v1.0.0 [requires: huggingface-hub *]
+└── pep440-wildcard v1.0.0 [requires: huggingface-hub==1.2.*]
+"""
+        mock_run.return_value = mock_tree_result
+
+        reqs = get_existing_requirements(
+            "huggingface-hub", Path("/fake/venv/bin/python"), Path("/fake/uv")
+        )
+        requiring_pkgs = {pkg for pkg, _ in reqs}
+
+        assert "any-version" not in requiring_pkgs
+        assert "pep440-wildcard" in requiring_pkgs
+
+
+class TestCheckSpecifierCompatibility:
+    @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
+    def test_uses_no_deps_and_python(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+
+        ok, _ = check_specifier_compatibility(
+            "huggingface-hub>=1.1.0",
+            "huggingface-hub<0.37",
+            venv_python=Path("/fake/venv/bin/python"),
+            uv_path=Path("/fake/uv"),
+        )
+        assert ok is True
+
+        args, kwargs = mock_run.call_args
+        cmd = args[0]
+        assert "--no-deps" in cmd
+        assert "--python" in cmd
+        assert "/fake/venv/bin/python" in cmd
+        assert "-" in cmd
+        assert kwargs.get("input") is not None
+
+    @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
+    def test_returns_false_for_unsatisfiable(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "requirements are unsatisfiable"
+        mock_run.return_value = mock_result
+
+        ok, stderr = check_specifier_compatibility(
+            "huggingface-hub>=1.1.0",
+            "huggingface-hub<0.37",
+            venv_python=None,
+            uv_path=Path("/fake/uv"),
+        )
+        assert ok is False
+        assert "unsatisfiable" in stderr
+
+    @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
+    def test_treats_non_unsatisfiable_failures_as_compatible(self, mock_run):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "connection refused"
+        mock_run.return_value = mock_result
+
+        ok, stderr = check_specifier_compatibility(
+            "huggingface-hub>=1.1.0",
+            "huggingface-hub<0.37",
+            venv_python=None,
+            uv_path=Path("/fake/uv"),
+        )
+        assert ok is True
+        assert stderr == ""

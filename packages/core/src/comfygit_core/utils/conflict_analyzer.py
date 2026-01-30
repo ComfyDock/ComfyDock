@@ -45,6 +45,7 @@ def parse_constraint_string(constraint: str) -> tuple[str, str] | None:
     Returns:
         Tuple of (normalized_package_name, version_specifier) or None if invalid
     """
+    constraint = constraint.strip()
     match = re.match(r"^([a-zA-Z0-9._-]+)(.*)$", constraint)
     if not match:
         return None
@@ -53,6 +54,10 @@ def parse_constraint_string(constraint: str) -> tuple[str, str] | None:
     version_spec = match.group(2).strip()
 
     if not version_spec:
+        return None
+
+    # Skip wildcard constraints like "pkg *" which aren't valid specifiers for UV compile.
+    if version_spec == "*":
         return None
 
     return pkg_name, version_spec
@@ -182,13 +187,15 @@ def get_existing_requirements(
         #     └── nested-pkg v1.0.0 [requires: comfygit-core>=0.3.0]  <- skip nested
         #
         # Use ^ anchor to only match first-level dependents (no leading spaces)
-        req_pattern = r"^[└├]── (\S+) v[\d.]+ \[requires: ([^\]]+)\]"
+        req_pattern = r"^[└├]── (\S+) v[^\s]+ \[requires: ([^\]]+)\]"
         for match in re.finditer(req_pattern, result.stdout, re.MULTILINE):
             pkg_name = match.group(1)
             requirement_spec = match.group(2)
             # Skip wildcard specs like "pkg *" - they mean "any version" and
-            # aren't valid for uv pip compile
-            if requirement_spec.strip().endswith(" *") or requirement_spec.strip().endswith("*"):
+            # aren't valid for uv pip compile.
+            #
+            # Note: Do not skip valid PEP 440 wildcards like "pkg==1.2.*".
+            if re.fullmatch(r"[a-zA-Z0-9._-]+\s+\*", requirement_spec.strip()):
                 continue
             requirements.append((pkg_name, requirement_spec))
 
@@ -206,6 +213,7 @@ _get_existing_requirements = get_existing_requirements
 def check_specifier_compatibility(
     existing_spec: str,
     new_spec: str,
+    venv_python: Path | None,
     uv_path: Path,
 ) -> tuple[bool, str]:
     """Check if two version specifiers for the same package are compatible.
@@ -226,8 +234,13 @@ def check_specifier_compatibility(
     combined_reqs = f"{existing_spec}\n{new_spec}"
 
     try:
+        cmd = [str(uv_path), "pip", "compile", "--no-deps", "--quiet"]
+        if venv_python:
+            cmd.extend(["--python", str(venv_python)])
+        cmd.append("-")
+
         result = subprocess.run(
-            [str(uv_path), "pip", "compile", "--quiet", "-"],
+            cmd,
             input=combined_reqs,
             capture_output=True,
             text=True,
@@ -236,8 +249,20 @@ def check_specifier_compatibility(
 
         if result.returncode == 0:
             return True, ""
-        else:
-            return False, result.stderr
+
+        # Only treat true unsatisfiable resolutions as incompatibilities.
+        # Other failures (network, index auth, transient errors) should not
+        # block node installation via false positives.
+        stderr = (result.stderr or result.stdout or "").strip()
+        stderr_lower = stderr.lower()
+        if "unsatisfiable" in stderr_lower or "no solution found" in stderr_lower:
+            return False, stderr
+
+        logger.debug(
+            "UV compile failed but did not look like an incompatibility: "
+            f"{existing_spec} vs {new_spec} ({stderr})"
+        )
+        return True, ""
 
     except subprocess.TimeoutExpired:
         logger.debug(f"Timeout checking compatibility: {existing_spec} vs {new_spec}")

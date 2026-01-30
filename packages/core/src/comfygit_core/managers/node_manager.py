@@ -1773,7 +1773,7 @@ class NodeManager:
             # Check each existing requirement for compatibility
             for requiring_pkg, existing_spec in existing_reqs:
                 is_compatible, stderr = check_specifier_compatibility(
-                    existing_spec, new_spec, uv_path
+                    existing_spec, new_spec, venv_python, uv_path
                 )
 
                 if not is_compatible:
