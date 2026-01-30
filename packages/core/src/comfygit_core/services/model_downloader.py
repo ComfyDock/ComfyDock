@@ -313,13 +313,21 @@ class ModelDownloader:
 
         try:
             # Download to HF cache (Xet-enabled when available)
-            cache_path_str = hf_hub_download(
+            download_kwargs = dict(
                 repo_id=parsed.repo_id,
                 filename=parsed.path_in_repo,
                 revision=parsed.revision or "main",
                 token=token if token else None,
-                tqdm_class=_make_tqdm_class(progress_callback) if progress_callback else None,
             )
+            if progress_callback:
+                download_kwargs["tqdm_class"] = _make_tqdm_class(progress_callback)
+
+            try:
+                cache_path_str = hf_hub_download(**download_kwargs)
+            except TypeError:
+                # Older huggingface-hub may not support tqdm_class — download without progress
+                download_kwargs.pop("tqdm_class", None)
+                cache_path_str = hf_hub_download(**download_kwargs)
 
             cache_path = Path(cache_path_str).resolve()
 

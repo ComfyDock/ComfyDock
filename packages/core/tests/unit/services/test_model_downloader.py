@@ -556,6 +556,57 @@ class TestModelDownloader:
             assert result.success is True
 
 
+class TestModelDownloaderHuggingFaceFallback:
+    """Tests for HuggingFace tqdm_class graceful degradation."""
+
+    @patch('comfygit_core.services.model_downloader.hf_hub_download')
+    @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
+    def test_hf_download_retries_without_tqdm_class_on_type_error(self, mock_parse, mock_hf_download, tmp_path):
+        """Test that HF download falls back to no progress bar if tqdm_class causes TypeError."""
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+
+        mock_parse.return_value = ParsedHuggingFaceUrl(
+            kind="file", repo_id="user/model", path_in_repo="model.safetensors", revision="main"
+        )
+
+        # First call with tqdm_class raises TypeError, second without succeeds
+        cache_file = tmp_path / "cached_model.safetensors"
+        cache_file.write_bytes(b"model_data")
+
+        def side_effect(**kwargs):
+            if "tqdm_class" in kwargs:
+                raise TypeError("unexpected keyword argument 'tqdm_class'")
+            return str(cache_file)
+
+        mock_hf_download.side_effect = side_effect
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+        workspace_config.get_huggingface_token.return_value = None
+
+        downloader = ModelDownloader(repo, workspace_config)
+        target_path = tmp_path / "checkpoints" / "model.safetensors"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/user/model/resolve/main/model.safetensors",
+            target_path=target_path
+        )
+
+        result = downloader.download(request, progress_callback=lambda cur, total: None)
+
+        assert result.success is True
+        assert mock_hf_download.call_count == 2
+        # First call had tqdm_class
+        assert "tqdm_class" in mock_hf_download.call_args_list[0].kwargs
+        # Second call did not
+        assert "tqdm_class" not in mock_hf_download.call_args_list[1].kwargs
+
+
 class TestModelDownloaderPathValidation:
     """Tests for target path validation in ModelDownloader."""
 

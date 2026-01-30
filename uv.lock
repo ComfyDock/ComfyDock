@@ -404,7 +404,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "blake3", specifier = ">=1.0.5" },
-    { name = "huggingface-hub", specifier = ">=1.1.0" },
+    { name = "huggingface-hub" },
     { name = "packaging", specifier = ">=25.0" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
