@@ -1745,9 +1745,7 @@ class GlobalCommands:
 
     def orch_logs(self, args: argparse.Namespace) -> None:
         """Show orchestrator logs."""
-        import subprocess
-
-        from .utils.orchestrator import tail_log_file
+        from .utils.orchestrator import follow_log_file, tail_log_file
 
         metadata_dir = self.workspace.path / ".metadata"
         log_file = metadata_dir / "orchestrator.log"
@@ -1758,14 +1756,12 @@ class GlobalCommands:
             return
 
         if args.follow:
-            # Use tail -f for live following
             print(f"Following {log_file} (Ctrl+C to stop)\n")
             try:
-                subprocess.run(["tail", "-f", str(log_file)])
+                follow_log_file(log_file)
             except KeyboardInterrupt:
-                print("\n")
+                print()
         else:
-            # Show last N lines
             lines = tail_log_file(log_file, args.lines)
             if lines:
                 print("".join(lines))

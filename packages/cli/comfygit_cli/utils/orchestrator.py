@@ -250,3 +250,26 @@ def tail_log_file(log_file: Path, num_lines: int = 50) -> list[str]:
             return lines[-num_lines:]
     except IOError:
         return []
+
+
+def follow_log_file(log_file: Path, poll_interval: float = 0.3) -> None:
+    """Follow a log file using polling (cross-platform, no inotify).
+
+    Starts from end of file and prints new lines as they appear.
+    Handles file truncation (log rotation).
+    """
+    with open(log_file, 'r') as f:
+        f.seek(0, 2)
+        while True:
+            line = f.readline()
+            if line:
+                print(line, end='')
+            else:
+                current_pos = f.tell()
+                f.seek(0, 2)
+                if f.tell() < current_pos:
+                    # File was truncated (log rotation), start from beginning
+                    f.seek(0)
+                else:
+                    f.seek(current_pos)
+                time.sleep(poll_interval)
