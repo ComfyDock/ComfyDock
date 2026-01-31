@@ -282,6 +282,46 @@ class TestParseConstraintString:
         assert parse_constraint_string("numpy *") is None
 
 
+class TestNormalizePackageNamePep503:
+    """Tests for PEP 503 package name normalization."""
+
+    def test_normalizes_uppercase_to_lowercase(self):
+        from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+
+        assert normalize_package_name_pep503("Foo-Bar") == "foo-bar"
+        assert normalize_package_name_pep503("NUMPY") == "numpy"
+
+    def test_normalizes_underscores_to_dashes(self):
+        from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+
+        assert normalize_package_name_pep503("foo_bar") == "foo-bar"
+        assert normalize_package_name_pep503("huggingface_hub") == "huggingface-hub"
+
+    def test_collapses_multiple_separators(self):
+        from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+
+        assert normalize_package_name_pep503("foo__bar") == "foo-bar"
+        assert normalize_package_name_pep503("foo..bar") == "foo-bar"
+        assert normalize_package_name_pep503("foo-_-bar") == "foo-bar"
+
+    def test_matches_packaging_utils_canonicalize(self):
+        """Should match packaging.utils.canonicalize_name exactly."""
+        from packaging.utils import canonicalize_name
+        from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+
+        test_cases = [
+            "Hugging_Face.Hub",
+            "foo-bar",
+            "foo_bar",
+            "COMfyUI-Manager",
+            "numpy",
+            "Foo__Bar",
+        ]
+
+        for name in test_cases:
+            assert normalize_package_name_pep503(name) == canonicalize_name(name)
+
+
 class TestGetExistingRequirements:
     @patch("comfygit_core.utils.conflict_analyzer.subprocess.run")
     def test_parses_first_level_deps_with_non_numeric_versions(self, mock_run):

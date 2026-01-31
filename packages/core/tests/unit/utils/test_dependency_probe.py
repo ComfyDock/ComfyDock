@@ -228,29 +228,100 @@ class TestAnalyzeFailures:
 
 
 class TestPackageNameNormalization:
-    """Tests for package name normalization."""
+    """Tests for package name normalization using PEP 503 canonical form."""
 
     def test_normalize_uppercase(self, tmp_path):
-        """Package names are normalized to lowercase."""
+        """Package names are normalized to lowercase per PEP 503."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
         )
 
         normalized = probe._normalize_name("Foo-Bar")
-        # Should be lowercase, may use - or _
-        assert normalized == normalized.lower()
+        # PEP 503: lowercase with dashes
+        assert normalized == "foo-bar"
 
-    def test_normalize_underscore_dash(self, tmp_path):
-        """Dashes are normalized to underscores in names."""
+    def test_normalize_underscore_to_dash(self, tmp_path):
+        """Underscores are normalized to dashes per PEP 503."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
         )
 
-        # Package index treats foo-bar and foo_bar as same package
-        normalized = probe._normalize_name("foo-bar")
-        assert "-" not in normalized or "_" in normalized
+        # PEP 503 canonical form uses dashes
+        normalized = probe._normalize_name("foo_bar")
+        assert normalized == "foo-bar"
+
+    def test_normalize_mixed_separators(self, tmp_path):
+        """Multiple separators (-, _, .) collapse to single dash per PEP 503."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        # PEP 503: runs of separators become single dash
+        assert probe._normalize_name("foo__bar") == "foo-bar"
+        assert probe._normalize_name("foo..bar") == "foo-bar"
+        assert probe._normalize_name("foo-_-bar") == "foo-bar"
+
+    def test_normalize_matches_packaging_utils(self, tmp_path):
+        """Normalization should match packaging.utils.canonicalize_name."""
+        from packaging.utils import canonicalize_name
+
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        test_cases = [
+            "Hugging_Face.Hub",
+            "foo-bar",
+            "foo_bar",
+            "COMfyUI-Manager",
+            "numpy",
+        ]
+
+        for name in test_cases:
+            assert probe._normalize_name(name) == canonicalize_name(name)
+
+    def test_version_to_constraint_uses_canonical_names(self, tmp_path):
+        """Generated constraints should use PEP 503 canonical names (dashes)."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        # Test with underscore input - should output dash-separated
+        constraint = probe._version_to_constraint("huggingface_hub", "0.36.0")
+        assert constraint == "huggingface-hub<0.37"
+
+        # Test with mixed separators
+        constraint = probe._version_to_constraint("Foo__Bar", "1.2.3")
+        assert constraint == "foo-bar<1.3"
+
+    def test_normalization_matches_conflict_analyzer(self, tmp_path):
+        """Probe normalization must match conflict_analyzer for constraint compatibility."""
+        from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        test_cases = [
+            "huggingface_hub",
+            "Hugging-Face.Hub",
+            "foo__bar",
+            "COMfyUI_Manager",
+        ]
+
+        for name in test_cases:
+            probe_normalized = probe._normalize_name(name)
+            analyzer_normalized = normalize_package_name_pep503(name)
+            assert probe_normalized == analyzer_normalized, (
+                f"Normalization mismatch for '{name}': "
+                f"probe='{probe_normalized}' vs analyzer='{analyzer_normalized}'"
+            )
 
 
 class TestProbeResultDataclass:
