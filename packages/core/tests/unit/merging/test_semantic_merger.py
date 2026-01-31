@@ -284,3 +284,83 @@ class TestSemanticMerger:
         # Both nodes should be included
         assert "node-a" in result["tool"]["comfygit"]["nodes"]
         assert "node-b" in result["tool"]["comfygit"]["nodes"]
+
+    def test_target_only_workflow_uses_target_node_entry(self):
+        """Node from target-only workflow should use target's node entry, not base."""
+        base = {
+            "tool": {
+                "comfygit": {
+                    "workflows": {"wf1": {"nodes": ["node-a"]}},
+                    "nodes": {
+                        "node-a": {"version": "1.0", "source": "base-source"},
+                        "shared-node": {"version": "1.0", "source": "base-source"},
+                    },
+                }
+            }
+        }
+        target = {
+            "tool": {
+                "comfygit": {
+                    "workflows": {
+                        # wf2 only exists in target, references shared-node
+                        "wf2": {"nodes": ["shared-node"]},
+                    },
+                    "nodes": {
+                        "shared-node": {"version": "2.0", "source": "target-source"},
+                    },
+                }
+            }
+        }
+
+        merger = SemanticMerger()
+        result = merger.merge(
+            base_config=base,
+            target_config=target,
+            workflow_resolutions={},
+            merged_workflow_files=["wf1", "wf2"],
+        )
+
+        nodes = result["tool"]["comfygit"]["nodes"]
+        # wf2 came from target (not in base), so shared-node should use target entry
+        assert nodes["shared-node"]["version"] == "2.0"
+        assert nodes["shared-node"]["source"] == "target-source"
+
+    def test_mixed_source_node_prefers_target(self):
+        """Node used by both base and target workflows should prefer target entry."""
+        base = {
+            "tool": {
+                "comfygit": {
+                    "workflows": {
+                        "wf1": {"nodes": ["shared-node"]},
+                    },
+                    "nodes": {
+                        "shared-node": {"version": "1.0", "source": "base-source"},
+                    },
+                }
+            }
+        }
+        target = {
+            "tool": {
+                "comfygit": {
+                    "workflows": {
+                        "wf2": {"nodes": ["shared-node"]},
+                    },
+                    "nodes": {
+                        "shared-node": {"version": "2.0", "source": "target-source"},
+                    },
+                }
+            }
+        }
+
+        merger = SemanticMerger()
+        result = merger.merge(
+            base_config=base,
+            target_config=target,
+            workflow_resolutions={"wf1": "take_base", "wf2": "take_target"},
+            merged_workflow_files=["wf1", "wf2"],
+        )
+
+        nodes = result["tool"]["comfygit"]["nodes"]
+        # Node used by both, but wf2 is take_target, so target entry should win
+        assert nodes["shared-node"]["version"] == "2.0"
+        assert nodes["shared-node"]["source"] == "target-source"
