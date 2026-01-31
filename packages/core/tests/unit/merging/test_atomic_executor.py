@@ -159,6 +159,7 @@ class TestAtomicMergeExecutor:
         executor = AtomicMergeExecutor(
             repo_path=tmp_path,
             pyproject_manager=mock_pyproject,
+            workspace_path=tmp_path,
         )
 
         plan = MergePlan(
@@ -180,10 +181,10 @@ class TestAtomicMergeExecutor:
             with patch.object(executor, "_resolve_workflow_files"):
                 with patch.object(executor, "_build_merged_pyproject"):
                     with patch.object(executor, "_abort_merge") as mock_abort:
-                        with patch("comfygit_core.merging.atomic_executor.git_rev_parse", return_value="pre123"):
+                        with patch("comfygit_core.utils.git.git_rev_parse", return_value="pre123"):
                             with patch("comfygit_core.merging.atomic_executor.ResolutionTester", return_value=mock_tester):
                                 result = executor.execute(plan)
 
         assert not result.success
-        assert "unsatisfiable" in result.error.lower() or "conflicts" in result.error.lower()
+        assert "unsatisfiable" in result.error.lower()
         mock_abort.assert_called_once()
