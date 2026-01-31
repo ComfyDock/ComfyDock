@@ -1166,6 +1166,7 @@ class Environment:
         executor = AtomicMergeExecutor(
             repo_path=self.cec_path,
             pyproject_manager=self.pyproject,
+            workspace_path=self.workspace_paths.root,
         )
 
         result = executor.execute(plan)
