@@ -124,13 +124,13 @@ Run 'cg status' to review changes
 ```
 
 !!! tip "Development nodes are self-managed"
-    Dev nodes are fully managed by you, the developer:
+    Dev nodes are managed by you, the developer — ComfyGit won't auto-pull or modify your code:
 
-    - **Dependencies**: Install manually with `uv pip install` or `pip install`
     - **Git state**: Push/pull using standard git commands
-    - **Requirements.txt**: ComfyGit doesn't track or sync dev node requirements
+    - **Dependencies**: Run `cg node update <node>` to sync `requirements.txt` changes to the environment
+    - **Code**: You develop and test the node directly in `custom_nodes/`
 
-    ComfyGit only tracks the bare minimum (name, repository URL) to help teammates clone your dev nodes.
+    ComfyGit tracks name, repository URL, and requirements so teammates can clone and install your dev nodes.
 
 ## Removing nodes
 
