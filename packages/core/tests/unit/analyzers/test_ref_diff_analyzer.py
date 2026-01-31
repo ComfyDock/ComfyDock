@@ -238,6 +238,30 @@ class TestWorkflowDiffing:
         assert len(result.workflow_changes) == 1
         assert result.workflow_changes[0].change_type == "deleted"
 
+    def test_detects_renamed_workflows(self, mock_git_show, mock_run_command, tmp_path):
+        """Detects workflow renames (R status) as delete old + add new."""
+        base_toml = "[tool.comfygit]"
+        target_toml = "[tool.comfygit]"
+        mock_git_show.side_effect = [base_toml, target_toml]
+        mock_run_command.side_effect = [
+            MagicMock(returncode=1, stdout=""),  # No merge base
+            MagicMock(
+                returncode=0,
+                stdout="R100\tworkflows/old_name.json\tworkflows/new_name.json\n",
+            ),
+        ]
+
+        analyzer = RefDiffAnalyzer(tmp_path)
+        result = analyzer.analyze(base_ref="HEAD", target_ref="origin/main")
+
+        assert len(result.workflow_changes) == 2
+        deleted = [c for c in result.workflow_changes if c.change_type == "deleted"]
+        added = [c for c in result.workflow_changes if c.change_type == "added"]
+        assert len(deleted) == 1
+        assert deleted[0].name == "old_name"
+        assert len(added) == 1
+        assert added[0].name == "new_name"
+
 
 class TestThreeWayConflictDetection:
     """Test three-way merge conflict detection."""
@@ -350,6 +374,92 @@ version = "2.0.0"
 
         assert result.merge_base is None
         assert result.node_changes[0].conflict is None
+
+    def test_detects_add_add_workflow_conflict(
+        self, mock_git_show, mock_run_command, tmp_path
+    ):
+        """Detects add/add conflict when both branches independently created same workflow.
+
+        If diff-tree shows "M" (file in both branches) but file doesn't exist
+        at the merge_base ancestor, both branches added it independently.
+        """
+        base_toml = "[tool.comfygit]"
+        target_toml = "[tool.comfygit]"
+        ancestor_toml = "[tool.comfygit]"
+        # git_show calls:
+        # 1. base pyproject.toml
+        # 2. target pyproject.toml
+        # 3. ancestor pyproject.toml (merge_base != base_ref)
+        # 4. _check_workflow_conflict: ancestor workflow -> raises (doesn't exist)
+        # 5. _check_workflow_conflict: base workflow content
+        # 6. _check_workflow_conflict: target workflow content
+        mock_git_show.side_effect = [
+            base_toml,
+            target_toml,
+            ancestor_toml,
+            ValueError("file not found at ancestor"),  # ancestor doesn't have workflow
+            '{"base": "version"}',  # base has it
+            '{"target": "version"}',  # target has it (different content)
+        ]
+        mock_run_command.side_effect = [
+            MagicMock(returncode=0, stdout="merge_base_abc\n"),  # merge-base found
+            MagicMock(
+                returncode=0,
+                stdout="M\tworkflows/shared.json\n",
+            ),  # diff-tree shows modified
+        ]
+
+        analyzer = RefDiffAnalyzer(tmp_path)
+        result = analyzer.analyze(
+            base_ref="HEAD", target_ref="origin/main", detect_conflicts=True
+        )
+
+        assert len(result.workflow_changes) == 1
+        assert result.workflow_changes[0].change_type == "modified"
+        assert result.workflow_changes[0].conflict is not None
+        assert result.workflow_changes[0].conflict.conflict_type == "both_modified"
+
+    def test_detects_delete_modify_workflow_conflict(
+        self, mock_git_show, mock_run_command, tmp_path
+    ):
+        """Detects conflict when target deletes a workflow that base modified.
+
+        If diff-tree shows "D" (deleted in target) but the file was modified
+        in base since the ancestor, that's a delete/modify conflict.
+        """
+        base_toml = "[tool.comfygit]"
+        target_toml = "[tool.comfygit]"
+        ancestor_toml = "[tool.comfygit]"
+        # git_show calls:
+        # 1. base pyproject.toml
+        # 2. target pyproject.toml
+        # 3. ancestor pyproject.toml (merge_base != base_ref)
+        # 4. delete/modify check: ancestor workflow content
+        # 5. delete/modify check: base workflow content (modified since ancestor)
+        mock_git_show.side_effect = [
+            base_toml,
+            target_toml,
+            ancestor_toml,
+            '{"original": "content"}',  # ancestor has it
+            '{"modified": "content"}',  # base modified it
+        ]
+        mock_run_command.side_effect = [
+            MagicMock(returncode=0, stdout="merge_base_abc\n"),  # merge-base found
+            MagicMock(
+                returncode=0,
+                stdout="D\tworkflows/deleted_wf.json\n",
+            ),  # diff-tree shows deleted in target
+        ]
+
+        analyzer = RefDiffAnalyzer(tmp_path)
+        result = analyzer.analyze(
+            base_ref="HEAD", target_ref="origin/main", detect_conflicts=True
+        )
+
+        assert len(result.workflow_changes) == 1
+        assert result.workflow_changes[0].change_type == "deleted"
+        assert result.workflow_changes[0].conflict is not None
+        assert result.workflow_changes[0].conflict.conflict_type == "delete_modify"
 
 
 class TestDependencyDiffing:
