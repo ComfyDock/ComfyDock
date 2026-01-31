@@ -1,12 +1,15 @@
 """Tests for NodeManager utilities."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, call
 import tempfile
 import shutil
 
+import pytest
+
 from comfygit_core.managers.node_manager import NodeManager
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.models.exceptions import CDEnvironmentError, CDNodeConflictError
 from comfygit_core.utils.git import is_github_url
 
 
@@ -121,3 +124,158 @@ class TestNodeManager:
         # Verify .disabled was removed
         assert not disabled_dir.exists()
         assert not (custom_nodes_dir / "test-node.disabled").exists()
+
+
+class TestInstallTransactionSafety:
+    """Tests for install rollback and transaction safety (cg-ckh.1)."""
+
+    def _make_node_manager(self, tmp_path):
+        """Create a NodeManager with mocked dependencies for transaction tests."""
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        cache_dir = tmp_path / "cache" / "test-node"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "node.py").write_text("new node content")
+
+        mock_pyproject = Mock()
+        mock_pyproject.snapshot.return_value = {"snapshot": "data"}
+        mock_pyproject.restore = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {}
+
+        mock_uv = Mock()
+        mock_node_lookup = Mock()
+        mock_node_lookup.download_to_cache.return_value = cache_dir
+        mock_node_lookup.scan_requirements.return_value = []
+
+        node_manager = NodeManager(
+            mock_pyproject, mock_uv, mock_node_lookup, Mock(), custom_nodes_dir, Mock()
+        )
+        node_manager.add_node_package = Mock()
+
+        return node_manager, mock_pyproject, mock_uv, custom_nodes_dir, cache_dir
+
+    def test_install_rollback_preserves_disabled_directory(self, tmp_path):
+        """Bug 1: _install_node_from_info rollback must preserve .disabled backup.
+
+        When .disabled exists and install fails, rollback should NOT have
+        already deleted .disabled — it should still be available for recovery.
+        """
+        nm, mock_pyproject, mock_uv, custom_nodes_dir, _ = self._make_node_manager(tmp_path)
+
+        # Create a pre-existing .disabled directory (from a previous update)
+        disabled_dir = custom_nodes_dir / "test-node.disabled"
+        disabled_dir.mkdir()
+        (disabled_dir / "old_code.py").write_text("old version code")
+
+        # Make uv sync fail to trigger rollback
+        mock_uv.sync_project.side_effect = Exception("sync failed")
+
+        node_info = NodeInfo(name="test-node", registry_id="test-node", source="registry")
+
+        with pytest.raises((CDEnvironmentError, CDNodeConflictError)):
+            nm._install_node_from_info(node_info, no_test=True)
+
+        # .disabled MUST still exist after rollback
+        assert disabled_dir.exists(), (
+            ".disabled directory was deleted before install completed — "
+            "rollback cannot restore old version"
+        )
+        assert (disabled_dir / "old_code.py").read_text() == "old version code"
+
+    def test_install_rollback_resyncs_venv(self, tmp_path):
+        """Bug 2: Install rollback must re-sync venv after restoring pyproject.
+
+        After restoring pyproject.toml, the venv is out of sync. Rollback
+        should attempt a best-effort re-sync.
+        """
+        nm, mock_pyproject, mock_uv, custom_nodes_dir, _ = self._make_node_manager(tmp_path)
+
+        # Make sync fail on the FIRST call (during install), succeed on second (rollback re-sync)
+        call_count = 0
+        def sync_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("sync failed during install")
+
+        mock_uv.sync_project.side_effect = sync_side_effect
+
+        node_info = NodeInfo(name="test-node", registry_id="test-node", source="registry")
+
+        with pytest.raises((CDEnvironmentError, CDNodeConflictError)):
+            nm._install_node_from_info(node_info, no_test=True)
+
+        # sync_project should have been called TWICE:
+        # 1st: during install (fails) → triggers rollback
+        # 2nd: during rollback re-sync (best-effort)
+        assert mock_uv.sync_project.call_count >= 2, (
+            f"Expected at least 2 sync_project calls (install + rollback re-sync), "
+            f"got {mock_uv.sync_project.call_count}"
+        )
+
+    def test_add_node_replacement_restores_old_node_on_failure(self, tmp_path):
+        """Bug 3: add_node version replacement must restore old node if install fails.
+
+        When replacing an existing node with a different version, the old node
+        should be moved to .disabled (not deleted) so it can be restored on failure.
+        """
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        cache_dir = tmp_path / "cache" / "test-node"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "node.py").write_text("new version code")
+
+        # Create the existing node directory
+        old_node_dir = custom_nodes_dir / "TestNode"
+        old_node_dir.mkdir()
+        (old_node_dir / "node.py").write_text("old version code")
+
+        mock_pyproject = Mock()
+        mock_pyproject.snapshot.return_value = {"snapshot": "data"}
+        mock_pyproject.restore = Mock()
+
+        # Set up existing node in tracking
+        existing_node = NodeInfo(
+            name="TestNode", registry_id="test-node", version="1.0.0", source="registry"
+        )
+        mock_pyproject.nodes.get_existing.return_value = {"test-node": existing_node}
+
+        mock_uv = Mock()
+        mock_node_lookup = Mock()
+
+        new_node_info = NodeInfo(
+            name="TestNode", registry_id="test-node", version="2.0.0", source="registry"
+        )
+        mock_node_lookup.get_node.return_value = new_node_info
+        mock_node_lookup.download_to_cache.return_value = cache_dir
+        mock_node_lookup.scan_requirements.return_value = []
+
+        mock_node_repo = Mock()
+        mock_node_repo.resolve_github_url.return_value = None
+
+        nm = NodeManager(
+            mock_pyproject, mock_uv, mock_node_lookup, Mock(), custom_nodes_dir, mock_node_repo
+        )
+        nm.add_node_package = Mock()
+
+        # Make sync succeed during remove_node (1st call), fail during new install (2nd call)
+        call_count = 0
+        def sync_side_effect(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise Exception("sync failed on new version")
+
+        mock_uv.sync_project.side_effect = sync_side_effect
+
+        with pytest.raises((CDEnvironmentError, CDNodeConflictError)):
+            nm.add_node("test-node@2.0.0", no_test=True)
+
+        # Old node directory MUST be restored after failed replacement
+        assert old_node_dir.exists(), (
+            "Old node directory was permanently deleted during failed replacement — "
+            "should have been restored from .disabled backup"
+        )
+        assert (old_node_dir / "node.py").read_text() == "old version code"
