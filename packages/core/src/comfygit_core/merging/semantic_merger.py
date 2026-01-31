@@ -51,12 +51,12 @@ class SemanticMerger:
         self._preserve_comfygit_metadata(result, base_config)
 
         # 4. Workflows: Based on which files exist and user choices
-        self._merge_workflows(
+        workflow_sources = self._merge_workflows(
             result, base_config, target_config, workflow_resolutions, merged_workflow_files
         )
 
         # 5. Nodes: Determined by merged workflows' requirements
-        self._merge_nodes(result, base_config, target_config, workflow_resolutions)
+        self._merge_nodes(result, base_config, target_config, workflow_sources)
 
         # 6. Models: Semantic merge by hash, union sources
         self._merge_models(result, base_config, target_config, merged_workflow_files)
@@ -84,12 +84,18 @@ class SemanticMerger:
         target_config: dict,
         workflow_resolutions: dict[str, Resolution],
         merged_workflow_files: list[str],
-    ) -> None:
-        """Merge workflow configs based on resolutions."""
+    ) -> dict[str, str]:
+        """Merge workflow configs based on resolutions.
+
+        Returns:
+            Mapping of workflow name to actual source ("base" or "target").
+        """
         base_workflows = base_config.get("tool", {}).get("comfygit", {}).get("workflows", {})
         target_workflows = target_config.get("tool", {}).get("comfygit", {}).get("workflows", {})
 
         merged = {}
+        workflow_sources: dict[str, str] = {}  # wf_name -> "base" | "target"
+
         for wf_name in merged_workflow_files:
             resolution = workflow_resolutions.get(wf_name)
 
@@ -97,31 +103,43 @@ class SemanticMerger:
                 # Use target workflow config
                 if wf_name in target_workflows:
                     merged[wf_name] = dict(target_workflows[wf_name])
+                    workflow_sources[wf_name] = "target"
                 elif wf_name in base_workflows:
                     merged[wf_name] = dict(base_workflows[wf_name])
+                    workflow_sources[wf_name] = "base"
             elif resolution == "take_base":
                 # Use base workflow config
                 if wf_name in base_workflows:
                     merged[wf_name] = dict(base_workflows[wf_name])
+                    workflow_sources[wf_name] = "base"
                 elif wf_name in target_workflows:
                     merged[wf_name] = dict(target_workflows[wf_name])
+                    workflow_sources[wf_name] = "target"
             else:
                 # No explicit resolution - prefer base, fall back to target
                 if wf_name in base_workflows:
                     merged[wf_name] = dict(base_workflows[wf_name])
+                    workflow_sources[wf_name] = "base"
                 elif wf_name in target_workflows:
                     merged[wf_name] = dict(target_workflows[wf_name])
+                    workflow_sources[wf_name] = "target"
 
         result["tool"]["comfygit"]["workflows"] = merged
+        return workflow_sources
 
     def _merge_nodes(
         self,
         result: dict,
         base_config: dict,
         target_config: dict,
-        workflow_resolutions: dict[str, Resolution],
+        workflow_sources: dict[str, str],
     ) -> None:
-        """Merge nodes based on which workflows need them."""
+        """Merge nodes based on which workflows need them.
+
+        Args:
+            workflow_sources: Mapping of workflow name to actual source
+                ("base" or "target") as determined by _merge_workflows.
+        """
         base_nodes = base_config.get("tool", {}).get("comfygit", {}).get("nodes", {})
         target_nodes = target_config.get("tool", {}).get("comfygit", {}).get("nodes", {})
 
@@ -136,21 +154,14 @@ class SemanticMerger:
         # Build merged nodes dict
         merged_nodes = {}
         for node_id in required_nodes:
-            # Determine which config to use based on workflow resolution
-            # Find a workflow that uses this node to determine source
-            source_config = None
-            for wf_name, wf_config in merged_workflows.items():
-                if node_id in wf_config.get("nodes", []):
-                    resolution = workflow_resolutions.get(wf_name)
-                    if resolution == "take_target":
-                        source_config = target_nodes
-                    else:
-                        source_config = base_nodes
-                    break
-
-            if source_config is None:
-                # Default to base, then target
-                source_config = base_nodes if node_id in base_nodes else target_nodes
+            # Check ALL workflows that reference this node.
+            # If any workflow sourced from target uses this node, prefer target entry.
+            uses_target = any(
+                workflow_sources.get(wf_name) == "target"
+                for wf_name, wf_config in merged_workflows.items()
+                if node_id in wf_config.get("nodes", [])
+            )
+            source_config = target_nodes if uses_target else base_nodes
 
             if node_id in source_config:
                 merged_nodes[node_id] = dict(source_config[node_id])
