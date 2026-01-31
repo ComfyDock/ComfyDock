@@ -118,10 +118,7 @@ class NodeManager:
 
         try:
             # STEP 1: Filesystem changes
-            if disabled_existed:
-                logger.info(f"Removing old disabled version of {node_info.name}")
-                rmtree(disabled_path)
-
+            # Note: .disabled is NOT deleted here — callers (update flows) clean it up on success
             shutil.copytree(cache_path, target_path, dirs_exist_ok=True)
             logger.info(f"Installed node '{node_info.name}' to {target_path}")
 
@@ -150,16 +147,22 @@ class NodeManager:
                 except Exception as fs_err:
                     logger.error(f"Failed to clean up {target_path}: {fs_err}")
 
-            # 3. Restore disabled version if it existed
-            if disabled_existed:
-                try:
-                    # Note: We can't restore disabled_path since we already deleted it
-                    # This is acceptable - user can re-disable manually if needed
-                    logger.debug("Cannot restore disabled version (already removed)")
-                except Exception:
-                    pass
+            # 3. Re-sync venv to match restored pyproject.toml
+            try:
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            except Exception as sync_err:
+                logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
+                logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
 
             raise CDEnvironmentError(f"Failed to install node '{node_info.name}': {e}") from e
+
+        # Success — clean up .disabled if it existed (left by update flows)
+        if disabled_existed:
+            try:
+                rmtree(disabled_path)
+                logger.debug(f"Cleaned up old disabled version of {node_info.name}")
+            except Exception:
+                pass  # Non-critical cleanup
 
         logger.info(f"Successfully added node: {node_info.name}")
         return node_info
@@ -354,9 +357,17 @@ class NodeManager:
                             )
                         )
 
-            # Remove existing node (for both dev and regular nodes after confirmation)
+            # Safely replace existing node using .disabled backup pattern
+            # (matching update flows — old node preserved until new install succeeds)
             logger.info(f"Replacing {node_info.name} {existing_node.version} → {node_info.version}")
-            self.remove_node(existing_identifier)
+            node_path = self.custom_nodes_path / node_info.name
+            disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
+            if node_path.exists():
+                if disabled_path.exists():
+                    rmtree(disabled_path)
+                shutil.move(node_path, disabled_path)
+            self.pyproject.nodes.remove(existing_identifier)
+            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
         # Check for filesystem conflicts before proceeding
         if not force:
@@ -440,10 +451,7 @@ class NodeManager:
                 logger.info(f"Auto-applied constraint: {constraint}")
 
             # STEP 1: Filesystem changes
-            if disabled_existed:
-                logger.info(f"Removing old disabled version of {node_info.name}")
-                rmtree(disabled_path)
-
+            # Note: .disabled is NOT deleted here — callers clean it up on success
             shutil.copytree(cache_path, target_path, dirs_exist_ok=True)
             logger.info(f"Installed node '{node_info.name}' to {target_path}")
 
@@ -472,14 +480,22 @@ class NodeManager:
                 except Exception as fs_err:
                     logger.warning(f"Could not remove {target_path} during rollback: {fs_err}")
 
-            # 3. Note about disabled directory (cannot restore - already deleted)
-            if disabled_existed:
-                logger.warning(
-                    f"Cannot restore {disabled_path.name} "
-                    f"(was deleted before rollback)"
-                )
+            # 3. Restore from .disabled backup if replacement was in progress
+            if disabled_existed and disabled_path.exists() and not target_path.exists():
+                try:
+                    shutil.move(disabled_path, target_path)
+                    logger.info(f"Restored old version of '{node_info.name}' from backup")
+                except Exception as restore_err:
+                    logger.error(f"Failed to restore old version: {restore_err}")
 
-            # 4. Re-raise with appropriate error type
+            # 4. Re-sync venv to match restored pyproject.toml
+            try:
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            except Exception as sync_err:
+                logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
+                logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
+
+            # 5. Re-raise with appropriate error type
             from ..models.exceptions import UVCommandError
             from ..utils.uv_error_handler import format_uv_error_for_user, log_uv_error
 
@@ -499,6 +515,14 @@ class NodeManager:
                 ) from e
 
         # === END TRANSACTIONAL SECTION ===
+
+        # Success — clean up .disabled if it existed
+        if disabled_existed:
+            try:
+                rmtree(disabled_path)
+                logger.debug(f"Cleaned up old disabled version of {node_info.name}")
+            except Exception:
+                pass  # Non-critical cleanup
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
