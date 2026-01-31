@@ -114,7 +114,6 @@ class NodeManager:
         pyproject_snapshot = self.pyproject.snapshot()
         target_path = self.custom_nodes_path / node_info.name
         disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
-        disabled_existed = disabled_path.exists()
 
         try:
             # STEP 1: Filesystem changes
@@ -156,8 +155,8 @@ class NodeManager:
 
             raise CDEnvironmentError(f"Failed to install node '{node_info.name}': {e}") from e
 
-        # Success — clean up .disabled if it existed (left by update flows)
-        if disabled_existed:
+        # Success — clean up .disabled if present (left by update flows)
+        if disabled_path.exists():
             try:
                 rmtree(disabled_path)
                 logger.debug(f"Cleaned up old disabled version of {node_info.name}")
@@ -283,6 +282,7 @@ class NodeManager:
             logger.info(f"Enhanced node info with dual sources: registry_id={registry_id}, github_url={github_url}")
 
         # Check for existing installation and handle version replacement
+        is_replacement = False
         existing_entry = self._find_node_by_name(node_info.name)
         if existing_entry:
             existing_identifier, existing_node = existing_entry
@@ -357,20 +357,14 @@ class NodeManager:
                             )
                         )
 
-            # Safely replace existing node using .disabled backup pattern
-            # (matching update flows — old node preserved until new install succeeds)
+            # Mark as replacement — actual removal happens inside transactional section
+            # so the snapshot captures pre-replacement state for proper rollback
             logger.info(f"Replacing {node_info.name} {existing_node.version} → {node_info.version}")
-            node_path = self.custom_nodes_path / node_info.name
-            disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
-            if node_path.exists():
-                if disabled_path.exists():
-                    rmtree(disabled_path)
-                shutil.move(node_path, disabled_path)
-            self.pyproject.nodes.remove(existing_identifier)
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            is_replacement = True
 
         # Check for filesystem conflicts before proceeding
-        if not force:
+        # Skip during replacement — directory is expected to exist (it's the node we're replacing)
+        if not force and not is_replacement:
             has_conflict, conflict_msg, conflict_context = self._check_filesystem_conflict(
                 node_info.name,
                 expected_repo_url=node_info.repository
@@ -442,16 +436,24 @@ class NodeManager:
         pyproject_snapshot = self.pyproject.snapshot()
         target_path = self.custom_nodes_path / node_info.name
         disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
-        disabled_existed = disabled_path.exists()
 
         try:
-            # STEP 0: Apply auto-discovered constraints (transactional)
+            # STEP 0a: Handle replacement — back up old node (inside transaction for proper rollback)
+            if is_replacement:
+                if target_path.exists():
+                    if disabled_path.exists():
+                        rmtree(disabled_path)
+                    shutil.move(target_path, disabled_path)
+                self.pyproject.nodes.remove(existing_identifier)
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+
+            # STEP 0b: Apply auto-discovered constraints (transactional)
             for constraint in discovered_constraints:
                 self.pyproject.uv_config.add_constraint(constraint)
                 logger.info(f"Auto-applied constraint: {constraint}")
 
             # STEP 1: Filesystem changes
-            # Note: .disabled is NOT deleted here — callers clean it up on success
+            # Note: .disabled is NOT deleted here — cleaned up on success below
             shutil.copytree(cache_path, target_path, dirs_exist_ok=True)
             logger.info(f"Installed node '{node_info.name}' to {target_path}")
 
@@ -481,7 +483,7 @@ class NodeManager:
                     logger.warning(f"Could not remove {target_path} during rollback: {fs_err}")
 
             # 3. Restore from .disabled backup if replacement was in progress
-            if disabled_existed and disabled_path.exists() and not target_path.exists():
+            if disabled_path.exists() and not target_path.exists():
                 try:
                     shutil.move(disabled_path, target_path)
                     logger.info(f"Restored old version of '{node_info.name}' from backup")
@@ -516,8 +518,8 @@ class NodeManager:
 
         # === END TRANSACTIONAL SECTION ===
 
-        # Success — clean up .disabled if it existed
-        if disabled_existed:
+        # Success — clean up .disabled if present (from replacement or previous operation)
+        if disabled_path.exists():
             try:
                 rmtree(disabled_path)
                 logger.debug(f"Cleaned up old disabled version of {node_info.name}")

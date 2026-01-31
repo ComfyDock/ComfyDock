@@ -1,9 +1,6 @@
 """Tests for NodeManager utilities."""
 
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, call
-import tempfile
-import shutil
+from unittest.mock import Mock
 
 import pytest
 
@@ -279,3 +276,6 @@ class TestInstallTransactionSafety:
             "should have been restored from .disabled backup"
         )
         assert (old_node_dir / "node.py").read_text() == "old version code"
+
+        # Pyproject must be restored to pre-replacement state (old node still tracked)
+        mock_pyproject.restore.assert_called_once_with({"snapshot": "data"})
