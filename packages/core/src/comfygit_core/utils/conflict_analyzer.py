@@ -328,7 +328,7 @@ def _get_new_package_chains(
                     via_pkgs = new_pkg.split("==")[0]
 
                 for via in via_pkgs.split(","):
-                    via = via.strip().lower()
+                    via = normalize_package_name_pep503(via.strip())
                     if via and current_pkg:
                         graph[via].append(current_pkg)
             elif line.startswith("#"):
@@ -336,14 +336,14 @@ def _get_new_package_chains(
                 continue
             elif "==" in line:
                 # Package line
-                current_pkg = line.split("==")[0].lower()
+                current_pkg = normalize_package_name_pep503(line.split("==")[0])
 
         # BFS to find all paths from root to target
         chains = []
-        target_lower = target.lower()
-        root = new_pkg.split("==")[0].lower()
+        target_normalized = normalize_package_name_pep503(target)
+        root = normalize_package_name_pep503(new_pkg.split("==")[0])
 
-        if target_lower not in graph.values() and target_lower not in [
+        if target_normalized not in graph.values() and target_normalized not in [
             item for sublist in graph.values() for item in sublist
         ]:
             return []
@@ -355,7 +355,7 @@ def _get_new_package_chains(
         while queue:
             node, path = queue.pop(0)
 
-            if node == target_lower:
+            if node == target_normalized:
                 # Find the constraint source (second to last in chain)
                 constraint_source = path[-2] if len(path) > 1 else root
                 chains.append(
