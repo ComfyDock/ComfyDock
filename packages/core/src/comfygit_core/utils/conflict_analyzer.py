@@ -13,6 +13,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from packaging.utils import canonicalize_name
+
 from ..logging.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -24,8 +26,9 @@ UV_TIMEOUT = 30
 def normalize_package_name_pep503(name: str) -> str:
     """Normalize package name per PEP 503.
 
-    Replaces underscores, dots, and runs of separators with single dashes,
-    and lowercases the result.
+    Uses packaging.utils.canonicalize_name which implements the official PEP 503
+    normalization: converts to lowercase and replaces runs of separators (-, _, .)
+    with single dashes.
 
     Args:
         name: Package name to normalize
@@ -33,7 +36,7 @@ def normalize_package_name_pep503(name: str) -> str:
     Returns:
         Normalized package name (e.g., "Hugging_Face.Hub" -> "hugging-face-hub")
     """
-    return re.sub(r"[-_.]+", "-", name).lower()
+    return canonicalize_name(name)
 
 
 def parse_constraint_string(constraint: str) -> tuple[str, str] | None:
