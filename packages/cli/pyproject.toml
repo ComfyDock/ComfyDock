@@ -9,6 +9,11 @@ dependencies = [
     "argcomplete>=3.5.0",
 ]
 
+[project.urls]
+Documentation = "https://docs.comfygit.org/"
+Repository = "https://github.com/comfygit-ai/comfygit"
+Issues = "https://github.com/comfygit-ai/comfygit/issues"
+
 [project.scripts]
 comfygit = "comfygit_cli.cli:main"
 cg = "comfygit_cli.cli:main"

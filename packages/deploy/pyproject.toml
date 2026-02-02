@@ -10,6 +10,11 @@ dependencies = [
     "zeroconf>=0.131.0",
 ]
 
+[project.urls]
+Documentation = "https://docs.comfygit.org/"
+Repository = "https://github.com/comfygit-ai/comfygit"
+Issues = "https://github.com/comfygit-ai/comfygit/issues"
+
 [project.scripts]
 cg-deploy = "comfygit_deploy.cli:main"
 

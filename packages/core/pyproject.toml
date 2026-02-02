@@ -18,6 +18,11 @@ dependencies = [
     "xxhash>=2.0.0",
 ]
 
+[project.urls]
+Documentation = "https://docs.comfygit.org/"
+Repository = "https://github.com/comfygit-ai/comfygit"
+Issues = "https://github.com/comfygit-ai/comfygit/issues"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
