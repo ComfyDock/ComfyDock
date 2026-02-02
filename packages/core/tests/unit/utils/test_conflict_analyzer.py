@@ -3,8 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from comfygit_core.utils.conflict_analyzer import (
     ConflictAnalysis,
     ConflictChain,
@@ -12,10 +10,9 @@ from comfygit_core.utils.conflict_analyzer import (
     check_specifier_compatibility,
     format_conflict_report,
     get_existing_requirements,
-    parse_constraint_string,
     parse_conflict_from_stderr,
+    parse_constraint_string,
 )
-
 
 # Real UV error output from depthflow conflict scenario
 DEPTHFLOW_UV_ERROR = """
@@ -306,8 +303,8 @@ class TestNormalizePackageNamePep503:
 
     def test_matches_packaging_utils_canonicalize(self):
         """Should match packaging.utils.canonicalize_name exactly."""
-        from packaging.utils import canonicalize_name
         from comfygit_core.utils.conflict_analyzer import normalize_package_name_pep503
+        from packaging.utils import canonicalize_name
 
         test_cases = [
             "Hugging_Face.Hub",

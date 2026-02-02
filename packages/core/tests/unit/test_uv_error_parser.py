@@ -1,5 +1,4 @@
 """Tests for UV error parsing utilities."""
-import pytest
 
 from comfygit_core.utils.uv_error_handler import parse_failed_dependency_group
 

@@ -3,7 +3,6 @@
 This replaces the version numbering system (v1, v2, v3) with native git commit hashes.
 """
 
-import pytest
 import sys
 from pathlib import Path
 

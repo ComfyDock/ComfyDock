@@ -5,7 +5,6 @@ useful for development testing with multiple workspaces sharing a cache.
 """
 import json
 
-import pytest
 from comfygit_core.models.workspace_config import WorkspaceConfig
 from comfygit_core.repositories.workspace_config_repository import WorkspaceConfigRepository
 
@@ -106,7 +105,6 @@ class TestWorkspaceConfigRepositoryExternalUvCache:
 
     def test_set_external_uv_cache_persists_path(self, tmp_path):
         """set_external_uv_cache should persist the path to config."""
-        from pathlib import Path
 
         config_file = tmp_path / "workspace.json"
         config_file.write_text(json.dumps({

@@ -1,16 +1,13 @@
 """Integration tests for model download flow."""
 
 import http.server
-import json
 import socketserver
-import tempfile
 import threading
 from pathlib import Path
 
 import pytest
-
 from comfygit_core.repositories.model_repository import ModelRepository
-from comfygit_core.services.model_downloader import ModelDownloader, DownloadRequest
+from comfygit_core.services.model_downloader import DownloadRequest, ModelDownloader
 
 
 @pytest.fixture

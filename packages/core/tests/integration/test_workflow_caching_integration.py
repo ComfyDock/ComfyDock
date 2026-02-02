@@ -8,16 +8,15 @@ Tests end-to-end workflow caching behavior:
 - Performance improvements
 """
 import json
+import sys
 import time
 from pathlib import Path
-import pytest
-import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from conftest import (
-    simulate_comfyui_save_workflow,
     load_workflow_fixture,
+    simulate_comfyui_save_workflow,
 )
 
 
@@ -109,7 +108,7 @@ class TestCacheInvalidationOnWorkflowEdit:
 
         # Edit workflow1 (add node)
         workflow_path = test_env.comfyui_path / "user" / "default" / "workflows" / "workflow1.json"
-        with open(workflow_path, 'r') as f:
+        with open(workflow_path) as f:
             wf_data = json.load(f)
         wf_data["nodes"].append({
             "id": 999,

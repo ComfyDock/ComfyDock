@@ -18,10 +18,10 @@ class CustomNodeScanner:
 
     def scan_node(self, node_path: Path) -> NodeDependencies:
         """Scan a custom node directory for dependencies.
-        
+
         Args:
             node_path: Path to the custom node directory
-            
+
         Returns:
             NodeDependencies with found requirements
         """
@@ -89,10 +89,10 @@ class CustomNodeScanner:
 
     def find_all_requirements(self, node_path: Path) -> list[Path]:
         """Find all requirements files in a node (including subdirectories).
-        
+
         Args:
             node_path: Path to the custom node directory
-            
+
         Returns:
             List of paths to requirements files
         """

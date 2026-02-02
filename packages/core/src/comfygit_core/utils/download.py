@@ -13,11 +13,11 @@ logger = get_logger(__name__)
 
 def download_and_extract_archive(url: str, target_path: Path) -> None:
     """Download and extract an archive file with automatic format detection.
-    
+
     Args:
         url: URL of the archive to download
         target_path: Directory to extract contents to
-        
+
     Raises:
         OSError: If download fails
         ValueError: If archive format is unsupported or corrupted
@@ -47,14 +47,14 @@ def download_and_extract_archive(url: str, target_path: Path) -> None:
 
 def download_file(url: str, suffix: str | None = None) -> Path:
     """Download a file to a temporary location.
-    
+
     Args:
         url: URL to download from
         suffix: Optional file suffix for the temp file
-        
+
     Returns:
         Path to downloaded file
-        
+
     Raises:
         OSError: If download fails
     """
@@ -88,17 +88,17 @@ def download_file(url: str, suffix: str | None = None) -> Path:
 
 def extract_archive(archive_path: Path, target_path: Path) -> None:
     """Extract an archive with automatic format detection.
-    
+
     Tries multiple archive formats until one succeeds:
     - ZIP
     - TAR.GZ (gzipped tar)
     - TAR (plain tar)
     - TAR.BZ2 (bzip2 tar)
-    
+
     Args:
         archive_path: Path to archive file
         target_path: Directory to extract to
-        
+
     Raises:
         ValueError: If file is not a supported archive format
         OSError: If file system operation fails (permissions, disk space, etc.)
@@ -141,7 +141,7 @@ def extract_archive(archive_path: Path, target_path: Path) -> None:
 
 def _try_extract_zip(archive_path: Path, target_path: Path) -> None:
     """Try to extract as ZIP archive.
-    
+
     Raises:
         zipfile.BadZipFile: If not a valid ZIP file
         OSError: If extraction fails
@@ -157,7 +157,7 @@ def _try_extract_zip(archive_path: Path, target_path: Path) -> None:
 
 def _try_extract_tar_gz(archive_path: Path, target_path: Path) -> None:
     """Try to extract as gzipped TAR archive.
-    
+
     Raises:
         tarfile.ReadError: If not a valid gzipped TAR file
         OSError: If extraction fails
@@ -173,7 +173,7 @@ def _try_extract_tar_gz(archive_path: Path, target_path: Path) -> None:
 
 def _try_extract_tar(archive_path: Path, target_path: Path) -> None:
     """Try to extract as plain TAR archive.
-    
+
     Raises:
         tarfile.ReadError: If not a valid TAR file
         OSError: If extraction fails
@@ -189,7 +189,7 @@ def _try_extract_tar(archive_path: Path, target_path: Path) -> None:
 
 def _try_extract_tar_bz2(archive_path: Path, target_path: Path) -> None:
     """Try to extract as bzip2 TAR archive.
-    
+
     Raises:
         tarfile.ReadError: If not a valid bzip2 TAR file
         OSError: If extraction fails

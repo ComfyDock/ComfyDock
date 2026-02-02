@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from comfygit_core.configs.package_config import PackageConfigManager
 from comfygit_core.services.node_lookup_service import NodeLookupService
 

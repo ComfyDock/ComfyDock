@@ -6,7 +6,6 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
 
 from comfygit_core.logging.logging_config import get_logger, setup_logging
 from comfygit_core.utils.input_signature import (
@@ -26,7 +25,7 @@ class GlobalMappingsBuilder:
         self.total_nodes = 0
         self.total_signatures = 0
 
-    def build_mappings(self, registry_cache: Path) -> Dict:
+    def build_mappings(self, registry_cache: Path) -> dict:
         """Build mappings from cached registry data."""
         start_time = time.time()
         logger.info("Starting mappings build from cache")
@@ -36,7 +35,7 @@ class GlobalMappingsBuilder:
             logger.error(f"Registry cache not found: {registry_cache}")
             return {}
 
-        with open(registry_cache, 'r') as f:
+        with open(registry_cache) as f:
             cache_data = json.load(f)
 
         nodes = cache_data.get("nodes", [])
@@ -76,7 +75,7 @@ class GlobalMappingsBuilder:
             "packages": self.packages
         }
 
-    def _process_node(self, node: Dict):
+    def _process_node(self, node: dict):
         """Process a single node package from cache."""
         package_id = node["id"]
 
@@ -170,7 +169,7 @@ class GlobalMappingsBuilder:
             # Fallback to string comparison
             return (0, 0, 0)
 
-    def _process_comfy_nodes(self, package_id: str, version: str, comfy_nodes: List[Dict]):
+    def _process_comfy_nodes(self, package_id: str, version: str, comfy_nodes: list[dict]):
         """Process comfy-nodes metadata and create mappings."""
         for node_data in comfy_nodes:
             display_name = node_data.get("comfy_node_name", "")

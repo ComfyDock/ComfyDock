@@ -310,7 +310,7 @@ class PyprojectManager:
 
     def get_manifest_state(self) -> str:
         """Get the current manifest state.
-        
+
         Returns:
             'local' or 'exportable'
         """
@@ -658,7 +658,7 @@ class BaseHandler:
 
     def save(self, config: dict) -> None:
         """Save configuration through manager.
-        
+
         Raises:
             CDPyprojectError
         """
@@ -1061,7 +1061,7 @@ class UVConfigHandler(BaseHandler):
         to_add = set(packages) - current
 
         if to_add:
-            all_exclusions = sorted(list(current | set(packages)))
+            all_exclusions = sorted(current | set(packages))
             config['tool']['uv']['exclude-dependencies'] = all_exclusions
             self.save(config)
             logger.info(f"Added package exclusions: {sorted(to_add)}")
@@ -1702,7 +1702,7 @@ class ModelHandler(BaseHandler):
         referenced_hashes = set()
         all_workflows = config.get('tool', {}).get('comfygit', {}).get('workflows', {})
 
-        for workflow_name, workflow_data in all_workflows.items():
+        for _workflow_name, workflow_data in all_workflows.items():
             workflow_models_data = workflow_data.get('models', [])
             for model_data in workflow_models_data:
                 # Only track resolved models (unresolved models aren't in global table)

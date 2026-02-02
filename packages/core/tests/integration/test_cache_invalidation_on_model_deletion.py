@@ -3,9 +3,9 @@
 This test reproduces the bug where workflow caches are not invalidated when
 the model index changes due to model deletion, causing stale resolutions.
 """
+from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
-from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
 
 
 class TestWorkflowCacheInvalidationOnModelDeletion:

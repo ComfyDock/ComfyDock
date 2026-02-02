@@ -1,6 +1,5 @@
 """Integration tests for package configuration."""
 
-from pathlib import Path
 
 
 def test_new_environment_has_package_config(test_workspace, mock_comfyui_clone, mock_github_api):

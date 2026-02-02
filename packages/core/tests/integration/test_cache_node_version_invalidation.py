@@ -9,15 +9,14 @@ Scenario:
 3. Update node package version
 4. Re-analyze workflow - cache should invalidate due to version change
 """
-import pytest
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from conftest import (
-    simulate_comfyui_save_workflow,
     load_workflow_fixture,
+    simulate_comfyui_save_workflow,
 )
 
 
@@ -87,7 +86,7 @@ class TestCacheInvalidationOnNodeVersionChange:
         cache = test_env.workflow_manager.workflow_cache
 
         # Get workflow path for cache lookup
-        workflow_path = test_env.workflow_manager.get_workflow_path("test_workflow")
+        test_env.workflow_manager.get_workflow_path("test_workflow")
 
         # Compute context hash with new version
         hash_with_new_version = cache._compute_resolution_context_hash(

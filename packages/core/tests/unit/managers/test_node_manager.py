@@ -3,10 +3,9 @@
 from unittest.mock import Mock
 
 import pytest
-
 from comfygit_core.managers.node_manager import NodeManager
-from comfygit_core.models.shared import NodeInfo
 from comfygit_core.models.exceptions import CDEnvironmentError, CDNodeConflictError
+from comfygit_core.models.shared import NodeInfo
 from comfygit_core.utils.git import is_github_url
 
 

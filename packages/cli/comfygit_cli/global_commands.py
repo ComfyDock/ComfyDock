@@ -638,7 +638,7 @@ class GlobalCommands:
             # Show dependency group summary if any failed
             if callbacks_instance.dep_group_failures:
                 print("\n⚠️  Some optional dependency groups failed to install:")
-                for group_name, error in callbacks_instance.dep_group_failures:
+                for group_name, _error in callbacks_instance.dep_group_failures:
                     print(f"   ✗ {group_name}")
                 print("\nSome functionality may be degraded or some nodes may not work properly.")
                 print("The environment will still function with reduced capabilities.")

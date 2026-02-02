@@ -1,6 +1,5 @@
 """Tests for PyTorch utility functions."""
 
-import pytest
 
 from comfygit_core.utils.pytorch import extract_backend_from_version, get_pytorch_index_url
 

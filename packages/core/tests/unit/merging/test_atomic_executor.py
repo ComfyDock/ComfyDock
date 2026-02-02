@@ -3,9 +3,7 @@
 Tests the atomic merge execution with rollback on failure.
 """
 
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from comfygit_core.merging.atomic_executor import AtomicMergeExecutor
 from comfygit_core.models.merge_plan import MergePlan

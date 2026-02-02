@@ -13,16 +13,16 @@ logger = get_logger(__name__)
 
 def parse_uv_conflicts(error_text: str, max_lines: int = 3) -> list[str]:
     """Extract specific conflict messages from UV error output.
-    
+
     Looks for patterns like:
     - "X and Y are incompatible"
     - "X depends on Y but Z needs different version"
     - Conclusion statements about incompatibilities
-    
+
     Args:
         error_text: Raw UV error output
         max_lines: Maximum number of conflict messages to return
-        
+
     Returns:
         List of simplified conflict messages
     """
@@ -72,10 +72,10 @@ def parse_uv_conflicts(error_text: str, max_lines: int = 3) -> list[str]:
 
 def parse_uv_resolution(output: str | None) -> dict[str, str]:
     """Parse UV resolution output to extract package versions.
-    
+
     Args:
         output: UV resolution output text
-        
+
     Returns:
         Dict mapping package names to resolved versions
     """
@@ -102,11 +102,11 @@ def parse_uv_resolution(output: str | None) -> dict[str, str]:
 
 def simplify_conflict_message(full_error: str, max_lines: int = 3) -> list[str]:
     """Simplify a full UV conflict error into user-friendly messages.
-    
+
     Args:
         full_error: Complete UV error message
         max_lines: Maximum number of simplified messages to return
-        
+
     Returns:
         List of simplified, user-friendly conflict descriptions
     """
@@ -142,10 +142,10 @@ def simplify_conflict_message(full_error: str, max_lines: int = 3) -> list[str]:
 
 def extract_conflicting_packages(error_text: str) -> list[tuple[str, str]]:
     """Extract pairs of conflicting packages from UV error.
-    
+
     Args:
         error_text: UV error output
-        
+
     Returns:
         List of tuples (package1, package2) that conflict
     """
@@ -182,10 +182,10 @@ def extract_conflicting_packages(error_text: str) -> list[tuple[str, str]]:
 
 def _clean_package_name(name: str) -> str:
     """Clean up a package name by removing version specs and extras.
-    
+
     Args:
         name: Raw package name (might include version specs)
-        
+
     Returns:
         Clean package name
     """
@@ -204,10 +204,10 @@ def _clean_package_name(name: str) -> str:
 
 def _clean_error_line(line: str) -> str:
     """Clean up an error line for display.
-    
+
     Args:
         line: Raw error line
-        
+
     Returns:
         Cleaned error line
     """

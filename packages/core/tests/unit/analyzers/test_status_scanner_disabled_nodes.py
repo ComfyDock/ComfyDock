@@ -1,9 +1,6 @@
 """Unit tests for StatusScanner disabled node handling."""
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from comfygit_core.analyzers.status_scanner import StatusScanner
 from comfygit_core.models.shared import NodeInfo

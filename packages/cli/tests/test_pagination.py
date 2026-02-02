@@ -51,7 +51,7 @@ def test_paginate_shows_first_page_when_tty():
 
     # Should have printed pagination controls
     calls = [str(call) for call in mock_print.call_args_list]
-    output = ''.join(calls)
+    ''.join(calls)
 
     # Should contain page indicator
     assert any("Page" in call for call in calls)

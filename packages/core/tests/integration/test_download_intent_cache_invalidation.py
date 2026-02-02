@@ -18,8 +18,6 @@ Expected behavior:
 from pathlib import Path
 from unittest.mock import Mock
 
-import pytest
-
 from comfygit_core.models.workflow import ResolvedModel
 from conftest import simulate_comfyui_save_workflow
 from helpers.workflow_builder import WorkflowBuilder
@@ -70,7 +68,7 @@ class TestDownloadIntentCacheInvalidation:
         )
 
         # Run fix_resolution which writes download intent via _write_single_model_resolution
-        result = test_env.workflow_manager.fix_resolution(
+        test_env.workflow_manager.fix_resolution(
             resolution1,
             model_strategy=mock_strategy
         )

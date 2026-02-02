@@ -1,19 +1,16 @@
 """Tests for symlink utility functions."""
 import os
-import shutil
 import subprocess
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
+from comfygit_core.models.exceptions import CDEnvironmentError
 from comfygit_core.utils.symlink_utils import (
-    is_link,
     create_platform_link,
     create_windows_junction,
+    is_link,
     is_safe_to_delete,
 )
-from comfygit_core.models.exceptions import CDEnvironmentError
 
 
 class TestIsLink:

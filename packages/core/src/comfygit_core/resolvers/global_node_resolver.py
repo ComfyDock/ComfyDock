@@ -264,7 +264,7 @@ class GlobalNodeResolver:
     def search_packages(
         self,
         node_type: str,
-        installed_packages: dict = {},
+        installed_packages: dict = None,
         include_registry: bool = True,
         limit: int = 10
     ) -> list[ScoredPackageMatch]:
@@ -283,6 +283,8 @@ class GlobalNodeResolver:
             Scored matches sorted by relevance (highest first)
         """
 
+        if installed_packages is None:
+            installed_packages = {}
         if not node_type:
             return []
 

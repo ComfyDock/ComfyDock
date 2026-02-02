@@ -181,7 +181,7 @@ def calculate_directory_size(path: Path) -> int:
     """
     total_size = 0
     try:
-        for dirpath, dirnames, filenames in os.walk(path):
+        for dirpath, _dirnames, filenames in os.walk(path):
             for filename in filenames:
                 filepath = Path(dirpath) / filename
                 if filepath.exists():

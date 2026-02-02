@@ -11,7 +11,6 @@ from pathlib import Path
 core_tests_path = Path(__file__).parent.parent.parent / "core" / "tests"
 sys.path.insert(0, str(core_tests_path))
 
-from comfygit_core.models.shared import NodeInfo
 
 
 class TestStatusDisabledNodesDisplay:

@@ -1,8 +1,6 @@
 """Test batch node add command functionality."""
-from unittest.mock import MagicMock, patch
 from argparse import Namespace
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from comfygit_cli.env_commands import EnvironmentCommands
 
@@ -36,7 +34,7 @@ class TestBatchNodeAdd:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_add(args)
 
         # Verify single node flow was used (add_node called, not batch)
@@ -77,7 +75,7 @@ class TestBatchNodeAdd:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_add(args)
 
         # Verify batch flow was used
@@ -158,7 +156,7 @@ class TestBatchNodeAdd:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_add(args)
 
         # Verify batch was called with all three nodes

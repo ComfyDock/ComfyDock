@@ -1,5 +1,4 @@
 """Helper for populating model index with test data."""
-from pathlib import Path
 from hashlib import sha256
 
 

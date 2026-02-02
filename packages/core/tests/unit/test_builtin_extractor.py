@@ -1,6 +1,6 @@
 """Tests for dynamic builtin node extraction utility."""
 import json
-from pathlib import Path
+
 import pytest
 
 
@@ -126,7 +126,7 @@ NODE_CLASS_MAPPINGS = {"TestNode": TestNode}
 ''')
 
         output_path = tmp_path / "builtins.json"
-        result = extract_comfyui_builtins(comfyui_path, output_path)
+        extract_comfyui_builtins(comfyui_path, output_path)
 
         # Verify JSON can be read back
         with open(output_path) as f:
@@ -164,7 +164,6 @@ class TestNodeClassifierWithEnvironment:
     def test_classifier_loads_from_environment(self, tmp_path):
         """Test loading builtins from .cec/comfyui_builtins.json."""
         from comfygit_core.analyzers.node_classifier import NodeClassifier
-        from comfygit_core.models.workflow import WorkflowNode
 
         # Create .cec directory with builtins config
         cec_path = tmp_path / ".cec"
@@ -298,8 +297,9 @@ class TestWorkflowDependencyParserWithCecPath:
 
     def test_parser_uses_environment_builtins(self, tmp_path, workflow_fixtures):
         """Test that parser uses environment-specific builtins for classification."""
-        from comfygit_core.analyzers.workflow_dependency_parser import WorkflowDependencyParser
         import json
+
+        from comfygit_core.analyzers.workflow_dependency_parser import WorkflowDependencyParser
 
         # Create environment config where KSampler is NOT a builtin
         cec_path = tmp_path / ".cec"

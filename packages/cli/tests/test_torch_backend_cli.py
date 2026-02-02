@@ -285,7 +285,7 @@ class TestRunBehavior:
             args=[]
         )
 
-        with pytest.raises(SystemExit) as exc_info:
+        with pytest.raises(SystemExit):
             cmd.run(args)
 
         # Should have called ensure_backend which reads from file or probes

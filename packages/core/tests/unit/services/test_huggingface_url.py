@@ -1,6 +1,5 @@
 """Unit tests for HuggingFace URL parser module."""
 
-import pytest
 
 from comfygit_core.services.huggingface_url import parse_huggingface_url
 

@@ -1,8 +1,6 @@
 """Tests for UserContentSymlinkManager."""
-from pathlib import Path
 
 import pytest
-
 from comfygit_core.managers.user_content_symlink_manager import UserContentSymlinkManager
 from comfygit_core.models.exceptions import CDEnvironmentError
 from comfygit_core.utils.symlink_utils import is_link
@@ -210,7 +208,7 @@ class TestMigrateExistingData:
         (manager.input_link / "existing.jpg").write_text("env_version")
         (manager.input_link / "new.jpg").write_text("new")
 
-        stats = manager.migrate_existing_data()
+        manager.migrate_existing_data()
 
         # Only new.jpg moved (existing.jpg skipped)
         assert (manager.input_target / "existing.jpg").read_text() == "workspace_version"

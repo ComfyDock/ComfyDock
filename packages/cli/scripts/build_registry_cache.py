@@ -7,7 +7,6 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from comfygit_core.logging.logging_config import get_logger, setup_logging
 from registry_client import RegistryClient
@@ -43,11 +42,11 @@ class RegistryCacheBuilder:
     async def build_cache(
         self,
         output_file: Path,
-        input_cache: Optional[Path] = None,
+        input_cache: Path | None = None,
         fetch_nodes: bool = True,
         fetch_versions: bool = True,
         fetch_metadata: bool = True,
-        pages: Optional[int] = None
+        pages: int | None = None
     ):
         """Build registry cache with progressive enhancement."""
         start_time = time.time()
@@ -92,7 +91,7 @@ class RegistryCacheBuilder:
         elapsed = time.time() - start_time
         self._print_summary(elapsed)
 
-    async def _phase1_fetch_nodes(self, client: RegistryClient, output_file: Path, max_pages: Optional[int]):
+    async def _phase1_fetch_nodes(self, client: RegistryClient, output_file: Path, max_pages: int | None):
         """Phase 1: Fetch basic node information."""
         logger.info("=" * 60)
         logger.info("PHASE 1: Fetching basic node information")
@@ -222,7 +221,7 @@ class RegistryCacheBuilder:
 
             # Process batch concurrently
             tasks = []
-            for node_id, node in batch:
+            for node_id, _node in batch:
                 task = asyncio.create_task(
                     self._fetch_node_versions_incremental(client, node_id)
                 )
@@ -443,7 +442,7 @@ class RegistryCacheBuilder:
 
     def _load_cache(self, cache_file: Path):
         """Load existing cache data."""
-        with open(cache_file, 'r') as f:
+        with open(cache_file) as f:
             cache_data = json.load(f)
 
         # Convert nodes list to dict for efficient lookups

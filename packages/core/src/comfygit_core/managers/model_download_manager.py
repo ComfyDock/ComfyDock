@@ -21,7 +21,7 @@ class ModelDownloadManager:
 
     def __init__(self, model_repository: ModelRepository, cache_dir: Path):
         """Initialize ModelDownloadManager.
-        
+
         Args:
             model_manager: ModelManager instance for indexing
             cache_dir: Directory to store downloaded models (defaults to workspace/models)
@@ -32,14 +32,14 @@ class ModelDownloadManager:
 
     def download_from_url(self, url: str, filename: str | None = None) -> ModelWithLocation:
         """Download model from URL and add to index.
-        
+
         Args:
             url: Source URL to download from
             filename: Override filename (extracted from URL if not provided)
-            
+
         Returns:
             ModelWithLocation entry for the downloaded model
-            
+
         Raises:
             ComfyDockError: If download or indexing fails
         """
@@ -84,11 +84,11 @@ class ModelDownloadManager:
 
     def _download_file(self, url: str, target_path: Path) -> None:
         """Download file from URL to target path.
-        
+
         Args:
             url: URL to download
             target_path: Path to save file
-            
+
         Raises:
             ComfyDockError: If download fails
         """
@@ -111,10 +111,10 @@ class ModelDownloadManager:
 
     def _parse_source_url(self, url: str) -> tuple[str, dict]:
         """Parse URL to determine source type and extract metadata.
-        
+
         Args:
             url: Source URL
-            
+
         Returns:
             Tuple of (source_type, metadata_dict)
         """
@@ -143,10 +143,10 @@ class ModelDownloadManager:
 
     def _extract_filename_from_url(self, url: str) -> str:
         """Extract filename from URL.
-        
+
         Args:
             url: Source URL
-            
+
         Returns:
             Extracted filename
         """
@@ -177,10 +177,10 @@ class ModelDownloadManager:
 
     def get_download_info(self, url: str) -> dict:
         """Get information about what would be downloaded without downloading.
-        
+
         Args:
             url: Source URL
-            
+
         Returns:
             Dictionary with download information
         """
@@ -204,10 +204,10 @@ class ModelDownloadManager:
 
     def bulk_download(self, urls: list[str]) -> dict[str, ModelWithLocation | Exception]:
         """Download multiple models from URLs.
-        
+
         Args:
             urls: List of URLs to download
-            
+
         Returns:
             Dictionary mapping URLs to ModelIndex or Exception
         """
@@ -226,10 +226,10 @@ class ModelDownloadManager:
 
     def redownload_from_sources(self, model_hash: str) -> ModelWithLocation | None:
         """Attempt to redownload a model from its known sources.
-        
+
         Args:
             model_hash: Hash of model to redownload
-            
+
         Returns:
             ModelIndex if successful, None if no sources or download failed
         """

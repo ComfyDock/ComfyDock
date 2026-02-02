@@ -8,12 +8,11 @@ Tests the following scenarios:
 5. Adding same node, different version for dev nodes with --force (should auto-replace)
 6. Using node update without version (should update to latest)
 """
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from comfygit_core.models.shared import NodeInfo
+import pytest
 from comfygit_core.models.exceptions import CDNodeConflictError
+from comfygit_core.models.shared import NodeInfo
 
 
 class TestNodeVersionReplacement:
@@ -209,7 +208,7 @@ class TestNodeVersionReplacement:
             mock_scan.return_value = []
 
             # ACT & ASSERT: Should raise error when user denies confirmation
-            with pytest.raises(CDNodeConflictError) as exc_info:
+            with pytest.raises(CDNodeConflictError):
                 test_env.node_manager.add_node(
                     "test-node@1.0.0",
                     no_test=True,

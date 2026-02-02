@@ -1,14 +1,12 @@
 """Integration tests for export/import functionality."""
-import tempfile
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from conftest import simulate_comfyui_save_workflow
-
 from comfygit_core.managers.export_import_manager import ExportImportManager
+from conftest import simulate_comfyui_save_workflow
 
 
 class TestExportImportBasic:

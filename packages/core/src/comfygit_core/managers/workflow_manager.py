@@ -15,6 +15,7 @@ from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
 from ..logging.logging_config import get_logger
 from ..models.protocols import ModelResolutionStrategy, NodeResolutionStrategy
 from ..models.workflow import (
+    BatchDownloadCallbacks,
     DetailedWorkflowStatus,
     ModelResolutionContext,
     NodeResolutionContext,
@@ -378,13 +379,13 @@ class WorkflowManager:
 
     def get_workflow_path(self, name: str) -> Path:
         """Check if workflow exists in ComfyUI directory and return path.
-        
+
         Args:
             name: Workflow name
 
         Returns:
             Path to workflow file if it exists
-            
+
         Raises:
             FileNotFoundError
         """
@@ -649,7 +650,7 @@ class WorkflowManager:
         if installed_nodes is None:
             installed_nodes = set(self.pyproject.nodes.get_existing().keys())
 
-        resolved_packages = set(r.package_id for r in resolution.nodes_resolved if r.package_id)
+        resolved_packages = {r.package_id for r in resolution.nodes_resolved if r.package_id}
         uninstalled_nodes = list(resolved_packages - installed_nodes)
 
         return WorkflowAnalysisStatus(
@@ -852,7 +853,7 @@ class WorkflowManager:
         logger.debug(f"Resolving {len(unique_nodes)} unique node types from {len(analysis.non_builtin_nodes)} total non-builtin nodes")
 
         # Resolve each unique node type with context
-        for node_type, node in unique_nodes.items():
+        for _node_type, node in unique_nodes.items():
             logger.debug(f"Trying to resolve node: {node}")
             resolved_packages = self.global_node_resolver.resolve_single_node_with_context(node, node_context)
 
@@ -905,7 +906,7 @@ class WorkflowManager:
             model_groups[key].append(model_ref)
 
         # Resolve each unique model group (one resolution per unique model)
-        for (widget_value, node_type), refs_in_group in model_groups.items():
+        for (_widget_value, _node_type), refs_in_group in model_groups.items():
             # Use first ref as representative for resolution
             primary_ref = refs_in_group[0]
 
@@ -1393,7 +1394,7 @@ class WorkflowManager:
 
         Args:
             resolution: Resolution result with ref→model mapping
-            
+
         Raises:
             FileNotFoundError if workflow not found
         """

@@ -3,21 +3,18 @@
 When the same model appears in multiple nodes, the user should only be prompted once,
 and all node references should be grouped together in a single ManifestWorkflowModel entry.
 """
-import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock, call, patch
+from unittest.mock import Mock, patch
 
+import pytest
 from comfygit_core.managers.workflow_manager import WorkflowManager
-from comfygit_core.models.workflow import (
-    WorkflowNodeWidgetRef,
-    WorkflowNode,
-    WorkflowDependencies,
-    ResolvedModel,
-    ResolutionResult,
-    ModelResolutionContext,
-)
-from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.models.manifest import ManifestWorkflowModel
+from comfygit_core.models.shared import ModelWithLocation
+from comfygit_core.models.workflow import (
+    ResolvedModel,
+    WorkflowDependencies,
+    WorkflowNodeWidgetRef,
+)
 
 
 class TestModelDeduplication:

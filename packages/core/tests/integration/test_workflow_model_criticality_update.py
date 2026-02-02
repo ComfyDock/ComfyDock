@@ -40,7 +40,7 @@ class TestModelCriticalityUpdate:
         simulate_comfyui_save_workflow(test_env, "utilities", workflow)
 
         # Initial resolution
-        result = test_env.resolve_workflow(
+        test_env.resolve_workflow(
             name="utilities",
             node_strategy=AutoNodeStrategy(),
             model_strategy=AutoModelStrategy()
@@ -83,7 +83,7 @@ class TestModelCriticalityUpdate:
             relative_path="checkpoints",
             category="checkpoints"
         )
-        models = model_builder.index_all()
+        model_builder.index_all()
 
         workflow = make_minimal_workflow("model.safetensors")
         simulate_comfyui_save_workflow(test_env, "test_hash", workflow)

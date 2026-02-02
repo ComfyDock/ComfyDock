@@ -4,13 +4,11 @@ This replaces the old heuristic auto-resolution with scored search.
 """
 
 import json
-import pytest
-from pathlib import Path
 from unittest.mock import Mock
 
-from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
-from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
+from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
 
 
 class TestUnifiedSearchScoring:

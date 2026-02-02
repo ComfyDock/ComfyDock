@@ -3,11 +3,9 @@
 Tests that the prune command correctly identifies and removes nodes that are
 installed but not referenced by any workflow.
 """
-from pathlib import Path
 
-import pytest
 
-from helpers.workflow_builder import WorkflowBuilder, make_minimal_workflow
+from helpers.workflow_builder import WorkflowBuilder
 
 
 class TestNodePrune:

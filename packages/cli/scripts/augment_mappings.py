@@ -57,7 +57,6 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set
 from urllib.parse import urlparse, urlunparse
 
 from comfygit_core.logging.logging_config import get_logger, setup_logging
@@ -102,16 +101,16 @@ class MappingsAugmenter:
     def load_data(self):
         """Load both data files."""
         # Load existing mappings
-        with open(self.mappings_file, 'r') as f:
+        with open(self.mappings_file) as f:
             self.mappings_data = json.load(f)
         logger.info(f"Loaded {len(self.mappings_data['mappings'])} mappings, {len(self.mappings_data['packages'])} packages")
 
         # Load manager extension map
-        with open(self.manager_file, 'r') as f:
+        with open(self.manager_file) as f:
             self.manager_data = json.load(f)
         logger.info(f"Loaded {len(self.manager_data)} extensions from Manager")
 
-    def build_url_to_package_map(self) -> Dict[str, str]:
+    def build_url_to_package_map(self) -> dict[str, str]:
         """Build mapping from GitHub URLs to package IDs."""
         url_map = {}
 

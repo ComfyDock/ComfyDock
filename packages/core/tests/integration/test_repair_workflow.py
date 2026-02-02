@@ -1,10 +1,6 @@
 """Integration tests for repair command simulating git pull workflow."""
 
 import json
-import shutil
-from pathlib import Path
-
-import pytest
 
 
 def test_repair_restores_workflows_from_cec(test_env):

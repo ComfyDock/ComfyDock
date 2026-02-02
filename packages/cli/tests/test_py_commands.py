@@ -1,10 +1,9 @@
 """Unit tests for py add/remove/list commands."""
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from argparse import Namespace
 
 import pytest
-
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.models.exceptions import UVCommandError
 
@@ -133,7 +132,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_from_requirements_file(self, mock_workspace, tmp_path):
         """Should add packages from requirements.txt file."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"
@@ -169,7 +167,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_requirements_with_upgrade(self, mock_workspace, tmp_path):
         """Should support --upgrade with requirements file."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"
@@ -204,7 +201,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_errors_with_both_packages_and_requirements(self, mock_workspace, tmp_path):
         """Should error when both packages and requirements file are specified."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"

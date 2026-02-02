@@ -5,9 +5,9 @@ uninstalled packages after resolution.
 """
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.models.workflow import (
+    ResolutionResult,
     WorkflowAnalysisStatus,
     WorkflowDependencies,
-    ResolutionResult,
 )
 
 

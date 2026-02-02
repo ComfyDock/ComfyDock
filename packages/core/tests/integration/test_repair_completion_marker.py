@@ -3,9 +3,7 @@
 Tests the scenario where an environment loses its .complete marker
 (e.g., from manual git pull) and repair should restore it.
 """
-from pathlib import Path
 
-import pytest
 
 from comfygit_core.utils.environment_cleanup import (
     COMPLETION_MARKER,

@@ -183,7 +183,7 @@ class Workflow:
     def __repr__(self) -> str:
         """Concise representation showing node count and types."""
         node_count = len(self.nodes)
-        type_summary = ", ".join(sorted(set(n.type for n in self.nodes.values()))[:5])
+        type_summary = ", ".join(sorted({n.type for n in self.nodes.values()})[:5])
         if len(self.node_types) > 5:
             type_summary += f", ... ({len(self.node_types) - 5} more types)"
         return f"Workflow(nodes={node_count}, types=[{type_summary}])"

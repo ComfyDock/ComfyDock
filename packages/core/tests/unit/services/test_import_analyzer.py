@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-
 from comfygit_core.services.import_analyzer import ImportAnalyzer
 
 

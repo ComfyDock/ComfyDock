@@ -1,9 +1,5 @@
 """Unit tests for ModelSymlinkManager."""
-import os
-import shutil
-from pathlib import Path
 import pytest
-
 from comfygit_core.managers.model_symlink_manager import ModelSymlinkManager, is_link
 from comfygit_core.models.exceptions import CDEnvironmentError
 

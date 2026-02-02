@@ -1,6 +1,5 @@
 """Tests for ModelConfig dynamic loading with cec_path parameter."""
 import json
-import pytest
 
 from comfygit_core.configs.model_config import ModelConfig
 

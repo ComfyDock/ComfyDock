@@ -5,19 +5,17 @@ Nodes and dependencies are derived from workflow resolutions.
 There is NO skip option - all conflicts must be resolved.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
+from comfygit_cli.strategies.conflict_resolver import (
+    AutoConflictResolver,
+    InteractiveConflictResolver,
+)
 from comfygit_core.models.ref_diff import (
     DependencyChanges,
     RefDiff,
     WorkflowChange,
     WorkflowConflict,
-)
-
-from comfygit_cli.strategies.conflict_resolver import (
-    AutoConflictResolver,
-    InteractiveConflictResolver,
 )
 
 

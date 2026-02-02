@@ -3,7 +3,6 @@
 Tests the intelligent pyproject.toml merging based on workflow resolutions.
 """
 
-import pytest
 
 from comfygit_core.merging.semantic_merger import SemanticMerger
 

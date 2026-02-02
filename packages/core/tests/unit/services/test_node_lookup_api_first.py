@@ -15,7 +15,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
 import pytest
-
 from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.services.node_lookup_service import NodeLookupService

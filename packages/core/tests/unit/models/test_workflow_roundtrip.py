@@ -3,7 +3,6 @@
 Tests that workflows with subgraphs can be loaded, modified, and saved back
 while preserving the original ComfyUI structure.
 """
-import json
 from comfygit_core.models.workflow import Workflow
 
 

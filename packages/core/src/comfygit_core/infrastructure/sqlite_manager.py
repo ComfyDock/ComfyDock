@@ -17,7 +17,7 @@ class SQLiteManager:
 
     def __init__(self, db_path: Path):
         """Initialize SQLite manager.
-        
+
         Args:
             db_path: Path to SQLite database file
         """
@@ -27,10 +27,10 @@ class SQLiteManager:
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """Get database connection with context management.
-        
+
         Yields:
             SQLite connection with row factory enabled
-            
+
         Raises:
             ComfyDockError: If database connection fails
         """
@@ -48,14 +48,14 @@ class SQLiteManager:
 
     def execute_query(self, query: str, params: tuple = ()) -> list[dict[str, Any]]:
         """Execute SELECT query and return results.
-        
+
         Args:
             query: SQL SELECT query
             params: Query parameters
-            
+
         Returns:
             List of dictionaries representing rows
-            
+
         Raises:
             ComfyDockError: If query execution fails
         """
@@ -71,14 +71,14 @@ class SQLiteManager:
 
     def execute_write(self, query: str, params: tuple = ()) -> int:
         """Execute INSERT/UPDATE/DELETE query.
-        
+
         Args:
             query: SQL write query
             params: Query parameters
-            
+
         Returns:
             Number of affected rows
-            
+
         Raises:
             ComfyDockError: If write operation fails
         """
@@ -95,10 +95,10 @@ class SQLiteManager:
 
     def create_table(self, schema: str) -> None:
         """Create table using schema SQL.
-        
+
         Args:
             schema: CREATE TABLE SQL statement
-            
+
         Raises:
             ComfyDockError: If table creation fails
         """
@@ -114,10 +114,10 @@ class SQLiteManager:
 
     def begin_transaction(self) -> sqlite3.Connection:
         """Begin a transaction and return connection for manual management.
-        
+
         Returns:
             SQLite connection with transaction started
-            
+
         Note:
             Caller is responsible for commit/rollback and closing connection
         """
@@ -132,10 +132,10 @@ class SQLiteManager:
 
     def table_exists(self, table_name: str) -> bool:
         """Check if table exists in database.
-        
+
         Args:
             table_name: Name of table to check
-            
+
         Returns:
             True if table exists, False otherwise
         """
@@ -145,10 +145,10 @@ class SQLiteManager:
 
     def get_table_info(self, table_name: str) -> list[dict[str, Any]]:
         """Get table schema information.
-        
+
         Args:
             table_name: Name of table
-            
+
         Returns:
             List of column information dictionaries
         """

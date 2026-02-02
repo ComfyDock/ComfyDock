@@ -1,6 +1,6 @@
 """Command-line interface for ComfyUI environment detection."""
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 from .cli import main
 

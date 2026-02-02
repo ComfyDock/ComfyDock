@@ -162,7 +162,7 @@ def create_system_requirements_from_detection(
 @dataclass
 class SystemInfo:
     """System information detected from a ComfyUI installation.
-    
+
     This dataclass represents all system-level information needed
     to recreate a ComfyUI environment.
     """

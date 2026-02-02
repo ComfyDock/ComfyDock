@@ -1,8 +1,6 @@
 """Interactive resolution strategies for CLI."""
 
 
-from comfygit_cli.utils.civitai_errors import show_civitai_auth_help
-from comfygit_cli.utils.progress import create_progress_callback, show_download_stats
 from comfygit_core.models.protocols import (
     ModelResolutionStrategy,
     NodeResolutionStrategy,

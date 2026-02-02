@@ -4,12 +4,10 @@ Tests the repository pattern extraction from GlobalNodeResolver.
 """
 
 import json
-import pytest
-from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
-from comfygit_core.models.node_mapping import GlobalNodePackage, GlobalNodeMapping
 
 
 class TestNodeMappingsRepositoryLoading:

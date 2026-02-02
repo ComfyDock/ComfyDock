@@ -68,12 +68,12 @@ class APICacheManager:
 
     def get(self, cache_type: str, key: str, ttl_seconds: int | None = None) -> Any | None:
         """Get a value from cache if it exists and hasn't expired.
-        
+
         Args:
             cache_type: Type of cache (e.g., 'github', 'registry')
             key: Cache key
             ttl_seconds: Time-to-live in seconds (overrides default)
-            
+
         Returns:
             Cached value if valid, None if expired or not found
         """
@@ -113,12 +113,12 @@ class APICacheManager:
 
     def set(self, cache_type: str, key: str, value: Any) -> bool:
         """Store a value in cache with current timestamp.
-        
+
         Args:
             cache_type: Type of cache (e.g., 'github', 'registry')
             key: Cache key
             value: Value to cache
-            
+
         Returns:
             True if successfully cached, False otherwise
         """
@@ -153,7 +153,7 @@ class APICacheManager:
 
     def clear(self, cache_type: str | None = None):
         """Clear cache entries.
-        
+
         Args:
             cache_type: Specific cache type to clear, or None to clear all
         """
@@ -173,7 +173,7 @@ class APICacheManager:
 
     def cleanup_expired(self, cache_type: str | None = None):
         """Remove expired entries from cache.
-        
+
         Args:
             cache_type: Specific cache type to clean, or None to clean all
         """

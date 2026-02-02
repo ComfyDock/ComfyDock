@@ -5,9 +5,8 @@ from tempfile import TemporaryDirectory
 
 import pytest
 import tomlkit
-
-from comfygit_core.managers.pytorch_backend_manager import PyTorchBackendManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
+from comfygit_core.managers.pytorch_backend_manager import PyTorchBackendManager
 
 
 class TestPyTorchInjectionContext:
@@ -340,7 +339,7 @@ class TestInjectionStripsExistingConfig:
 
         # First injection
         with pyproject.pytorch_injection_context(pytorch_manager):
-            first_content = temp_env["pyproject_path"].read_text()
+            temp_env["pyproject_path"].read_text()
 
         # Reload the polluted state
         polluted_config = {
@@ -420,6 +419,7 @@ class TestSyncProjectWithPyTorchManager:
     def test_sync_project_without_pytorch_manager_no_injection(self, temp_env):
         """sync_project without pytorch_manager should not inject config."""
         from unittest.mock import MagicMock
+
         from comfygit_core.managers.uv_project_manager import UVProjectManager
 
         pyproject = PyprojectManager(temp_env["pyproject_path"])
@@ -446,6 +446,7 @@ class TestSyncProjectWithPyTorchManager:
     def test_sync_project_with_pytorch_manager_injects_and_restores(self, temp_env):
         """sync_project with pytorch_manager should inject and restore config."""
         from unittest.mock import MagicMock
+
         from comfygit_core.managers.uv_project_manager import UVProjectManager
 
         pyproject = PyprojectManager(temp_env["pyproject_path"])
@@ -487,6 +488,7 @@ class TestSyncProjectWithPyTorchManager:
     def test_sync_project_restores_on_sync_error(self, temp_env):
         """sync_project should restore config even when uv sync fails."""
         from unittest.mock import MagicMock
+
         from comfygit_core.managers.uv_project_manager import UVProjectManager
         from comfygit_core.models.exceptions import UVCommandError
 

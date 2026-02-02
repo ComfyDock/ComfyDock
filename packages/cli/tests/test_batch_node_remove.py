@@ -1,8 +1,6 @@
 """Test batch node remove command functionality."""
-from unittest.mock import MagicMock, patch
 from argparse import Namespace
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from comfygit_cli.env_commands import EnvironmentCommands
 
@@ -37,7 +35,7 @@ class TestBatchNodeRemove:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_remove(args)
 
         # Verify single node flow was used with default untrack_only=False
@@ -69,7 +67,7 @@ class TestBatchNodeRemove:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_remove(args)
 
         # Verify batch flow was used
@@ -152,7 +150,7 @@ class TestBatchNodeRemove:
         )
 
         # Execute
-        with patch('builtins.print') as mock_print:
+        with patch('builtins.print'):
             cmd.node_remove(args)
 
         # Verify batch was called with all five nodes

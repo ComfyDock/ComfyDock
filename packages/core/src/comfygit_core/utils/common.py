@@ -78,10 +78,10 @@ def run_command(
 
 def format_size(size_bytes: int) -> str:
     """Format a size in bytes as human-readable string.
-    
+
     Args:
         size_bytes: Size in bytes
-        
+
     Returns:
         Human-readable size string (e.g., "1.5 MB")
     """
@@ -104,7 +104,7 @@ def format_size(size_bytes: int) -> str:
 
 def log_pyproject_content(pyproject_path: Path, context: str = "") -> None:
     """Log pyproject.toml content in a nicely formatted way.
-    
+
     Args:
         pyproject_path: Path to pyproject.toml file
         context: Optional context string for the log message
@@ -129,7 +129,7 @@ def log_pyproject_content(pyproject_path: Path, context: str = "") -> None:
 
 def log_requirements_content(requirements_file: Path, show_all: bool = True) -> None:
     """Log the compiled requirements file content.
-    
+
     Args:
         requirements_file: Path to the compiled requirements file
         show_all: If True, show all lines, otherwise show a summary

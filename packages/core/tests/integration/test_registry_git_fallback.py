@@ -3,10 +3,9 @@
 When a registry node has metadata but no download URL, the system should
 fallback to cloning from the repository URL instead of failing.
 """
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
+import pytest
 from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
 
 

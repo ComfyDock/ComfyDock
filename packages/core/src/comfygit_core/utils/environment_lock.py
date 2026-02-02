@@ -21,7 +21,7 @@ class EnvironmentOperationLock:
         self._file: IO[str] | None = None
         self._owner_thread: int | None = None
 
-    def __enter__(self) -> "EnvironmentOperationLock":
+    def __enter__(self) -> EnvironmentOperationLock:
         current_thread = threading.get_ident()
         with self._thread_lock:
             if self._depth > 0 and self._owner_thread != current_thread:

@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
 from comfygit_core.models.workflow import BatchDownloadCallbacks, ResolvedModel
 from comfygit_core.strategies.auto import AutoModelStrategy
 from conftest import simulate_comfyui_save_workflow
@@ -50,14 +49,14 @@ class TestDeferredModelDownloads:
         ))
 
         # ACT - Resolve workflow with download intent
-        result = test_env.resolve_workflow(
+        test_env.resolve_workflow(
             name="test",
             model_strategy=mock_strategy,
             fix=True
         )
 
         # ASSERT - Download intent should be stored in pyproject
-        assertions = PyprojectAssertions(test_env)
+        PyprojectAssertions(test_env)
 
         # Verify workflow model has download intent fields
         workflow_models = test_env.pyproject.workflows.get_workflow_models("test")
@@ -121,7 +120,7 @@ class TestDeferredModelDownloads:
     def test_batch_download_execution_with_callbacks(self, test_env, test_workspace):
         """Test batch download execution calls all callbacks correctly."""
         # ARRANGE - Create model index builder
-        builder = ModelIndexBuilder(test_workspace)
+        ModelIndexBuilder(test_workspace)
 
         # Create workflow with missing model
         workflow = (
@@ -165,7 +164,7 @@ class TestDeferredModelDownloads:
         ))
 
         # ACT - Resolve with callbacks
-        result = test_env.resolve_workflow(
+        test_env.resolve_workflow(
             name="test",
             model_strategy=mock_strategy,
             fix=True,
@@ -245,7 +244,7 @@ class TestDeferredModelDownloads:
 
         # Mock execute_pending_downloads to prevent actual HTTP requests to fake URLs
         with patch.object(test_env.workflow_manager, 'execute_pending_downloads', return_value=[]):
-            result1 = test_env.resolve_workflow(
+            test_env.resolve_workflow(
                 name="test",
                 model_strategy=mock_strategy_session1,
                 fix=True
@@ -406,7 +405,7 @@ class TestModelResolutionContextChanges:
         simulate_comfyui_save_workflow(test_env, "test", workflow)
 
         # Resolve once to populate pyproject
-        result = test_env.resolve_workflow(
+        test_env.resolve_workflow(
             name="test",
             model_strategy=AutoModelStrategy(),
             fix=True
@@ -493,7 +492,11 @@ class TestSchemaChanges:
 
     def test_resolution_result_has_download_intents_property(self):
         """Test ResolutionResult.has_download_intents property."""
-        from comfygit_core.models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+        from comfygit_core.models.workflow import (
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowNodeWidgetRef,
+        )
 
         # ARRANGE - Create result with download intent
         ref = WorkflowNodeWidgetRef(
@@ -570,7 +573,11 @@ class TestPropertyDownloadIntentRegression:
 
     def test_has_download_intents_includes_property_download_intent(self):
         """ResolutionResult.has_download_intents should return True for property_download_intent."""
-        from comfygit_core.models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+        from comfygit_core.models.workflow import (
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowNodeWidgetRef,
+        )
 
         # ARRANGE - Create result with property_download_intent (from node properties)
         ref = WorkflowNodeWidgetRef(
@@ -603,7 +610,11 @@ class TestPropertyDownloadIntentRegression:
 
     def test_has_download_intents_includes_both_intent_types(self):
         """ResolutionResult.has_download_intents should return True for either intent type."""
-        from comfygit_core.models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+        from comfygit_core.models.workflow import (
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowNodeWidgetRef,
+        )
 
         ref1 = WorkflowNodeWidgetRef(
             node_id="1", node_type="CheckpointLoaderSimple",
@@ -644,8 +655,11 @@ class TestPropertyDownloadIntentRegression:
     def test_workflow_analysis_status_has_issues_for_property_download_intent(self):
         """WorkflowAnalysisStatus.has_issues should return True for property_download_intent."""
         from comfygit_core.models.workflow import (
-            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
-            WorkflowNodeWidgetRef, WorkflowDependencies
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowAnalysisStatus,
+            WorkflowDependencies,
+            WorkflowNodeWidgetRef,
         )
 
         ref = WorkflowNodeWidgetRef(
@@ -687,8 +701,11 @@ class TestPropertyDownloadIntentRegression:
     def test_download_intents_count_includes_property_download_intent(self):
         """WorkflowAnalysisStatus.download_intents_count should count property_download_intent."""
         from comfygit_core.models.workflow import (
-            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
-            WorkflowNodeWidgetRef, WorkflowDependencies
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowAnalysisStatus,
+            WorkflowDependencies,
+            WorkflowNodeWidgetRef,
         )
 
         refs = [
@@ -728,8 +745,11 @@ class TestPropertyDownloadIntentRegression:
     def test_issue_summary_includes_property_download_intents(self):
         """WorkflowAnalysisStatus.issue_summary should mention pending downloads for property_download_intent."""
         from comfygit_core.models.workflow import (
-            WorkflowAnalysisStatus, ResolutionResult, ResolvedModel,
-            WorkflowNodeWidgetRef, WorkflowDependencies
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowAnalysisStatus,
+            WorkflowDependencies,
+            WorkflowNodeWidgetRef,
         )
 
         ref = WorkflowNodeWidgetRef(

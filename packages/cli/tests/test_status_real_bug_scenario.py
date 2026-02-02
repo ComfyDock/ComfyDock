@@ -10,9 +10,10 @@ The key difference from other tests: These nodes WILL resolve because they're
 in custom mappings, so has_issues will return False even though they're not installed.
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Import core test helpers
 core_tests_path = Path(__file__).parent.parent.parent / "core" / "tests"
@@ -108,13 +109,13 @@ class TestStatusRealBugScenario:
         assert test_workflow is not None, "test_workflow should exist"
 
         # DEBUG: Show what resolution found
-        print(f"\n=== REAL BUG SCENARIO ===")
+        print("\n=== REAL BUG SCENARIO ===")
         print(f"Workflow needs (from pyproject): {config['tool']['comfygit']['workflows']['test_workflow']['nodes']}")
         print(f"Installed packages: {list(test_env.pyproject.nodes.get_existing().keys())}")
         print(f"Nodes resolved: {[n.package_id for n in test_workflow.resolution.nodes_resolved]}")
         print(f"Nodes unresolved: {[n.type for n in test_workflow.resolution.nodes_unresolved]}")
         print(f"has_issues: {test_workflow.has_issues}")
-        print(f"========================\n")
+        print("========================\n")
 
         # VERIFY: Calculate uninstalled packages
         workflow_needs = set(config['tool']['comfygit']['workflows']['test_workflow']['nodes'])

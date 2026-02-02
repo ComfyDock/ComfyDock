@@ -1,14 +1,13 @@
 """Unit tests for ModelDownloader service."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
-import pytest
 
+import pytest
 from comfygit_core.services.model_downloader import (
-    ModelDownloader,
     DownloadRequest,
     DownloadResult,
+    ModelDownloader,
 )
 
 

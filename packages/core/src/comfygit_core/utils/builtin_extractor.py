@@ -209,7 +209,7 @@ def _extract_node_names(file_path: str) -> list[str]:
     comfynode_regex_names = _extract_comfynode_from_regex(file_path)
     all_nodes.extend(comfynode_regex_names)
 
-    return sorted(list(set(all_nodes)))
+    return sorted(set(all_nodes))
 
 
 def _discover_node_files(directory: Path) -> list[Path]:
@@ -276,7 +276,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> tuple[dict, list]:
         if extras_all:
             all_nodes['extras'] = {
                 'source': 'comfy_extras',
-                'nodes': sorted(list(set(extras_all))),
+                'nodes': sorted(set(extras_all)),
                 'count': len(set(extras_all)),
                 'by_file': extras_by_file
             }
@@ -297,7 +297,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> tuple[dict, list]:
         if api_all:
             all_nodes['api'] = {
                 'source': 'comfy_api_nodes',
-                'nodes': sorted(list(set(api_all))),
+                'nodes': sorted(set(api_all)),
                 'count': len(set(api_all)),
                 'by_file': api_by_file
             }
@@ -320,7 +320,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> tuple[dict, list]:
         if custom_all:
             all_nodes['custom'] = {
                 'source': 'custom_nodes',
-                'nodes': sorted(list(set(custom_all))),
+                'nodes': sorted(set(custom_all)),
                 'count': len(set(custom_all)),
                 'by_file': custom_by_file
             }
@@ -359,7 +359,7 @@ def extract_comfyui_builtins(comfyui_path: Path, output_path: Path) -> dict:
     for category_data in all_nodes.values():
         all_builtin.update(category_data['nodes'])
 
-    all_builtin_list = sorted(list(all_builtin))
+    all_builtin_list = sorted(all_builtin)
 
     # Get version info
     version = get_comfyui_version(comfyui_path)

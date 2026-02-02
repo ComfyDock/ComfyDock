@@ -7,15 +7,8 @@ This test verifies that when importing an environment, the EXACT ComfyUI
 version specified in the export is cloned, not the latest HEAD.
 """
 
-import json
-import shutil
 import tarfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from comfygit_core.factories.environment_factory import EnvironmentFactory
+from unittest.mock import patch
 
 
 class TestImportComfyUIVersionBug:
@@ -60,7 +53,7 @@ nodes = {}
 
         # ACT - Import the environment (fixture handles subprocess mocking)
         with patch('comfygit_core.utils.comfyui_ops.clone_comfyui', side_effect=track_clone_version):
-            env = test_workspace.import_environment(
+            test_workspace.import_environment(
                 tarball_path=export_tarball,
                 name="imported-env"
             )
@@ -109,7 +102,7 @@ nodes = {}
 
         # ACT (fixture handles subprocess mocking)
         with patch('comfygit_core.utils.comfyui_ops.clone_comfyui', side_effect=track_clone_version):
-            env = test_workspace.import_environment(
+            test_workspace.import_environment(
                 tarball_path=export_tarball,
                 name="imported-env2"
             )

@@ -19,9 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import simulate_comfyui_save_workflow
+from helpers.model_index_builder import ModelIndexBuilder
 from helpers.pyproject_assertions import PyprojectAssertions
 from helpers.workflow_builder import WorkflowBuilder
-from helpers.model_index_builder import ModelIndexBuilder
 
 
 class TestWorkflowResolutionCleanup:
@@ -42,7 +42,7 @@ class TestWorkflowResolutionCleanup:
         # ARRANGE: Create test models
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("model1.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Step 1: Create and commit 'default' workflow
         workflow1 = WorkflowBuilder().add_checkpoint_loader("model1.safetensors").build()
@@ -119,7 +119,7 @@ class TestWorkflowResolutionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("unique_a.safetensors", "checkpoints", size_mb=4)
         builder.add_model("unique_b.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Create and commit wf1 with model A
         wf1 = WorkflowBuilder().add_checkpoint_loader("unique_a.safetensors").build()
@@ -184,7 +184,7 @@ class TestWorkflowResolutionCleanup:
         builder.add_model("mb.safetensors", "checkpoints")
         builder.add_model("mc.safetensors", "checkpoints")
         builder.add_model("md.safetensors", "checkpoints")
-        models = builder.index_all()
+        builder.index_all()
 
         # Create and commit A, B, C
         for name, model in [("wf_a", "ma.safetensors"),
@@ -248,7 +248,7 @@ class TestWorkflowResolutionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("m1.safetensors", "checkpoints")
         builder.add_model("m2.safetensors", "checkpoints")
-        models = builder.index_all()
+        builder.index_all()
 
         # Step 1: Create and resolve 'wf1' WITHOUT committing
         wf1 = WorkflowBuilder().add_checkpoint_loader("m1.safetensors").build()

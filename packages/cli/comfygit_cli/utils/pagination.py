@@ -1,7 +1,8 @@
 """Simple pagination utility for CLI output."""
 
 import sys
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 T = TypeVar('T')
 

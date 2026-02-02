@@ -14,7 +14,7 @@ from .compressed_handler import CompressedDualHandler
 
 class EnvironmentLogger:
     """Manages environment-specific logging with rotation.
-    
+
     This integrates with the existing logging system by adding/removing
     handlers to the root logger, so all get_logger(__name__) calls
     in managers will automatically log to the environment file.
@@ -33,7 +33,7 @@ class EnvironmentLogger:
     @classmethod
     def set_workspace_path(cls, workspace_path: Path) -> None:
         """Set the workspace path for all environment loggers.
-        
+
         Args:
             workspace_path: Path to ComfyGit workspace
         """
@@ -134,16 +134,16 @@ class EnvironmentLogger:
     @contextmanager
     def log_command(cls, env_name: str, command: str, **context):
         """Context manager for logging a command execution.
-        
+
         This adds a file handler to the root logger for the duration
         of the command, so all logging from any module will go to
         the environment's log file.
-        
+
         Args:
             env_name: Environment name
             command: Command being executed
             **context: Additional context to log
-            
+
         Example:
             with EnvironmentLogger.log_command("my-env", "node add"):
                 # All logging from any module will go to my-env.log
@@ -203,11 +203,11 @@ class EnvironmentLogger:
     @classmethod
     def set_environment(cls, env_name: str) -> None:
         """Set the active environment for logging.
-        
+
         This is useful for long-running operations where you want
         all logs to go to a specific environment file without
         using the context manager.
-        
+
         Args:
             env_name: Environment name
         """
@@ -226,7 +226,7 @@ class EnvironmentLogger:
 
 class WorkspaceLogger:
     """Manages workspace-level logging separate from environment-specific logging.
-    
+
     This creates logs under logs/workspace/workspace.log for global workspace commands.
     """
 
@@ -242,7 +242,7 @@ class WorkspaceLogger:
     @classmethod
     def set_workspace_path(cls, workspace_path: Path) -> None:
         """Set the workspace path for workspace logging.
-        
+
         Args:
             workspace_path: Path to ComfyGit workspace
         """
@@ -256,7 +256,7 @@ class WorkspaceLogger:
     @classmethod
     def _add_workspace_handler(cls) -> logging.Handler | None:
         """Add a file handler for workspace commands to the root logger.
-        
+
         Returns:
             The handler that was added, or None if workspace not set
         """
@@ -338,15 +338,15 @@ class WorkspaceLogger:
     @contextmanager
     def log_command(cls, command: str, **context):
         """Context manager for logging a workspace command execution.
-        
+
         This adds a file handler to the root logger for the duration
         of the command, so all logging from any module will go to
         the workspace log file.
-        
+
         Args:
             command: Command being executed
             **context: Additional context to log
-            
+
         Example:
             with WorkspaceLogger.log_command("init"):
                 # All logging from any module will go to workspace.log
@@ -406,7 +406,7 @@ class WorkspaceLogger:
 
 def with_env_logging(command_name: str, get_env_name: Callable | None = None, log_args: bool = True, **log_context):
     """Decorator for environment commands that automatically sets up logging.
-    
+
     Args:
         command_name: Name of the command for logging (e.g., "create", "node add")
         get_env_name: Optional function to extract env name from args.
@@ -496,18 +496,18 @@ def with_env_logging(command_name: str, get_env_name: Callable | None = None, lo
 
 def with_workspace_logging(command_name: str, log_args: bool = True, **log_context):
     """Decorator for workspace commands that automatically sets up logging.
-    
+
     Args:
         command_name: Name of the command for logging (e.g., "init", "list", "model scan")
         log_args: If True, automatically logs all args attributes (default: True)
         **log_context: Additional static context to log
-    
+
     Example:
         @with_workspace_logging("init")  # Automatically logs all args
         def init(self, args):
             # All logging automatically goes to workspace log
             result = self.workspace_factory.create(...)
-        
+
         @with_workspace_logging("model scan", log_args=False, custom_field="value")
         def model_scan(self, args):
             # Only logs custom_field, not args

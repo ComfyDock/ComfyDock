@@ -11,18 +11,15 @@ Key behaviors tested:
 4. Rollback/checkout operations skip dev nodes entirely
 5. Status reports dev nodes separately (informational, not errors)
 """
-import tarfile
-from pathlib import Path
 import subprocess
 import sys
-
-import pytest
+import tarfile
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from conftest import simulate_comfyui_save_workflow
 
-from comfygit_core.models.shared import NodeInfo
 from comfygit_core.managers.pyproject_manager import PyprojectManager
+from comfygit_core.models.shared import NodeInfo
 
 
 class TestPhase1NodeInfoGitFields:
@@ -195,7 +192,7 @@ class TestPhase3ImportChanges:
 
     def test_sync_clones_missing_dev_node_with_repository(self, test_env):
         """sync_nodes_to_filesystem should clone dev node from repository if missing."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         # ARRANGE - Track a dev node with repository but NO local directory
         node_info = NodeInfo(
@@ -313,7 +310,7 @@ class TestPhase3ImportChanges:
 
     def test_sync_calls_dev_node_cloned_callback(self, test_env):
         """sync_nodes_to_filesystem should call on_dev_node_cloned callback on success."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
 
         # ARRANGE
         node_info = NodeInfo(

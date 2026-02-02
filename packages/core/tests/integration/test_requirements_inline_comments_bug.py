@@ -8,7 +8,6 @@ CustomNodeScanner -> NodeManager -> ResolutionTester -> UV validation
 
 Unit tests for the actual parsing logic are in: tests/unit/analyzers/test_custom_node_scanner.py
 """
-from pathlib import Path
 from unittest.mock import patch
 
 from comfygit_core.models.shared import NodeInfo

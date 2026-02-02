@@ -1,5 +1,4 @@
 """Unit tests for UUID detection utility."""
-import pytest
 from comfygit_core.utils.uuid import is_uuid
 
 

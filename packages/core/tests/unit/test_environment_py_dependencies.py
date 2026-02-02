@@ -2,7 +2,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from comfygit_core.core.environment import Environment
 from comfygit_core.models.exceptions import UVCommandError
 
@@ -14,7 +13,7 @@ def mock_env():
          patch('comfygit_core.core.environment.NodeManager'), \
          patch('comfygit_core.core.environment.GitManager'), \
          patch('comfygit_core.core.environment.PyprojectManager'), \
-         patch('comfygit_core.core.environment.UVProjectManager') as mock_uv_mgr:
+         patch('comfygit_core.core.environment.UVProjectManager'):
 
         # Create environment instance
         env = Environment.__new__(Environment)

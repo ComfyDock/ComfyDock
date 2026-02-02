@@ -236,7 +236,7 @@ class ModelDownloader:
             else:
                 error_category = "unknown"
 
-        elif isinstance(error, (URLError, SocketTimeout, requests.Timeout, requests.ConnectionError)):
+        elif isinstance(error, URLError | SocketTimeout | requests.Timeout | requests.ConnectionError):
             error_category = "network"
 
         return DownloadErrorContext(
@@ -313,12 +313,12 @@ class ModelDownloader:
 
         try:
             # Download to HF cache (Xet-enabled when available)
-            download_kwargs = dict(
-                repo_id=parsed.repo_id,
-                filename=parsed.path_in_repo,
-                revision=parsed.revision or "main",
-                token=token if token else None,
-            )
+            download_kwargs = {
+                "repo_id": parsed.repo_id,
+                "filename": parsed.path_in_repo,
+                "revision": parsed.revision or "main",
+                "token": token if token else None,
+            }
             if progress_callback:
                 download_kwargs["tqdm_class"] = _make_tqdm_class(progress_callback)
 

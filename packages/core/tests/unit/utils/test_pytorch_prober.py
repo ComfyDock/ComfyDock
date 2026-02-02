@@ -35,7 +35,7 @@ class TestGetExactPythonVersion:
 
     def test_raises_on_invalid_output(self):
         """Should raise error when can't parse version."""
-        from comfygit_core.utils.pytorch_prober import get_exact_python_version, PyTorchProbeError
+        from comfygit_core.utils.pytorch_prober import PyTorchProbeError, get_exact_python_version
 
         mock_result = MagicMock()
         mock_result.returncode = 0

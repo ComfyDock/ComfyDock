@@ -2,8 +2,6 @@
 import argparse
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from comfygit_core.models.shared import ManagerStatus, ManagerUpdateResult
 
 

@@ -13,10 +13,10 @@ logger = get_logger(__name__)
 
 def parse_dependency_string(dep_str: str) -> tuple[str, str | None]:
     """Parse a dependency string like 'numpy>=1.21.0' into name and version.
-    
+
     Args:
         dep_str: Dependency string (e.g., 'numpy>=1.21.0', 'numpy[extra]>=1.21.0')
-        
+
     Returns:
         Tuple of (package_name, version_spec) where version_spec may be None
     """
@@ -32,13 +32,13 @@ def parse_dependency_string(dep_str: str) -> tuple[str, str | None]:
 
 def extract_all_dependencies(pyproject_data: dict) -> dict[str, dict]:
     """Extract all dependencies from pyproject.toml including groups.
-    
+
     When a package appears in multiple places, we track all occurrences
     and use the most restrictive constraint as the effective one.
-    
+
     Args:
         pyproject_data: Parsed pyproject.toml data
-        
+
     Returns:
         Dict mapping package names to their info (version, source)
     """
@@ -109,18 +109,18 @@ def extract_all_dependencies(pyproject_data: dict) -> dict[str, dict]:
 def is_meaningful_version_change(old_version: str | None,
                                 new_version: str | None) -> bool:
     """Determine if a version change is meaningful.
-    
+
     Rules:
     - No change if both are None or both are the same
     - No change if one is None and the other is a lower bound (>=)
       since unconstrained effectively means "any version"
     - Change if going from unconstrained to pinned
     - Change if version numbers actually differ
-    
+
     Args:
         old_version: Previous version constraint
         new_version: New version constraint
-        
+
     Returns:
         True if the change is meaningful
     """
@@ -152,12 +152,12 @@ def is_meaningful_version_change(old_version: str | None,
 
 def find_most_restrictive_constraint(constraints: list[str]) -> str | None:
     """Find the most restrictive version constraint from a list.
-    
+
     Priority: exact pins > upper bounds > ranges > lower bounds > unconstrained
-    
+
     Args:
         constraints: List of version constraints
-        
+
     Returns:
         The most restrictive constraint or None
     """
@@ -185,11 +185,11 @@ def find_most_restrictive_constraint(constraints: list[str]) -> str | None:
 
 def compare_dependency_sets(before: dict[str, dict], after: dict[str, dict]) -> dict[str, list]:
     """Compare two sets of dependencies to find changes.
-    
+
     Args:
         before: Previous dependencies (from git)
         after: Current dependencies (from file)
-        
+
     Returns:
         Dict with 'added', 'removed', and 'updated' lists
     """

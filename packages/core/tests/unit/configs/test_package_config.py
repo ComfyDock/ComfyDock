@@ -1,11 +1,10 @@
 """Tests for PackageConfigManager."""
 
-import pytest
 from pathlib import Path
 
 from comfygit_core.configs.package_config import (
-    PackageConfigManager,
     DEFAULT_PACKAGE_SUBSTITUTIONS,
+    PackageConfigManager,
 )
 
 

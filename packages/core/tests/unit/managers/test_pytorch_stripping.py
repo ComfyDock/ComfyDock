@@ -11,7 +11,6 @@ from tempfile import TemporaryDirectory
 
 import pytest
 import tomlkit
-
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 
 

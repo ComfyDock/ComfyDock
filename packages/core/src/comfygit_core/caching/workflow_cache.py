@@ -578,7 +578,7 @@ class WorkflowCacheRepository:
                 return str(obj)
             elif isinstance(obj, dict):
                 return {k: convert_paths(v) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
+            elif isinstance(obj, list | tuple):
                 return [convert_paths(item) for item in obj]
             return obj
 

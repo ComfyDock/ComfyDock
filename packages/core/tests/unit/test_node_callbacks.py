@@ -1,5 +1,6 @@
 """Unit tests for node installation callbacks."""
 from unittest.mock import Mock
+
 from comfygit_core.models.workflow import NodeInstallCallbacks
 
 

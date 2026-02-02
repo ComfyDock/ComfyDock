@@ -1,6 +1,7 @@
 """Unit tests for ModelIndexManager."""
 
 import time
+
 from comfygit_core.repositories.model_repository import ModelRepository
 
 

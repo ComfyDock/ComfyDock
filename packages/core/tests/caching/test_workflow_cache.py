@@ -12,9 +12,8 @@ Tests workflow analysis caching including:
 import json
 import os
 import time
-from pathlib import Path
-import pytest
 
+import pytest
 from comfygit_core.caching.workflow_cache import WorkflowCacheRepository
 from comfygit_core.models.workflow import WorkflowDependencies, WorkflowNode
 
@@ -146,7 +145,7 @@ class TestCacheInvalidationOnContentChange:
         assert result is not None
 
         # Modify workflow content (add a node)
-        with open(sample_workflow_file, 'r') as f:
+        with open(sample_workflow_file) as f:
             workflow = json.load(f)
 
         workflow["nodes"].append({
@@ -516,7 +515,7 @@ class TestSessionCacheInvalidationOnFileChange:
         cache_db.set("test-env", "test_workflow", sample_workflow_file, sample_dependencies)
 
         # Multiple gets without file changes should all hit session cache
-        for i in range(3):
+        for _i in range(3):
             result = cache_db.get("test-env", "test_workflow", sample_workflow_file)
             assert result is not None
             assert result.dependencies is not None
@@ -573,7 +572,6 @@ class TestCacheHashVerification:
         # Get the mtime+size that was cached
         stat = workflow_path.stat()
         original_mtime = stat.st_mtime
-        original_size = stat.st_size
 
         # Now modify the file content but preserve SAME mtime+size
         # This simulates the race where content changed between panel read and cache set
@@ -639,7 +637,9 @@ class TestResolutionRoundTrip:
         (has_category_mismatch, expected_categories, actual_category) get dropped.
         """
         from comfygit_core.models.workflow import (
-            ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+            ResolutionResult,
+            ResolvedModel,
+            WorkflowNodeWidgetRef,
         )
 
         db_path = tmp_path / "test.db"
@@ -705,7 +705,7 @@ class TestResolutionRoundTrip:
         cached_model = result.resolution.models_resolved[0]
 
         # These assertions fail with the bug (fields are dropped during deserialization)
-        assert cached_model.has_category_mismatch == True, \
+        assert cached_model.has_category_mismatch, \
             "has_category_mismatch should survive cache round-trip"
         assert cached_model.expected_categories == ["loras"], \
             "expected_categories should survive cache round-trip"
@@ -713,7 +713,7 @@ class TestResolutionRoundTrip:
             "actual_category should survive cache round-trip"
 
         # Verify other fields are still correct
-        assert cached_model.needs_path_sync == True
+        assert cached_model.needs_path_sync
         assert cached_model.match_type == "filename"
         assert cached_model.match_confidence == 0.7
 
@@ -723,11 +723,9 @@ class TestResolutionRoundTrip:
         This ensures backward compatibility when loading cache created before
         new fields were added.
         """
-        from comfygit_core.models.workflow import (
-            ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
-        )
-        from comfygit_core.caching.workflow_cache import WorkflowCacheRepository
         import json
+
+        from comfygit_core.caching.workflow_cache import WorkflowCacheRepository
 
         db_path = tmp_path / "test.db"
         cache = WorkflowCacheRepository(db_path)
@@ -770,10 +768,10 @@ class TestResolutionRoundTrip:
         model = result.models_resolved[0]
 
         # New fields should use defaults
-        assert model.has_category_mismatch == False
+        assert not model.has_category_mismatch
         assert model.expected_categories == []
         assert model.actual_category is None
 
         # Existing fields should still work
-        assert model.needs_path_sync == True
+        assert model.needs_path_sync
         assert model.match_type == "filename"

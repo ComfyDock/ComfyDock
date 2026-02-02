@@ -10,13 +10,12 @@ Fix: Compare workflow's declared node list (from pyproject.toml) against actuall
 installed nodes (from pyproject.toml nodes section).
 """
 
-import pytest
 import sys
 from pathlib import Path
 
 # Add parent directory to path for conftest imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from conftest import simulate_comfyui_save_workflow, load_workflow_fixture
+from conftest import load_workflow_fixture, simulate_comfyui_save_workflow
 
 
 class TestStatusUninstalledNodes:
@@ -91,7 +90,7 @@ class TestStatusUninstalledNodes:
         installed_packages = set(test_env.pyproject.nodes.get_existing().keys())
 
         # Calculate difference (this is what _print_workflow_issues does)
-        packages_needed = resolved_packages - installed_packages
+        resolved_packages - installed_packages
 
         # BUG: This will be 0 because both lists are empty or matching
         # after resolution re-parses the workflow

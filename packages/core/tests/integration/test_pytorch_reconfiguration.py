@@ -3,7 +3,6 @@
 Tests that PyTorch config is handled via injection context manager, keeping
 pyproject.toml clean of machine-specific PyTorch configuration.
 """
-import pytest
 from unittest.mock import patch
 
 
@@ -20,8 +19,9 @@ class TestGetInstalledPytorchInfo:
 
     def test_get_installed_info_with_cuda(self):
         """Should return installed PyTorch info with backend."""
-        from comfygit_core.utils.pytorch import get_installed_pytorch_info
         from unittest.mock import MagicMock
+
+        from comfygit_core.utils.pytorch import get_installed_pytorch_info
 
         # ARRANGE - Mock uv_manager
         mock_uv = MagicMock()
@@ -43,8 +43,9 @@ class TestGetInstalledPytorchInfo:
 
     def test_get_installed_info_cpu_only(self):
         """Should return 'cpu' backend when no suffix."""
-        from comfygit_core.utils.pytorch import get_installed_pytorch_info
         from unittest.mock import MagicMock
+
+        from comfygit_core.utils.pytorch import get_installed_pytorch_info
 
         # ARRANGE - Mock uv_manager with CPU versions
         mock_uv = MagicMock()

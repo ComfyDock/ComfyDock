@@ -5,7 +5,7 @@ that enable fetching and validating ComfyUI release tags from GitHub API.
 """
 
 import pytest
-from comfygit_core.clients.github_client import GitHubClient, GitHubRepoInfo
+from comfygit_core.clients.github_client import GitHubClient
 
 
 @pytest.fixture

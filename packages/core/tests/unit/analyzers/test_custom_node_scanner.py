@@ -2,8 +2,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from comfygit_core.analyzers.custom_node_scanner import CustomNodeScanner
 
 

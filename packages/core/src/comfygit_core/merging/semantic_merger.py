@@ -147,7 +147,7 @@ class SemanticMerger:
         required_nodes: set[str] = set()
         merged_workflows = result["tool"]["comfygit"].get("workflows", {})
 
-        for wf_name, wf_config in merged_workflows.items():
+        for _wf_name, wf_config in merged_workflows.items():
             nodes_list = wf_config.get("nodes", [])
             required_nodes.update(nodes_list)
 

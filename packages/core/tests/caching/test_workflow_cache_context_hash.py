@@ -7,14 +7,12 @@ Tests that context hash correctly captures workflow-specific changes:
 - Model metadata changes are captured
 - Model index changes are captured
 """
-import json
-from pathlib import Path
-from unittest.mock import Mock, MagicMock
-import pytest
+from unittest.mock import Mock
 
+import pytest
 from comfygit_core.caching.workflow_cache import WorkflowCacheRepository
-from comfygit_core.models.workflow import WorkflowDependencies, WorkflowNode, WorkflowNodeWidgetRef
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.models.workflow import WorkflowDependencies, WorkflowNode
 
 
 @pytest.fixture

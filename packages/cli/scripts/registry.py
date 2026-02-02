@@ -9,22 +9,22 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, Optional
-import urllib.request
-import urllib.parse
 import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
 
 
 class RegistryClient:
-    def __init__(self, base_url: str = "https://api.comfy.org", token: Optional[str] = None):
+    def __init__(self, base_url: str = "https://api.comfy.org", token: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token or os.environ.get("COMFY_API_TOKEN")
 
     def _make_request(
-        self, method: str, path: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, method: str, path: str, data: dict[str, Any] | None = None, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
-        
+
         if params:
             query_params = {}
             for k, v in params.items():
@@ -47,7 +47,7 @@ class RegistryClient:
             req_data = json.dumps(data).encode("utf-8")
 
         request = urllib.request.Request(url, data=req_data, headers=headers, method=method)
-        
+
         try:
             with urllib.request.urlopen(request) as response:
                 if response.status in (200, 201):
@@ -62,24 +62,24 @@ class RegistryClient:
         except urllib.error.URLError as e:
             return {"error": "Connection error", "message": str(e)}
 
-    def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._make_request("GET", path, params=params)
 
-    def post(self, path: str, data: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def post(self, path: str, data: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._make_request("POST", path, data=data, params=params)
 
-    def put(self, path: str, data: Dict[str, Any], params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def put(self, path: str, data: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._make_request("PUT", path, data=data, params=params)
 
-    def delete(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def delete(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._make_request("DELETE", path, params=params)
 
 
-def print_json(data: Dict[str, Any]) -> None:
+def print_json(data: dict[str, Any]) -> None:
     print(json.dumps(data, indent=2))
 
 
-def filter_comfy_nodes_by_name(result: Dict[str, Any], name_filter: str) -> Dict[str, Any]:
+def filter_comfy_nodes_by_name(result: dict[str, Any], name_filter: str) -> dict[str, Any]:
     """Filter ComfyNode results by comfy_node_name field."""
     if not name_filter or "error" in result:
         return result
@@ -128,10 +128,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
 def add_users_commands(subparsers) -> None:
     users_parser = subparsers.add_parser("users", help="User operations")
     users_subparsers = users_parser.add_subparsers(dest="users_action", help="User actions")
-    
+
     get_user_parser = users_subparsers.add_parser("get", help="Get current user info")
     add_common_args(get_user_parser)
-    
+
     list_publishers_parser = users_subparsers.add_parser("publishers", help="List publishers for current user")
     add_common_args(list_publishers_parser)
 
@@ -139,18 +139,18 @@ def add_users_commands(subparsers) -> None:
 def add_publishers_commands(subparsers) -> None:
     pub_parser = subparsers.add_parser("publishers", help="Publisher operations")
     pub_subparsers = pub_parser.add_subparsers(dest="publishers_action", help="Publisher actions")
-    
+
     list_parser = pub_subparsers.add_parser("list", help="List all publishers")
     add_common_args(list_parser)
-    
+
     get_parser = pub_subparsers.add_parser("get", help="Get publisher by ID")
     get_parser.add_argument("publisher_id", help="Publisher ID")
     add_common_args(get_parser)
-    
+
     validate_parser = pub_subparsers.add_parser("validate", help="Validate publisher username")
     validate_parser.add_argument("username", help="Username to validate")
     add_common_args(validate_parser)
-    
+
     create_parser = pub_subparsers.add_parser("create", help="Create new publisher")
     create_parser.add_argument("--name", required=True, help="Publisher name")
     create_parser.add_argument("--id", required=True, help="Publisher ID (username)")
@@ -165,7 +165,7 @@ def add_publishers_commands(subparsers) -> None:
 def add_nodes_commands(subparsers) -> None:
     nodes_parser = subparsers.add_parser("nodes", help="Node operations")
     nodes_subparsers = nodes_parser.add_subparsers(dest="nodes_action", help="Node actions")
-    
+
     list_parser = nodes_subparsers.add_parser("list", help="List all nodes")
     list_parser.add_argument("--page", type=int, default=1, help="Page number")
     list_parser.add_argument("--limit", type=int, default=10, help="Items per page")
@@ -173,29 +173,29 @@ def add_nodes_commands(subparsers) -> None:
     list_parser.add_argument("--timestamp", help="Filter by timestamp (ISO format)")
     list_parser.add_argument("--latest", action="store_true", help="Get latest from database")
     add_common_args(list_parser)
-    
+
     search_parser = nodes_subparsers.add_parser("search", help="Search nodes")
     search_parser.add_argument("--query", help="Search query")
     search_parser.add_argument("--page", type=int, default=1, help="Page number")
     search_parser.add_argument("--limit", type=int, default=10, help="Items per page")
     search_parser.add_argument("--include-banned", action="store_true", help="Include banned nodes")
     add_common_args(search_parser)
-    
+
     get_parser = nodes_subparsers.add_parser("get", help="Get node by ID")
     get_parser.add_argument("node_id", help="Node ID")
     add_common_args(get_parser)
-    
+
     install_parser = nodes_subparsers.add_parser("install", help="Get node installation info")
     install_parser.add_argument("node_id", help="Node ID")
     install_parser.add_argument("--version", help="Specific version")
     add_common_args(install_parser)
-    
+
     versions_parser = nodes_subparsers.add_parser("versions", help="List node versions")
     versions_parser.add_argument("node_id", help="Node ID")
     versions_parser.add_argument("--statuses", nargs="+", help="Filter by statuses")
     versions_parser.add_argument("--include-status-reason", action="store_true", help="Include status reasons")
     add_common_args(versions_parser)
-    
+
     comfy_nodes_parser = nodes_subparsers.add_parser("comfy-nodes", help="Get ComfyNode metadata")
     comfy_nodes_parser.add_argument("node_id", help="Node ID")
     comfy_nodes_parser.add_argument("version", help="Version")
@@ -209,7 +209,7 @@ def add_nodes_commands(subparsers) -> None:
 def add_git_commands(subparsers) -> None:
     git_parser = subparsers.add_parser("git", help="Git/CI operations")
     git_subparsers = git_parser.add_subparsers(dest="git_action", help="Git actions")
-    
+
     commit_parser = git_subparsers.add_parser("commit", help="Get commit data")
     commit_parser.add_argument("--commit-id", help="Commit ID")
     commit_parser.add_argument("--os", help="Operating system filter")
@@ -219,18 +219,18 @@ def add_git_commands(subparsers) -> None:
     commit_parser.add_argument("--page", type=int, default=1, help="Page number")
     commit_parser.add_argument("--page-size", type=int, default=10, help="Page size")
     add_common_args(commit_parser)
-    
+
     summary_parser = git_subparsers.add_parser("summary", help="Get commit summaries")
     summary_parser.add_argument("--repo", default="comfyanonymous/ComfyUI", help="Repository name")
     summary_parser.add_argument("--branch", help="Branch name filter")
     summary_parser.add_argument("--page", type=int, default=1, help="Page number")
     summary_parser.add_argument("--page-size", type=int, default=10, help="Page size")
     add_common_args(summary_parser)
-    
+
     branches_parser = git_subparsers.add_parser("branches", help="Get repository branches")
     branches_parser.add_argument("--repo", required=True, help="Repository name")
     add_common_args(branches_parser)
-    
+
     workflow_parser = git_subparsers.add_parser("workflow", help="Get workflow result")
     workflow_parser.add_argument("workflow_id", help="Workflow result ID")
     add_common_args(workflow_parser)
@@ -244,7 +244,7 @@ def handle_users_command(client: RegistryClient, args: argparse.Namespace) -> No
     else:
         print("Unknown users action")
         return
-    
+
     print_json(result)
 
 
@@ -270,12 +270,12 @@ def handle_publishers_command(client: RegistryClient, args: argparse.Namespace) 
             data["source_code_repo"] = args.source_code_repo
         if args.logo:
             data["logo"] = args.logo
-        
+
         result = client.post("/publishers", data)
     else:
         print("Unknown publishers action")
         return
-    
+
     print_json(result)
 
 
@@ -290,7 +290,7 @@ def handle_nodes_command(client: RegistryClient, args: argparse.Namespace) -> No
             params["timestamp"] = args.timestamp
         if hasattr(args, "latest") and args.latest:
             params["latest"] = args.latest
-        
+
         result = client.get("/nodes", params)
     elif args.nodes_action == "search":
         params = {
@@ -300,7 +300,7 @@ def handle_nodes_command(client: RegistryClient, args: argparse.Namespace) -> No
         }
         if args.query:
             params["search"] = args.query
-        
+
         result = client.get("/nodes/search", params)
     elif args.nodes_action == "get":
         result = client.get(f"/nodes/{args.node_id}")
@@ -308,7 +308,7 @@ def handle_nodes_command(client: RegistryClient, args: argparse.Namespace) -> No
         params = {}
         if args.version:
             params["version"] = args.version
-        
+
         result = client.get(f"/nodes/{args.node_id}/install", params)
     elif args.nodes_action == "versions":
         params = {}
@@ -316,7 +316,7 @@ def handle_nodes_command(client: RegistryClient, args: argparse.Namespace) -> No
             params["statuses"] = args.statuses
         if args.include_status_reason:
             params["include_status_reason"] = args.include_status_reason
-        
+
         result = client.get(f"/nodes/{args.node_id}/versions", params)
     elif args.nodes_action == "comfy-nodes":
         if args.comfy_node_id:
@@ -461,7 +461,7 @@ def handle_git_command(client: RegistryClient, args: argparse.Namespace) -> None
             params["workflowName"] = args.workflow
         if args.branch:
             params["branch"] = args.branch
-        
+
         result = client.get("/gitcommit", params)
     elif args.git_action == "summary":
         params = {
@@ -471,7 +471,7 @@ def handle_git_command(client: RegistryClient, args: argparse.Namespace) -> None
         }
         if args.branch:
             params["branchName"] = args.branch
-        
+
         result = client.get("/gitcommitsummary", params)
     elif args.git_action == "branches":
         result = client.get("/branch", {"repo_name": args.repo})
@@ -480,7 +480,7 @@ def handle_git_command(client: RegistryClient, args: argparse.Namespace) -> None
     else:
         print("Unknown git action")
         return
-    
+
     print_json(result)
 
 
@@ -504,25 +504,25 @@ Examples:
   uv run registry users get --token your-token-here
         """,
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
     add_users_commands(subparsers)
     add_publishers_commands(subparsers)
     add_nodes_commands(subparsers)
     add_git_commands(subparsers)
-    
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         return
-    
+
     client = RegistryClient(
         base_url=getattr(args, "base_url", "https://api.comfy.org"),
         token=getattr(args, "token", None)
     )
-    
+
     try:
         if args.command == "users":
             handle_users_command(client, args)

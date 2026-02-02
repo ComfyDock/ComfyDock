@@ -275,7 +275,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # Config management - now with subcommands
     config_parser = subparsers.add_parser("config", help="Manage configuration settings")
-    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Configuration commands")
+    config_parser.add_subparsers(dest="config_command", help="Configuration commands")
 
     # Legacy flags - still supported at root level for backward compatibility
     config_parser.add_argument("--civitai-key", type=str, help="Set Civitai API key (use empty string to clear)")

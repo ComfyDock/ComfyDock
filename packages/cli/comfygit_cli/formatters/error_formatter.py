@@ -51,7 +51,7 @@ class NodeErrorFormatter:
             return f"cg node update {action.node_identifier}"
 
         elif action.action_type == 'add_constraint':
-            return f"cg constraint add \"<package>==<version>\""
+            return "cg constraint add \"<package>==<version>\""
 
         elif action.action_type == 'skip_node':
             return "# Don't install this node"

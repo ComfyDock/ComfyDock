@@ -30,7 +30,7 @@ class SystemDetector:
 
     def detect_all(self) -> SystemInfo:
         """Detect all system information and return typed result.
-        
+
         Returns:
             SystemInfo: Structured system information
         """
@@ -66,11 +66,11 @@ class SystemDetector:
     def _find_python_executable(self) -> Path:
         """
         Find the Python executable and virtual environment used by ComfyUI.
-        
+
         Args:
             comfyui_path: Path to ComfyUI directory
             python_hint: Direct path to Python executable (if provided by user)
-        
+
         Returns:
             Path to python_executable
         """
@@ -221,20 +221,20 @@ try:
         'cuda_available': torch.cuda.is_available(),
         'cuda_torch_version': torch.version.cuda if torch.cuda.is_available() else None
     }
-    
+
     # Try to detect torchvision and torchaudio
     try:
         import torchvision
         info['torchvision'] = torchvision.__version__
     except ImportError:
         pass
-        
+
     try:
         import torchaudio
         info['torchaudio'] = torchaudio.__version__
     except ImportError:
         pass
-        
+
     print(json.dumps(info))
 except ImportError:
     print(json.dumps({'error': 'PyTorch not installed'}))

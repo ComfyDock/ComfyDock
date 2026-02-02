@@ -1,7 +1,6 @@
 """Tests for WorkflowDependencyParser multi-model extraction."""
-import pytest
-from pathlib import Path
 import json
+from pathlib import Path
 
 from comfygit_core.analyzers.workflow_dependency_parser import WorkflowDependencyParser
 from comfygit_core.models.workflow import Workflow, WorkflowNode, WorkflowNodeWidgetRef

@@ -1,9 +1,6 @@
 """Tests for NodeManager git repo conflict detection."""
 
-from pathlib import Path
 from unittest.mock import Mock, patch
-import tempfile
-import subprocess
 
 from comfygit_core.managers.node_manager import NodeManager
 

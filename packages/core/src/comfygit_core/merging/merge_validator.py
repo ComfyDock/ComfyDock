@@ -60,7 +60,7 @@ class MergeValidator:
         result.update(target_workflows)
 
         # Handle resolutions
-        for wf_name, resolution in workflow_resolutions.items():
+        for _wf_name, resolution in workflow_resolutions.items():
             if resolution == "take_base":
                 # Keep base version (already in result)
                 pass

@@ -3,8 +3,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 from comfygit_cli.completion_commands import CompletionCommands
 
 
@@ -226,7 +224,7 @@ class TestCompletionCommands:
         try:
             # Add completion twice
             CompletionCommands._add_completion_to_config('bash', config_file)
-            first_content = config_file.read_text()
+            config_file.read_text()
 
             CompletionCommands._add_completion_to_config('bash', config_file)
             second_content = config_file.read_text()

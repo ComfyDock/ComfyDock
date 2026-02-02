@@ -1,7 +1,7 @@
 """Test handling of multiple optional dependency group failures during sync."""
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+import pytest
 from comfygit_core.managers.uv_project_manager import UVProjectManager
 from comfygit_core.models.exceptions import UVCommandError
 

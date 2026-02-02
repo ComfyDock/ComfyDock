@@ -7,10 +7,8 @@ conflict with the target branch.
 Reference: docs/contexts/plan/git-branch-workflow-preservation.md
 """
 import json
-from pathlib import Path
 
 import pytest
-
 from comfygit_core.models.exceptions import CDEnvironmentError
 
 

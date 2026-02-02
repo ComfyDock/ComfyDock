@@ -2,10 +2,11 @@
 
 import os
 from unittest.mock import Mock
+
 import pytest
-from requests import HTTPError, Response
-from comfygit_core.services.model_downloader import ModelDownloader
 from comfygit_core.models.exceptions import DownloadErrorContext
+from comfygit_core.services.model_downloader import ModelDownloader
+from requests import HTTPError, Response
 
 
 @pytest.fixture
