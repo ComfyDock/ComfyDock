@@ -275,7 +275,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # Config management - now with subcommands
     config_parser = subparsers.add_parser("config", help="Manage configuration settings")
-    config_subparsers = config_parser.add_subparsers(dest="config_command", help="Configuration commands")
+    config_parser.add_subparsers(dest="config_command", help="Configuration commands")
 
     # Legacy flags - still supported at root level for backward compatibility
     config_parser.add_argument("--civitai-key", type=str, help="Set Civitai API key (use empty string to clear)")
@@ -675,6 +675,7 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     node_add_parser.add_argument("--no-test", action="store_true", help="Don't test resolution")
     node_add_parser.add_argument("--force", action="store_true", help="Force overwrite existing directory")
     node_add_parser.add_argument("--verbose", "-v", action="store_true", help="Show full UV error output for dependency conflicts")
+    node_add_parser.add_argument("--strict", action="store_true", help="Fail on dependency conflicts instead of auto-resolving")
     node_add_parser.set_defaults(func=env_cmds.node_add)
 
     # node remove

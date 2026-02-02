@@ -107,7 +107,7 @@ class NodeInfo:
         Returns:
             NodeInfo instance
         """
-        from packaging.version import Version, InvalidVersion
+        from packaging.version import InvalidVersion, Version
 
         # Determine version to use
         if version is None:

@@ -6,11 +6,9 @@ Tests the full flow:
 3. Install missing nodes to filesystem
 """
 
-import pytest
-import json
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import simulate_comfyui_save_workflow
 

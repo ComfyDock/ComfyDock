@@ -1,6 +1,6 @@
 # ComfyGit
 
-[![Documentation](https://img.shields.io/badge/docs-comfyhub.org-blue)](https://docs.comfyhub.org/comfygit/)
+[![Documentation](https://img.shields.io/badge/docs-comfygit.org-blue)](https://docs.comfygit.org/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE.txt)
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?logo=discord&logoColor=white)](https://discord.gg/2h5rSTeh6Y)
 
@@ -52,15 +52,15 @@ $ cg run
 Starting ComfyUI at http://localhost:8188
 ```
 
-See the [documentation](https://docs.comfyhub.org/comfygit/getting-started/quickstart/) for more examples including version control workflows, sharing environments, and team collaboration.
+See the [documentation](https://docs.comfygit.org/getting-started/installation/) for more examples including version control workflows, sharing environments, and team collaboration.
 
 ## Documentation
 
-Full documentation at **[docs.comfyhub.org/comfygit](https://docs.comfyhub.org/comfygit)** including:
+Full documentation at **[docs.comfygit.org](https://docs.comfygit.org/)** including:
 
-- [How It Works](https://docs.comfyhub.org/comfygit/getting-started/concepts/) — architecture and design
-- [Model Management](https://docs.comfyhub.org/comfygit/user-guide/models/model-index/) — content-addressable indexing
-- [Sharing Environments](https://docs.comfyhub.org/comfygit/user-guide/collaboration/export-import/) — export/import and git remotes
+- [How It Works](https://docs.comfygit.org/getting-started/concepts/) — architecture and design
+- [Model Management](https://docs.comfygit.org/user-guide/models/model-index/) — content-addressable indexing
+- [Sharing Environments](https://docs.comfygit.org/user-guide/collaboration/export-import/) — export/import and git remotes
 
 ## Features
 
@@ -100,10 +100,10 @@ cg push / cg pull             # Sync with git remote
 
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-- [GitHub Issues](https://github.com/comfyhub-org/comfygit/issues) — bugs and features
-- [GitHub Discussions](https://github.com/comfyhub-org/comfygit/discussions) — questions and ideas
+- [GitHub Issues](https://github.com/comfygit-ai/comfygit/issues) — bugs and features
+- [GitHub Discussions](https://github.com/comfygit-ai/comfygit/discussions) — questions and ideas
 - [Discord](https://discord.gg/2h5rSTeh6Y) — community chat
 
 ## License
 
-ComfyGit is dual-licensed under [AGPL-3.0](LICENSE.txt) for open-source use and proprietary licenses for commercial use. See [licensing details](https://docs.comfyhub.org/comfygit/license/) for more information.
+ComfyGit is dual-licensed under [AGPL-3.0](LICENSE.txt) for open-source use and proprietary licenses for commercial use. See the [LICENSE.txt](LICENSE.txt) for more information.

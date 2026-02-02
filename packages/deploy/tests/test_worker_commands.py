@@ -16,7 +16,7 @@ from comfygit_deploy.config import DeployConfig
 class TestWorkspaceValidation:
     """Tests for workspace validation helper."""
 
-    def test_get_workspace_from_config(self, tmp_path: Path) -> None:
+    def test_get_workspace_from_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """get_validated_workspace returns workspace from config."""
         config_path = tmp_path / "config" / "worker.json"
         workspace_path = tmp_path / "workspace"
@@ -28,6 +28,7 @@ class TestWorkspaceValidation:
             "workspace_path": str(workspace_path),
         }))
 
+        monkeypatch.delenv("COMFYGIT_HOME", raising=False)
         with patch(
             "comfygit_deploy.commands.worker.WORKER_CONFIG_PATH", config_path
         ):

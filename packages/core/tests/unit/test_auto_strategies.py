@@ -1,9 +1,8 @@
 """Test auto resolution strategies."""
-import pytest
-from comfygit_core.strategies import AutoNodeStrategy, AutoModelStrategy
-from comfygit_core.models.workflow import WorkflowNodeWidgetRef, ResolvedNodePackage, ResolvedModel
-from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.models.node_mapping import GlobalNodePackage
+from comfygit_core.models.shared import ModelWithLocation
+from comfygit_core.models.workflow import ResolvedModel, ResolvedNodePackage, WorkflowNodeWidgetRef
+from comfygit_core.strategies import AutoModelStrategy, AutoNodeStrategy
 
 
 class TestAutoNodeStrategy:

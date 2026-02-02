@@ -6,13 +6,8 @@ Tests the correct behavior:
 - Return node IDs that are referenced in workflows but not installed
 """
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-from pathlib import Path
+from unittest.mock import Mock
 
-from comfygit_core.models.workflow import ResolutionResult, ResolvedNodePackage
-from comfygit_core.models.node_mapping import GlobalNodePackage
-from comfygit_core.models.environment import EnvironmentState, NodeState
 from comfygit_core.models.shared import NodeInfo
 
 

@@ -1,7 +1,6 @@
 """Simplified sync models for ComfyDock - workflow sync removed."""
 
 from dataclasses import dataclass, field
-from typing import List
 
 
 @dataclass
@@ -12,24 +11,24 @@ class SyncResult:
     packages_synced: bool = False
 
     # Dependency groups
-    dependency_groups_installed: List[str] = field(default_factory=list)  # Group names
-    dependency_groups_failed: List[tuple[str, str]] = field(default_factory=list)  # (group_name, error)
+    dependency_groups_installed: list[str] = field(default_factory=list)  # Group names
+    dependency_groups_failed: list[tuple[str, str]] = field(default_factory=list)  # (group_name, error)
 
     # Node sync
-    nodes_installed: List[str] = field(default_factory=list)
-    nodes_removed: List[str] = field(default_factory=list)
-    nodes_updated: List[str] = field(default_factory=list)
+    nodes_installed: list[str] = field(default_factory=list)
+    nodes_removed: list[str] = field(default_factory=list)
+    nodes_updated: list[str] = field(default_factory=list)
 
     # Model paths
     model_paths_configured: bool = False
 
     # Model downloads
-    models_downloaded: List[str] = field(default_factory=list)  # Filenames
-    models_failed: List[tuple[str, str]] = field(default_factory=list)  # (filename, error)
+    models_downloaded: list[str] = field(default_factory=list)  # Filenames
+    models_failed: list[tuple[str, str]] = field(default_factory=list)  # (filename, error)
 
     # Overall status
     success: bool = True
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     @property
     def has_changes(self) -> bool:

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
 from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
+
 from .logging.environment_logger import WorkspaceLogger
 
 if TYPE_CHECKING:

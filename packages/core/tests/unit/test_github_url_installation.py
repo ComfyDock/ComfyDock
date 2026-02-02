@@ -1,8 +1,8 @@
 """Test that arbitrary GitHub URLs can be installed (not just registry packages)."""
 
+from unittest.mock import Mock
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from pathlib import Path
 from comfygit_core.managers.node_manager import NodeManager
 from comfygit_core.models.shared import NodeInfo
 

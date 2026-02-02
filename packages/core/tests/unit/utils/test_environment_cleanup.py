@@ -2,8 +2,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from comfygit_core.utils.environment_cleanup import (
     COMPLETION_MARKER,
     is_environment_complete,

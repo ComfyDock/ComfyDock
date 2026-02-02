@@ -3,10 +3,7 @@
 Tests the scenario where repair command should remove extra nodes from filesystem
 to match the state in pyproject.toml (git collaboration scenario).
 """
-import shutil
-from pathlib import Path
 
-import pytest
 
 
 class TestRepairNodeRemoval:

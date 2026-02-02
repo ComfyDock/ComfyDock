@@ -32,13 +32,13 @@ class WorkspaceFactory:
     @staticmethod
     def find(path: Path | None = None) -> Workspace:
         """Find an existing workspace.
-        
+
         Args:
             path: Workspace path (defaults to ~/comfygit or COMFYGIT_HOME)
-            
+
         Returns:
             Workspace instance
-            
+
         Raises:
             CDWorkspaceNotFoundError: If workspace not found
         """
@@ -52,13 +52,13 @@ class WorkspaceFactory:
     @staticmethod
     def create(path: Path | None = None) -> Workspace:
         """Create a new ComfyDock workspace.
-        
+
         Args:
             path: Workspace directory (defaults to ~/comfygit)
-            
+
         Returns:
             Initialized Workspace
-            
+
         Raises:
             CDWorkspaceExistsError: If workspace already exists
             CDWorkspaceError: If directory exists and is not empty

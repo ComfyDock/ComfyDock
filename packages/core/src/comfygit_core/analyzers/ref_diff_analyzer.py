@@ -228,6 +228,7 @@ class RefDiffAnalyzer:
                 "git",
                 "diff-tree",
                 "-r",
+                "-M",
                 "--name-status",
                 base_ref,
                 target_ref,
@@ -246,8 +247,22 @@ class RefDiffAnalyzer:
             if not line:
                 continue
             parts = line.split("\t")
-            status, filepath = parts[0], parts[-1]
+            status = parts[0]
 
+            # Renames: R100\told_path\tnew_path → delete old + add new
+            if status.startswith("R"):
+                old_path, new_path = parts[1], parts[2]
+                if old_path.endswith(".json"):
+                    changes.append(
+                        WorkflowChange(name=Path(old_path).stem, change_type="deleted")
+                    )
+                if new_path.endswith(".json"):
+                    changes.append(
+                        WorkflowChange(name=Path(new_path).stem, change_type="added")
+                    )
+                continue
+
+            filepath = parts[-1]
             if not filepath.endswith(".json"):
                 continue
 
@@ -262,11 +277,15 @@ class RefDiffAnalyzer:
             else:
                 continue
 
-            # Check for conflicts on modified files
+            # Check for conflicts
             conflict = None
             if change_type == "modified" and merge_base:
                 conflict = self._check_workflow_conflict(
                     filepath, base_ref, target_ref, merge_base
+                )
+            elif change_type == "deleted" and merge_base:
+                conflict = self._check_delete_modify_conflict(
+                    filepath, base_ref, merge_base
                 )
 
             changes.append(
@@ -292,7 +311,24 @@ class RefDiffAnalyzer:
                 self.repo_path, merge_base, Path(filepath), is_text=True
             )
         except (ValueError, OSError):
-            return None  # File didn't exist at merge base
+            # No ancestor — both branches added the file independently (add/add)
+            try:
+                base_content = git_show(
+                    self.repo_path, base_ref, Path(filepath), is_text=True
+                )
+                target_content = git_show(
+                    self.repo_path, target_ref, Path(filepath), is_text=True
+                )
+            except (ValueError, OSError):
+                return None
+            if base_content != target_content:
+                return WorkflowConflict(
+                    identifier=Path(filepath).stem,
+                    conflict_type="both_modified",
+                    base_hash=hashlib.sha256(base_content.encode()).hexdigest()[:12],
+                    target_hash=hashlib.sha256(target_content.encode()).hexdigest()[:12],
+                )
+            return None
 
         try:
             base_content = git_show(self.repo_path, base_ref, Path(filepath), is_text=True)
@@ -313,6 +349,37 @@ class RefDiffAnalyzer:
                 conflict_type="both_modified",
                 base_hash=hashlib.sha256(base_content.encode()).hexdigest()[:12],
                 target_hash=hashlib.sha256(target_content.encode()).hexdigest()[:12],
+            )
+
+        return None
+
+    def _check_delete_modify_conflict(
+        self,
+        filepath: str,
+        base_ref: str,
+        merge_base: str,
+    ) -> WorkflowConflict | None:
+        """Check if deleted workflow was modified in base (delete/modify conflict).
+
+        Called when target deleted a file. If base modified it since the
+        ancestor, that's a conflict.
+        """
+        try:
+            ancestor_content = git_show(
+                self.repo_path, merge_base, Path(filepath), is_text=True
+            )
+            base_content = git_show(
+                self.repo_path, base_ref, Path(filepath), is_text=True
+            )
+        except (ValueError, OSError):
+            return None
+
+        if base_content != ancestor_content:
+            return WorkflowConflict(
+                identifier=Path(filepath).stem,
+                conflict_type="delete_modify",
+                base_hash=hashlib.sha256(base_content.encode()).hexdigest()[:12],
+                target_hash=None,
             )
 
         return None

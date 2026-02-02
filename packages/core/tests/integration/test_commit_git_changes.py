@@ -14,16 +14,13 @@ This happens in scenarios like:
 The CLI layer incorrectly checks ONLY workflow file sync status,
 ignoring git uncommitted changes in .cec/pyproject.toml.
 """
-import pytest
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 # Add parent dir to path for conftest import
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from conftest import simulate_comfyui_save_workflow, load_workflow_fixture
-
 from comfygit_core.models.shared import NodeInfo
+from conftest import simulate_comfyui_save_workflow
 
 
 class TestCommitWithGitChangesOnly:

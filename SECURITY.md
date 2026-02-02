@@ -17,7 +17,7 @@ Instead, please report them via one of the following methods:
 
 ### Preferred: GitHub Security Advisories
 
-1. Go to the [Security tab](https://github.com/comfyhub-org/comfygit/security/advisories/new)
+1. Go to the [Security tab](https://github.com/comfygit-ai/comfygit/security/advisories/new)
 2. Click "Report a vulnerability"
 3. Provide details about the vulnerability
 
@@ -170,7 +170,7 @@ If you're building on ComfyGit Core:
 ## Security Updates
 
 Security updates are announced via:
-- [GitHub Security Advisories](https://github.com/comfyhub-org/comfygit/security/advisories)
+- [GitHub Security Advisories](https://github.com/comfygit-ai/comfygit/security/advisories)
 - Release notes in GitHub Releases
 - Updates to this SECURITY.md file
 

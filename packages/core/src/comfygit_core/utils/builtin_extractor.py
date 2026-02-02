@@ -6,7 +6,6 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
 
 from ..logging.logging_config import get_logger
 from .comfyui_ops import get_comfyui_version
@@ -35,10 +34,10 @@ def _is_valid_node_name(name: str) -> bool:
     return True
 
 
-def _extract_from_ast(file_path: str) -> List[str]:
+def _extract_from_ast(file_path: str) -> list[str]:
     """Extract NODE_CLASS_MAPPINGS using AST parsing."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         tree = ast.parse(content, filename=file_path)
@@ -64,10 +63,10 @@ def _extract_from_ast(file_path: str) -> List[str]:
         return []
 
 
-def _extract_comfynode_from_ast(file_path: str) -> List[str]:
+def _extract_comfynode_from_ast(file_path: str) -> list[str]:
     """Extract nodes using the new io.ComfyNode pattern."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         tree = ast.parse(content, filename=file_path)
@@ -101,10 +100,10 @@ def _extract_comfynode_from_ast(file_path: str) -> List[str]:
         return []
 
 
-def _extract_from_regex(file_path: str) -> List[str]:
+def _extract_from_regex(file_path: str) -> list[str]:
     """Extract NODE_CLASS_MAPPINGS using regex as fallback."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         pattern = r'NODE_CLASS_MAPPINGS\s*=\s*\{'
@@ -161,10 +160,10 @@ def _extract_from_regex(file_path: str) -> List[str]:
         return []
 
 
-def _extract_comfynode_from_regex(file_path: str) -> List[str]:
+def _extract_comfynode_from_regex(file_path: str) -> list[str]:
     """Extract io.ComfyNode nodes using regex as fallback."""
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, encoding='utf-8') as f:
             content = f.read()
 
         node_names = []
@@ -189,7 +188,7 @@ def _extract_comfynode_from_regex(file_path: str) -> List[str]:
         return []
 
 
-def _extract_node_names(file_path: str) -> List[str]:
+def _extract_node_names(file_path: str) -> list[str]:
     """Extract node names from a Python file using all patterns."""
     all_nodes = []
 
@@ -210,10 +209,10 @@ def _extract_node_names(file_path: str) -> List[str]:
     comfynode_regex_names = _extract_comfynode_from_regex(file_path)
     all_nodes.extend(comfynode_regex_names)
 
-    return sorted(list(set(all_nodes)))
+    return sorted(set(all_nodes))
 
 
-def _discover_node_files(directory: Path) -> List[Path]:
+def _discover_node_files(directory: Path) -> list[Path]:
     """Discover Python files that likely contain node definitions."""
     if not directory.exists():
         return []
@@ -245,7 +244,7 @@ def _get_frontend_nodes() -> dict:
     }
 
 
-def _extract_nodes_from_comfyui(comfyui_path: Path) -> Tuple[dict, list]:
+def _extract_nodes_from_comfyui(comfyui_path: Path) -> tuple[dict, list]:
     """Extract all built-in nodes from a ComfyUI installation."""
     all_nodes: dict = {}
     errors: list = []
@@ -277,7 +276,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> Tuple[dict, list]:
         if extras_all:
             all_nodes['extras'] = {
                 'source': 'comfy_extras',
-                'nodes': sorted(list(set(extras_all))),
+                'nodes': sorted(set(extras_all)),
                 'count': len(set(extras_all)),
                 'by_file': extras_by_file
             }
@@ -298,7 +297,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> Tuple[dict, list]:
         if api_all:
             all_nodes['api'] = {
                 'source': 'comfy_api_nodes',
-                'nodes': sorted(list(set(api_all))),
+                'nodes': sorted(set(api_all)),
                 'count': len(set(api_all)),
                 'by_file': api_by_file
             }
@@ -321,7 +320,7 @@ def _extract_nodes_from_comfyui(comfyui_path: Path) -> Tuple[dict, list]:
         if custom_all:
             all_nodes['custom'] = {
                 'source': 'custom_nodes',
-                'nodes': sorted(list(set(custom_all))),
+                'nodes': sorted(set(custom_all)),
                 'count': len(set(custom_all)),
                 'by_file': custom_by_file
             }
@@ -360,7 +359,7 @@ def extract_comfyui_builtins(comfyui_path: Path, output_path: Path) -> dict:
     for category_data in all_nodes.values():
         all_builtin.update(category_data['nodes'])
 
-    all_builtin_list = sorted(list(all_builtin))
+    all_builtin_list = sorted(all_builtin)
 
     # Get version info
     version = get_comfyui_version(comfyui_path)

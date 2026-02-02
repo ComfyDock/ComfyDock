@@ -22,7 +22,7 @@ def setup_logging(
     file_level: str | None = None
 ) -> None:
     """Configure logging for the application.
-    
+
     Args:
         level: Default logging level (DEBUG, INFO, WARNING, ERROR)
         log_file: Optional file path for logging output
@@ -87,10 +87,10 @@ def setup_logging(
 
 def get_logger(name: str) -> logging.Logger:
     """Get a logger instance for the given module.
-    
+
     Args:
         name: Module name (typically __name__)
-        
+
     Returns:
         Configured logger instance
     """

@@ -50,6 +50,11 @@ class ExportImportManager:
             if python_version_path.exists():
                 tar.add(python_version_path, arcname=".python-version")
 
+            # Add package_config.toml (package substitutions and exclusions)
+            package_config_path = self.cec_path / "package_config.toml"
+            if package_config_path.exists():
+                tar.add(package_config_path, arcname="package_config.toml")
+
             # Add workflows
             workflows_path = self.cec_path / "workflows"
             if workflows_path.exists():

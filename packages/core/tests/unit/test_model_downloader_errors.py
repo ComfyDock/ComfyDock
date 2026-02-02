@@ -2,10 +2,11 @@
 
 import os
 from unittest.mock import Mock
+
 import pytest
-from requests import HTTPError, Response
-from comfygit_core.services.model_downloader import ModelDownloader
 from comfygit_core.models.exceptions import DownloadErrorContext
+from comfygit_core.services.model_downloader import ModelDownloader
+from requests import HTTPError, Response
 
 
 @pytest.fixture
@@ -13,6 +14,8 @@ def mock_workspace_config():
     """Mock workspace config with no API key."""
     config = Mock()
     config.get_civitai_token.return_value = None
+    # Mock HF token getter to check env vars (mimics real implementation)
+    config.get_huggingface_token.side_effect = lambda: os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     config.get_models_directory.return_value = None
     return config
 
@@ -22,6 +25,8 @@ def mock_workspace_config_with_key():
     """Mock workspace config with CivitAI API key."""
     config = Mock()
     config.get_civitai_token.return_value = "test_api_key_12345"
+    # Mock HF token getter to check env vars (mimics real implementation)
+    config.get_huggingface_token.side_effect = lambda: os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     config.get_models_directory.return_value = None
     return config
 

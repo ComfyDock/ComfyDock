@@ -1,15 +1,11 @@
 """Tests for enhanced WorkflowManager status system."""
 
-import json
 from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import pytest
 
 from comfygit_core.models.workflow import (
-    WorkflowSyncStatus,
-    WorkflowAnalysisStatus,
     DetailedWorkflowStatus,
+    WorkflowAnalysisStatus,
+    WorkflowSyncStatus,
 )
 
 
@@ -53,8 +49,8 @@ class TestDetailedWorkflowStatus:
     def test_total_issues_with_no_issues(self):
         """Test total_issues when no workflows have issues."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
+            WorkflowDependencies,
         )
 
         sync_status = WorkflowSyncStatus(synced=["wf1"])
@@ -76,8 +72,8 @@ class TestDetailedWorkflowStatus:
     def test_total_issues_with_unresolved_models(self):
         """Test total_issues with unresolved models."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
+            WorkflowDependencies,
             WorkflowNodeWidgetRef,
         )
 
@@ -113,14 +109,13 @@ class TestWorkflowAnalysisStatusDownloadIntents:
     def test_has_issues_with_download_intents(self):
         """Test that has_issues returns True when download intents are present."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
             ResolvedModel,
+            WorkflowDependencies,
             WorkflowNodeWidgetRef,
         )
-        from pathlib import Path
 
-        sync_status = WorkflowSyncStatus(synced=["wf1"])
+        WorkflowSyncStatus(synced=["wf1"])
 
         model_ref = WorkflowNodeWidgetRef(
             node_id="4",
@@ -156,8 +151,8 @@ class TestWorkflowAnalysisStatusDownloadIntents:
     def test_has_issues_without_download_intents(self):
         """Test that has_issues returns False when no download intents."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
+            WorkflowDependencies,
         )
 
         analysis = WorkflowAnalysisStatus(
@@ -172,12 +167,11 @@ class TestWorkflowAnalysisStatusDownloadIntents:
     def test_download_intents_count(self):
         """Test download_intents_count property."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
             ResolvedModel,
+            WorkflowDependencies,
             WorkflowNodeWidgetRef,
         )
-        from pathlib import Path
 
         ref1 = WorkflowNodeWidgetRef(
             node_id="4",
@@ -243,8 +237,8 @@ class TestIssueSummaryConsistency:
         but issue_summary="No issues" (because it only checked resolution failures).
         """
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
+            WorkflowDependencies,
         )
 
         analysis = WorkflowAnalysisStatus(
@@ -267,12 +261,11 @@ class TestIssueSummaryConsistency:
     def test_issue_summary_with_download_intents(self):
         """issue_summary should include download intents when they exist."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
             ResolvedModel,
+            WorkflowDependencies,
             WorkflowNodeWidgetRef,
         )
-        from pathlib import Path
 
         model_ref = WorkflowNodeWidgetRef(
             node_id="4",
@@ -311,8 +304,8 @@ class TestIssueSummaryConsistency:
     def test_issue_summary_no_issues_when_actually_no_issues(self):
         """issue_summary should return 'No issues' only when has_issues is False."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
+            WorkflowDependencies,
         )
 
         analysis = WorkflowAnalysisStatus(
@@ -329,13 +322,12 @@ class TestIssueSummaryConsistency:
     def test_issue_summary_with_combined_issues(self):
         """issue_summary should include all issue types."""
         from comfygit_core.models.workflow import (
-            WorkflowDependencies,
             ResolutionResult,
             ResolvedModel,
-            WorkflowNodeWidgetRef,
+            WorkflowDependencies,
             WorkflowNode,
+            WorkflowNodeWidgetRef,
         )
-        from pathlib import Path
 
         model_ref = WorkflowNodeWidgetRef(
             node_id="4",

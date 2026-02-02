@@ -1,10 +1,9 @@
 """Unit tests for py add/remove/list commands."""
+from argparse import Namespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from argparse import Namespace
 
 import pytest
-
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.models.exceptions import UVCommandError
 
@@ -19,7 +18,7 @@ class TestPyAdd:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added: requests"
+        mock_env.add_dependencies.return_value = {"output": "Added: requests", "substitutions": {}}
 
         # Create command handler
         cmd = EnvironmentCommands()
@@ -53,7 +52,7 @@ class TestPyAdd:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added: 3 packages"
+        mock_env.add_dependencies.return_value = {"output": "Added: 3 packages", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -82,7 +81,7 @@ class TestPyAdd:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Upgraded: requests"
+        mock_env.add_dependencies.return_value = {"output": "Upgraded: requests", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -133,7 +132,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_from_requirements_file(self, mock_workspace, tmp_path):
         """Should add packages from requirements.txt file."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"
@@ -142,7 +140,7 @@ class TestPyAdd:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added packages from requirements"
+        mock_env.add_dependencies.return_value = {"output": "Added packages from requirements", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -169,7 +167,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_requirements_with_upgrade(self, mock_workspace, tmp_path):
         """Should support --upgrade with requirements file."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"
@@ -178,7 +175,7 @@ class TestPyAdd:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Upgraded packages from requirements"
+        mock_env.add_dependencies.return_value = {"output": "Upgraded packages from requirements", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -204,7 +201,6 @@ class TestPyAdd:
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_add_errors_with_both_packages_and_requirements(self, mock_workspace, tmp_path):
         """Should error when both packages and requirements file are specified."""
-        from pathlib import Path
 
         # Create a real temporary requirements file
         reqs_file = tmp_path / "requirements.txt"
@@ -410,7 +406,7 @@ class TestPyAddTier2Flags:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added to group optional-cuda"
+        mock_env.add_dependencies.return_value = {"output": "Added to group optional-cuda", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -443,7 +439,7 @@ class TestPyAddTier2Flags:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added to dev dependencies"
+        mock_env.add_dependencies.return_value = {"output": "Added to dev dependencies", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -476,7 +472,7 @@ class TestPyAddTier2Flags:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added as editable"
+        mock_env.add_dependencies.return_value = {"output": "Added as editable", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -509,7 +505,7 @@ class TestPyAddTier2Flags:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added with exact bounds"
+        mock_env.add_dependencies.return_value = {"output": "Added with exact bounds", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -542,7 +538,7 @@ class TestPyAddTier2Flags:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.add_dependencies.return_value = "Added with multiple flags"
+        mock_env.add_dependencies.return_value = {"output": "Added with multiple flags", "substitutions": {}}
 
         cmd = EnvironmentCommands()
         args = Namespace(

@@ -7,8 +7,6 @@ Tests the merge system that handles:
 - Model source union from both branches
 """
 
-import pytest
-import tomllib
 
 
 class TestAtomicSemanticMerge:

@@ -3,7 +3,6 @@
 Tests pre-merge validation for node version conflicts.
 """
 
-import pytest
 
 from comfygit_core.merging.merge_validator import MergeValidator
 

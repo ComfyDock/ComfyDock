@@ -67,14 +67,13 @@ class TestManifest:
 
         # Should print YAML content
         mock_print.assert_called()
-        output = str(mock_print.call_args[0][0])
+        str(mock_print.call_args[0][0])
         # YAML output should contain the data
         assert mock_print.called
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_manifest_section_filter(self, mock_workspace):
         """Should filter to specific section when --section is used."""
-        import pytest
 
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
@@ -130,7 +129,7 @@ class TestManifest:
         )
 
         with pytest.raises(SystemExit) as exc_info:
-            with patch('builtins.print') as mock_print:
+            with patch('builtins.print'):
                 cmd.manifest(args)
 
         # Should exit with error

@@ -1,6 +1,7 @@
 """Unit tests for ModelIndexManager."""
 
 import time
+
 from comfygit_core.repositories.model_repository import ModelRepository
 
 
@@ -37,8 +38,8 @@ def test_add_and_find_models(tmp_path):
     assert results[0].hash == "abc123def456"
     assert results[0].filename == "test_model.safetensors"
 
-    # Find by filename
-    filename_results = index_mgr.find_by_filename("test_model")
+    # Find by filename (exact match)
+    filename_results = index_mgr.find_by_filename("test_model.safetensors")
     assert len(filename_results) == 1
     assert filename_results[0].hash == "abc123def456"
 

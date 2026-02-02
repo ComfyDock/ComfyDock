@@ -1,5 +1,4 @@
 """Tests for environment creation progress callbacks."""
-import pytest
 from dataclasses import dataclass, field
 
 
@@ -29,7 +28,7 @@ class TestEnvironmentCreateProgress:
         tracker = ProgressTracker()
 
         # ACT
-        env = test_workspace.create_environment(
+        test_workspace.create_environment(
             name="progress-test-env",
             progress=tracker,
         )

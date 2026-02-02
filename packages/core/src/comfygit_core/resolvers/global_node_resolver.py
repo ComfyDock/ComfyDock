@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING, List
 
 from comfygit_core.models.workflow import (
-    WorkflowNode,
-    ResolvedNodePackage,
     NodeResolutionContext,
+    ResolvedNodePackage,
     ScoredPackageMatch,
+    WorkflowNode,
 )
 
 from ..logging.logging_config import get_logger
@@ -49,7 +47,7 @@ class GlobalNodeResolver:
         """Get GitHub URL for a package ID."""
         return self.repository.get_github_url_for_package(package_id)
 
-    def resolve_single_node_from_mapping(self, node: WorkflowNode) -> List[ResolvedNodePackage] | None:
+    def resolve_single_node_from_mapping(self, node: WorkflowNode) -> list[ResolvedNodePackage] | None:
         """Resolve a single node type using global mappings.
 
         Returns all ranked packages for this node from the registry.
@@ -123,7 +121,7 @@ class GlobalNodeResolver:
         self,
         node: WorkflowNode,
         context: NodeResolutionContext | None = None
-    ) -> List[ResolvedNodePackage] | None:
+    ) -> list[ResolvedNodePackage] | None:
         """Enhanced resolution with context awareness.
 
         Resolution priority:
@@ -197,7 +195,7 @@ class GlobalNodeResolver:
 
     def _auto_select_best_package(
         self,
-        packages: List[ResolvedNodePackage],
+        packages: list[ResolvedNodePackage],
         installed_packages: dict
     ) -> ResolvedNodePackage:
         """Auto-select best package from ranked list based on installed state.
@@ -266,10 +264,10 @@ class GlobalNodeResolver:
     def search_packages(
         self,
         node_type: str,
-        installed_packages: dict = {},
+        installed_packages: dict = None,
         include_registry: bool = True,
         limit: int = 10
-    ) -> List[ScoredPackageMatch]:
+    ) -> list[ScoredPackageMatch]:
         """Unified search with heuristic boosting.
 
         Combines fuzzy matching with hint pattern detection to rank packages.
@@ -284,8 +282,9 @@ class GlobalNodeResolver:
         Returns:
             Scored matches sorted by relevance (highest first)
         """
-        from difflib import SequenceMatcher
 
+        if installed_packages is None:
+            installed_packages = {}
         if not node_type:
             return []
 

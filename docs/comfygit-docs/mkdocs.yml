@@ -152,7 +152,7 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/comfygit-ai/comfygit
     - icon: fontawesome/brands/discord
-      link: https://discord.gg/comfyhub
+      link: https://discord.com/invite/2h5rSTeh6Y
   version:
     provider: mike
     default: latest

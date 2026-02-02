@@ -3,8 +3,6 @@
 import os
 from pathlib import Path
 
-import pytest
-
 
 def _bump_mtime(path: Path, seconds: float = 2.0) -> None:
     """Bump mtime deterministically to avoid sleep-based flakiness."""
@@ -31,8 +29,8 @@ class TestAutoModelIndexSync:
         This test verifies the UX problem is solved: users don't need to manually
         run 'model index sync' after copying model files.
         """
-        from helpers.workflow_builder import make_minimal_workflow
         from conftest import simulate_comfyui_save_workflow
+        from helpers.workflow_builder import make_minimal_workflow
 
         models_dir = test_workspace.workspace_config_manager.get_models_directory()
 
@@ -87,8 +85,8 @@ class TestAutoModelIndexSync:
         For MVP: auto_sync always runs but is fast due to mtime optimization.
         This test verifies that existing models are resolved correctly.
         """
-        from helpers.workflow_builder import make_minimal_workflow
         from conftest import simulate_comfyui_save_workflow
+        from helpers.workflow_builder import make_minimal_workflow
 
         # ARRANGE: Use existing test_models fixture (already synced)
         # Get a model from the fixture
@@ -115,8 +113,8 @@ class TestAutoModelIndexSync:
         This test verifies that creating a new directory with models triggers
         proper indexing during auto-sync.
         """
-        from helpers.workflow_builder import make_minimal_workflow
         from conftest import simulate_comfyui_save_workflow
+        from helpers.workflow_builder import make_minimal_workflow
 
         models_dir = test_workspace.workspace_config_manager.get_models_directory()
 
@@ -146,7 +144,7 @@ class TestAutoModelIndexSync:
 
         # ACT: Resolve workflow to trigger auto-sync
         env_with_sync = test_workspace.get_environment("test-env", auto_sync=True)
-        resolution = env_with_sync.resolve_workflow("test_workflow", fix=False)
+        env_with_sync.resolve_workflow("test_workflow", fix=False)
 
         # ASSERT: Model should be indexed after auto-sync
         results_after = test_workspace.model_repository.find_by_filename(model_filename)
@@ -160,8 +158,8 @@ class TestAutoModelIndexSync:
         When a model file is deleted, the directory mtime changes, triggering
         a sync that removes the stale entry from the index.
         """
-        from helpers.workflow_builder import make_minimal_workflow
         from conftest import simulate_comfyui_save_workflow
+        from helpers.workflow_builder import make_minimal_workflow
 
         models_dir = test_workspace.workspace_config_manager.get_models_directory()
         checkpoints_dir = models_dir / "checkpoints"
@@ -191,7 +189,7 @@ class TestAutoModelIndexSync:
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow)
 
         env_with_sync = test_workspace.get_environment("test-env", auto_sync=True)
-        resolution = env_with_sync.resolve_workflow("test_workflow", fix=False)
+        env_with_sync.resolve_workflow("test_workflow", fix=False)
 
         # ASSERT: Deleted model should be removed from index
         results_after = test_workspace.model_repository.find_by_filename(model_filename)
@@ -207,8 +205,8 @@ class TestAutoModelIndexSync:
         This test verifies that directory mtime detection works consistently
         across platforms by using Path.stat() which is cross-platform.
         """
-        from helpers.workflow_builder import make_minimal_workflow
         from conftest import simulate_comfyui_save_workflow
+        from helpers.workflow_builder import make_minimal_workflow
 
         models_dir = test_workspace.workspace_config_manager.get_models_directory()
 

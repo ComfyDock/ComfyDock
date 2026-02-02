@@ -9,12 +9,10 @@ showing "Environment: test âœ“" instead of "Environment: test (detached HEAD) âš
 Fix: Always display git state and show detached HEAD warning even in clean state.
 """
 
-import pytest
-import sys
-import io
 import argparse
+import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 # Import CLI command handler
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,17 +21,8 @@ from comfygit_cli.env_commands import EnvironmentCommands
 # Import core models
 core_src_path = Path(__file__).parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(core_src_path))
-from comfygit_core.models.environment import (
-    EnvironmentStatus,
-    GitStatus,
-    EnvironmentComparison,
-    PackageSyncStatus
-)
-from comfygit_core.models.workflow import (
-    DetailedWorkflowStatus,
-    WorkflowSyncStatus,
-    WorkflowAnalysisStatus
-)
+from comfygit_core.models.environment import EnvironmentComparison, EnvironmentStatus, GitStatus
+from comfygit_core.models.workflow import DetailedWorkflowStatus, WorkflowSyncStatus
 
 
 class TestDetachedHeadDisplay:

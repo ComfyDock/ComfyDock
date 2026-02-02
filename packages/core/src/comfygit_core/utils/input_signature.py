@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from comfygit_core.models.workflow import NodeInput
@@ -56,7 +56,7 @@ def normalize_registry_inputs(input_types_json: str) -> str:
         return ""
 
 
-def normalize_workflow_inputs(inputs: List[NodeInput]) -> str:
+def normalize_workflow_inputs(inputs: list[NodeInput]) -> str:
     """Normalize input types from workflow node definition.
 
     Args:
@@ -87,7 +87,7 @@ def normalize_workflow_inputs(inputs: List[NodeInput]) -> str:
     return _create_canonical_signature(normalized)
 
 
-def _create_canonical_signature(inputs: Dict[str, str]) -> str:
+def _create_canonical_signature(inputs: dict[str, str]) -> str:
     """Create canonical signature from normalized inputs.
 
     Args:

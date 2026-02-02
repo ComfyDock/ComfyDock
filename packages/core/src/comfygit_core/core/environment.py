@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from functools import cached_property
+from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +36,7 @@ from ..models.shared import (
 from ..models.sync import SyncResult
 from ..strategies.confirmation import ConfirmationStrategy
 from ..utils.common import run_command
+from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
 from ..validation.resolution_tester import ResolutionTester
 
@@ -62,6 +63,14 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+
+
+def _requires_env_lock(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._operation_lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class Environment:
@@ -96,6 +105,9 @@ class Environment:
         self.custom_nodes_path = self.comfyui_path / "custom_nodes"
         self.venv_path = path / ".venv"
         self.models_path = self.comfyui_path / "models"
+
+        # Guard against concurrent mutations of this environment.
+        self._operation_lock = EnvironmentOperationLock(self.path / ".comfygit.lock")
 
     ## Cached properties ##
     #
@@ -136,6 +148,12 @@ class Environment:
         return ResolutionTester(self.workspace_paths.root)
 
     @cached_property
+    def package_config(self):
+        """Get package configuration manager for substitutions and exclusions."""
+        from ..configs.package_config import PackageConfigManager
+        return PackageConfigManager(self.cec_path)
+
+    @cached_property
     def node_manager(self) -> NodeManager:
         return NodeManager(
             self.pyproject,
@@ -144,7 +162,8 @@ class Environment:
             self.resolution_tester,
             self.custom_nodes_path,
             self.node_mapping_repository,
-            self.pytorch_manager
+            self.pytorch_manager,
+            self.package_config,
         )
 
     @cached_property
@@ -324,6 +343,7 @@ class Environment:
             is_tracked=is_tracked,
         )
 
+    @_requires_env_lock
     def update_manager(
         self,
         version: str = "latest",
@@ -533,6 +553,7 @@ class Environment:
 
         return migrated
 
+    @_requires_env_lock
     def sync(
         self,
         dry_run: bool = False,
@@ -570,6 +591,15 @@ class Environment:
         # Migrate schema v1 → v2 if needed (strips embedded PyTorch config)
         # This ensures old environments get migrated on first sync with new code
         self._ensure_schema_migrated()
+
+        # Ensure package config exists (migration for existing envs)
+        self.package_config.ensure_exists()
+
+        # Sync exclude-dependencies from package_config.toml to pyproject.toml
+        # This ensures user edits to package_config.toml take effect
+        self.pyproject.uv_config.set_exclude_dependencies(
+            self.package_config.exclude_packages
+        )
 
         logger.info("Syncing environment...")
 
@@ -796,6 +826,7 @@ class Environment:
         analyzer = RefDiffAnalyzer(self.cec_path)
         return analyzer.analyze(base_ref="HEAD", target_ref=branch, detect_conflicts=True)
 
+    @_requires_env_lock
     def pull_and_repair(
         self,
         remote: str = "origin",
@@ -910,6 +941,7 @@ class Environment:
                 git_reset_hard(self.cec_path, pre_pull_commit)
             raise
 
+    @_requires_env_lock
     def push_commits(self, remote: str = "origin", branch: str | None = None, force: bool = False) -> str:
         """Push commits to remote (requires clean working directory).
 
@@ -944,6 +976,7 @@ class Environment:
         logger.info("Pushing commits to remote...")
         return self.git_manager.push(remote, branch, force=force)
 
+    @_requires_env_lock
     def checkout(
         self,
         ref: str,
@@ -963,6 +996,7 @@ class Environment:
         """
         self.git_orchestrator.checkout(ref, strategy, force)
 
+    @_requires_env_lock
     def reset(
         self,
         ref: str | None = None,
@@ -984,6 +1018,7 @@ class Environment:
         """
         self.git_orchestrator.reset(ref, mode, strategy, force)
 
+    @_requires_env_lock
     def create_branch(self, name: str, start_point: str = "HEAD") -> None:
         """Create new branch at start_point.
 
@@ -993,6 +1028,7 @@ class Environment:
         """
         self.git_orchestrator.create_branch(name, start_point)
 
+    @_requires_env_lock
     def delete_branch(self, name: str, force: bool = False) -> None:
         """Delete branch.
 
@@ -1002,6 +1038,7 @@ class Environment:
         """
         self.git_orchestrator.delete_branch(name, force)
 
+    @_requires_env_lock
     def create_and_switch_branch(self, name: str, start_point: str = "HEAD") -> None:
         """Create new branch and switch to it (git checkout -b semantics).
 
@@ -1018,6 +1055,7 @@ class Environment:
         """
         self.git_orchestrator.create_and_switch_branch(name, start_point)
 
+    @_requires_env_lock
     def switch_branch(self, branch: str, create: bool = False) -> None:
         """Switch to branch and sync environment.
 
@@ -1046,6 +1084,7 @@ class Environment:
         """
         return self.git_manager.get_current_branch()
 
+    @_requires_env_lock
     def merge_branch(
         self,
         branch: str,
@@ -1094,6 +1133,7 @@ class Environment:
         validator = MergeValidator()
         return validator.validate(base_config, target_config, workflow_resolutions)
 
+    @_requires_env_lock
     def execute_atomic_merge(
         self,
         branch: str,
@@ -1150,6 +1190,7 @@ class Environment:
         executor = AtomicMergeExecutor(
             repo_path=self.cec_path,
             pyproject_manager=self.pyproject,
+            workspace_path=self.workspace_paths.root,
         )
 
         result = executor.execute(plan)
@@ -1227,13 +1268,15 @@ class Environment:
         nodes_dict = self.pyproject.nodes.get_existing()
         return list(nodes_dict.values())
 
+    @_requires_env_lock
     def add_node(
         self,
         identifier: str,
         is_development: bool = False,
         no_test: bool = False,
         force: bool = False,
-        confirmation_strategy: ConfirmationStrategy | None = None
+        confirmation_strategy: ConfirmationStrategy | None = None,
+        strict: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1243,14 +1286,23 @@ class Environment:
             no_test: Skip dependency resolution testing
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
+            strict: If True, fail on dependency conflicts instead of auto-resolving
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDNodeConflictError: If node has dependency conflicts
             CDEnvironmentError: If node with same name already exists
         """
-        return self.node_manager.add_node(identifier, is_development, no_test, force, confirmation_strategy)
+        return self.node_manager.add_node(
+            identifier,
+            is_development=is_development,
+            no_test=no_test,
+            force=force,
+            confirmation_strategy=confirmation_strategy,
+            strict=strict,
+        )
 
+    @_requires_env_lock
     def install_nodes_with_progress(
         self,
         node_ids: list[str],
@@ -1294,6 +1346,7 @@ class Environment:
 
         return success_count, failed
 
+    @_requires_env_lock
     def remove_node(self, identifier: str, untrack_only: bool = False) -> NodeRemovalResult:
         """Remove a custom node.
 
@@ -1309,6 +1362,7 @@ class Environment:
         """
         return self.node_manager.remove_node(identifier, untrack_only=untrack_only)
 
+    @_requires_env_lock
     def remove_nodes_with_progress(
         self,
         node_ids: list[str],
@@ -1352,6 +1406,7 @@ class Environment:
 
         return success_count, failed
 
+    @_requires_env_lock
     def update_node(
         self,
         identifier: str,
@@ -1534,6 +1589,7 @@ class Environment:
 
         return [installed_nodes[nid] for nid in unused_ids]
 
+    @_requires_env_lock
     def prune_unused_nodes(
         self,
         exclude: list[str] | None = None,
@@ -1575,6 +1631,7 @@ class Environment:
 
         return has_workflow_changes or has_git_changes
 
+    @_requires_env_lock
     def commit(self, message: str | None = None) -> None:
         """Commit changes to git repository.
 
@@ -1586,6 +1643,7 @@ class Environment:
         """
         return self.git_manager.commit_all(message)
 
+    @_requires_env_lock
     def execute_commit(
         self,
         workflow_status: DetailedWorkflowStatus | None = None,
@@ -1660,6 +1718,7 @@ class Environment:
     # Model Source Management
     # =====================================================
 
+    @_requires_env_lock
     def add_model_source(self, identifier: str, url: str) -> ModelSourceResult:
         """Add a download source URL to a model.
 
@@ -1672,6 +1731,7 @@ class Environment:
         """
         return self.model_manager.add_model_source(identifier, url)
 
+    @_requires_env_lock
     def remove_model_source(self, identifier: str, url: str) -> ModelSourceResult:
         """Remove a download source URL from a model.
 
@@ -1719,10 +1779,12 @@ class Environment:
         dev: bool = False,
         editable: bool = False,
         bounds: str | None = None
-    ) -> str:
+    ) -> dict:
         """Add Python dependencies to the environment.
 
         Uses uv add to add packages to [project.dependencies] and install them.
+        Applies package substitutions from package_config.toml (e.g., opencv-python
+        is automatically replaced with opencv-python-headless).
 
         Args:
             packages: List of package specifications (e.g., ['requests>=2.0.0', 'pillow'])
@@ -1734,7 +1796,9 @@ class Environment:
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
 
         Returns:
-            UV command output
+            Dict with:
+                - output: UV command output
+                - substitutions: Dict of {original: substituted} for any packages that were replaced
 
         Raises:
             UVCommandError: If uv add fails
@@ -1743,15 +1807,68 @@ class Environment:
         if not packages and not requirements_file:
             raise ValueError("Either packages or requirements_file must be provided")
 
-        return self.uv_manager.add_dependency(
-            packages=packages,
-            requirements_file=requirements_file,
+        substitutions: dict[str, str] = {}
+        final_packages: list[str] | None = None
+
+        # If requirements file provided, read and parse it
+        if requirements_file:
+            final_packages = self._read_requirements_file(requirements_file)
+        elif packages:
+            final_packages = list(packages)
+
+        # Apply package substitutions
+        if final_packages:
+            transformed_packages = []
+            for pkg in final_packages:
+                substituted = self.package_config.apply_substitution(pkg)
+                if substituted != pkg:
+                    substitutions[pkg] = substituted
+                    logger.info(f"Package substitution: {pkg} → {substituted}")
+                transformed_packages.append(substituted)
+            final_packages = transformed_packages
+
+        output = self.uv_manager.add_dependency(
+            packages=final_packages,
+            requirements_file=None,  # We've already parsed it
             upgrade=upgrade,
             group=group,
             dev=dev,
             editable=editable,
             bounds=bounds
         )
+
+        return {"output": output, "substitutions": substitutions}
+
+    def _read_requirements_file(self, requirements_file: Path) -> list[str]:
+        """Read and parse a requirements.txt file.
+
+        Strips comments and handles basic formatting.
+
+        Args:
+            requirements_file: Path to requirements.txt
+
+        Returns:
+            List of requirement strings
+        """
+        requirements = []
+        with open(requirements_file, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                # Skip -r includes (recursive requirements)
+                if line.startswith('-r '):
+                    continue
+                # Skip other pip flags
+                if line.startswith('-'):
+                    continue
+                # Strip inline comments
+                if '#' in line:
+                    line = line.split('#', 1)[0].strip()
+                if line:
+                    requirements.append(line)
+        return requirements
 
     def remove_dependencies(self, packages: list[str]) -> dict:
         """Remove Python dependencies from the environment.
@@ -2065,6 +2182,17 @@ class Environment:
         except Exception as e:
             logger.warning(f"Failed to extract builtin nodes: {e}")
             logger.warning("Workflow resolution will fall back to global static config")
+
+        # Extract folder paths from ComfyUI installation
+        from ..utils.folder_paths_extractor import extract_folder_paths
+
+        try:
+            folder_paths_json = self.cec_path / "comfyui_folder_paths.json"
+            extract_folder_paths(self.comfyui_path, folder_paths_json)
+            logger.info(f"Extracted folder paths to {folder_paths_json.name}")
+        except Exception as e:
+            logger.warning(f"Failed to extract folder paths: {e}")
+            logger.warning("Model category validation will fall back to static config")
 
         # Remove ComfyUI's default models directory (will be replaced with symlink)
         models_dir = self.comfyui_path / "models"

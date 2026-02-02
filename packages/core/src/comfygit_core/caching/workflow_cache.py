@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 
 from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
-from ..models.workflow import WorkflowDependencies, ResolutionResult
+from ..models.workflow import ResolutionResult, WorkflowDependencies
 from ..utils.workflow_hash import compute_workflow_hash
+
 
 def _get_version() -> str:
     """Get comfygit_core version."""
@@ -23,8 +24,8 @@ def _get_version() -> str:
         return "0.0.0"  # Fallback for development
 
 if TYPE_CHECKING:
-    from ..repositories.model_repository import ModelRepository
     from ..managers.pyproject_manager import PyprojectManager
+    from ..repositories.model_repository import ModelRepository
     from ..repositories.workspace_config_repository import WorkspaceConfigRepository
 
 logger = get_logger(__name__)
@@ -577,7 +578,7 @@ class WorkflowCacheRepository:
                 return str(obj)
             elif isinstance(obj, dict):
                 return {k: convert_paths(v) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
+            elif isinstance(obj, list | tuple):
                 return [convert_paths(item) for item in obj]
             return obj
 
@@ -595,12 +596,16 @@ class WorkflowCacheRepository:
             ResolutionResult object
         """
         from pathlib import Path
-        from ..models.workflow import (
-            ResolvedNodePackage, ResolvedModel, DownloadResult,
-            WorkflowNode, WorkflowNodeWidgetRef
-        )
-        from ..models.shared import ModelWithLocation
+
         from ..models.node_mapping import GlobalNodePackage, GlobalNodePackageVersion
+        from ..models.shared import ModelWithLocation
+        from ..models.workflow import (
+            DownloadResult,
+            ResolvedModel,
+            ResolvedNodePackage,
+            WorkflowNode,
+            WorkflowNodeWidgetRef,
+        )
 
         res_dict = json.loads(resolution_json)
 
@@ -711,8 +716,9 @@ class WorkflowCacheRepository:
         if not self.pyproject_manager or not self.model_repository:
             return ""
 
-        import blake3
         import time
+
+        import blake3
 
         context_start = time.perf_counter()
         context = {}

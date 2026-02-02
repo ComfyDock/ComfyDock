@@ -2,8 +2,6 @@
 """Shared registry client for ComfyUI API interactions."""
 
 import asyncio
-import json
-from typing import Dict, List, Optional
 
 import aiohttp
 from comfygit_core.logging.logging_config import get_logger
@@ -41,7 +39,7 @@ class RegistryClient:
         if self.session:
             await self.session.close()
 
-    async def get_all_nodes(self, page_size: int = 100, max_pages: Optional[int] = None) -> List[Dict]:
+    async def get_all_nodes(self, page_size: int = 100, max_pages: int | None = None) -> list[dict]:
         """Fetch all nodes from registry."""
         all_nodes = []
         page = 1
@@ -86,7 +84,7 @@ class RegistryClient:
         logger.info(f"Fetched {len(all_nodes)} nodes from registry")
         return all_nodes
 
-    async def get_node(self, node_id: str) -> Optional[Dict]:
+    async def get_node(self, node_id: str) -> dict | None:
         """Get single node by ID."""
         url = f"{self.base_url}/nodes/{node_id}"
 
@@ -100,7 +98,7 @@ class RegistryClient:
             logger.error(f"Error fetching node {node_id}: {e}")
             return None
 
-    async def get_node_versions(self, node_id: str) -> List[Dict]:
+    async def get_node_versions(self, node_id: str) -> list[dict]:
         """Get all versions for a node."""
         url = f"{self.base_url}/nodes/{node_id}/versions"
 
@@ -125,7 +123,7 @@ class RegistryClient:
             logger.warning(f"Error fetching versions for {node_id}: {e}")
             return []
 
-    async def get_install_info(self, node_id: str, version: str) -> Optional[Dict]:
+    async def get_install_info(self, node_id: str, version: str) -> dict | None:
         """Get install info for specific version."""
         url = f"{self.base_url}/nodes/{node_id}/install"
         params = {"version": version}
@@ -140,7 +138,7 @@ class RegistryClient:
             logger.debug(f"Error fetching install info for {node_id}@{version}: {e}")
             return None
 
-    async def get_comfy_nodes(self, node_id: str, version: str) -> Optional[List[Dict]]:
+    async def get_comfy_nodes(self, node_id: str, version: str) -> list[dict] | None:
         """Get comfy-nodes metadata for a specific version with pagination."""
         all_comfy_nodes = []
         page = 1

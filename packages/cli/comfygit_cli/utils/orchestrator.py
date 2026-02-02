@@ -6,10 +6,9 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 
-def read_orchestrator_pid(metadata_dir: Path) -> Optional[int]:
+def read_orchestrator_pid(metadata_dir: Path) -> int | None:
     """Read orchestrator PID from file."""
     pid_file = metadata_dir / ".orchestrator.pid"
     if not pid_file.exists():
@@ -41,7 +40,7 @@ def _is_process_running(pid: int) -> bool:
             return False
 
 
-def is_orchestrator_running(metadata_dir: Path) -> tuple[bool, Optional[int]]:
+def is_orchestrator_running(metadata_dir: Path) -> tuple[bool, int | None]:
     """Check if orchestrator is running.
 
     Returns:
@@ -57,7 +56,7 @@ def is_orchestrator_running(metadata_dir: Path) -> tuple[bool, Optional[int]]:
         return (False, pid)  # PID file exists but process is dead
 
 
-def read_switch_status(metadata_dir: Path) -> Optional[dict]:
+def read_switch_status(metadata_dir: Path) -> dict | None:
     """Read environment switch status."""
     status_file = metadata_dir / ".switch_status.json"
     if not status_file.exists():
@@ -66,7 +65,7 @@ def read_switch_status(metadata_dir: Path) -> Optional[dict]:
     try:
         with open(status_file) as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -208,7 +207,7 @@ def format_uptime(seconds: float) -> str:
         return f"{hours}h {minutes}m {secs}s"
 
 
-def get_orchestrator_uptime(metadata_dir: Path, pid: int) -> Optional[float]:
+def get_orchestrator_uptime(metadata_dir: Path, pid: int) -> float | None:
     """Get orchestrator uptime in seconds.
 
     Reads process start time from /proc on Linux.
@@ -245,8 +244,31 @@ def tail_log_file(log_file: Path, num_lines: int = 50) -> list[str]:
         return []
 
     try:
-        with open(log_file, 'r') as f:
+        with open(log_file) as f:
             lines = f.readlines()
             return lines[-num_lines:]
-    except IOError:
+    except OSError:
         return []
+
+
+def follow_log_file(log_file: Path, poll_interval: float = 0.3) -> None:
+    """Follow a log file using polling (cross-platform, no inotify).
+
+    Starts from end of file and prints new lines as they appear.
+    Handles file truncation (log rotation).
+    """
+    with open(log_file) as f:
+        f.seek(0, 2)
+        while True:
+            line = f.readline()
+            if line:
+                print(line, end='')
+            else:
+                current_pos = f.tell()
+                f.seek(0, 2)
+                if f.tell() < current_pos:
+                    # File was truncated (log rotation), start from beginning
+                    f.seek(0)
+                else:
+                    f.seek(current_pos)
+                time.sleep(poll_interval)

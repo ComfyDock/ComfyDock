@@ -1,16 +1,12 @@
 """Tests for CLI preview diff display."""
 
 import io
-import sys
 from contextlib import redirect_stdout
-
-import pytest
 
 from comfygit_core.models.ref_diff import (
     DependencyChanges,
     ModelChange,
     NodeChange,
-    NodeConflict,
     RefDiff,
     WorkflowChange,
     WorkflowConflict,

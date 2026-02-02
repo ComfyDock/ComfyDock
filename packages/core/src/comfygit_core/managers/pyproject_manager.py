@@ -206,7 +206,7 @@ class PyprojectManager:
         for prop in cached_props:
             if prop in self.__dict__:
                 del self.__dict__[prop]
-                
+
         # Invalidate cache after save to ensure fresh reads
         self._config_cache = None
         self._cache_mtime = None
@@ -310,7 +310,7 @@ class PyprojectManager:
 
     def get_manifest_state(self) -> str:
         """Get the current manifest state.
-        
+
         Returns:
             'local' or 'exportable'
         """
@@ -549,10 +549,45 @@ class PyprojectManager:
     def _inject_pytorch_config(self, config: dict, pytorch_config: dict) -> None:
         """Inject PyTorch-specific configuration into pyproject.toml config.
 
+        IMPORTANT: This method first strips any existing PyTorch config to handle
+        "polluted" pyproject.toml files that may have been committed with embedded
+        PyTorch configuration from other machines.
+
         Args:
             config: The pyproject.toml config dict to modify
             pytorch_config: PyTorch config from PyTorchBackendManager.get_pytorch_config()
         """
+        from ..constants import PYTORCH_CORE_PACKAGES
+
+        # FIRST: Strip any existing PyTorch config (handles polluted commits)
+        if 'tool' in config and 'uv' in config['tool']:
+            uv_config = config['tool']['uv']
+
+            # Remove PyTorch indexes
+            if 'index' in uv_config:
+                indexes = uv_config.get('index', [])
+                if isinstance(indexes, list):
+                    uv_config['index'] = [
+                        idx for idx in indexes
+                        if not any(p in idx.get('name', '').lower() for p in ['pytorch-', 'torch-'])
+                    ]
+
+            # Remove PyTorch sources
+            if 'sources' in uv_config:
+                sources = uv_config['sources']
+                for pkg in PYTORCH_CORE_PACKAGES:
+                    sources.pop(pkg, None)
+
+            # Remove PyTorch constraints
+            if 'constraint-dependencies' in uv_config:
+                constraints = uv_config['constraint-dependencies']
+                if isinstance(constraints, list):
+                    uv_config['constraint-dependencies'] = [
+                        c for c in constraints
+                        if not any(pkg in c for pkg in PYTORCH_CORE_PACKAGES)
+                    ]
+
+        # THEN: Inject the correct config
         # Ensure tool.uv section exists
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
@@ -598,9 +633,8 @@ class PyprojectManager:
             uv_config['sources'] = tomlkit.table()
 
         for package_name, source in pytorch_config.get('sources', {}).items():
-            # Only add if not already present
-            if package_name not in uv_config['sources']:
-                uv_config['sources'][package_name] = source
+            # Always set/overwrite sources (we've already stripped old ones)
+            uv_config['sources'][package_name] = source
 
         # Inject constraints (if any)
         constraints = pytorch_config.get('constraints', [])
@@ -624,7 +658,7 @@ class BaseHandler:
 
     def save(self, config: dict) -> None:
         """Save configuration through manager.
-        
+
         Raises:
             CDPyprojectError
         """
@@ -1010,6 +1044,50 @@ class UVConfigHandler(BaseHandler):
         else:
             group_deps.append(package)
             logger.info(f"Added '{package}' to group '{group}'")
+
+    def ensure_exclude_dependencies(self, packages: list[str]) -> None:
+        """Ensure packages are in exclude-dependencies list.
+
+        Called during sync to ensure exclusions are applied even for
+        environments created before this feature.
+
+        Args:
+            packages: List of package names to exclude
+        """
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        current = set(config['tool']['uv'].get('exclude-dependencies', []))
+        to_add = set(packages) - current
+
+        if to_add:
+            all_exclusions = sorted(current | set(packages))
+            config['tool']['uv']['exclude-dependencies'] = all_exclusions
+            self.save(config)
+            logger.info(f"Added package exclusions: {sorted(to_add)}")
+
+    def set_exclude_dependencies(self, packages: list[str]) -> None:
+        """Set exclude-dependencies list, replacing any existing values.
+
+        This is the primary method for syncing exclusions from package_config.toml.
+        If packages list is empty, removes the exclude-dependencies key entirely.
+
+        Args:
+            packages: List of package names to exclude (replaces existing)
+        """
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        if packages:
+            config['tool']['uv']['exclude-dependencies'] = sorted(packages)
+            self.save(config)
+            logger.debug(f"Set package exclusions: {sorted(packages)}")
+        else:
+            # Empty list = remove the key entirely
+            if 'exclude-dependencies' in config['tool']['uv']:
+                del config['tool']['uv']['exclude-dependencies']
+                self.save(config)
+                logger.debug("Removed package exclusions (empty list)")
 
 
 class NodeHandler(BaseHandler):
@@ -1624,7 +1702,7 @@ class ModelHandler(BaseHandler):
         referenced_hashes = set()
         all_workflows = config.get('tool', {}).get('comfygit', {}).get('workflows', {})
 
-        for workflow_name, workflow_data in all_workflows.items():
+        for _workflow_name, workflow_data in all_workflows.items():
             workflow_models_data = workflow_data.get('models', [])
             for model_data in workflow_models_data:
                 # Only track resolved models (unresolved models aren't in global table)

@@ -9,7 +9,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from comfygit_core.caching.base import CacheBase, ContentCacheBase
 
 

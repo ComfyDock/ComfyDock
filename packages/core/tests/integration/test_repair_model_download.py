@@ -4,16 +4,15 @@ This test suite follows TDD - tests are written first to validate the expected
 behavior before implementation.
 """
 
-import pytest
-from pathlib import Path
-from conftest import simulate_comfyui_save_workflow
-
 # Import helpers using sys.path manipulation
 import sys
+from pathlib import Path
+
+from conftest import simulate_comfyui_save_workflow
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from helpers.workflow_builder import WorkflowBuilder
 from helpers.model_index_builder import ModelIndexBuilder
-from helpers.pyproject_assertions import PyprojectAssertions
+from helpers.workflow_builder import WorkflowBuilder
 
 
 class TestRepairModelDownload:
@@ -30,7 +29,7 @@ class TestRepairModelDownload:
             size_mb=4,
             category="checkpoints"
         )
-        models = builder.index_all()
+        builder.index_all()
 
         # Create and resolve workflow
         workflow = (
@@ -79,7 +78,7 @@ class TestRepairModelDownload:
             size_mb=4,
             category="checkpoints"
         )
-        models = builder.index_all()
+        builder.index_all()
 
         workflow = (
             WorkflowBuilder()
@@ -140,7 +139,7 @@ class TestRepairModelDownload:
             size_mb=4,
             category="checkpoints"
         )
-        models = builder.index_all()
+        builder.index_all()
 
         # Create two workflows using the same model
         workflow1 = (

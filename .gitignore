@@ -90,5 +90,8 @@ docs/contexts
 # bv (beads viewer) local config and caches
 .bv/
 
+# MEOW agent orchestration runtime
+.meow/
+
 # Beads issue tracking - synced via beads-sync branch only
 .beads/issues.jsonl

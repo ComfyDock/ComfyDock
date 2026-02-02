@@ -114,7 +114,7 @@ class CompletionCommands:
         """Install argcomplete globally using uv tool."""
         try:
             print("📦 Installing argcomplete globally...")
-            result = subprocess.run(
+            subprocess.run(
                 ['uv', 'tool', 'install', 'argcomplete'],
                 capture_output=True,
                 text=True,
@@ -221,7 +221,7 @@ class CompletionCommands:
         # Check if already installed
         if self._is_completion_installed(config_file):
             print(f"✓ Tab completion is already installed in {config_file}")
-            print(f"\nTo activate in current shell, run:")
+            print("\nTo activate in current shell, run:")
             print(f"  source {config_file}")
             return
 
@@ -247,15 +247,15 @@ class CompletionCommands:
         # Install completion
         try:
             self._add_completion_to_config(shell, config_file)
-            print(f"\n✓ Tab completion installed successfully!")
+            print("\n✓ Tab completion installed successfully!")
             print(f"\nAdded to: {config_file}")
-            print(f"\nTo activate in current shell, run:")
+            print("\nTo activate in current shell, run:")
             print(f"  source {config_file}")
-            print(f"\nOr start a new terminal session.")
-            print(f"\nTry it out:")
-            print(f"  cg stat<TAB>")
-            print(f"  cg use <TAB>")
-            print(f"  cg workflow resolve <TAB>")
+            print("\nOr start a new terminal session.")
+            print("\nTry it out:")
+            print("  cg stat<TAB>")
+            print("  cg use <TAB>")
+            print("  cg workflow resolve <TAB>")
         except Exception as e:
             print(f"✗ Failed to install completion: {e}")
             sys.exit(1)
@@ -269,14 +269,14 @@ class CompletionCommands:
             sys.exit(1)
 
         if not self._is_completion_installed(config_file):
-            print(f"✓ Tab completion is not installed")
+            print("✓ Tab completion is not installed")
             return
 
         try:
             self._remove_completion_from_config(config_file)
-            print(f"✓ Tab completion uninstalled")
+            print("✓ Tab completion uninstalled")
             print(f"\nRemoved from: {config_file}")
-            print(f"\nRestart your shell for changes to take effect.")
+            print("\nRestart your shell for changes to take effect.")
         except Exception as e:
             print(f"✗ Failed to uninstall completion: {e}")
             sys.exit(1)
@@ -307,7 +307,7 @@ class CompletionCommands:
             if not argcomplete_available:
                 print("\n⚠️  Warning: Completion is configured but argcomplete is not in PATH")
                 print("   Install with: uv tool install argcomplete")
-            print(f"\nTo uninstall: cg completion uninstall")
+            print("\nTo uninstall: cg completion uninstall")
         else:
             print("Status: ✗ Not installed")
-            print(f"\nTo install: cg completion install")
+            print("\nTo install: cg completion install")

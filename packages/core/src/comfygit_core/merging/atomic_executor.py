@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from ..models.merge_plan import MergePlan, MergeResult, Resolution
 from ..utils.git import _git
+from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -23,10 +24,12 @@ class AtomicMergeExecutor:
         repo_path: Path,
         pyproject_manager: "PyprojectManager",
         semantic_merger: SemanticMerger | None = None,
+        workspace_path: Path | None = None,
     ):
         self.repo_path = repo_path
         self.pyproject = pyproject_manager
         self.merger = semantic_merger or SemanticMerger()
+        self.workspace_path = workspace_path
 
     def execute(self, plan: MergePlan) -> MergeResult:
         """Execute merge according to plan.
@@ -34,6 +37,13 @@ class AtomicMergeExecutor:
         Atomic: either completes fully or rolls back to pre-merge state.
         """
         from ..utils.git import git_rev_parse
+
+        # Guard: refuse to merge if already in merge state
+        if self.is_merge_in_progress(self.repo_path):
+            return MergeResult(
+                success=False,
+                error="A merge is already in progress. Run 'git merge --abort' to cancel it first.",
+            )
 
         pre_merge_commit = git_rev_parse(self.repo_path, "HEAD")
 
@@ -47,6 +57,9 @@ class AtomicMergeExecutor:
             # Phase 3: Build and write merged pyproject
             self._build_merged_pyproject(plan)
 
+            # Phase 3.5: Validate merged pyproject resolves
+            self._validate_merged_resolution()
+
             # Phase 4: Stage all changes and commit
             merge_commit = self._commit_merge(plan.target_branch)
 
@@ -58,7 +71,7 @@ class AtomicMergeExecutor:
 
         except Exception as e:
             # Rollback everything
-            self._abort_merge()
+            self._abort_merge(pre_merge_commit=pre_merge_commit)
             return MergeResult(success=False, error=str(e))
 
     def _start_merge(self, branch: str) -> None:
@@ -138,9 +151,27 @@ class AtomicMergeExecutor:
         commit_hash: str = git_rev_parse(self.repo_path, "HEAD")
         return commit_hash
 
-    def _abort_merge(self) -> None:
-        """Abort in-progress merge."""
-        _git(["merge", "--abort"], self.repo_path, check=False)
+    def _validate_merged_resolution(self) -> None:
+        """Dry-run resolve merged pyproject to catch unsatisfiable deps."""
+        if not self.workspace_path:
+            return  # Skip validation if no workspace path available
+
+        from ..models.exceptions import CDDependencyConflictError
+
+        tester = ResolutionTester(self.workspace_path)
+        result = tester.test_resolution(self.pyproject.path)
+        if not result.success:
+            conflicts = "; ".join(result.conflicts[:3]) if result.conflicts else "unknown"
+            raise CDDependencyConflictError(
+                f"Merged pyproject.toml has unsatisfiable dependencies: {conflicts}"
+            )
+
+    def _abort_merge(self, pre_merge_commit: str | None = None) -> None:
+        """Abort in-progress merge, falling back to hard reset if needed."""
+        result = _git(["merge", "--abort"], self.repo_path, check=False)
+        if result.returncode != 0 and pre_merge_commit:
+            # Fallback: hard reset to pre-merge state
+            _git(["reset", "--hard", pre_merge_commit], self.repo_path, check=False)
 
     @staticmethod
     def is_merge_in_progress(repo_path: Path) -> bool:

@@ -1,6 +1,6 @@
 """Integration tests for model source management and commit behavior."""
-from helpers.model_index_builder import ModelIndexBuilder
 from conftest import simulate_comfyui_save_workflow
+from helpers.model_index_builder import ModelIndexBuilder
 
 
 class TestModelSourceManagement:

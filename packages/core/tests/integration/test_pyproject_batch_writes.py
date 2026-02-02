@@ -2,18 +2,16 @@
 
 Tests that commit operations minimize pyproject.toml I/O by batching writes.
 """
-import pytest
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from conftest import (
     simulate_comfyui_save_workflow,
-    load_workflow_fixture,
 )
-from helpers.workflow_builder import WorkflowBuilder
 from helpers.model_index_builder import ModelIndexBuilder
+from helpers.workflow_builder import WorkflowBuilder
 
 
 class TestPyprojectBatchWrites:
@@ -105,7 +103,7 @@ class TestPyprojectBatchWrites:
         # ARRANGE: Create test model
         builder = ModelIndexBuilder(test_env.workspace)
         builder.add_model("sd15.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Create and save workflow
         workflow = WorkflowBuilder().add_checkpoint_loader("sd15.safetensors").build()

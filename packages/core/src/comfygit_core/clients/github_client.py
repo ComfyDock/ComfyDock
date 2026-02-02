@@ -57,10 +57,10 @@ class GitHubClient:
 
     def parse_github_url(self, url: str) -> GitHubRepoInfo | None:
         """Parse a GitHub URL to extract repository information.
-        
+
         Args:
             url: GitHub repository URL
-            
+
         Returns:
             GitHubRepoInfo or None if invalid URL
         """
@@ -79,12 +79,12 @@ class GitHubClient:
     def clone_repository(self, repo_url: str, target_path: Path,
                         ref: str | None = None) -> bool:
         """Clone a GitHub repository to a target path.
-        
+
         Args:
             repo_url: GitHub repository URL
             target_path: Where to clone the repository
             ref: Optional git ref (branch/tag/commit) to checkout
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -292,12 +292,12 @@ class GitHubClient:
     def download_release_asset(self, repo_url: str, asset_name: str,
                               target_path: Path) -> bool:
         """Download a specific release asset from a repository.
-        
+
         Args:
             repo_url: GitHub repository URL
             asset_name: Name of the asset to download
             target_path: Where to save the downloaded asset
-            
+
         Returns:
             True if successful, False otherwise
         """

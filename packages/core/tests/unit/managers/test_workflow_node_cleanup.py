@@ -6,14 +6,12 @@ in pyproject.toml should be updated to remove orphaned references.
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock
 
 import pytest
 import tomlkit
-
-from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.node_manager import NodeManager
-from comfygit_core.models.shared import NodeInfo
+from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.exceptions import CDNodeNotFoundError
 
 

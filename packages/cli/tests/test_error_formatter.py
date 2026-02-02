@@ -1,12 +1,11 @@
 """Tests for CLI error formatter."""
 
-import pytest
+from comfygit_cli.formatters.error_formatter import NodeErrorFormatter
 from comfygit_core.models.exceptions import (
+    CDNodeConflictError,
     NodeAction,
     NodeConflictContext,
-    CDNodeConflictError,
 )
-from comfygit_cli.formatters.error_formatter import NodeErrorFormatter
 
 
 def test_format_remove_node_action():

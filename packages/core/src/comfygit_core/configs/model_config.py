@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .comfyui_models import COMFYUI_MODELS_CONFIG
 from ..logging.logging_config import get_logger
+from .comfyui_models import COMFYUI_MODELS_CONFIG
 
 logger = get_logger(__name__)
 
@@ -43,7 +43,7 @@ class ModelConfig:
             if not config_path.exists():
                 raise FileNotFoundError(f"Model config file not found: {config_path}")
             try:
-                with open(config_path, 'r', encoding='utf-8') as f:
+                with open(config_path, encoding='utf-8') as f:
                     data = json.load(f)
             except Exception as e:
                 logger.error(f"Failed to load model config from {config_path}: {e}")
@@ -54,7 +54,7 @@ class ModelConfig:
             folder_paths_file = cec_path / "comfyui_folder_paths.json"
             if folder_paths_file.exists():
                 try:
-                    with open(folder_paths_file, 'r', encoding='utf-8') as f:
+                    with open(folder_paths_file, encoding='utf-8') as f:
                         folder_data = json.load(f)
 
                     # Merge folder_mappings into node_directory_mappings

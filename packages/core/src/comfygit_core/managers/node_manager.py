@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..analyzers.node_git_analyzer import get_node_git_info
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
@@ -22,12 +23,12 @@ from ..services.node_lookup_service import NodeLookupService
 from ..strategies.confirmation import AutoConfirmStrategy, ConfirmationStrategy
 from ..utils.conflict_parser import extract_conflicting_packages
 from ..utils.dependency_parser import parse_dependency_string
-from ..analyzers.node_git_analyzer import get_node_git_info
 from ..utils.filesystem import rmtree
 from ..utils.git import git_clone, is_github_url, normalize_github_url
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
+    from ..configs.package_config import PackageConfigManager
     from ..managers.pytorch_backend_manager import PyTorchBackendManager
     from ..repositories.node_mappings_repository import NodeMappingsRepository
 
@@ -46,6 +47,7 @@ class NodeManager:
         custom_nodes_path: Path,
         node_repository: NodeMappingsRepository,
         pytorch_manager: PyTorchBackendManager | None = None,
+        package_config: PackageConfigManager | None = None,
     ):
         self.pyproject = pyproject
         self.uv = uv
@@ -54,6 +56,7 @@ class NodeManager:
         self.custom_nodes_path = custom_nodes_path
         self.node_repository = node_repository
         self.pytorch_manager = pytorch_manager
+        self.package_config = package_config
 
     def _find_node_by_name(self, name: str) -> tuple[str, NodeInfo] | None:
         """Find a node by name across all identifiers (case-insensitive).
@@ -92,7 +95,7 @@ class NodeManager:
             raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
 
         # Scan requirements from cached directory
-        requirements = self.node_lookup.scan_requirements(cache_path)
+        requirements = self.node_lookup.scan_requirements(cache_path, package_config=self.package_config)
 
         # Create node package
         node_package = NodePackage(node_info=node_info, requirements=requirements)
@@ -102,21 +105,19 @@ class NodeManager:
             logger.info(f"Testing dependency resolution for '{node_package.name}' before installation")
             test_result = self._test_requirements_in_isolation(node_package.requirements)
             if not test_result.success:
-                self._raise_dependency_conflict(node_package.name, test_result)
+                # Pass first requirement as package_spec for conflict analysis
+                pkg_spec = node_package.requirements[0] if node_package.requirements else None
+                self._raise_dependency_conflict(node_package.name, test_result, package_spec=pkg_spec)
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
         pyproject_snapshot = self.pyproject.snapshot()
         target_path = self.custom_nodes_path / node_info.name
         disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
-        disabled_existed = disabled_path.exists()
 
         try:
             # STEP 1: Filesystem changes
-            if disabled_existed:
-                logger.info(f"Removing old disabled version of {node_info.name}")
-                rmtree(disabled_path)
-
+            # Note: .disabled is NOT deleted here — callers (update flows) clean it up on success
             shutil.copytree(cache_path, target_path, dirs_exist_ok=True)
             logger.info(f"Installed node '{node_info.name}' to {target_path}")
 
@@ -145,16 +146,22 @@ class NodeManager:
                 except Exception as fs_err:
                     logger.error(f"Failed to clean up {target_path}: {fs_err}")
 
-            # 3. Restore disabled version if it existed
-            if disabled_existed:
-                try:
-                    # Note: We can't restore disabled_path since we already deleted it
-                    # This is acceptable - user can re-disable manually if needed
-                    logger.debug("Cannot restore disabled version (already removed)")
-                except Exception:
-                    pass
+            # 3. Re-sync venv to match restored pyproject.toml
+            try:
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            except Exception as sync_err:
+                logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
+                logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
 
             raise CDEnvironmentError(f"Failed to install node '{node_info.name}': {e}") from e
+
+        # Success — clean up .disabled if present (left by update flows)
+        if disabled_path.exists():
+            try:
+                rmtree(disabled_path)
+                logger.debug(f"Cleaned up old disabled version of {node_info.name}")
+            except Exception:
+                pass  # Non-critical cleanup
 
         logger.info(f"Successfully added node: {node_info.name}")
         return node_info
@@ -221,6 +228,7 @@ class NodeManager:
         no_test: bool = False,
         force: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
+        strict: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -230,6 +238,7 @@ class NodeManager:
             no_test: Skip testing the node
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
+            strict: If True, fail on dependency conflicts instead of auto-resolving
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -273,6 +282,7 @@ class NodeManager:
             logger.info(f"Enhanced node info with dual sources: registry_id={registry_id}, github_url={github_url}")
 
         # Check for existing installation and handle version replacement
+        is_replacement = False
         existing_entry = self._find_node_by_name(node_info.name)
         if existing_entry:
             existing_identifier, existing_node = existing_entry
@@ -347,12 +357,14 @@ class NodeManager:
                             )
                         )
 
-            # Remove existing node (for both dev and regular nodes after confirmation)
+            # Mark as replacement — actual removal happens inside transactional section
+            # so the snapshot captures pre-replacement state for proper rollback
             logger.info(f"Replacing {node_info.name} {existing_node.version} → {node_info.version}")
-            self.remove_node(existing_identifier)
+            is_replacement = True
 
         # Check for filesystem conflicts before proceeding
-        if not force:
+        # Skip during replacement — directory is expected to exist (it's the node we're replacing)
+        if not force and not is_replacement:
             has_conflict, conflict_msg, conflict_context = self._check_filesystem_conflict(
                 node_info.name,
                 expected_repo_url=node_info.repository
@@ -366,31 +378,82 @@ class NodeManager:
             raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
 
         # Scan requirements from cached directory
-        requirements = self.node_lookup.scan_requirements(cache_path)
+        requirements = self.node_lookup.scan_requirements(cache_path, package_config=self.package_config)
 
         # Create node package
         node_package = NodePackage(node_info=node_info, requirements=requirements)
 
-        # TEST DEPENDENCIES FIRST (before any filesystem or pyproject changes)
+        # DEPENDENCY PREFLIGHT (before filesystem install)
+        # Default: probe and discover needed constraints
+        # Strict mode: old behavior (fail on conflicts)
+        discovered_constraints: list[str] = []
+
         if not no_test and node_package.requirements:
-            logger.info(f"Testing dependency resolution for '{node_package.name}' before installation")
-            test_result = self._test_requirements_in_isolation(node_package.requirements)
-            if not test_result.success:
-                self._raise_dependency_conflict(node_package.name, test_result)
+            if strict:
+                # Old behavior - fail on conflict
+                logger.info(f"Testing dependency resolution for '{node_package.name}' (strict mode)")
+                test_result = self._test_requirements_in_isolation(node_package.requirements)
+                if not test_result.success:
+                    pkg_spec = node_package.requirements[0] if node_package.requirements else None
+                    self._raise_dependency_conflict(node_package.name, test_result, package_spec=pkg_spec)
+            else:
+                # New behavior - probe and discover needed constraints
+                logger.info(f"Probing dependencies for '{node_package.name}'")
+                from ..utils.dependency_probe import DependencyProbe
+
+                probe = DependencyProbe(
+                    cec_path=self.pyproject.path.parent,
+                    workspace_path=self.resolution_tester.workspace_path,
+                )
+                probe_result = probe.run(node_package.requirements)
+
+                # If one-by-one installs fail, we can't safely infer constraints
+                if probe_result.install_failures:
+                    self._raise_probe_install_failures(node_package.name, probe_result)
+
+                # If the probe would change protected packages, bail out
+                if probe_result.protected_changes:
+                    self._raise_probe_protected_changes(node_package.name, probe_result)
+
+                discovered_constraints = probe_result.suggested_constraints
+
+                if discovered_constraints:
+                    logger.info(
+                        f"Probe discovered {len(discovered_constraints)} constraint(s): "
+                        + ", ".join(discovered_constraints)
+                    )
+
+                    # Validate constraints don't conflict with existing environment
+                    # This catches issues BEFORE modifying pyproject.toml
+                    self._validate_constraints_against_environment(
+                        node_package.name,
+                        discovered_constraints,
+                        node_package.requirements,
+                    )
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
         pyproject_snapshot = self.pyproject.snapshot()
         target_path = self.custom_nodes_path / node_info.name
         disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
-        disabled_existed = disabled_path.exists()
 
         try:
-            # STEP 1: Filesystem changes
-            if disabled_existed:
-                logger.info(f"Removing old disabled version of {node_info.name}")
-                rmtree(disabled_path)
+            # STEP 0a: Handle replacement — back up old node (inside transaction for proper rollback)
+            if is_replacement:
+                if target_path.exists():
+                    if disabled_path.exists():
+                        rmtree(disabled_path)
+                    shutil.move(target_path, disabled_path)
+                self.pyproject.nodes.remove(existing_identifier)
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
+            # STEP 0b: Apply auto-discovered constraints (transactional)
+            for constraint in discovered_constraints:
+                self.pyproject.uv_config.add_constraint(constraint)
+                logger.info(f"Auto-applied constraint: {constraint}")
+
+            # STEP 1: Filesystem changes
+            # Note: .disabled is NOT deleted here — cleaned up on success below
             shutil.copytree(cache_path, target_path, dirs_exist_ok=True)
             logger.info(f"Installed node '{node_info.name}' to {target_path}")
 
@@ -419,14 +482,22 @@ class NodeManager:
                 except Exception as fs_err:
                     logger.warning(f"Could not remove {target_path} during rollback: {fs_err}")
 
-            # 3. Note about disabled directory (cannot restore - already deleted)
-            if disabled_existed:
-                logger.warning(
-                    f"Cannot restore {disabled_path.name} "
-                    f"(was deleted before rollback)"
-                )
+            # 3. Restore from .disabled backup if replacement was in progress
+            if disabled_path.exists() and not target_path.exists():
+                try:
+                    shutil.move(disabled_path, target_path)
+                    logger.info(f"Restored old version of '{node_info.name}' from backup")
+                except Exception as restore_err:
+                    logger.error(f"Failed to restore old version: {restore_err}")
 
-            # 4. Re-raise with appropriate error type
+            # 4. Re-sync venv to match restored pyproject.toml
+            try:
+                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            except Exception as sync_err:
+                logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
+                logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
+
+            # 5. Re-raise with appropriate error type
             from ..models.exceptions import UVCommandError
             from ..utils.uv_error_handler import format_uv_error_for_user, log_uv_error
 
@@ -446,6 +517,14 @@ class NodeManager:
                 ) from e
 
         # === END TRANSACTIONAL SECTION ===
+
+        # Success — clean up .disabled if present (from replacement or previous operation)
+        if disabled_path.exists():
+            try:
+                rmtree(disabled_path)
+                logger.debug(f"Cleaned up old disabled version of {node_info.name}")
+            except Exception:
+                pass  # Non-critical cleanup
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
@@ -691,7 +770,7 @@ class NodeManager:
             existing_nodes: Dict of node_name -> Path for nodes on filesystem
             callbacks: Optional callbacks for progress feedback
         """
-        for identifier, node_info in expected_nodes.items():
+        for _identifier, node_info in expected_nodes.items():
             if node_info.source != 'development':
                 continue
 
@@ -990,12 +1069,12 @@ class NodeManager:
                     raise CDNodeNotFoundError(
                         f"Cannot download from GitHub URL: {identifier}\n"
                         f"Ensure the URL is accessible and correctly formatted"
-                    )
+                    ) from None
                 else:
                     raise CDNodeNotFoundError(
                         f"Node '{identifier}' not found in registry or filesystem.\n"
                         f"Provide a GitHub URL or ensure the directory exists in custom_nodes/"
-                    )
+                    ) from None
 
             node_name = node_info.name
             node_path = self.custom_nodes_path / node_name
@@ -1038,7 +1117,7 @@ class NodeManager:
                 )
 
         # Scan for requirements
-        requirements = self.node_lookup.scan_requirements(node_path)
+        requirements = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
         # Create as development node
         node_info = NodeInfo(name=node_name, version='dev', source='development')
@@ -1151,7 +1230,7 @@ class NodeManager:
                 changes.append("commit")
 
         # Scan current requirements
-        current_reqs = self.node_lookup.scan_requirements(node_path)
+        current_reqs = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
         # Get stored requirements from dependency group
         group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
@@ -1196,7 +1275,9 @@ class NodeManager:
         if not no_test and reqs_changed:
             resolution_result = self.resolution_tester.test_resolution(self.pyproject.path)
             if not resolution_result.success:
-                self._raise_dependency_conflict(node_info.name, resolution_result)
+                # Pass first added requirement as package_spec for conflict analysis
+                pkg_spec = next(iter(added), None) if added else None
+                self._raise_dependency_conflict(node_info.name, resolution_result, package_spec=pkg_spec)
 
         result.requirements_added = list(added)
         result.requirements_removed = list(removed)
@@ -1465,7 +1546,7 @@ class NodeManager:
                 continue
 
             # Scan current requirements
-            current_reqs = self.node_lookup.scan_requirements(node_path)
+            current_reqs = self.node_lookup.scan_requirements(node_path, package_config=self.package_config)
 
             # Get stored requirements from dependency group
             group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
@@ -1504,27 +1585,49 @@ class NodeManager:
             group_name=None  # Test as main dependencies for broadest compatibility check
         )
 
-    def _raise_dependency_conflict(self, node_name: str, test_result) -> None:
+    def _raise_dependency_conflict(
+        self,
+        node_name: str,
+        test_result,
+        package_spec: str | None = None,
+    ) -> None:
         """Raise enhanced dependency conflict error with actionable suggestions.
 
         Args:
             node_name: Name of the node being installed
             test_result: ResolutionResult from dependency testing
+            package_spec: Package being installed (e.g., "depthflow==0.9.1") for deep analysis
         """
         # Extract conflicting package pairs
         conflict_pairs = extract_conflicting_packages(test_result.stderr)
 
-        # Build simple, honest suggestions
-        suggestions = [
-            NodeAction(
-                action_type='skip_node',
-                description=f"Skip installing '{node_name}'"
-            ),
-            NodeAction(
-                action_type='add_constraint',
-                description="Add version constraint to override (see --verbose for details)"
-            )
-        ]
+        # Run deep conflict analysis if possible
+        analysis = None
+        if package_spec:
+            try:
+                from ..utils.conflict_analyzer import (
+                    analyze_conflict,
+                    format_conflict_report,
+                )
+
+                venv_python = self.uv.python_executable
+                uv_path = Path(self.uv.binary)
+
+                analysis = analyze_conflict(
+                    stderr=test_result.stderr,
+                    new_package=package_spec,
+                    venv_python=venv_python,
+                    uv_path=uv_path,
+                )
+
+                if analysis:
+                    # Log the detailed report for visibility
+                    logger.error(format_conflict_report(analysis))
+            except Exception as e:
+                logger.debug(f"Conflict analysis failed: {e}")
+
+        # Build suggestions (enhanced with analysis if available)
+        suggestions = self._build_conflict_suggestions(node_name, analysis)
 
         # Create enhanced context
         context = DependencyConflictContext(
@@ -1532,10 +1635,254 @@ class NodeManager:
             conflicting_packages=conflict_pairs,
             conflict_descriptions=test_result.conflicts,
             raw_stderr=test_result.stderr,
-            suggested_actions=suggestions
+            suggested_actions=suggestions,
+            conflict_analysis=analysis,
         )
 
         raise CDDependencyConflictError(
             f"Cannot add '{node_name}' due to dependency conflicts",
             context=context
+        )
+
+    def _build_conflict_suggestions(
+        self,
+        node_name: str,
+        analysis,
+    ) -> list[NodeAction]:
+        """Build actionable suggestions from conflict analysis.
+
+        Args:
+            node_name: Name of the node being installed
+            analysis: ConflictAnalysis or None
+
+        Returns:
+            List of suggested actions
+        """
+        suggestions = [
+            NodeAction(
+                action_type='skip_node',
+                description=f"Skip installing '{node_name}'"
+            ),
+        ]
+
+        # Enhanced suggestions from analysis
+        if analysis and analysis.suggestions:
+            for suggestion in analysis.suggestions:
+                suggestions.append(NodeAction(
+                    action_type='add_constraint',
+                    description=suggestion
+                ))
+        else:
+            # Fallback suggestion if no analysis
+            suggestions.append(NodeAction(
+                action_type='add_constraint',
+                description="Add version constraint to override (see --verbose for details)"
+            ))
+
+        return suggestions
+
+    def _raise_probe_install_failures(self, node_name: str, probe_result) -> None:
+        """Raise a dependency conflict when probe couldn't install some requirements.
+
+        Args:
+            node_name: Name of the node being installed
+            probe_result: ProbeResult from dependency probing
+        """
+        from ..utils.dependency_probe import ProbeResult
+
+        result: ProbeResult = probe_result
+
+        suggestions = [
+            NodeAction(
+                action_type="add_node_force",
+                node_identifier=node_name,
+                description="Install with --no-test flag (skip dependency check)",
+            ),
+        ]
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[],
+            conflict_descriptions=[
+                f"Probe failed to install requirement: {req}"
+                for req in result.install_failures
+            ],
+            raw_stderr="",
+            suggested_actions=suggestions,
+        )
+
+        raise CDDependencyConflictError(
+            f"Node '{node_name}' dependencies could not be probed (install failures)",
+            context=context,
+        )
+
+    def _raise_probe_protected_changes(self, node_name: str, probe_result) -> None:
+        """Raise a dependency conflict if probe would change protected packages.
+
+        Args:
+            node_name: Name of the node being installed
+            probe_result: ProbeResult from dependency probing
+        """
+        from ..utils.dependency_probe import ProbeResult
+
+        result: ProbeResult = probe_result
+
+        suggestions = [
+            NodeAction(
+                action_type="skip_node",
+                description=f"Skip installing '{node_name}'",
+            ),
+            NodeAction(
+                action_type="add_node_force",
+                node_identifier=node_name,
+                description="Install with --no-test flag (skip dependency check, risk breaking environment)",
+            ),
+        ]
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[(pkg, "") for pkg in result.protected_changes],
+            conflict_descriptions=[
+                f"Would change protected package: {pkg}" for pkg in result.protected_changes
+            ],
+            raw_stderr="",
+            suggested_actions=suggestions,
+        )
+
+        raise CDDependencyConflictError(
+            f"Node '{node_name}' would change protected packages: {', '.join(result.protected_changes)}",
+            context=context,
+        )
+
+    def _validate_constraints_against_environment(
+        self,
+        node_name: str,
+        constraints: list[str],
+        requirements: list[str],
+    ) -> None:
+        """Validate discovered constraints don't conflict with installed packages.
+
+        Uses UV's resolver to check if each constraint is compatible with the
+        existing environment. This catches conflicts BEFORE applying constraints.
+
+        Args:
+            node_name: Name of the node being installed
+            constraints: List of discovered constraints (e.g., ["huggingface_hub<0.37"])
+            requirements: Original requirements from the node (for error context)
+
+        Raises:
+            CDDependencyConflictError: If any constraint conflicts with installed packages
+        """
+        from ..utils.conflict_analyzer import (
+            check_specifier_compatibility,
+            get_existing_requirements,
+            parse_constraint_string,
+        )
+
+        venv_python = self.uv.python_executable
+        uv_path = Path(self.uv.binary)
+
+        for constraint in constraints:
+            # Parse the constraint string
+            parsed = parse_constraint_string(constraint)
+            if not parsed:
+                continue
+
+            pkg_name, constraint_spec = parsed
+            new_spec = f"{pkg_name}{constraint_spec}"
+
+            # Get existing requirements for this package from the environment
+            existing_reqs = get_existing_requirements(pkg_name, venv_python, uv_path)
+            if not existing_reqs:
+                continue  # No existing requirements, no conflict possible
+
+            # Check each existing requirement for compatibility
+            for requiring_pkg, existing_spec in existing_reqs:
+                is_compatible, stderr = check_specifier_compatibility(
+                    existing_spec, new_spec, venv_python, uv_path
+                )
+
+                if not is_compatible:
+                    self._raise_constraint_conflict(
+                        node_name=node_name,
+                        pkg_name=pkg_name,
+                        constraint_spec=constraint_spec,
+                        requiring_pkg=requiring_pkg,
+                        existing_spec=existing_spec,
+                        requirements=requirements,
+                        stderr=stderr,
+                    )
+
+    def _raise_constraint_conflict(
+        self,
+        node_name: str,
+        pkg_name: str,
+        constraint_spec: str,
+        requiring_pkg: str,
+        existing_spec: str,
+        requirements: list[str],
+        stderr: str,
+    ) -> None:
+        """Build and raise a detailed conflict error.
+
+        Args:
+            node_name: Name of the node being installed
+            pkg_name: Normalized name of conflicting package
+            constraint_spec: Version specifier from node (e.g., "<0.37")
+            requiring_pkg: Package that requires the existing spec
+            existing_spec: Full existing requirement (e.g., "huggingface-hub>=1.1.0")
+            requirements: Original requirements from the node
+            stderr: UV stderr output
+        """
+        from ..utils.conflict_analyzer import (
+            ConflictAnalysis,
+            ConflictChain,
+            format_conflict_report,
+        )
+
+        logger.warning(
+            f"Constraint conflict detected: '{pkg_name}{constraint_spec}' "
+            f"conflicts with '{requiring_pkg}' which requires '{existing_spec}'"
+        )
+
+        analysis = ConflictAnalysis(
+            conflicting_package=pkg_name,
+            existing_constraints=[(requiring_pkg, existing_spec)],
+            new_package_chains=[
+                ConflictChain(
+                    root_package=requirements[0].split("==")[0] if requirements else node_name,
+                    chain=[node_name, "...", pkg_name],
+                    constraint=f"{pkg_name}{constraint_spec}",
+                    constraint_source="transitive dependency",
+                )
+            ],
+            suggestions=[
+                f"The node's dependencies require {pkg_name}{constraint_spec}, "
+                f"but {requiring_pkg} requires {existing_spec}",
+                "These version ranges have no overlap and cannot be satisfied together",
+                f"Consider checking if {requiring_pkg} has a newer version with relaxed constraints",
+            ],
+        )
+
+        logger.error(format_conflict_report(analysis))
+
+        context = DependencyConflictContext(
+            node_name=node_name,
+            conflicting_packages=[(pkg_name, requiring_pkg)],
+            conflict_descriptions=[
+                f"Node requires {pkg_name}{constraint_spec} but {requiring_pkg} requires {existing_spec}"
+            ],
+            raw_stderr=stderr,
+            suggested_actions=[
+                NodeAction(
+                    action_type='skip_node',
+                    description=f"Skip installing '{node_name}'"
+                ),
+            ],
+            conflict_analysis=analysis,
+        )
+
+        raise CDDependencyConflictError(
+            f"Cannot add '{node_name}': dependency {pkg_name} has conflicting requirements",
+            context=context,
         )

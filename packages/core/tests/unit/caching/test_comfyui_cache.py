@@ -8,12 +8,9 @@ TDD tests to verify:
 
 import json
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
-from comfygit_core.caching.comfyui_cache import ComfyUISpec, ComfyUICacheManager
+from comfygit_core.caching.comfyui_cache import ComfyUICacheManager, ComfyUISpec
 
 
 class TestComfyUICacheManager:

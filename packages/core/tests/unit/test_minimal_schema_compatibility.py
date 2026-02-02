@@ -1,5 +1,4 @@
 """Test that minimal schema (omitting unused fields) works with dataclasses."""
-import pytest
 from comfygit_core.models.node_mapping import (
     GlobalNodePackage,
     GlobalNodePackageVersion,

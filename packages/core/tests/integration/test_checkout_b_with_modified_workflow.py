@@ -8,11 +8,6 @@ This reproduces the exact user scenario where:
 5. Actual: Error about uncommitted changes that would be overwritten
 """
 import json
-from pathlib import Path
-
-import pytest
-
-from comfygit_core.models.exceptions import CDEnvironmentError
 
 
 def create_simple_workflow():

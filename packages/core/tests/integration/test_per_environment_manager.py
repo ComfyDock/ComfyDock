@@ -9,11 +9,8 @@ Implementation Plan Reference:
 """
 
 import json
-from pathlib import Path
 
 import pytest
-
-from comfygit_core.core.environment import Environment
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
 from comfygit_core.models.shared import ManagerStatus
 from comfygit_core.utils.symlink_utils import is_link
@@ -122,7 +119,7 @@ class TestUpdateManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: []
+            lambda path, **kwargs: []
         )
 
         # ACT
@@ -185,7 +182,7 @@ class TestUpdateManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: ["comfygit-core>=0.3.0"]
+            lambda path, **kwargs: ["comfygit-core>=0.3.0"]
         )
 
         # ACT
@@ -304,7 +301,7 @@ class TestNodeManagerAllowsManager:
         )
         monkeypatch.setattr(
             test_env.node_lookup, "scan_requirements",
-            lambda path: []
+            lambda path, **kwargs: []
         )
 
         # Create dummy cache source
@@ -402,7 +399,7 @@ class TestWorkspaceSchemaVersion:
         (metadata / "workspace.json").write_text("{}")
 
         # ACT
-        from comfygit_core.core.workspace import WorkspacePaths, Workspace
+        from comfygit_core.core.workspace import Workspace, WorkspacePaths
         paths = WorkspacePaths(workspace_path)
         workspace = Workspace(paths)
 
@@ -411,7 +408,7 @@ class TestWorkspaceSchemaVersion:
 
     def test_has_legacy_system_nodes(self, tmp_path):
         """has_legacy_system_nodes returns True only if system_nodes directory has content."""
-        from comfygit_core.core.workspace import WorkspacePaths, Workspace
+        from comfygit_core.core.workspace import Workspace, WorkspacePaths
 
         # ARRANGE - Create workspace structure
         workspace_path = tmp_path / "test_workspace"
@@ -440,7 +437,7 @@ class TestWorkspaceSchemaVersion:
 
     def test_upgrade_schema_if_needed(self, tmp_path):
         """upgrade_schema_if_needed only writes version file if it doesn't exist."""
-        from comfygit_core.core.workspace import WorkspacePaths, Workspace
+        from comfygit_core.core.workspace import Workspace, WorkspacePaths
 
         # ARRANGE - Create legacy workspace
         workspace_path = tmp_path / "test_workspace"

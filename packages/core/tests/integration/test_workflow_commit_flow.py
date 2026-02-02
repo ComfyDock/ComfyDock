@@ -6,16 +6,15 @@ These tests reproduce the exact bugs found during manual testing:
 3. is_synced doesn't consider workflow changes
 """
 import json
-import pytest
 import subprocess
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from conftest import (
-    simulate_comfyui_save_workflow,
     load_workflow_fixture,
+    simulate_comfyui_save_workflow,
 )
 
 
@@ -74,11 +73,11 @@ def normalize_workflow_for_comparison(workflow: dict) -> dict:
                     if isinstance(node['pos'], tuple):
                         node['pos'] = list(node['pos'])
                     if isinstance(node['pos'], list):
-                        node['pos'] = [int(x) if isinstance(x, (int, float)) else x for x in node['pos']]
+                        node['pos'] = [int(x) if isinstance(x, int | float) else x for x in node['pos']]
 
                 # Normalize node ID to int
                 if 'id' in node:
-                    node['id'] = int(node['id']) if isinstance(node['id'], (int, str)) and str(node['id']).isdigit() else node['id']
+                    node['id'] = int(node['id']) if isinstance(node['id'], int | str) and str(node['id']).isdigit() else node['id']
 
     # Remove empty top-level containers
     if normalized.get('extra') == {}:
@@ -720,9 +719,9 @@ class TestWorkflowReset:
         Scenario: User has uncommitted changes, rolls back to HEAD to discard
         Expected: Changes discarded, no new commit, clean state
         """
-        import subprocess
         import copy
         import json
+        import subprocess
 
         # Create commit
         first_workflow = load_workflow_fixture(workflow_fixtures, "simple_txt2img")
@@ -799,9 +798,9 @@ class TestWorkflowReset:
         Scenario: User has uncommitted changes, runs 'cg reset --hard' (discard changes)
         Expected: Changes discarded, stay at current version, no new commit
         """
-        import subprocess
         import copy
         import json
+        import subprocess
 
         # Create v2
         v2_workflow = load_workflow_fixture(workflow_fixtures, "simple_txt2img")

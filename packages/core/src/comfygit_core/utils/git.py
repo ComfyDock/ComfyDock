@@ -20,10 +20,10 @@ logger = get_logger(__name__)
 
 def _is_not_found_error(error: CDProcessError) -> bool:
     """Check if a git error indicates something doesn't exist.
-    
+
     Args:
         error: The CDProcessError from a git command
-        
+
     Returns:
         True if this is a "not found" type error
     """
@@ -46,7 +46,7 @@ def _git(cmd: list[str], repo_path: Path,
          capture_output: bool = True,
          text: bool = True) -> subprocess.CompletedProcess:
     """Run git command with consistent error handling.
-    
+
     Args:
         cmd: Git command arguments (without 'git' prefix)
         repo_path: Path to git repository
@@ -54,10 +54,10 @@ def _git(cmd: list[str], repo_path: Path,
         not_found_msg: Custom message for "not found" errors
         capture_output: Whether to capture stdout/stderr
         text: Whether to return text output
-        
+
     Returns:
         CompletedProcess result
-        
+
     Raises:
         ValueError: For "not found" type errors
         OSError: For other git command failures
@@ -310,14 +310,14 @@ def git_init(repo_path: Path) -> None:
 
 def git_diff(repo_path: Path, file_path: Path) -> str:
     """Get git diff for a specific file.
-    
+
     Args:
         repo_path: Path to git repository
         file_path: Path to file to diff
-        
+
     Returns:
         Git diff output as string
-        
+
     Raises:
         OSError: If git diff command fails
     """
@@ -352,16 +352,16 @@ def git_commit(repo_path: Path, message: str, add_all: bool = True) -> None:
 
 def git_show(repo_path: Path, ref: str, file_path: Path, is_text: bool = True) -> str:
     """Show file content from a specific git ref.
-    
+
     Args:
         repo_path: Path to git repository
         ref: Git reference (commit, branch, tag)
         file_path: Path to file to show
         is_text: Whether to treat file as text
-        
+
     Returns:
         File content as string
-        
+
     Raises:
         OSError: If git show command fails
         ValueError: If ref or file doesn't exist
@@ -380,6 +380,7 @@ def git_history(
     max_count: int | None = None,
     follow: bool = False,
     oneline: bool = False,
+    rev_range: str | None = None,
 ) -> str:
     """Get git history for a specific file.
 
@@ -390,6 +391,7 @@ def git_history(
         follow: Whether to follow renames
         max_count: Maximum number of commits to return
         pretty: Git pretty format
+        rev_range: Git revision range (e.g. "origin/main..HEAD")
 
     Returns:
         Git log output as string
@@ -406,6 +408,8 @@ def git_history(
         cmd.append(f"--max-count={max_count}")
     if pretty:
         cmd.append(f"--pretty={pretty}")
+    if rev_range:
+        cmd.append(rev_range)
     if file_path:
         cmd.append("--")
         cmd.append(str(file_path))
@@ -428,7 +432,7 @@ def git_clone(
         depth: Clone depth (1 for shallow clone)
         ref: Optional specific ref (branch/tag/commit) to checkout
         timeout: Command timeout in seconds
-        
+
     Raises:
         OSError: If git clone or checkout fails
         ValueError: If URL is invalid or ref doesn't exist
@@ -528,13 +532,13 @@ def git_checkout(repo_path: Path,
                 files: list[str] | None = None,
                 unstage: bool = False) -> None:
     """Universal checkout function for commits, branches, or specific files.
-    
+
     Args:
         repo_path: Path to git repository
         target: What to checkout (commit, branch, tag)
         files: Specific files to checkout (None for all)
         unstage: Whether to unstage files after checkout
-        
+
     Raises:
         OSError: If git command fails
         ValueError: If target doesn't exist
@@ -587,13 +591,13 @@ def git_status_porcelain(repo_path: Path) -> list[tuple[str, str, str]]:
 
 def get_staged_changes(repo_path: Path) -> list[str]:
     """Get list of files that are staged (git added) but not committed.
-    
+
     Args:
         repo_path: Path to the git repository
-        
+
     Returns:
         List of file paths that are staged
-        
+
     Raises:
         OSError: If git command fails
     """

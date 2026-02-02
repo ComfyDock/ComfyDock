@@ -15,6 +15,7 @@ from ..logging.logging_config import get_logger
 from ..utils.git import is_git_url
 
 if TYPE_CHECKING:
+    from comfygit_core.configs.package_config import PackageConfigManager
     from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 
 logger = get_logger(__name__)
@@ -179,19 +180,33 @@ class NodeLookupService:
             raise CDNodeNotFoundError(msg)
         return node
 
-    def scan_requirements(self, node_path: Path) -> list[str]:
+    def scan_requirements(
+        self,
+        node_path: Path,
+        package_config: PackageConfigManager | None = None,
+    ) -> list[str]:
         """Scan a node directory for Python requirements.
 
         Args:
             node_path: Path to node directory
+            package_config: Optional package config for substitutions
 
         Returns:
             List of requirement strings (empty if none found)
         """
         deps = self.scanner.scan_node(node_path)
         if deps and deps.requirements:
-            logger.info(f"Found {len(deps.requirements)} requirements in {node_path.name}")
-            return deps.requirements
+            requirements = deps.requirements
+
+            # Apply package substitutions if config provided
+            if package_config:
+                requirements = [
+                    package_config.apply_substitution(req)
+                    for req in requirements
+                ]
+
+            logger.info(f"Found {len(requirements)} requirements in {node_path.name}")
+            return requirements
         logger.info(f"No requirements found in {node_path.name}")
         return []
 

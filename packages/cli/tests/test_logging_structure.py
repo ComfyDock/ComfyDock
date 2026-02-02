@@ -1,7 +1,6 @@
 """Integration tests for logging directory structure."""
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -153,6 +152,7 @@ class TestCompressedLogRotation:
     def test_compressed_log_rotates_with_full_log(self, mock_workspace, monkeypatch):
         """When full.log rotates, compressed.log should also rotate."""
         import logging
+
         from comfygit_cli.logging.compressed_handler import CompressedDualHandler
 
         os.environ['COMFYGIT_DEV_COMPRESS_LOGS'] = 'true'

@@ -4,7 +4,6 @@ Tests the new git-native branching functionality that replaces the checkpoint-st
 rollback model with proper git branches, checkout, reset, and merge operations.
 """
 import subprocess
-from pathlib import Path
 
 import pytest
 

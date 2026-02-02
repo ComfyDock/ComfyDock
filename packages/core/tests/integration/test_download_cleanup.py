@@ -3,16 +3,12 @@
 After a model is successfully downloaded and indexed, the workflow model entry should
 be cleaned up to remove redundant metadata that now lives in the global models table.
 """
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
-
 from comfygit_core.models.manifest import ManifestWorkflowModel
-from comfygit_core.models.workflow import ResolvedModel, WorkflowNodeWidgetRef
+from comfygit_core.models.workflow import WorkflowNodeWidgetRef
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
-from helpers.pyproject_assertions import PyprojectAssertions
 from helpers.workflow_builder import WorkflowBuilder
 
 

@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 
 import pytest
 import tomlkit
-
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.shared import NodeInfo
 
@@ -523,9 +522,9 @@ explicit = true
     def test_strip_and_readd_index_produces_array_of_tables(self, temp_pyproject):
         """Test that stripping indexes with list comprehension and re-adding preserves format.
 
-        This is the critical bug scenario: after checkout, _override_pytorch_config_from_installed
-        strips PyTorch indexes with a list comprehension, which creates a plain Python list.
-        Then add_index appends to it, producing inline format instead of array-of-tables.
+        This tests the TOML formatting behavior: when indexes are stripped via list
+        comprehension, add_index should still produce array-of-tables format ([[tool.uv.index]])
+        instead of inline format (index = [{...}]).
         """
         # Start with uv-formatted content (array-of-tables)
         uv_format = '''[project]
@@ -554,7 +553,7 @@ index = "pytorch-cu129"
 
         manager = PyprojectManager(temp_pyproject)
 
-        # Simulate _override_pytorch_config_from_installed stripping with list comprehension
+        # Simulate stripping PyTorch indexes with list comprehension
         config = manager.load()
         indexes = config['tool']['uv'].get('index', [])
         config['tool']['uv']['index'] = [
@@ -577,3 +576,131 @@ index = "pytorch-cu129"
         assert 'index = [{' not in content, (
             f"Should not use inline array format after strip-and-readd, got:\n{content}"
         )
+
+
+class TestInitialPyprojectConfig:
+    """Test initial pyproject.toml configuration."""
+
+    def test_initial_pyproject_has_empty_uv_section(self):
+        """Test that newly created pyproject.toml has empty uv section.
+
+        exclude-dependencies is set by first sync() from package_config.toml,
+        not hardcoded in initial config.
+        """
+        from comfygit_core.factories.environment_factory import EnvironmentFactory
+
+        # Create initial pyproject config
+        config = EnvironmentFactory._create_initial_pyproject(
+            name="test-env",
+            python_version="3.11",
+            comfyui_version="v0.3.60",
+            comfyui_version_type="tag",
+            comfyui_commit_sha="abc123"
+        )
+
+        # Verify uv section exists but is empty (sync will populate it)
+        assert "tool" in config
+        assert "uv" in config["tool"]
+        assert config["tool"]["uv"] == {}
+
+
+class TestExcludeDependencies:
+    """Test exclude-dependencies handling in UV config."""
+
+    def test_ensure_exclude_dependencies_adds_new(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies adds new packages."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add exclude dependencies
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "some-other-package"])
+
+        # Read config
+        with open(temp_pyproject) as f:
+            content = f.read()
+
+        # Verify exclusions added
+        assert "[tool.uv]" in content
+        assert "exclude-dependencies" in content
+        assert "opencv-python" in content
+        assert "some-other-package" in content
+
+    def test_ensure_exclude_dependencies_idempotent(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies is idempotent."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add exclusions twice
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
+
+        # Load config
+        config = manager.load()
+        exclusions = config['tool']['uv'].get('exclude-dependencies', [])
+
+        # Should only appear once
+        assert exclusions.count("opencv-python") == 1
+
+    def test_ensure_exclude_dependencies_merges_with_existing(self, temp_pyproject):
+        """Test that ensure_exclude_dependencies merges with existing exclusions."""
+        # Manually create config with existing exclusions
+        initial_config = {
+            "project": {
+                "name": "test-project",
+                "version": "0.1.0",
+                "requires-python": ">=3.11",
+                "dependencies": [],
+            },
+            "tool": {
+                "comfygit": {
+                    "comfyui_version": "v0.3.60",
+                    "python_version": "3.11",
+                },
+                "uv": {
+                    "exclude-dependencies": ["existing-package"]
+                }
+            }
+        }
+
+        with open(temp_pyproject, 'w') as f:
+            tomlkit.dump(initial_config, f)
+
+        manager = PyprojectManager(temp_pyproject)
+
+        # Add new exclusions
+        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "existing-package"])
+
+        # Load config
+        config = manager.load()
+        exclusions = config['tool']['uv']['exclude-dependencies']
+
+        # Should have both, no duplicates
+        assert len(exclusions) == 2
+        assert "existing-package" in exclusions
+        assert "opencv-python" in exclusions
+
+    def test_set_exclude_dependencies_replaces_existing(self, temp_pyproject):
+        """set_exclude_dependencies should replace, not merge."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Set initial exclusions
+        manager.uv_config.set_exclude_dependencies(["pkg-a", "pkg-b"])
+        config = manager.load(force_reload=True)
+        assert config["tool"]["uv"]["exclude-dependencies"] == ["pkg-a", "pkg-b"]
+
+        # Replace with different list
+        manager.uv_config.set_exclude_dependencies(["pkg-c"])
+        config = manager.load(force_reload=True)
+        assert config["tool"]["uv"]["exclude-dependencies"] == ["pkg-c"]
+
+    def test_set_exclude_dependencies_empty_removes_key(self, temp_pyproject):
+        """Empty list should remove exclude-dependencies entirely."""
+        manager = PyprojectManager(temp_pyproject)
+
+        # Set some exclusions first
+        manager.uv_config.set_exclude_dependencies(["pkg-a"])
+        assert "exclude-dependencies" in manager.load(force_reload=True)["tool"]["uv"]
+
+        # Set empty list
+        manager.uv_config.set_exclude_dependencies([])
+        config = manager.load(force_reload=True)
+        # Key should be removed (or uv section might not exist if it was the only key)
+        assert "exclude-dependencies" not in config.get("tool", {}).get("uv", {})

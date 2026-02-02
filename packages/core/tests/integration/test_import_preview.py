@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
 
 

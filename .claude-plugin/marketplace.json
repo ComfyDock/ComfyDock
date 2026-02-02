@@ -1,0 +1,19 @@
+{
+  "name": "comfygit-marketplace",
+  "owner": {
+    "name": "Alex Katz",
+    "email": "akatz.claude1@gmail.com"
+  },
+  "metadata": {
+    "description": "ComfyGit plugins for ComfyUI environment management",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "comfygit",
+      "source": "./plugins/comfygit",
+      "description": "CLI and library for managing ComfyUI environments with version control and dependency management"
+    }
+  ]
+}

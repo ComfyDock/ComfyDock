@@ -17,16 +17,15 @@ The root cause: execute_commit() only processes "new" and "modified" workflows,
 completely ignoring "deleted" workflows. It calls copy_all_workflows() which removes
 JSON files, but never cleans up the pyproject.toml sections.
 """
-import pytest
 import sys
 from pathlib import Path
 
 # Add parent dir to path for conftest import
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import simulate_comfyui_save_workflow
+from helpers.model_index_builder import ModelIndexBuilder
 from helpers.pyproject_assertions import PyprojectAssertions
 from helpers.workflow_builder import WorkflowBuilder
-from helpers.model_index_builder import ModelIndexBuilder
 
 
 class TestWorkflowDeletionCleanup:
@@ -47,7 +46,7 @@ class TestWorkflowDeletionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("model1.safetensors", "checkpoints", size_mb=4)
         builder.add_model("model2.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Create workflow 'default' using model1
         workflow1 = (
@@ -116,7 +115,7 @@ class TestWorkflowDeletionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("model_a.safetensors", "checkpoints", size_mb=4)
         builder.add_model("model_b.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Create wf1 with model A
         wf1 = WorkflowBuilder().add_checkpoint_loader("model_a.safetensors").build()
@@ -174,7 +173,7 @@ class TestWorkflowDeletionCleanup:
         builder.add_model("m1.safetensors", "checkpoints")
         builder.add_model("m2.safetensors", "loras")
         builder.add_model("m3.safetensors", "checkpoints")
-        models = builder.index_all()
+        builder.index_all()
 
         # Create 3 workflows
         for i, model_file in enumerate(["m1.safetensors", "m2.safetensors", "m3.safetensors"], 1):
@@ -228,7 +227,7 @@ class TestWorkflowDeletionCleanup:
         # ARRANGE: Create and commit 'default' workflow
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("model.safetensors", "checkpoints")
-        models = builder.index_all()
+        builder.index_all()
 
         wf = WorkflowBuilder().add_checkpoint_loader("model.safetensors").build()
         simulate_comfyui_save_workflow(test_env, "default", wf)
@@ -283,7 +282,7 @@ class TestWorkflowDeletionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("m1.safetensors", "checkpoints")
         builder.add_model("m2.safetensors", "loras")
-        models = builder.index_all()
+        builder.index_all()
 
         wf = (
             WorkflowBuilder()
@@ -330,7 +329,7 @@ class TestWorkflowDeletionCleanup:
         builder.add_model("mb.safetensors", "checkpoints")
         builder.add_model("mc.safetensors", "checkpoints")
         builder.add_model("md.safetensors", "loras")  # Use loras category for the lora model
-        models = builder.index_all()
+        builder.index_all()
 
         # Create workflows A, B, C
         for name, model in [("wf_a", "ma.safetensors"), ("wf_b", "mb.safetensors"), ("wf_c", "mc.safetensors")]:
@@ -383,7 +382,7 @@ class TestWorkflowDeletionCleanup:
 
         # Models B, C, D should remain (we just verify count > 0 since models are shared)
         assert len(models_section) >= 2, \
-            f"Should have at least 2 models remaining (B, C, and possibly D)"
+            "Should have at least 2 models remaining (B, C, and possibly D)"
 
     def test_resolved_but_never_committed_workflow_cleanup(self, test_env, test_workspace):
         """Test that resolved-but-never-committed workflows are cleaned up on commit.
@@ -403,7 +402,7 @@ class TestWorkflowDeletionCleanup:
         builder = ModelIndexBuilder(test_workspace)
         builder.add_model("model1.safetensors", "checkpoints", size_mb=4)
         builder.add_model("model2.safetensors", "checkpoints", size_mb=4)
-        models = builder.index_all()
+        builder.index_all()
 
         # Create and COMMIT workflow 'committed_wf' (this one will stay)
         committed_wf = WorkflowBuilder().add_checkpoint_loader("model1.safetensors").build()

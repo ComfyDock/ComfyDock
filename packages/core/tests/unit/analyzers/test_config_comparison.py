@@ -4,14 +4,13 @@ These tests verify the pure functions extracted from GitChangeParser for DRY reu
 by both GitChangeParser (HEAD vs working tree) and RefDiffAnalyzer (any ref vs any ref).
 """
 
-import pytest
 
 from comfygit_core.analyzers.config_comparison import (
-    flatten_nodes,
-    extract_nodes_section,
-    extract_models_section,
-    compare_node_configs,
     compare_constraint_configs,
+    compare_node_configs,
+    extract_models_section,
+    extract_nodes_section,
+    flatten_nodes,
 )
 
 

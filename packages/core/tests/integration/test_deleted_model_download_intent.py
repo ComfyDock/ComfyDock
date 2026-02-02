@@ -6,10 +6,10 @@ a clean slate to re-resolve (move model back, find new URL, etc.).
 
 The global table entry gets cleaned up by cleanup_orphans() during apply_resolution().
 """
+from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
 from helpers.pyproject_assertions import PyprojectAssertions
-from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
 
 
 class TestDeletedModelResolution:

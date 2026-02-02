@@ -4,8 +4,8 @@ Tests that optional dependency groups (prefixed with 'optional-') can fail
 without breaking the entire sync operation, while non-optional groups must succeed.
 """
 
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
+
 from comfygit_core.models.exceptions import UVCommandError
 
 

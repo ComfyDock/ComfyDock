@@ -1,11 +1,17 @@
 """Auto resolution strategies for workflow dependencies."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from comfygit_core.models.protocols import ModelResolutionStrategy, NodeResolutionStrategy
 
-from ..models.workflow import ModelResolutionContext, NodeResolutionContext, ResolvedModel, WorkflowNodeWidgetRef
+from ..models.workflow import (
+    ModelResolutionContext,
+    NodeResolutionContext,
+    ResolvedModel,
+    WorkflowNodeWidgetRef,
+)
 
 if TYPE_CHECKING:
     from ..models.workflow import ResolvedNodePackage
@@ -18,7 +24,7 @@ class AutoNodeStrategy(NodeResolutionStrategy):
         self,
         node_type: str,
         possible: list[ResolvedNodePackage],
-        context: "NodeResolutionContext"
+        context: NodeResolutionContext
     ) -> ResolvedNodePackage | None:
         """Pick the top suggestion by confidence, or first if tied.
 

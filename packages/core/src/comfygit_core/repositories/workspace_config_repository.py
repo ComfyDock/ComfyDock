@@ -161,6 +161,39 @@ class WorkspaceConfigRepository:
 
         return None
 
+    def set_huggingface_token(self, token: str | None):
+        """Set or clear HuggingFace API token."""
+        data = self.config_file
+        if token:
+            if not data.api_credentials:
+                data.api_credentials = APICredentials(huggingface_token=token)
+            else:
+                data.api_credentials.huggingface_token = token
+            logger.info("HuggingFace API token configured")
+        else:
+            if data.api_credentials:
+                data.api_credentials.huggingface_token = None
+            logger.info("HuggingFace API token cleared")
+        self.save(data)
+
+    def get_huggingface_token(self) -> str | None:
+        """Get HuggingFace API token from config or environment.
+
+        Priority: HF_TOKEN env > HUGGING_FACE_HUB_TOKEN env > config file
+        """
+        # Priority: environment variable > config file
+        env_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if env_token:
+            logger.debug("Using HuggingFace token from environment")
+            return env_token
+
+        data = self.config_file
+        if data.api_credentials and data.api_credentials.huggingface_token:
+            logger.debug("Using HuggingFace token from config")
+            return data.api_credentials.huggingface_token
+
+        return None
+
     def get_external_uv_cache(self) -> Path | None:
         """Get external UV cache path if configured."""
         data = self.config_file

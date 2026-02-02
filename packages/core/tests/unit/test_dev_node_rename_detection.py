@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
 from comfygit_core.analyzers.status_scanner import StatusScanner
 from comfygit_core.models.environment import EnvironmentState, NodeState
 

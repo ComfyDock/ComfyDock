@@ -5,14 +5,11 @@ Following TDD approach - these tests should FAIL initially.
 """
 from argparse import Namespace
 from unittest.mock import MagicMock, patch
-import sys
-from io import StringIO
 
 import pytest
-
-from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.cli import create_parser
 from comfygit_cli.completers import branch_completer
+from comfygit_cli.env_commands import EnvironmentCommands
 
 
 class TestCheckoutCommand:

@@ -2,7 +2,6 @@
 
 import pytest
 from comfygit_core.models.exceptions import CDEnvironmentError
-from comfygit_core.core.workspace import Workspace
 
 
 def test_reserved_name_workspace():

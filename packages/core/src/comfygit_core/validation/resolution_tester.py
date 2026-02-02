@@ -86,7 +86,7 @@ class ResolutionTester:
                     resolution_output = resolution_result.stdout
                 except UVCommandError as e:
                     # Log full UV error details for debugging
-                    self.logger.error(f"UV resolution test failed")
+                    self.logger.error("UV resolution test failed")
                     if e.stderr:
                         self.logger.error(f"UV stderr:\n{e.stderr}")
                     if e.stdout:

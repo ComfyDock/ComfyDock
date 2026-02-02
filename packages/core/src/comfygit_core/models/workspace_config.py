@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 
+
 @dataclass(repr=False)
 class APICredentials:
     """Secure storage for external API credentials."""
     civitai_token: str | None = None
     runpod_api_key: str | None = None
+    huggingface_token: str | None = None
 
     @classmethod
     def from_dict(cls, data):
@@ -13,6 +15,7 @@ class APICredentials:
         return cls(
             civitai_token=data.get("civitai_token"),
             runpod_api_key=data.get("runpod_api_key"),
+            huggingface_token=data.get("huggingface_token"),
         )
 
     def to_dict(self):
@@ -21,6 +24,8 @@ class APICredentials:
             result["civitai_token"] = self.civitai_token
         if self.runpod_api_key:
             result["runpod_api_key"] = self.runpod_api_key
+        if self.huggingface_token:
+            result["huggingface_token"] = self.huggingface_token
         return result
 
     def __repr__(self):
@@ -30,6 +35,8 @@ class APICredentials:
             parts.append(f"civitai_token='***{self.civitai_token[-4:]}'")
         if self.runpod_api_key:
             parts.append(f"runpod_api_key='***{self.runpod_api_key[-4:]}'")
+        if self.huggingface_token:
+            parts.append(f"huggingface_token='***{self.huggingface_token[-4:]}'")
         return f"APICredentials({', '.join(parts) if parts else ''})"
 
 @dataclass

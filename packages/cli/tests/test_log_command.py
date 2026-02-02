@@ -3,8 +3,6 @@ from argparse import Namespace
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from comfygit_cli.env_commands import EnvironmentCommands
 
 

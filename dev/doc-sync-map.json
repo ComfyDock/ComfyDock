@@ -1,0 +1,79 @@
+{
+  "mappings": [
+    {
+      "code_glob": "packages/core/src/comfygit_core/core/**",
+      "section_name": "core-arch",
+      "docs": [
+        "packages/core/docs/architecture.md"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/managers/**",
+      "section_name": "core-managers",
+      "docs": [
+        "packages/core/docs/architecture.md"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/managers/node_manager.py",
+      "section_name": "user-nodes",
+      "docs": [
+        "docs/comfygit-docs/docs/user-guide/custom-nodes/"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/managers/model_manager.py",
+      "section_name": "user-models",
+      "docs": [
+        "docs/comfygit-docs/docs/user-guide/models/"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/managers/workflow_manager.py",
+      "section_name": "user-workflows",
+      "docs": [
+        "docs/comfygit-docs/docs/user-guide/workflows/"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/services/**",
+      "section_name": "core-services",
+      "docs": [
+        "packages/core/docs/architecture.md"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/analyzers/**",
+      "section_name": "core-analyzers",
+      "docs": [
+        "packages/core/docs/architecture.md"
+      ]
+    },
+    {
+      "code_glob": "packages/core/src/comfygit_core/resolvers/**",
+      "section_name": "core-resolvers",
+      "docs": [
+        "packages/core/docs/architecture.md"
+      ]
+    },
+    {
+      "code_glob": "packages/cli/comfygit_cli/**",
+      "section_name": "cli",
+      "docs": [
+        "packages/cli/docs/architecture.md",
+        "docs/comfygit-docs/docs/cli-reference/"
+      ]
+    },
+    {
+      "code_glob": "packages/deploy/**",
+      "section_name": "deploy",
+      "docs": [
+        "packages/deploy/docs/architecture.md"
+      ]
+    }
+  ],
+  "always_check": [
+    "docs/comfygit-docs/docs/getting-started/features.md",
+    "docs/comfygit-docs/docs/getting-started/concepts.md"
+  ]
+}

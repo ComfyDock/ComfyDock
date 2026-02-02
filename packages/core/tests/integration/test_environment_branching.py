@@ -7,10 +7,8 @@ Tests the high-level Environment API for git-native branching:
 - Environment synchronization after git operations
 - Merge operations with environment reconciliation
 """
-from pathlib import Path
 
 import pytest
-
 from comfygit_core.models.exceptions import CDEnvironmentError
 
 
@@ -28,7 +26,7 @@ class TestEnvironmentCheckout:
 
         # Get commits (get_commit_history returns newest-first)
         history = test_env.get_commit_history(limit=2)
-        v2_hash = history[0]["hash"]  # Newest = v2 with test.txt
+        history[0]["hash"]  # Newest = v2 with test.txt
         v1_hash = history[1]["hash"]  # Older = fixture's initial commit
 
         # ACT: Checkout v1 (should NOT create v3)

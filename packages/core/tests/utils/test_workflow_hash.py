@@ -7,15 +7,11 @@ Tests content-based hashing and normalization:
 - Semantic changes affect hash
 - Hash stability across saves
 """
-import json
 import copy
-from pathlib import Path
-import pytest
+import json
 
-from comfygit_core.utils.workflow_hash import (
-    compute_workflow_hash,
-    normalize_workflow
-)
+import pytest
+from comfygit_core.utils.workflow_hash import compute_workflow_hash, normalize_workflow
 
 
 @pytest.fixture
@@ -277,7 +273,7 @@ class TestHashStability:
         hash1 = compute_workflow_hash(workflow_path)
 
         # Load and re-save (simulating ComfyUI round-trip)
-        with open(workflow_path, 'r') as f:
+        with open(workflow_path) as f:
             loaded = json.load(f)
         with open(workflow_path, 'w') as f:
             json.dump(loaded, f)

@@ -4,18 +4,16 @@ These tests verify the dataclasses and their computed properties for representin
 differences between two git refs.
 """
 
-import pytest
 
 from comfygit_core.models.ref_diff import (
-    RefDiff,
-    NodeChange,
-    ModelChange,
-    WorkflowChange,
     DependencyChanges,
-    Conflict,
-    NodeConflict,
-    WorkflowConflict,
     DependencyConflict,
+    ModelChange,
+    NodeChange,
+    NodeConflict,
+    RefDiff,
+    WorkflowChange,
+    WorkflowConflict,
 )
 
 

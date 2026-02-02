@@ -2,8 +2,6 @@
 from argparse import Namespace
 from unittest.mock import Mock, patch
 
-import pytest
-
 from comfygit_cli.completers import (
     branch_completer,
     commit_hash_completer,

@@ -1,14 +1,13 @@
 """Unit tests for ModelDownloader service."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
-import pytest
 
+import pytest
 from comfygit_core.services.model_downloader import (
-    ModelDownloader,
     DownloadRequest,
     DownloadResult,
+    ModelDownloader,
 )
 
 
@@ -483,8 +482,8 @@ class TestModelDownloader:
         assert result.success is True
 
     @patch('requests.get')
-    def test_non_civitai_url_no_auth_header_even_with_api_key(self, mock_get, tmp_path):
-        """Test that non-Civitai URLs don't get auth header even when API key is configured."""
+    def test_custom_url_no_auth_header_even_with_civitai_api_key(self, mock_get, tmp_path):
+        """Test that custom URLs don't get Civitai auth header even when API key is configured."""
         # Setup mock response
         mock_response = Mock()
         mock_response.status_code = 200
@@ -492,7 +491,7 @@ class TestModelDownloader:
         mock_response.iter_content = Mock(return_value=[b"test" * 256])
         mock_get.return_value = mock_response
 
-        # Workspace config with API key
+        # Workspace config with Civitai API key
         workspace_config = Mock()
         workspace_config.get_models_directory.return_value = tmp_path
         workspace_config.get_civitai_token.return_value = "test_api_key_12345"
@@ -503,13 +502,13 @@ class TestModelDownloader:
 
         downloader = ModelDownloader(repo, workspace_config)
         request = DownloadRequest(
-            url="https://huggingface.co/user/model/blob/main/file.safetensors",
+            url="https://example.com/models/file.safetensors",
             target_path=tmp_path / "checkpoints/model.safetensors"
         )
 
         result = downloader.download(request)
 
-        # Verify no Authorization header for non-Civitai URL
+        # Verify no Authorization header for custom URL (not Civitai)
         mock_get.assert_called_once()
         call_kwargs = mock_get.call_args[1]
         assert 'headers' in call_kwargs
@@ -554,3 +553,148 @@ class TestModelDownloader:
             call_kwargs = mock_get.call_args[1]
             assert call_kwargs['headers'] == {'Authorization': 'Bearer test_key'}
             assert result.success is True
+
+
+class TestModelDownloaderHuggingFaceFallback:
+    """Tests for HuggingFace tqdm_class graceful degradation."""
+
+    @patch('comfygit_core.services.model_downloader.hf_hub_download')
+    @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
+    def test_hf_download_retries_without_tqdm_class_on_type_error(self, mock_parse, mock_hf_download, tmp_path):
+        """Test that HF download falls back to no progress bar if tqdm_class causes TypeError."""
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+
+        mock_parse.return_value = ParsedHuggingFaceUrl(
+            kind="file", repo_id="user/model", path_in_repo="model.safetensors", revision="main"
+        )
+
+        # First call with tqdm_class raises TypeError, second without succeeds
+        cache_file = tmp_path / "cached_model.safetensors"
+        cache_file.write_bytes(b"model_data")
+
+        def side_effect(**kwargs):
+            if "tqdm_class" in kwargs:
+                raise TypeError("unexpected keyword argument 'tqdm_class'")
+            return str(cache_file)
+
+        mock_hf_download.side_effect = side_effect
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+        workspace_config.get_huggingface_token.return_value = None
+
+        downloader = ModelDownloader(repo, workspace_config)
+        target_path = tmp_path / "checkpoints" / "model.safetensors"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/user/model/resolve/main/model.safetensors",
+            target_path=target_path
+        )
+
+        result = downloader.download(request, progress_callback=lambda cur, total: None)
+
+        assert result.success is True
+        assert mock_hf_download.call_count == 2
+        # First call had tqdm_class
+        assert "tqdm_class" in mock_hf_download.call_args_list[0].kwargs
+        # Second call did not
+        assert "tqdm_class" not in mock_hf_download.call_args_list[1].kwargs
+
+
+class TestModelDownloaderPathValidation:
+    """Tests for target path validation in ModelDownloader."""
+
+    def test_rejects_directory_as_target_path(self, tmp_path):
+        """Test that download rejects target path if it's a directory."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        # Create a directory at the target path
+        target_dir = tmp_path / "checkpoints"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        request = DownloadRequest(
+            url="https://example.com/model.safetensors",
+            target_path=target_dir  # This is a directory, not a file
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "directory" in result.error.lower()
+
+    def test_rejects_target_path_without_extension(self, tmp_path):
+        """Test that download rejects target path without file extension."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://example.com/model.safetensors",
+            target_path=tmp_path / "checkpoints" / "model_without_extension"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "file path" in result.error.lower() or "filename" in result.error.lower()
+
+
+class TestModelDownloaderHuggingFaceValidation:
+    """Tests for HuggingFace URL validation in ModelDownloader."""
+
+    def test_rejects_hf_repo_url_with_helpful_error(self, tmp_path):
+        """Test that HF repo browser URLs (/tree/main) are rejected with guidance."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/microsoft/VibeVoice-1.5B/tree/main",
+            target_path=tmp_path / "checkpoints" / "model.safetensors"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "repository" in result.error.lower() or "repo" in result.error.lower()
+        # Should mention using file browser or /resolve/ URL
+        assert "/resolve/" in result.error or "file" in result.error.lower()
+
+    def test_rejects_hf_base_repo_url(self, tmp_path):
+        """Test that HF base repo URLs (no /tree/) are rejected."""
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+
+        downloader = ModelDownloader(repo, workspace_config)
+
+        request = DownloadRequest(
+            url="https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+            target_path=tmp_path / "checkpoints" / "model.safetensors"
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is False
+        assert "repository" in result.error.lower() or "repo" in result.error.lower()

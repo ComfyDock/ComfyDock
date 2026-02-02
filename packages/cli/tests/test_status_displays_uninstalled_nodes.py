@@ -10,14 +10,13 @@ if they're not installed.
 Fix: Add separate check for uninstalled packages independent of has_issues.
 """
 
-import pytest
 import sys
-import io
 from pathlib import Path
+
+import pytest
 
 # Import CLI command handler
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from comfygit_cli.env_commands import EnvironmentCommands
 
 # Import core test helpers
 core_tests_path = Path(__file__).parent.parent.parent / "core" / "tests"
@@ -113,7 +112,7 @@ class TestStatusDisplaysUninstalledNodes:
         has_uninstalled = bool(workflow_needs - installed)
 
         # DEBUG: Print what we found
-        print(f"\n=== DEBUG ===")
+        print("\n=== DEBUG ===")
         print(f"Workflow needs: {workflow_needs}")
         print(f"Installed: {installed}")
         print(f"Uninstalled: {workflow_needs - installed}")
@@ -121,7 +120,7 @@ class TestStatusDisplaysUninstalledNodes:
         print(f"has_uninstalled: {has_uninstalled}")
         print(f"nodes_resolved: {[n.package_id for n in test_workflow.resolution.nodes_resolved]}")
         print(f"nodes_unresolved: {[n.type for n in test_workflow.resolution.nodes_unresolved]}")
-        print(f"=============\n")
+        print("=============\n")
 
         # ASSERT: This will FAIL if bug exists (has_issues=False but has_uninstalled=True)
         # When fixed, both should be True or has_issues should check for uninstalled

@@ -9,13 +9,12 @@ This is a regression test for the bug where:
 3. Update flow calls get_node() but NOT install_node() to get complete version data
 4. Installation fails because download_url is empty
 """
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from comfygit_core.models.shared import NodeInfo
-from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
+import pytest
 from comfygit_core.models.exceptions import CDEnvironmentError
+from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
+from comfygit_core.models.shared import NodeInfo
 from comfygit_core.strategies.confirmation import AutoConfirmStrategy
 
 

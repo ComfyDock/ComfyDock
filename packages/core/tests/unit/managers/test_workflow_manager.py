@@ -1,7 +1,8 @@
 """Tests for WorkflowManager normalization logic."""
-import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import pytest
 from comfygit_core.managers.workflow_manager import WorkflowManager
 from comfygit_core.utils.workflow_hash import normalize_workflow
 
@@ -109,13 +110,13 @@ def test_workflows_differ_detects_real_changes():
 
 def test_apply_resolution_preserves_existing_sources(workflow_manager):
     """Test that apply_resolution preserves sources from existing models in global table."""
+    from comfygit_core.models.manifest import ManifestModel
+    from comfygit_core.models.shared import ModelWithLocation
     from comfygit_core.models.workflow import (
         ResolutionResult,
         ResolvedModel,
         WorkflowNodeWidgetRef,
     )
-    from comfygit_core.models.manifest import ManifestModel
-    from comfygit_core.models.shared import ModelWithLocation
 
     # Setup: Create a model that already exists in global table with sources
     existing_hash = "abc123"
@@ -187,12 +188,12 @@ def test_apply_resolution_preserves_existing_sources(workflow_manager):
 
 def test_apply_resolution_empty_sources_for_new_models(workflow_manager):
     """Test that apply_resolution uses empty sources for new models."""
+    from comfygit_core.models.shared import ModelWithLocation
     from comfygit_core.models.workflow import (
         ResolutionResult,
         ResolvedModel,
         WorkflowNodeWidgetRef,
     )
-    from comfygit_core.models.shared import ModelWithLocation
 
     # Mock get_by_hash to return None (model doesn't exist yet)
     workflow_manager.pyproject.models.get_by_hash = Mock(return_value=None)
@@ -483,12 +484,12 @@ class TestOptionalUnresolvedModelPersistence:
 
     def test_optional_unresolved_model_survives_apply_resolution(self, workflow_manager):
         """Test that optional unresolved models are preserved in apply_resolution()."""
+        from comfygit_core.models.manifest import ManifestWorkflowModel
         from comfygit_core.models.workflow import (
             ResolutionResult,
             ResolvedModel,
-            WorkflowNodeWidgetRef
+            WorkflowNodeWidgetRef,
         )
-        from comfygit_core.models.manifest import ManifestWorkflowModel
 
         # Setup: Create a resolution with an optional unresolved model (Type C)
         model_ref = WorkflowNodeWidgetRef(
@@ -554,12 +555,12 @@ class TestOptionalUnresolvedModelPersistence:
 
     def test_mixed_model_types_all_preserved(self, workflow_manager):
         """Test all three model types are preserved: resolved, optional resolved, optional unresolved."""
+        from comfygit_core.models.shared import ModelWithLocation
         from comfygit_core.models.workflow import (
             ResolutionResult,
             ResolvedModel,
-            WorkflowNodeWidgetRef
+            WorkflowNodeWidgetRef,
         )
-        from comfygit_core.models.shared import ModelWithLocation
 
         # Type A: Normal resolved (has model, not optional)
         ref_a = WorkflowNodeWidgetRef(

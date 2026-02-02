@@ -2,14 +2,13 @@
 
 import json
 import tempfile
-from unittest.mock import MagicMock, patch, mock_open
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from comfygit_core.clients.civitai_client import CivitAIClient
-from comfygit_core.models.civitai import SearchParams, ModelType, SortOrder
 from comfygit_core.caching.api_cache import APICacheManager
+from comfygit_core.clients.civitai_client import CivitAIClient
+from comfygit_core.models.civitai import ModelType, SearchParams, SortOrder
 
 
 @pytest.fixture

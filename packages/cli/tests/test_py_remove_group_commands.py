@@ -1,8 +1,7 @@
 """Test CLI commands for dependency group removal."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 from argparse import Namespace
+from unittest.mock import patch
 
 
 class TestPyRemoveGroupCLI:

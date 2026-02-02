@@ -18,8 +18,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 # Import test helpers
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import load_workflow_fixture, simulate_comfyui_save_workflow

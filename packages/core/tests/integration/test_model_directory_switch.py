@@ -1,7 +1,5 @@
 """Integration tests for switching model directories with metadata preservation."""
 
-from pathlib import Path
-import pytest
 
 
 class TestModelDirectorySwitch:

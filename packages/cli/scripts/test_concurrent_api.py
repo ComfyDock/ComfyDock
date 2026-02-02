@@ -6,9 +6,9 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
-import aiohttp
 from datetime import datetime
+
+import aiohttp
 
 
 @dataclass
@@ -17,8 +17,8 @@ class RequestResult:
     node_id: str
     success: bool
     duration: float
-    error: Optional[str] = None
-    status_code: Optional[int] = None
+    error: str | None = None
+    status_code: int | None = None
     version_count: int = 0
 
 
@@ -29,9 +29,9 @@ class TestResults:
     successful: int = 0
     failed: int = 0
     total_duration: float = 0
-    errors_by_type: Dict[str, int] = field(default_factory=dict)
-    failed_nodes: List[str] = field(default_factory=list)
-    results: List[RequestResult] = field(default_factory=list)
+    errors_by_type: dict[str, int] = field(default_factory=dict)
+    failed_nodes: list[str] = field(default_factory=list)
+    results: list[RequestResult] = field(default_factory=list)
 
 
 class ConcurrentAPITester:
@@ -42,7 +42,7 @@ class ConcurrentAPITester:
         self.concurrency = concurrency
         self.semaphore = asyncio.Semaphore(concurrency)
 
-    async def get_nodes_list(self, limit: int = 50) -> List[str]:
+    async def get_nodes_list(self, limit: int = 50) -> list[str]:
         """Get first page of nodes."""
         async with aiohttp.ClientSession() as session:
             url = f"{self.base_url}/nodes"
@@ -115,7 +115,7 @@ class ConcurrentAPITester:
                     error=f"Unexpected: {str(e)[:100]}"
                 )
 
-    async def run_concurrent_test(self, node_ids: List[str]) -> TestResults:
+    async def run_concurrent_test(self, node_ids: list[str]) -> TestResults:
         """Run concurrent version fetches for given nodes."""
         results = TestResults()
         results.total_requests = len(node_ids)
@@ -183,7 +183,7 @@ class ConcurrentAPITester:
             min_duration = min(r.duration for r in successful_results)
             max_duration = max(r.duration for r in successful_results)
 
-            print(f"\nSuccessful request stats:")
+            print("\nSuccessful request stats:")
             print(f"  Average: {avg_duration:.3f}s")
             print(f"  Min: {min_duration:.3f}s")
             print(f"  Max: {max_duration:.3f}s")
@@ -193,7 +193,7 @@ class ConcurrentAPITester:
             print(f"  Total versions fetched: {total_versions}")
 
         if results.errors_by_type:
-            print(f"\nErrors by type:")
+            print("\nErrors by type:")
             for error_type, count in sorted(results.errors_by_type.items()):
                 print(f"  {error_type}: {count}")
 
@@ -209,14 +209,14 @@ class ConcurrentAPITester:
         if results.successful > 0:
             sequential_time = sum(r.duration for r in results.results if r.success)
             speedup = sequential_time / results.total_duration
-            print(f"\nPerformance:")
+            print("\nPerformance:")
             print(f"  Sequential time (estimated): {sequential_time:.2f}s")
             print(f"  Concurrent time: {results.total_duration:.2f}s")
             print(f"  Speedup: {speedup:.1f}x")
             print(f"  Efficiency: {speedup/self.concurrency*100:.1f}%")
 
 
-async def test_multiple_concurrency_levels(node_ids: List[str], levels: List[int]):
+async def test_multiple_concurrency_levels(node_ids: list[str], levels: list[int]):
     """Test multiple concurrency levels."""
     all_results = {}
 
@@ -232,7 +232,7 @@ async def test_multiple_concurrency_levels(node_ids: List[str], levels: List[int
 
         # Wait between tests to avoid rate limiting
         if concurrency != levels[-1]:
-            print(f"\nWaiting 2 seconds before next test...")
+            print("\nWaiting 2 seconds before next test...")
             await asyncio.sleep(2)
 
     # Summary comparison

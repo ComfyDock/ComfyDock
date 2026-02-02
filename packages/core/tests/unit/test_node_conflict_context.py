@@ -1,10 +1,9 @@
 """Tests for NodeConflictContext and error formatting."""
 
-import pytest
 from comfygit_core.models.exceptions import (
+    CDNodeConflictError,
     NodeAction,
     NodeConflictContext,
-    CDNodeConflictError,
 )
 
 

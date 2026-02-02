@@ -1,7 +1,7 @@
 """Unit tests for git utility functions."""
+
 import pytest
-from comfygit_core.utils.git import parse_git_url_with_subdir, git_clone_subdirectory
-from pathlib import Path
+from comfygit_core.utils.git import git_clone_subdirectory, parse_git_url_with_subdir
 
 
 class TestParseGitUrlWithSubdir:

@@ -3,21 +3,12 @@
 Tests the core resolution priority order and context tracking in GlobalNodeResolver.
 """
 
-import pytest
-from pathlib import Path
-from dataclasses import dataclass, field
 from unittest.mock import Mock
 
-from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
-from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
-from comfygit_core.models.workflow import WorkflowNode, NodeResolutionContext
-from comfygit_core.models.node_mapping import (
-    GlobalNodeMappings,
-    GlobalNodePackage,
-    GlobalNodeMapping,
-    GlobalNodeMappingsStats,
-)
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.models.workflow import NodeResolutionContext, WorkflowNode
+from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
+from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
 
 
 class TestPropertiesFieldResolution:

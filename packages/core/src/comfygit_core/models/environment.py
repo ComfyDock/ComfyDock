@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import List, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from .workflow import DetailedWorkflowStatus
 
@@ -131,8 +131,8 @@ class UserAction(Enum):
 class ChangesSummary:
     """Summary of changes with semantic meaning."""
 
-    primary_changes: List[str] = field(default_factory=list)
-    secondary_changes: List[str] = field(default_factory=list)
+    primary_changes: list[str] = field(default_factory=list)
+    secondary_changes: list[str] = field(default_factory=list)
     has_breaking_changes: bool = False
 
     def get_headline(self) -> str:

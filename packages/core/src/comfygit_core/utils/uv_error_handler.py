@@ -2,12 +2,11 @@
 
 import logging
 import re
-from typing import Optional
 
 from ..models.exceptions import UVCommandError
 
 
-def parse_failed_dependency_group(stderr: str) -> Optional[str]:
+def parse_failed_dependency_group(stderr: str) -> str | None:
     """Parse UV error to extract the dependency group that caused build failure.
 
     UV includes helpful context in build errors:
@@ -33,7 +32,7 @@ def parse_failed_dependency_group(stderr: str) -> Optional[str]:
     return None
 
 
-def extract_uv_error_hint(stderr: str) -> Optional[str]:
+def extract_uv_error_hint(stderr: str) -> str | None:
     """Extract the most useful error hint from UV stderr output.
 
     UV typically formats errors with:

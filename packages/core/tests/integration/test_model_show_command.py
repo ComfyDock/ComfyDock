@@ -1,10 +1,9 @@
 """Integration test for model index show command."""
 
-from pathlib import Path
 import tempfile
-import pytest
+from pathlib import Path
 
-from comfygit_core.repositories.model_repository import ModelRepository
+import pytest
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
 
 

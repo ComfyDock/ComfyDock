@@ -11,10 +11,10 @@ Expected behavior:
 - Sources are NOT in workflow models (workflow models only have hash reference) ✓
 """
 
-from helpers.model_index_builder import ModelIndexBuilder
-from helpers.workflow_builder import WorkflowBuilder
-from helpers.pyproject_assertions import PyprojectAssertions
 from conftest import simulate_comfyui_save_workflow
+from helpers.model_index_builder import ModelIndexBuilder
+from helpers.pyproject_assertions import PyprojectAssertions
+from helpers.workflow_builder import WorkflowBuilder
 
 
 class TestModelSourcePreservation:
@@ -146,7 +146,7 @@ class TestModelSourcePreservation:
             .has_model_with_filename("checkpoint.safetensors")
         )
         assert checkpoint_wf_model.config.get("sources", []) == [], \
-            f"Checkpoint workflow model should not have sources"
+            "Checkpoint workflow model should not have sources"
 
         # Check lora workflow model does NOT have sources
         lora_wf_model = (
@@ -155,7 +155,7 @@ class TestModelSourcePreservation:
             .has_model_with_filename("lora.safetensors")
         )
         assert lora_wf_model.config.get("sources", []) == [], \
-            f"Lora workflow model should not have sources"
+            "Lora workflow model should not have sources"
 
         # Check global models table HAS sources
         assertions.has_global_model(checkpoint_hash).has_source(checkpoint_url)

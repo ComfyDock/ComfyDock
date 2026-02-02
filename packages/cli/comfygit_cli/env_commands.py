@@ -8,8 +8,12 @@ import sys
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from comfygit_core.models.exceptions import CDDependencyConflictError, CDEnvironmentError, CDNodeConflictError, CDRegistryDataError, UVCommandError
-from comfygit_core.utils.uv_error_handler import handle_uv_error
+from comfygit_core.models.exceptions import (
+    CDDependencyConflictError,
+    CDNodeConflictError,
+    CDRegistryDataError,
+    UVCommandError,
+)
 
 from .formatters.error_formatter import NodeErrorFormatter
 from .strategies.interactive import InteractiveModelStrategy, InteractiveNodeStrategy
@@ -452,7 +456,7 @@ class EnvironmentCommands:
             print(f"🔧 Using PyTorch backend override: {torch_backend}")
         elif was_probed:
             print(f"✓ Backend detected and saved: {torch_backend}")
-            print(f"   To change: cg env-config torch-backend set <backend>")
+            print("   To change: cg env-config torch-backend set <backend>")
         else:
             print(f"🔧 Using PyTorch backend: {torch_backend}")
 
@@ -497,7 +501,7 @@ class EnvironmentCommands:
             print(f"🔧 Using PyTorch backend override: {torch_backend}")
         elif was_probed:
             print(f"✓ Backend detected and saved: {torch_backend}")
-            print(f"   To change: cg env-config torch-backend set <backend>")
+            print("   To change: cg env-config torch-backend set <backend>")
         else:
             print(f"🔧 Using PyTorch backend: {torch_backend}")
 
@@ -1166,14 +1170,15 @@ class EnvironmentCommands:
                 is_development=args.dev,
                 no_test=args.no_test,
                 force=args.force,
-                confirmation_strategy=confirmation_strategy
+                confirmation_strategy=confirmation_strategy,
+                strict=getattr(args, "strict", False),
             )
         except CDRegistryDataError as e:
             # Registry data unavailable
             formatted = NodeErrorFormatter.format_registry_error(e)
             if logger:
                 logger.error(f"Registry data unavailable for node add: {e}", exc_info=True)
-            print(f"✗ Cannot add node - registry data unavailable", file=sys.stderr)
+            print("✗ Cannot add node - registry data unavailable", file=sys.stderr)
             print(formatted, file=sys.stderr)
             sys.exit(1)
         except CDDependencyConflictError as e:
@@ -1527,7 +1532,7 @@ class EnvironmentCommands:
             print(f"📦 Adding {len(args.packages)} package(s){upgrade_text}...")
 
         try:
-            env.add_dependencies(
+            result = env.add_dependencies(
                 packages=args.packages or None,
                 requirements_file=requirements_file,
                 upgrade=args.upgrade,
@@ -1541,12 +1546,19 @@ class EnvironmentCommands:
                 logger.error(f"Failed to add dependencies: {e}", exc_info=True)
                 if e.stderr:
                     logger.error(f"UV stderr:\n{e.stderr}")
-            print(f"✗ Failed to add packages", file=sys.stderr)
+            print("✗ Failed to add packages", file=sys.stderr)
             if e.stderr:
                 print(f"\n{e.stderr}", file=sys.stderr)
             else:
                 print(f"   {e}", file=sys.stderr)
             sys.exit(1)
+
+        # Display any package substitutions that were applied
+        substitutions = result.get("substitutions", {})
+        if substitutions:
+            print()
+            for original, substituted in substitutions.items():
+                print(f"  ℹ️  {original} → {substituted} (per package_config.toml)")
 
         if requirements_file:
             print(f"\n✓ Added packages from {args.requirements}")
@@ -1600,7 +1612,7 @@ class EnvironmentCommands:
                 logger.error(f"Failed to remove dependencies: {e}", exc_info=True)
                 if e.stderr:
                     logger.error(f"UV stderr:\n{e.stderr}")
-            print(f"✗ Failed to remove packages", file=sys.stderr)
+            print("✗ Failed to remove packages", file=sys.stderr)
             if e.stderr:
                 print(f"\n{e.stderr}", file=sys.stderr)
             else:
@@ -1612,7 +1624,7 @@ class EnvironmentCommands:
             if len(result['skipped']) == 1:
                 print(f"\nℹ️  Package '{result['skipped'][0]}' is not in dependencies (already removed or never added)")
             else:
-                print(f"\nℹ️  None of the specified packages are in dependencies:")
+                print("\nℹ️  None of the specified packages are in dependencies:")
                 for pkg in result['skipped']:
                     print(f"  • {pkg}")
             return
@@ -1784,7 +1796,7 @@ class EnvironmentCommands:
 
             # Show model download preview with URLs and paths
             if preview.get('models_downloadable'):
-                print(f"\n  Models:")
+                print("\n  Models:")
                 count = len(preview['models_downloadable'])
                 print(f"    • Download {count} missing model(s):\n")
                 for idx, missing_info in enumerate(preview['models_downloadable'][:5], 1):
@@ -1804,7 +1816,7 @@ class EnvironmentCommands:
                     print(f"\n      ... and {count - 5} more")
 
             if preview.get('models_unavailable'):
-                print(f"\n  ⚠️  Models unavailable:")
+                print("\n  ⚠️  Models unavailable:")
                 for missing_info in preview['models_unavailable'][:3]:
                     print(f"      - {missing_info.model.filename} (no sources)")
 
@@ -1817,6 +1829,7 @@ class EnvironmentCommands:
 
         # Create callbacks for node and model progress
         from comfygit_core.models.workflow import BatchDownloadCallbacks, NodeInstallCallbacks
+
         from .utils.progress import create_progress_callback
 
         # Node installation callbacks
@@ -1923,7 +1936,7 @@ class EnvironmentCommands:
                 if current_branch is None:
                     print(f"✓ HEAD is now at {args.ref} (detached)")
                     print("  You are in 'detached HEAD' state. To keep changes:")
-                    print(f"    cg checkout -b <new-branch-name>")
+                    print("    cg checkout -b <new-branch-name>")
                 else:
                     print(f"✓ Switched to branch '{current_branch}'")
         except Exception as e:
@@ -2073,7 +2086,7 @@ class EnvironmentCommands:
                 # Interactive conflict resolution - ONLY workflow conflicts shown
                 from .strategies.conflict_resolver import InteractiveConflictResolver
 
-                print(f"\n⚠️  Conflicts detected:")
+                print("\n⚠️  Conflicts detected:")
                 resolver = InteractiveConflictResolver()
                 resolutions = resolver.resolve_all(diff)
 
@@ -2245,7 +2258,7 @@ class EnvironmentCommands:
                     if diff.is_already_merged:
                         print("\n✓ Already up to date.")
                     elif diff.is_fast_forward:
-                        print(f"\n✓ Remote has commits but no ComfyGit changes.")
+                        print("\n✓ Remote has commits but no ComfyGit changes.")
                         print("   Pull will bring in commits without affecting nodes/models/workflows.")
                     else:
                         print("\n✓ No ComfyGit configuration changes to pull.")
@@ -2326,6 +2339,7 @@ class EnvironmentCommands:
 
             # Create callbacks for node and model progress (reuse repair command patterns)
             from comfygit_core.models.workflow import BatchDownloadCallbacks, NodeInstallCallbacks
+
             from .utils.progress import create_progress_callback
 
             # Node installation callbacks
@@ -2408,7 +2422,7 @@ class EnvironmentCommands:
             # Check if it's a merge conflict
             error_str = str(e)
             if "Merge conflict" in error_str or "conflict" in error_str.lower():
-                print(f"\n✗ Merge conflict detected", file=sys.stderr)
+                print("\n✗ Merge conflict detected", file=sys.stderr)
                 print()
                 print("💡 To resolve:")
                 print(f"   1. cd {env.cec_path}")
@@ -2428,7 +2442,7 @@ class EnvironmentCommands:
             # Check if it's a merge conflict (OSError from git_merge)
             error_str = str(e)
             if "Merge conflict" in error_str or "conflict" in error_str.lower():
-                print(f"\n✗ Merge conflict detected", file=sys.stderr)
+                print("\n✗ Merge conflict detected", file=sys.stderr)
                 print()
                 print("💡 To resolve:")
                 print(f"   1. cd {env.cec_path}")
@@ -2483,7 +2497,7 @@ class EnvironmentCommands:
                 print(f"📤 Pushing to {args.remote}...")
 
             # Push (with force flag if specified)
-            push_output = env.push_commits(remote=args.remote, force=force)
+            env.push_commits(remote=args.remote, force=force)
 
             if force:
                 print(f"   ✓ Force pushed commits to {args.remote}")
@@ -2660,7 +2674,7 @@ class EnvironmentCommands:
 
                 print(f"\nModel: {display_name}")
                 print(f"  Current: {current_importance}")
-                print(f"  Options: [r]equired, [f]lexible, [o]ptional, [s]kip")
+                print("  Options: [r]equired, [f]lexible, [o]ptional, [s]kip")
 
                 # Prompt for new importance
                 try:
@@ -2683,7 +2697,7 @@ class EnvironmentCommands:
                         print("  → Skipped")
                         continue
                     else:
-                        print(f"  → Invalid choice, skipping")
+                        print("  → Invalid choice, skipping")
                         continue
 
                 # Update model importance
@@ -2698,7 +2712,7 @@ class EnvironmentCommands:
                     print(f"  ✓ Updated to: {new_importance}")
                     updated_count += 1
                 else:
-                    print(f"  ✗ Failed to update")
+                    print("  ✗ Failed to update")
 
             print(f"\n✓ Updated {updated_count}/{len(models)} model(s)")
 
@@ -2775,7 +2789,7 @@ class EnvironmentCommands:
             formatted = NodeErrorFormatter.format_registry_error(e)
             if logger:
                 logger.error(f"Registry data unavailable for workflow resolve: {e}", exc_info=True)
-            print(f"✗ Cannot resolve workflow - registry data unavailable", file=sys.stderr)
+            print("✗ Cannot resolve workflow - registry data unavailable", file=sys.stderr)
             print(formatted, file=sys.stderr)
             sys.exit(1)
         except FileNotFoundError as e:
@@ -2831,7 +2845,6 @@ class EnvironmentCommands:
                     else:
                         # Handle UV-specific errors
                         if "UVCommandError" in str(error) and logger:
-                            from comfygit_core.integrations.uv_command import UVCommandError
                             try:
                                 # Try to extract meaningful error
                                 user_msg = error.split(":", 1)[1].strip() if ":" in error else error
@@ -2857,7 +2870,7 @@ class EnvironmentCommands:
 
                 if failed_nodes:
                     print(f"\n⚠️  Failed to install {len(failed_nodes)} nodes:")
-                    for node_id, error in failed_nodes:
+                    for node_id, _error in failed_nodes:
                         print(f"  • {node_id}")
                     print("\n💡 For detailed error information:")
                     log_file = self.workspace.paths.logs / env.name / "full.log"
@@ -2998,7 +3011,10 @@ class EnvironmentCommands:
     @with_env_logging("manager update")
     def manager_update(self, args: argparse.Namespace, logger: Any = None) -> None:
         """Update or migrate comfygit-manager."""
-        from comfygit_core.strategies.confirmation import AutoConfirmStrategy, InteractiveConfirmStrategy
+        from comfygit_core.strategies.confirmation import (
+            AutoConfirmStrategy,
+            InteractiveConfirmStrategy,
+        )
 
         env = self._get_env(args)
         version = getattr(args, 'version', None) or "latest"

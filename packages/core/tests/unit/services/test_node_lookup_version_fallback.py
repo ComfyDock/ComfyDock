@@ -8,10 +8,9 @@ Tests for the scenario where:
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from comfygit_core.models.shared import NodeInfo
 from comfygit_core.services.node_lookup_service import NodeLookupService
 

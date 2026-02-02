@@ -7,10 +7,10 @@ from pathlib import Path
 import xxhash
 from blake3 import blake3
 
+from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
 from ..models.shared import ModelWithLocation
-from ..infrastructure.sqlite_manager import SQLiteManager
 
 logger = get_logger(__name__)
 
@@ -251,7 +251,7 @@ class ModelRepository:
         """
         result = self.find_model_by_hash(hash)
         return result[0] if result else None
-        
+
     def has_model(self, hash: str) -> bool:
         """Check if model exists by hash.
 
@@ -449,10 +449,10 @@ class ModelRepository:
         return models
 
     def find_by_filename(self, filename_query: str, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
-        """Find models by filename pattern.
+        """Find models by exact filename match.
 
         Args:
-            filename_query: Filename or pattern to search for
+            filename_query: Exact filename to search for
             base_directory: Directory to filter by. Defaults to current_directory.
 
         Returns:
@@ -468,22 +468,20 @@ class ModelRepository:
                    l.base_directory, l.relative_path, l.filename, l.mtime, l.last_seen
             FROM models m
             JOIN model_locations l ON m.hash = l.model_hash
-            WHERE l.filename LIKE ? AND l.base_directory = ?
+            WHERE l.filename = ? AND l.base_directory = ?
             ORDER BY l.relative_path
             """
-            search_pattern = f"%{filename_query}%"
-            results = self.sqlite.execute_query(query, (search_pattern, base_dir_str))
+            results = self.sqlite.execute_query(query, (filename_query, base_dir_str))
         else:
             query = """
             SELECT m.hash, m.file_size, m.blake3_hash, m.sha256_hash, m.metadata,
                    l.base_directory, l.relative_path, l.filename, l.mtime, l.last_seen
             FROM models m
             JOIN model_locations l ON m.hash = l.model_hash
-            WHERE l.filename LIKE ?
+            WHERE l.filename = ?
             ORDER BY l.relative_path
             """
-            search_pattern = f"%{filename_query}%"
-            results = self.sqlite.execute_query(query, (search_pattern,))
+            results = self.sqlite.execute_query(query, (filename_query,))
 
         models = []
         for row in results:

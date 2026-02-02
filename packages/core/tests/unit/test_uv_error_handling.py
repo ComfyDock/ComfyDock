@@ -1,8 +1,6 @@
 """Tests for UV error handling and logging."""
 
 import logging
-from unittest.mock import Mock, MagicMock
-import pytest
 
 from comfygit_core.models.exceptions import UVCommandError
 
@@ -238,10 +236,11 @@ class TestPhase1ErrorHandlingImprovements:
         This test SHOULD FAIL until Phase 1 is implemented.
         """
         # Arrange
-        from unittest.mock import patch
-        from comfygit_core.validation.resolution_tester import ResolutionTester
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from comfygit_core.validation.resolution_tester import ResolutionTester
 
         # Create a minimal test setup
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -287,10 +286,11 @@ dependencies = []
     def test_fallback_warning_truncates_very_long_errors(self):
         """PHASE 1: Test that fallback warnings truncate extremely long error messages."""
         # Arrange
-        from unittest.mock import patch
-        from comfygit_core.validation.resolution_tester import ResolutionTester
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from comfygit_core.validation.resolution_tester import ResolutionTester
 
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace_path = Path(tmpdir)

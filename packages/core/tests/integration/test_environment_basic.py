@@ -1,6 +1,5 @@
 """Integration tests for basic environment operations."""
 
-from pathlib import Path
 
 import pytest
 from comfygit_core.factories.workspace_factory import WorkspaceFactory

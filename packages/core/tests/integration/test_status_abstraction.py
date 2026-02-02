@@ -14,7 +14,6 @@ Correct Abstraction:
 - CLI only iterates and prints - NO business logic
 """
 
-import pytest
 import sys
 from pathlib import Path
 
@@ -107,7 +106,7 @@ class TestStatusAbstraction:
     def test_multiple_workflows_with_unresolved_nodes(self, test_env):
         """Test abstraction works correctly with multiple workflows."""
         # ARRANGE: Create 2 workflows with different unresolvable nodes
-        for i, (name, node_count) in enumerate([
+        for _i, (name, node_count) in enumerate([
             ("workflow_a", 1),  # 1 unresolvable node
             ("workflow_b", 3)   # 3 unresolvable nodes
         ]):

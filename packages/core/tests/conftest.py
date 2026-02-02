@@ -1,11 +1,9 @@
 """Shared fixtures for integration tests."""
 import json
-import pytest
 import shutil
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-from comfygit_core.core.workspace import Workspace
+import pytest
 from comfygit_core.core.environment import Environment
 
 # ============================================================================
@@ -115,8 +113,6 @@ def test_env(test_workspace):
 @pytest.fixture
 def test_models(test_workspace, model_fixtures):
     """Create and index test model files."""
-    from comfygit_core.analyzers.model_scanner import ModelScanner
-    from comfygit_core.models.shared import ModelInfo
 
     # Use workspace's configured models directory
     models_dir = test_workspace.workspace_config_manager.get_models_directory()
@@ -330,7 +326,7 @@ def mock_comfyui_clone(monkeypatch):
                 # uv sync or uv pip install - create venv
                 if "sync" in cmd or ("pip" in cmd and "install" in cmd):
                     cwd = kwargs.get('cwd', Path.cwd())
-                    if isinstance(cwd, (str, Path)):
+                    if isinstance(cwd, str | Path):
                         _create_venv_structure(Path(cwd))
 
                 # uv pip show - return fake package info
@@ -441,8 +437,8 @@ def auto_mock_pytorch_probe_for_integration(request, monkeypatch):
     This fixture automatically mocks probe_pytorch_versions for any test
     in the integration/ directory to avoid real UV dry-run probes.
     """
-    # Only apply to integration tests
-    if "integration" in str(request.fspath):
+    # Only apply to integration tests (check for tests/integration/ directory, not just "integration" anywhere)
+    if "/tests/integration/" in str(request.fspath) or "\\tests\\integration\\" in str(request.fspath):
         monkeypatch.setattr(
             "comfygit_core.utils.pytorch_prober.probe_pytorch_versions",
             _fake_probe_pytorch_versions
@@ -475,10 +471,8 @@ def mock_github_api(monkeypatch):
             return [FakeRelease("v0.3.20"), FakeRelease("v0.3.19")]
 
     # Patch GitHubClient instantiation in resolve_comfyui_version
-    original_github_client_init = None
     try:
         from comfygit_core.clients.github_client import GitHubClient
-        original_github_client_init = GitHubClient.__init__
 
         def patched_init(self, *args, **kwargs):
             # Copy attributes from FakeGitHubClient

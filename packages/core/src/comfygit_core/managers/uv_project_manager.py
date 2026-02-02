@@ -153,7 +153,7 @@ class UVProjectManager:
             }
 
         # Remove only existing packages
-        result = self.uv.remove(existing_packages, **flags)
+        self.uv.remove(existing_packages, **flags)
 
         return {
             'removed': existing_packages,

@@ -305,8 +305,9 @@ class EnvironmentGitOrchestrator:
         # Reload pyproject
         self.pyproject.reset_lazy_handlers()
 
-        # Override PyTorch config with what's actually installed
-        self._override_pytorch_config_from_installed()
+        # NOTE: PyTorch config is now handled entirely by pytorch_injection_context()
+        # which strips existing config before injecting, then restores original after sync.
+        # This keeps pyproject.toml clean of machine-specific PyTorch configuration.
 
         new_nodes = self.pyproject.nodes.get_existing()
 
@@ -318,133 +319,6 @@ class EnvironmentGitOrchestrator:
 
         # Restore workflows
         self.workflow_manager.restore_all_from_cec(preserve_uncommitted=preserve_uncommitted)
-
-    def _override_pytorch_config_from_installed(self) -> None:
-        """Override pyproject.toml with currently installed PyTorch config.
-
-        This method:
-        1. Detects PyTorch installed in the venv
-        2. Checks if config already matches installed version
-        3. Only modifies file if changes are needed
-
-        Called after every git operation to ensure pyproject.toml
-        matches what's actually installed.
-        """
-        from ..constants import PYTORCH_CORE_PACKAGES
-        from ..utils.pytorch import get_installed_pytorch_info, get_pytorch_index_url
-
-        # Detect installed PyTorch
-        pytorch_info = get_installed_pytorch_info(
-            self.uv, self.uv.python_executable
-        )
-
-        if "torch" not in pytorch_info:
-            logger.debug("No PyTorch installed in venv, skipping config override")
-            return
-
-        backend = pytorch_info["backend"]
-
-        # Check if current config already matches installed PyTorch
-        if self._pytorch_config_matches_installed(pytorch_info, backend):
-            logger.debug(f"PyTorch config already matches installed backend: {backend}")
-            return
-
-        logger.info(f"Overriding PyTorch config with installed backend: {backend}")
-
-        # Strip existing PyTorch configuration and save
-        config = self.pyproject.load()
-
-        if "tool" in config and "uv" in config["tool"]:
-            # Remove PyTorch indexes
-            indexes = config["tool"]["uv"].get("index", [])
-            if isinstance(indexes, list):
-                config["tool"]["uv"]["index"] = [
-                    idx for idx in indexes
-                    if not any(p in idx.get("name", "").lower() for p in ["pytorch-", "torch-"])
-                ]
-
-            # Remove PyTorch sources
-            sources = config.get("tool", {}).get("uv", {}).get("sources", {})
-            for pkg in PYTORCH_CORE_PACKAGES:
-                sources.pop(pkg, None)
-
-            # Remove PyTorch constraints
-            constraints = config["tool"]["uv"].get("constraint-dependencies", [])
-            if isinstance(constraints, list):
-                config["tool"]["uv"]["constraint-dependencies"] = [
-                    c for c in constraints
-                    if not any(pkg in c for pkg in PYTORCH_CORE_PACKAGES)
-                ]
-
-        # Save stripped config
-        self.pyproject.save(config)
-
-        # Add new config (these methods load/save internally)
-        if backend != "cpu":
-            index_name = f"pytorch-{backend}"
-            self.pyproject.uv_config.add_index(
-                name=index_name,
-                url=get_pytorch_index_url(backend),
-                explicit=True
-            )
-
-            # Add sources pointing to new index
-            for pkg in PYTORCH_CORE_PACKAGES:
-                self.pyproject.uv_config.add_source(pkg, {"index": index_name})
-
-        # Add constraints for installed versions
-        for pkg in PYTORCH_CORE_PACKAGES:
-            if pkg in pytorch_info:
-                self.pyproject.uv_config.add_constraint(f"{pkg}=={pytorch_info[pkg]}")
-
-        logger.debug("PyTorch config override complete")
-
-    def _pytorch_config_matches_installed(self, pytorch_info: dict, backend: str) -> bool:
-        """Check if current pyproject.toml matches installed PyTorch.
-
-        Args:
-            pytorch_info: Dict with torch/torchvision/torchaudio versions and backend
-            backend: Detected backend (e.g., 'cu128', 'cpu')
-
-        Returns:
-            True if config matches installed versions, False otherwise
-        """
-        from ..constants import PYTORCH_CORE_PACKAGES
-
-        config = self.pyproject.load()
-        uv_config = config.get("tool", {}).get("uv", {})
-
-        # Check constraints match installed versions
-        constraints = uv_config.get("constraint-dependencies", [])
-        for pkg in PYTORCH_CORE_PACKAGES:
-            if pkg not in pytorch_info:
-                continue
-            expected = f"{pkg}=={pytorch_info[pkg]}"
-            if expected not in constraints:
-                return False
-
-        # Check index exists for non-cpu backends
-        if backend != "cpu":
-            expected_index_name = f"pytorch-{backend}"
-            indexes = uv_config.get("index", [])
-            if not isinstance(indexes, list):
-                indexes = [indexes] if indexes else []
-
-            has_index = any(
-                idx.get("name") == expected_index_name
-                for idx in indexes
-            )
-            if not has_index:
-                return False
-
-            # Check sources point to correct index
-            sources = uv_config.get("sources", {})
-            for pkg in PYTORCH_CORE_PACKAGES:
-                pkg_source = sources.get(pkg, {})
-                if pkg_source.get("index") != expected_index_name:
-                    return False
-
-        return True
 
     def _would_overwrite_workflows(self, target_branch: str, status) -> bool:
         """Check if switching to target branch would overwrite uncommitted workflows.

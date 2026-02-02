@@ -1,10 +1,8 @@
 """Tests for git pull/push operations."""
 import subprocess
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from comfygit_core.models.exceptions import CDEnvironmentError
 
 
@@ -518,7 +516,7 @@ nodes = {}
         )
 
         # Now replace origin with the remote_repo (which has unrelated history)
-        from comfygit_core.utils.git import git_remote_remove, git_remote_add
+        from comfygit_core.utils.git import git_remote_add, git_remote_remove
         git_remote_remove(env.cec_path, "origin")
         git_remote_add(env.cec_path, "origin", str(remote_repo))
 

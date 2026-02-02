@@ -8,8 +8,6 @@ This test replicates a critical bug where:
 5. ComfyUI fails at runtime because model isn't in current directory
 """
 
-from pathlib import Path
-import pytest
 
 
 class TestWorkflowModelResolutionWithDirectorySwitch:
@@ -103,7 +101,7 @@ class TestWorkflowModelResolutionWithDirectorySwitch:
         resolution = test_env.workflow_manager.resolve_workflow(dependencies)
 
         # DEBUG: Print what we found
-        print(f"\n=== RESOLUTION RESULTS ===")
+        print("\n=== RESOLUTION RESULTS ===")
         print(f"Models resolved: {len(resolution.models_resolved)}")
         print(f"Models unresolved: {len(resolution.models_unresolved)}")
         print(f"Models ambiguous: {len(resolution.models_ambiguous)}")

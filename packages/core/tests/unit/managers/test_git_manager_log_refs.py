@@ -1,8 +1,5 @@
 """Unit tests for git log with branch/ref decorations."""
-import subprocess
-from pathlib import Path
 
-import pytest
 
 
 class TestGitLogRefs:

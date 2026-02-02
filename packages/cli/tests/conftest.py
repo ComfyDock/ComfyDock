@@ -1,6 +1,5 @@
 """Shared fixtures for CLI tests."""
 
-import pytest
 import sys
 from pathlib import Path
 
@@ -11,6 +10,7 @@ if str(core_tests_path) not in sys.path:
 
 # Import from the core conftest module
 import importlib.util
+
 spec = importlib.util.spec_from_file_location("core_conftest", core_tests_path / "conftest.py")
 core_conftest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core_conftest)

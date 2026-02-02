@@ -4,11 +4,10 @@ Tests the full workflow lifecycle with properties field, session caching,
 and custom mappings.
 """
 
-import pytest
 import json
+import sys
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from conftest import simulate_comfyui_save_workflow
 
@@ -61,7 +60,7 @@ class TestWorkflowWithPropertiesField:
 
         # Add rgthree-comfy to global mappings (mock it exists)
         mappings_path = test_env.workspace_paths.cache / "custom_nodes" / "node_mappings.json"
-        with open(mappings_path, 'r') as f:
+        with open(mappings_path) as f:
             mappings = json.load(f)
 
         mappings["packages"]["rgthree-comfy"] = {
@@ -149,7 +148,7 @@ class TestSessionDeduplication:
         assert len(analysis.builtin_nodes) == 20, "Should find 20 total builtin nodes"
 
         # Verify deduplication by checking unique types
-        unique_types = set(node.type for node in analysis.builtin_nodes)
+        unique_types = {node.type for node in analysis.builtin_nodes}
         assert len(unique_types) == 2, "Should have only 2 unique node types"
         assert "KSampler" in unique_types
         assert "LoadImage" in unique_types
@@ -186,7 +185,7 @@ class TestHeuristicFallback:
 
         # Add package to global mappings and simulate it's installed
         mappings_path = test_env.workspace_paths.cache / "custom_nodes" / "node_mappings.json"
-        with open(mappings_path, 'r') as f:
+        with open(mappings_path) as f:
             mappings = json.load(f)
 
         mappings["packages"]["rgthree-comfy"] = {
