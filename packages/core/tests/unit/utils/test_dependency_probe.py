@@ -52,6 +52,25 @@ class TestVersionToConstraint:
         assert "foo" in constraint.lower()
 
 
+class TestProbeVenvPath:
+    """Tests for probe venv path uniqueness."""
+
+    def test_probe_venv_path_is_unique(self, tmp_path):
+        """Each probe instance should use a unique venv directory."""
+        probe_one = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+        probe_two = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        assert probe_one.probe_venv != probe_two.probe_venv
+        assert probe_one.probe_venv.name.startswith(".venv-probe-")
+        assert probe_two.probe_venv.name.startswith(".venv-probe-")
+
+
 class TestAnalyzeDetectDowngrades:
     """Tests for _analyze detecting downgrades and suggesting constraints."""
 

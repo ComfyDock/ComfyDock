@@ -10,6 +10,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
 import tomlkit
 from packaging.utils import canonicalize_name
@@ -71,7 +72,7 @@ class DependencyProbe:
         """
         self.cec_path = cec_path
         self.pyproject_path = cec_path / "pyproject.toml"
-        self.probe_venv = cec_path / ".venv-probe"
+        self.probe_venv = cec_path / f".venv-probe-{uuid4().hex}"
         self.uv_cache_path = workspace_path / "uv_cache"
         self.uv_python_path = workspace_path / "uv" / "python"
         self.keep_venv = keep_venv

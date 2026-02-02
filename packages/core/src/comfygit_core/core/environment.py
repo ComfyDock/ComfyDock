@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from functools import cached_property
+from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +36,7 @@ from ..models.shared import (
 from ..models.sync import SyncResult
 from ..strategies.confirmation import ConfirmationStrategy
 from ..utils.common import run_command
+from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
 from ..validation.resolution_tester import ResolutionTester
 
@@ -62,6 +63,14 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+
+
+def _requires_env_lock(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._operation_lock:
+            return method(self, *args, **kwargs)
+    return wrapper
 
 
 class Environment:
@@ -96,6 +105,9 @@ class Environment:
         self.custom_nodes_path = self.comfyui_path / "custom_nodes"
         self.venv_path = path / ".venv"
         self.models_path = self.comfyui_path / "models"
+
+        # Guard against concurrent mutations of this environment.
+        self._operation_lock = EnvironmentOperationLock(self.path / ".comfygit.lock")
 
     ## Cached properties ##
     #
@@ -331,6 +343,7 @@ class Environment:
             is_tracked=is_tracked,
         )
 
+    @_requires_env_lock
     def update_manager(
         self,
         version: str = "latest",
@@ -540,6 +553,7 @@ class Environment:
 
         return migrated
 
+    @_requires_env_lock
     def sync(
         self,
         dry_run: bool = False,
@@ -812,6 +826,7 @@ class Environment:
         analyzer = RefDiffAnalyzer(self.cec_path)
         return analyzer.analyze(base_ref="HEAD", target_ref=branch, detect_conflicts=True)
 
+    @_requires_env_lock
     def pull_and_repair(
         self,
         remote: str = "origin",
@@ -926,6 +941,7 @@ class Environment:
                 git_reset_hard(self.cec_path, pre_pull_commit)
             raise
 
+    @_requires_env_lock
     def push_commits(self, remote: str = "origin", branch: str | None = None, force: bool = False) -> str:
         """Push commits to remote (requires clean working directory).
 
@@ -960,6 +976,7 @@ class Environment:
         logger.info("Pushing commits to remote...")
         return self.git_manager.push(remote, branch, force=force)
 
+    @_requires_env_lock
     def checkout(
         self,
         ref: str,
@@ -979,6 +996,7 @@ class Environment:
         """
         self.git_orchestrator.checkout(ref, strategy, force)
 
+    @_requires_env_lock
     def reset(
         self,
         ref: str | None = None,
@@ -1000,6 +1018,7 @@ class Environment:
         """
         self.git_orchestrator.reset(ref, mode, strategy, force)
 
+    @_requires_env_lock
     def create_branch(self, name: str, start_point: str = "HEAD") -> None:
         """Create new branch at start_point.
 
@@ -1009,6 +1028,7 @@ class Environment:
         """
         self.git_orchestrator.create_branch(name, start_point)
 
+    @_requires_env_lock
     def delete_branch(self, name: str, force: bool = False) -> None:
         """Delete branch.
 
@@ -1018,6 +1038,7 @@ class Environment:
         """
         self.git_orchestrator.delete_branch(name, force)
 
+    @_requires_env_lock
     def create_and_switch_branch(self, name: str, start_point: str = "HEAD") -> None:
         """Create new branch and switch to it (git checkout -b semantics).
 
@@ -1034,6 +1055,7 @@ class Environment:
         """
         self.git_orchestrator.create_and_switch_branch(name, start_point)
 
+    @_requires_env_lock
     def switch_branch(self, branch: str, create: bool = False) -> None:
         """Switch to branch and sync environment.
 
@@ -1062,6 +1084,7 @@ class Environment:
         """
         return self.git_manager.get_current_branch()
 
+    @_requires_env_lock
     def merge_branch(
         self,
         branch: str,
@@ -1110,6 +1133,7 @@ class Environment:
         validator = MergeValidator()
         return validator.validate(base_config, target_config, workflow_resolutions)
 
+    @_requires_env_lock
     def execute_atomic_merge(
         self,
         branch: str,
@@ -1244,6 +1268,7 @@ class Environment:
         nodes_dict = self.pyproject.nodes.get_existing()
         return list(nodes_dict.values())
 
+    @_requires_env_lock
     def add_node(
         self,
         identifier: str,
@@ -1277,6 +1302,7 @@ class Environment:
             strict=strict,
         )
 
+    @_requires_env_lock
     def install_nodes_with_progress(
         self,
         node_ids: list[str],
@@ -1320,6 +1346,7 @@ class Environment:
 
         return success_count, failed
 
+    @_requires_env_lock
     def remove_node(self, identifier: str, untrack_only: bool = False) -> NodeRemovalResult:
         """Remove a custom node.
 
@@ -1335,6 +1362,7 @@ class Environment:
         """
         return self.node_manager.remove_node(identifier, untrack_only=untrack_only)
 
+    @_requires_env_lock
     def remove_nodes_with_progress(
         self,
         node_ids: list[str],
@@ -1378,6 +1406,7 @@ class Environment:
 
         return success_count, failed
 
+    @_requires_env_lock
     def update_node(
         self,
         identifier: str,
@@ -1560,6 +1589,7 @@ class Environment:
 
         return [installed_nodes[nid] for nid in unused_ids]
 
+    @_requires_env_lock
     def prune_unused_nodes(
         self,
         exclude: list[str] | None = None,
@@ -1601,6 +1631,7 @@ class Environment:
 
         return has_workflow_changes or has_git_changes
 
+    @_requires_env_lock
     def commit(self, message: str | None = None) -> None:
         """Commit changes to git repository.
 
@@ -1612,6 +1643,7 @@ class Environment:
         """
         return self.git_manager.commit_all(message)
 
+    @_requires_env_lock
     def execute_commit(
         self,
         workflow_status: DetailedWorkflowStatus | None = None,
@@ -1686,6 +1718,7 @@ class Environment:
     # Model Source Management
     # =====================================================
 
+    @_requires_env_lock
     def add_model_source(self, identifier: str, url: str) -> ModelSourceResult:
         """Add a download source URL to a model.
 
@@ -1698,6 +1731,7 @@ class Environment:
         """
         return self.model_manager.add_model_source(identifier, url)
 
+    @_requires_env_lock
     def remove_model_source(self, identifier: str, url: str) -> ModelSourceResult:
         """Remove a download source URL from a model.
 
