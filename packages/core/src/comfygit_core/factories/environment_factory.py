@@ -22,6 +22,31 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+
+def _get_manager_install_identifier() -> str:
+    from ..constants import MANAGER_GITHUB_URL, MANAGER_NODE_ID
+
+    identifier = MANAGER_NODE_ID
+    try:
+        from importlib.metadata import PackageNotFoundError, version as pkg_version
+
+        current_version = pkg_version(MANAGER_NODE_ID)
+    except PackageNotFoundError:
+        logger.info("Manager version not detected, installing from registry")
+        return identifier
+    except Exception as exc:
+        logger.info(f"Manager version not detected, installing from registry: {exc}")
+        return identifier
+
+    if current_version and "dev" not in current_version.lower():
+        identifier = f"{MANAGER_GITHUB_URL}@v{current_version}"
+        logger.info(f"Detected manager v{current_version}, installing from GitHub")
+    else:
+        logger.info("Manager version is dev or empty, installing from registry")
+
+    return identifier
+
+
 class EnvironmentFactory:
 
     @staticmethod
@@ -262,7 +287,8 @@ class EnvironmentFactory:
         try:
             from ..constants import MANAGER_NODE_ID
             logger.info(f"Installing {MANAGER_NODE_ID} as tracked node...")
-            env.node_manager.add_node(MANAGER_NODE_ID)
+            identifier = _get_manager_install_identifier()
+            env.node_manager.add_node(identifier)
             logger.info(f"{MANAGER_NODE_ID} installed successfully")
 
             # Upgrade workspace schema if this is a legacy workspace

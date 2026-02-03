@@ -73,6 +73,7 @@ LEGACY_SYSTEM_NODES = {
 
 # The manager node ID - used for environment creation and migration logic.
 MANAGER_NODE_ID = 'comfygit-manager'
+MANAGER_GITHUB_URL = 'https://github.com/comfygit-ai/comfygit-manager'
 
 # Schema version for environment pyproject.toml format.
 # Increment when making breaking changes to the pyproject.toml structure.
