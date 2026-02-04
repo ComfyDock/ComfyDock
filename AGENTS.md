@@ -11,9 +11,15 @@ ComfyGit is a monorepo workspace using uv for Python package management. It prov
 
 **Then use pyast** for specific symbol lookups:
 ```bash
+# overview/symbols take a DIRECTORY (not a file)
 pyast overview packages/core/src/comfygit_core/
-pyast search "retry" packages/core/src/comfygit_core/
 pyast symbols packages/core/src/comfygit_core/utils/
+
+# search takes PATH first, then QUERY (pyast search <path> <query>)
+pyast search packages/core/src/comfygit_core/ "retry"
+pyast search packages/core/src/comfygit_core/managers/ "injection_context"
+
+# deps takes SYMBOL then FILE
 pyast deps "Environment.sync" packages/core/src/comfygit_core/core/environment.py
 ```
 
