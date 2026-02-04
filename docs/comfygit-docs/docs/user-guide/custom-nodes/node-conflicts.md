@@ -37,6 +37,50 @@ When you run `cg node add` or `cg node update`, ComfyGit:
 
 By default, ComfyGit **prevents** installing nodes that would break your environment.
 
+## Automatic conflict resolution (probing mode)
+
+ComfyGit now includes an automatic probing mode that attempts to resolve dependency conflicts without user intervention:
+
+### How probing works
+
+1. **Detects conflict** - UV reports incompatible dependencies
+2. **Probes one-by-one** - Tests each dependency individually to discover which constraints would resolve the conflict
+3. **Suggests constraints** - Identifies version pins that would allow installation
+4. **Auto-applies** - Applies the discovered constraints during installation
+
+### When probing succeeds
+
+Most conflicts are auto-resolved:
+
+```
+📦 Adding node: new-node
+⚠️  Dependency conflict detected, probing for resolution...
+✓ Found compatible constraints:
+    numpy>=1.24.0,<1.26.0
+✓ Constraints applied automatically
+✓ Node 'new-node' installed successfully
+```
+
+### When probing fails
+
+Some conflicts require manual intervention:
+
+- **Protected package changes** - Probing won't downgrade PyTorch or other protected packages
+- **Unsolvable conflicts** - No constraint combination satisfies all requirements
+- **Install failures** - Constraint works in theory but fails in practice
+
+In these cases, ComfyGit falls back to the interactive suggestions described below.
+
+### Using strict mode
+
+To get the old behavior (fail immediately on conflicts without probing):
+
+```bash
+cg node add new-node --strict
+```
+
+This is useful when you want explicit control over all constraint decisions.
+
 ## Reading conflict error messages
 
 When a dependency conflict occurs, ComfyGit displays uv's native resolution output. This shows exactly which packages conflict and why, with the full dependency chain.

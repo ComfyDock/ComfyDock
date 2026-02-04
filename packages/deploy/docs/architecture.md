@@ -23,7 +23,7 @@ No coupling to specific UI frameworks. All operations async-first with aiohttp.
 |-----------|---------|--------------|
 | `cli.py` | Argument parsing and command dispatch | Subcommands, main() entry |
 | `config.py` | Persistent configuration storage | DeployConfig, ~/.config/comfygit/deploy/ |
-| `commands/` | Command handlers for CLI subcommands | runpod, custom, instances, dev, worker |
+| `commands/` | Command handlers for CLI subcommands | runpod, custom, instances, dev (local pkg setup), worker; also logs, open, wait, start |
 | `providers/` | Cloud provider REST/GraphQL clients | RunPodClient, CustomWorkerClient, API abstraction |
 | `startup/` | Startup script generation for deployments | generate_startup_script(), deployment IDs |
 | `worker/` | Self-hosted worker server and state | WorkerServer, InstanceState, PortAllocator, NativeManager |
@@ -73,7 +73,7 @@ No coupling to specific UI frameworks. All operations async-first with aiohttp.
 
 - **comfygit** - Core library for environment management
 - **aiohttp** - Async HTTP for APIs and worker server
-- **zeroconf** - mDNS discovery for worker discovery (planned)
+- **zeroconf** - mDNS discovery for worker discovery (MDNSBroadcaster/MDNSScanner)
 
 ## Testing Strategy
 

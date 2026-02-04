@@ -233,6 +233,17 @@ cg commit -m "Added dev node: your-custom-node"
     - Keep your own git workflow separate from ComfyGit
     - Have ComfyGit manage Python dependencies automatically
     - Track which dev nodes are part of the environment
+    - Share git info with teammates (if your dev node is a git repo)
+
+### Git info tracking
+
+If your development node is a git repository, ComfyGit automatically captures:
+
+- **Repository URL** - The remote origin
+- **Branch** - Current branch name
+- **Commit hash** - Current HEAD commit
+
+This information is stored in `pyproject.toml` and shared with teammates when they sync the environment. If a teammate syncs and the dev node directory is missing, ComfyGit can auto-clone it from the captured repository URL.
 
 ## Advanced options
 
