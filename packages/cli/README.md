@@ -257,6 +257,15 @@ Commands that operate IN environments (require `-e` or active environment):
 cg run [COMFYUI_ARGS...]
   --no-sync            Skip environment sync before running
 
+# Environment config (per environment)
+cg env-config torch-backend show
+cg env-config torch-backend set <backend>
+cg env-config torch-backend detect
+
+cg env-config local-sources show
+cg env-config local-sources add <package> --path /local/path [--editable]
+cg env-config local-sources remove <package>
+
 # View debug logs
 cg debug
   -n, --lines N        Number of lines (default: 200)

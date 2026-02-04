@@ -57,94 +57,18 @@ cg delete [-h] [-y] name
 - `-y, --yes` - Skip confirmation (default: `False`)
 
 
-## `env-config`
-
-Manage environment-specific configuration.
-
-**Usage:**
-
-```bash
-cg env-config [-h] {torch-backend} ...
-```
-
-### Subcommands
-
-
-### `torch-backend`
-
-Manage PyTorch backend settings for this environment.
-
-**Usage:**
-
-```bash
-cg env-config torch-backend [-h] {show,set,detect} ...
-```
-
-#### `show`
-
-Show current PyTorch backend setting.
-
-**Usage:**
-
-```bash
-cg env-config torch-backend show [-h]
-```
-
-#### `set`
-
-Set PyTorch backend for this environment.
-
-**Usage:**
-
-```bash
-cg env-config torch-backend set [-h] backend
-```
-
-**Arguments:**
-
-- `backend` - Backend to set (e.g., cu128, cpu, rocm6.3, xpu)
-
-#### `detect`
-
-Auto-detect and show recommended backend using uv probe.
-
-**Usage:**
-
-```bash
-cg env-config torch-backend detect [-h]
-```
-
-
 ## `run`
 
 **Usage:**
 
 ```bash
-cg run [-h] [--no-sync] [--torch-backend BACKEND] [-- COMFYUI_ARGS...]
+cg run [-h] [--no-sync] [--torch-backend BACKEND]
 ```
 
 **Options:**
 
 - `--no-sync` - Skip environment sync before running (default: `False`)
-- `--torch-backend BACKEND` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128, cu126, rocm6.3, xpu. Reads from .pytorch-backend file if not specified.
-
-**Note:** Arguments after `--` are passed directly to ComfyUI (e.g., `cg run -- --port 8189`)
-
-
-## `sync`
-
-Sync environment packages and dependencies to match pyproject.toml.
-
-**Usage:**
-
-```bash
-cg sync [-h] [--torch-backend BACKEND] [-v]
-```
-
-**Options:**
-
-- `--torch-backend BACKEND` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128, cu126, rocm6.3, xpu. Reads from .pytorch-backend file if not specified.
-- `-v, --verbose` - Show full UV output during sync (default: `False`)
+- `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
 
 
 ## `status`
@@ -165,13 +89,14 @@ cg status [-h] [-v]
 **Usage:**
 
 ```bash
-cg manifest [-h] [--pretty] [--section SECTION]
+cg manifest [-h] [--pretty] [--section SECTION] [--ide [CMD]]
 ```
 
 **Options:**
 
 - `--pretty` - Output as YAML instead of TOML (default: `False`)
 - `--section` - Show specific section (e.g., tool.comfygit.nodes)
+- `--ide` - Open in editor (uses $EDITOR if no command given)
 
 
 ## `repair`
@@ -193,11 +118,12 @@ cg repair [-h] [-y] [--models {all,required,skip}]
 **Usage:**
 
 ```bash
-cg log [-h] [-v]
+cg log [-h] [-n N] [-v]
 ```
 
 **Options:**
 
+- `-n, --limit` - Number of commits to show (default: 20) (default: `20`)
 - `-v, --verbose` - Show full details (default: `False`)
 
 
@@ -206,7 +132,7 @@ cg log [-h] [-v]
 **Usage:**
 
 ```bash
-cg commit [-h] [-m MESSAGE] [--auto] [--allow-issues]
+cg commit [-h] [-m MESSAGE] [--auto] [--allow-issues] [-y]
 ```
 
 **Options:**
@@ -214,24 +140,7 @@ cg commit [-h] [-m MESSAGE] [--auto] [--allow-issues]
 - `-m, --message` - Commit message (auto-generated if not provided)
 - `--auto` - Auto-resolve issues without interaction (default: `False`)
 - `--allow-issues` - Allow committing workflows with unresolved issues (default: `False`)
-
-
-## `rollback`
-
-**Usage:**
-
-```bash
-cg rollback [-h] [-y] [--force] [target]
-```
-
-**Arguments:**
-
-- `target` - Version to rollback to (e.g., 'v1', 'v2') - leave empty to discard uncommitted changes (optional)
-
-**Options:**
-
-- `-y, --yes` - Skip confirmation (default: `False`)
-- `--force` - Force rollback, discarding uncommitted changes without error (default: `False`)
+- `-y, --yes` - Skip detached HEAD warning (allow commit anyway) (default: `False`)
 
 
 ## `pull`
@@ -239,14 +148,20 @@ cg rollback [-h] [-y] [--force] [target]
 **Usage:**
 
 ```bash
-cg pull [-h] [-r REMOTE] [--models {all,required,skip}] [--force]
+cg pull [-h] [-r REMOTE] [-b BRANCH] [--models {all,required,skip}]
+               [--force] [--preview] [--auto-resolve {mine,theirs}]
+               [--torch-backend BACKEND]
 ```
 
 **Options:**
 
 - `-r, --remote` - Git remote name (default: origin) (default: `origin`)
+- `-b, --branch` - Remote branch to pull (default: current local branch). Use when remote has different default branch (e.g., master vs main)
 - `--models` - Model download strategy (default: all) (choices: `all`, `required`, `skip`) (default: `all`)
 - `--force` - Discard uncommitted changes and force pull (default: `False`)
+- `--preview` - Preview changes without applying (read-only fetch and diff) (default: `False`)
+- `--auto-resolve` - Auto-resolve conflicts: 'mine' keeps local, 'theirs' takes incoming (choices: `mine`, `theirs`)
+- `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
 
 
 ## `push`
@@ -261,83 +176,6 @@ cg push [-h] [-r REMOTE] [--force]
 
 - `-r, --remote` - Git remote name (default: origin) (default: `origin`)
 - `--force` - Force push using --force-with-lease (overwrite remote) (default: `False`)
-
-
-## `reset`
-
-Reset current HEAD to specified state.
-
-**Usage:**
-
-```bash
-cg reset [-h] [--hard] [--mixed] [--soft] [-y] [ref]
-```
-
-**Arguments:**
-
-- `ref` - Commit to reset to (default: HEAD)
-
-**Options:**
-
-- `--hard` - Discard all changes (hard reset) (default: `False`)
-- `--mixed` - Keep changes in working tree, unstage (default) (default: `False`)
-- `--soft` - Keep changes staged (default: `False`)
-- `-y, --yes` - Skip confirmation (default: `False`)
-
-
-## `switch`
-
-Switch to a branch.
-
-**Usage:**
-
-```bash
-cg switch [-h] [-c] branch
-```
-
-**Arguments:**
-
-- `branch` - Branch name to switch to
-
-**Options:**
-
-- `-c, --create` - Create branch if it doesn't exist (default: `False`)
-
-
-## `merge`
-
-Merge branch into current.
-
-**Usage:**
-
-```bash
-cg merge [-h] [-m MESSAGE] [--preview] [--auto-resolve {mine,theirs}] branch
-```
-
-**Arguments:**
-
-- `branch` - Branch to merge
-
-**Options:**
-
-- `-m, --message` - Merge commit message
-- `--preview` - Preview changes without applying (read-only diff with conflict detection) (default: `False`)
-- `--auto-resolve` - Auto-resolve conflicts: 'mine' keeps local, 'theirs' takes incoming (choices: `mine`, `theirs`)
-
-
-## `revert`
-
-Create new commit that undoes previous commit.
-
-**Usage:**
-
-```bash
-cg revert [-h] commit
-```
-
-**Arguments:**
-
-- `commit` - Commit to revert
 
 
 ## `remote`

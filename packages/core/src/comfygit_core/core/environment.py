@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         SyncCallbacks,
     )
 
+    from ..managers.local_uv_config_manager import LocalUVConfigManager
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
@@ -134,6 +135,12 @@ class Environment:
     @cached_property
     def pytorch_manager(self) -> PyTorchBackendManager:
         return PyTorchBackendManager(self.cec_path)
+
+    @cached_property
+    def local_uv_config(self) -> "LocalUVConfigManager":
+        """Manager for machine-specific UV config overrides (.local-uv-config)."""
+        from ..managers.local_uv_config_manager import LocalUVConfigManager
+        return LocalUVConfigManager(self.cec_path)
 
     @cached_property
     def node_lookup(self) -> NodeLookupService:

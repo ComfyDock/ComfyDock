@@ -48,7 +48,9 @@ make test       # Run all tests
 make lint       # Run linting
 ```
 
-Cross-platform testing: `python dev/scripts/cross-platform-test.py` (see `dev/cross-platform-test.toml` for config).
+**Python commands:** Use `uv run` for running Python scripts and tools (e.g., `uv run docs/comfygit-docs/scripts/generate_cli_reference.py`). Avoid calling `python` directly.
+
+Cross-platform testing: `uv run dev/scripts/cross-platform-test.py` (see `dev/cross-platform-test.toml` for config).
 
 ## Running Tests
 

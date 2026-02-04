@@ -432,6 +432,47 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_torch_detect_parser = env_config_torch_subparsers.add_parser("detect", help="Auto-detect and show recommended backend")
     env_config_torch_detect_parser.set_defaults(func=env_cmds.env_config_torch_detect)
 
+    # env-config local-sources - Manage local UV sources for this environment
+    env_config_local_sources_parser = env_config_subparsers.add_parser(
+        "local-sources",
+        help="Manage local UV source overrides"
+    )
+    env_config_local_sources_subparsers = env_config_local_sources_parser.add_subparsers(
+        dest="local_sources_command",
+        help="Local source commands"
+    )
+    env_config_local_sources_parser.set_defaults(func=_make_help_func(env_config_local_sources_parser))
+
+    # env-config local-sources show
+    env_config_local_sources_show_parser = env_config_local_sources_subparsers.add_parser(
+        "show", help="Show local UV sources"
+    )
+    env_config_local_sources_show_parser.set_defaults(func=env_cmds.env_config_local_sources_show)
+
+    # env-config local-sources add <package> --path PATH [--editable]
+    env_config_local_sources_add_parser = env_config_local_sources_subparsers.add_parser(
+        "add", help="Add or update a local UV source"
+    )
+    env_config_local_sources_add_parser.add_argument("package", help="Package name to override")
+    env_config_local_sources_add_parser.add_argument(
+        "--path",
+        required=True,
+        help="Local path to package (absolute or relative)"
+    )
+    env_config_local_sources_add_parser.add_argument(
+        "--editable",
+        action="store_true",
+        help="Install as editable"
+    )
+    env_config_local_sources_add_parser.set_defaults(func=env_cmds.env_config_local_sources_add)
+
+    # env-config local-sources remove <package>
+    env_config_local_sources_remove_parser = env_config_local_sources_subparsers.add_parser(
+        "remove", help="Remove a local UV source"
+    )
+    env_config_local_sources_remove_parser.add_argument("package", help="Package name to remove")
+    env_config_local_sources_remove_parser.set_defaults(func=env_cmds.env_config_local_sources_remove)
+
     # run - Run ComfyUI (special handling for ComfyUI args)
     run_parser = subparsers.add_parser("run", help="Run ComfyUI")
     run_parser.add_argument("--no-sync", action="store_true", help="Skip environment sync before running")
