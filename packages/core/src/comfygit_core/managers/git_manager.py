@@ -67,6 +67,9 @@ __pycache__/
 # PyTorch backend configuration (machine-specific)
 .pytorch-backend
 
+# Local UV config overrides (machine-specific)
+.local-uv-config
+
 # Lock file (machine-specific due to PyTorch platform variants)
 uv.lock
 """
@@ -175,6 +178,9 @@ uv.lock
         """
         # Ensure identity before committing
         self.ensure_git_identity()
+
+        if add_all:
+            self._strip_local_path_sources_before_commit()
 
         # Perform the commit
         git_commit(self.repo_path, message, add_all)
@@ -322,7 +328,24 @@ uv.lock
         """
         if message is None:
             message = "Committing all changes"
+        self._strip_local_path_sources_before_commit()
         return git_commit(self.repo_path, message, add_all=True)
+
+    def _strip_local_path_sources_before_commit(self) -> None:
+        """Remove local path sources from pyproject.toml before committing."""
+        pyproject_path = self.repo_path / "pyproject.toml"
+        if not pyproject_path.exists():
+            return
+
+        try:
+            from .pyproject_manager import PyprojectManager
+
+            pyproject = PyprojectManager(pyproject_path)
+            removed = pyproject.strip_local_path_sources()
+            if removed:
+                logger.info(f"Stripped {len(removed)} local path source(s) before commit")
+        except Exception as exc:
+            logger.warning(f"Failed to strip local path sources before commit: {exc}")
 
     def get_workflow_git_changes(self) -> dict[str, str]:
         """Get git status for workflow files specifically.

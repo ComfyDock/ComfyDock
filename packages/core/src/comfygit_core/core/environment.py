@@ -2386,26 +2386,9 @@ class Environment:
         These paths don't exist on other machines and cause sync failures.
         This method removes any source entries that use local paths.
         """
-        config = self.pyproject.load()
-        sources = config.get("tool", {}).get("uv", {}).get("sources", {})
-
-        if not sources:
-            return
-
-        # Find sources with local paths (not URLs)
-        to_remove = []
-        for pkg_name, source_config in sources.items():
-            if isinstance(source_config, dict) and "path" in source_config:
-                path_value = source_config["path"]
-                # Local paths don't start with http:// or https://
-                if isinstance(path_value, str) and not path_value.startswith(("http://", "https://")):
-                    to_remove.append(pkg_name)
-                    logger.info(f"Stripping local path source: {pkg_name} -> {path_value}")
-
-        if to_remove:
-            for pkg_name in to_remove:
-                del sources[pkg_name]
-            self.pyproject.save(config)
+        removed = self.pyproject.strip_local_path_sources()
+        for pkg_name in removed:
+            logger.info(f"Stripped local path source: {pkg_name}")
 
     def _untrack_uvlock_if_tracked(self) -> None:
         """Untrack uv.lock if it was previously tracked in git.

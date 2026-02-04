@@ -519,6 +519,36 @@ explicit = true
             f"Array-of-tables format should be preserved after roundtrip, got:\n{content}"
         )
 
+
+class TestStripLocalPathSources:
+    """Tests for stripping local path sources from pyproject."""
+
+    def test_strip_local_path_sources_removes_local_paths(self, temp_pyproject):
+        """Should remove sources that include local filesystem paths."""
+        manager = PyprojectManager(temp_pyproject)
+
+        config = manager.load()
+        config.setdefault("tool", {})
+        config["tool"].setdefault("uv", {})
+        config["tool"]["uv"]["sources"] = {
+            "local_pkg": {"path": "/tmp/local_pkg", "editable": True},
+            "remote_pkg": {"url": "https://example.com/remote_pkg.whl"},
+            "mixed_pkg": [
+                {"url": "https://example.com/one.whl"},
+                {"path": "/tmp/other"},
+            ],
+        }
+        manager.save(config)
+
+        removed = manager.strip_local_path_sources()
+        assert set(removed) == {"local_pkg", "mixed_pkg"}
+
+        updated = manager.load()
+        sources = updated.get("tool", {}).get("uv", {}).get("sources", {})
+        assert "local_pkg" not in sources
+        assert "mixed_pkg" not in sources
+        assert "remote_pkg" in sources
+
     def test_strip_and_readd_index_produces_array_of_tables(self, temp_pyproject):
         """Test that stripping indexes with list comprehension and re-adding preserves format.
 

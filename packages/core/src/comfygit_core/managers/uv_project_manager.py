@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, UVCommandError
+from ..managers.local_uv_config_manager import LocalUVConfigManager
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -38,9 +39,13 @@ class UVProjectManager:
         self,
         uv_command: UVCommand,
         pyproject_manager: PyprojectManager,
+        local_uv_config_manager: LocalUVConfigManager | None = None,
     ):
         self.uv = uv_command
         self.pyproject = pyproject_manager
+        self.local_uv_config_manager = local_uv_config_manager or LocalUVConfigManager(
+            self.pyproject.path.parent
+        )
 
     # ===== Properties =====
 
@@ -164,6 +169,7 @@ class UVProjectManager:
         self,
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
+        local_uv_config_manager: LocalUVConfigManager | None = None,
         backend_override: str | None = None,
         **flags
     ) -> str:
@@ -175,6 +181,7 @@ class UVProjectManager:
                             If provided, PyTorch config is injected before sync and
                             restored after (regardless of success/failure).
                             Also forces reinstall of PyTorch packages to ensure correct backend.
+            local_uv_config_manager: Optional local UV config manager for temporary injection.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             **flags: Additional uv sync flags
 
@@ -197,15 +204,19 @@ class UVProjectManager:
                     lock_file.unlink()
                     logger.info(f"Deleted uv.lock for backend override to {backend_override}")
 
-            # Use PyprojectManager's injection context
-            with self.pyproject.pytorch_injection_context(
-                pytorch_manager, backend_override=backend_override
+        local_manager = local_uv_config_manager or self.local_uv_config_manager
+
+        if pytorch_manager or local_manager:
+            with self.pyproject.uv_injection_context(
+                pytorch_manager=pytorch_manager,
+                local_uv_config_manager=local_manager,
+                backend_override=backend_override,
             ):
                 result = self.uv.sync(verbose=verbose, **flags)
                 return result.stdout
-        else:
-            result = self.uv.sync(verbose=verbose, **flags)
-            return result.stdout
+
+        result = self.uv.sync(verbose=verbose, **flags)
+        return result.stdout
 
     def lock_project(self, **flags) -> str:
         result = self.uv.lock(**flags)
