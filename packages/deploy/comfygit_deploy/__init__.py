@@ -1,3 +1,8 @@
 """ComfyGit Deploy - Remote deployment and worker management CLI."""
 
-__version__ = "0.3.3"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("comfygit-deploy")
+except PackageNotFoundError:
+    __version__ = "unknown"
