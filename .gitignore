@@ -93,5 +93,8 @@ docs/contexts
 # MEOW agent orchestration runtime
 .meow/
 
+# Git worktrees for parallel agent work
+.worktrees/
+
 # Beads issue tracking - synced via beads-sync branch only
 .beads/issues.jsonl
