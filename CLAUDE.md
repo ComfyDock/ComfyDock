@@ -50,6 +50,33 @@ make lint       # Run linting
 
 Cross-platform testing: `python dev/scripts/cross-platform-test.py` (see `dev/cross-platform-test.toml` for config).
 
+## Running Tests
+
+**IMPORTANT:** Always use `uv run pytest`, never bare `pytest`. The project uses uv for dependency management and pytest is only available through the virtual environment.
+
+```bash
+# From repo root - run all tests
+uv run pytest packages/core/tests/ -v
+
+# Run specific test file
+uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v
+
+# Run specific test class or function
+uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py::TestStripLocalPathSources -v
+
+# Run tests matching a pattern
+uv run pytest packages/core/tests/ -k "injection" -v
+
+# Quick run (no verbose)
+uv run pytest packages/core/tests/unit/managers/test_local_uv_config_manager.py -q
+```
+
+**Test locations:**
+- `packages/core/tests/unit/` - Unit tests for core library
+- `packages/core/tests/integration/` - Integration tests
+- `packages/cli/tests/` - CLI tests
+- `packages/deploy/tests/` - Deploy tests
+
 ## Validation
 
 Use `/validate` after features or fixes that change observable behavior. The skill covers quick checks against the shared workspace and full validation with disposable workspaces via `dev/scripts/validation-workspace.sh`.
