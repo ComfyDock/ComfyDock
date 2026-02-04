@@ -18,9 +18,9 @@ See the [root README](../../README.md#installation) for installation instruction
 
 TL;DR:
 ```bash
-uv tool install comfydock-cli
+uv tool install comfygit
 # or
-pip install comfydock-cli
+pip install comfygit
 ```
 
 ## CLI-Specific Features
@@ -106,7 +106,7 @@ This only happens when the CLI can't automatically resolve dependencies. Most of
 Every command is logged to environment-specific files:
 
 ```
-~/comfydock/
+~/comfygit/
 └── logs/
     ├── production/
     │   ├── full.log        # All operations in 'production'
@@ -532,7 +532,7 @@ cg debug --workspace
 
 **Log locations:**
 ```
-~/comfydock/logs/
+~/comfygit/logs/
 ├── <env-name>/
 │   ├── full.log        # Current log
 │   ├── full.log.1      # First rotation
@@ -604,10 +604,10 @@ cg init
 
 ## For Library Users
 
-If you want programmatic access without the CLI, use `comfydock-core` directly:
+If you want programmatic access without the CLI, use `comfygit-core` directly:
 
 ```python
-from comfydock_core.factories.workspace_factory import WorkspaceFactory
+from comfygit_core.factories.workspace_factory import WorkspaceFactory
 
 # Load workspace
 workspace = WorkspaceFactory.find()
