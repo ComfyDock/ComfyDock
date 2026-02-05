@@ -64,12 +64,7 @@ cg delete [-h] [-y] name
 ```bash
 cg run [-h] [--no-sync] [--torch-backend BACKEND] [--extra EXTRA]
               [--all-extras]
-              ...
 ```
-
-**Arguments:**
-
-- `args` - ComfyUI arguments (use -- to separate) (default: `[]`)
 
 **Options:**
 

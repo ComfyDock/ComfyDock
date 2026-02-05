@@ -73,33 +73,6 @@ def _check_for_old_docker_installation() -> None:
     warning_flag.touch()
 
 
-def _split_run_args(argv: list[str]) -> list[str]:
-    if "run" not in argv:
-        return []
-
-    run_index = argv.index("run")
-    tail = argv[run_index + 1:]
-
-    if "--" in tail:
-        cutoff = tail.index("--")
-        return tail[cutoff + 1:]
-
-    passthrough = []
-    i = 0
-    while i < len(tail):
-        token = tail[i]
-        if token in ("--no-sync", "--all-extras"):
-            i += 1
-            continue
-        if token in ("--torch-backend", "--extra"):
-            i += 2
-            continue
-        passthrough.append(token)
-        i += 1
-
-    return passthrough
-
-
 def main() -> None:
     """Main entry point for ComfyGit CLI."""
     # Enable readline for input() line editing (arrow keys, history)
@@ -117,14 +90,20 @@ def main() -> None:
     # Environment commands will add file handlers as needed
     setup_logging(level="INFO", simple_format=True, console_level="CRITICAL")
 
+    # Special handling for 'run' command to pass through ComfyUI args
     parser = create_parser()
     if 'run' in sys.argv:
-        args, _ = parser.parse_known_args()
+        # Parse known args, pass unknown to ComfyUI
+        args, unknown = parser.parse_known_args()
         if getattr(args, 'command', None) == 'run':
-            args.args = _split_run_args(sys.argv[1:])
+            if unknown and unknown[0] == "--":
+                unknown = unknown[1:]
+            args.args = unknown
         else:
+            # Not actually the run command, do normal parsing
             args = parser.parse_args()
     else:
+        # Normal parsing for all other commands
         args = parser.parse_args()
 
     if not hasattr(args, 'func'):
@@ -549,11 +528,6 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         "--all-extras",
         action="store_true",
         help="Install all optional dependency extras"
-    )
-    run_parser.add_argument(
-        "args",
-        nargs=argparse.REMAINDER,
-        help="ComfyUI arguments (use -- to separate)"
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 

@@ -64,24 +64,10 @@ class TestTorchBackendArgumentDefaults:
     def test_run_command_accepts_double_dash_passthrough(self):
         """Run command should accept ComfyUI args after --."""
         parser = create_parser()
-        args = parser.parse_args(["run", "--", "--listen", "0.0.0.0"])
+        args, unknown = parser.parse_known_args(["run", "--", "--listen", "0.0.0.0"])
 
-        assert "--listen" in args.args
-        assert "0.0.0.0" in args.args
-
-    def test_run_arg_split_handles_plain_args(self):
-        """Run arg splitter should preserve ComfyUI args without --."""
-        from comfygit_cli.cli import _split_run_args
-
-        result = _split_run_args(["run", "--port", "8188", "--listen", "0.0.0.0"])
-        assert result == ["--port", "8188", "--listen", "0.0.0.0"]
-
-    def test_run_arg_split_strips_comfygit_flags(self):
-        """Run arg splitter should strip ComfyGit run flags."""
-        from comfygit_cli.cli import _split_run_args
-
-        result = _split_run_args(["run", "--all-extras", "--port", "8188"])
-        assert result == ["--port", "8188"]
+        assert args.command == "run"
+        assert unknown == ["--", "--listen", "0.0.0.0"]
 
     def test_pull_command_accepts_explicit_override(self):
         """Pull command should accept explicit --torch-backend override."""
