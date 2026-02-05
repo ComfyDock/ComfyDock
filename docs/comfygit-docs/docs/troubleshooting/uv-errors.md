@@ -227,6 +227,26 @@ conda install -c conda-forge package-name
 # Copy wheel from conda env
 ```
 
+**Solution 4: CUDA packages needing PyTorch at build time (SageAttention, flash-attn, deepspeed)**
+
+Some CUDA packages must compile against the PyTorch you already have installed.
+Use `--no-build-isolation` so the build can see PyTorch headers and CUDA libs,
+and prefer the GitHub source if the PyPI release is missing or outdated.
+
+```bash
+cg py add "git+https://github.com/thu-ml/SageAttention.git" \
+  --group optional-cuda \
+  --no-build-isolation
+```
+
+If you need CUDA build variables:
+
+```bash
+CUDA_HOME=/usr \
+TORCH_CUDA_ARCH_LIST="8.6;8.9" \
+cg py add "git+https://github.com/thu-ml/SageAttention.git" --no-build-isolation
+```
+
 ### Cache corruption
 
 **Symptom:**

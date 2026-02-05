@@ -589,6 +589,10 @@ Install build tools for your platform:
 
 See [UV Errors - Build failures](uv-errors.md#build-failures-compiled-packages) for details.
 
+If you are installing CUDA-heavy packages like SageAttention or flash-attn,
+use `--no-build-isolation` so the build can see your installed PyTorch and CUDA headers.
+See [UV Errors - Build failures](uv-errors.md#build-failures-compiled-packages) for the full example.
+
 ---
 
 ## Getting detailed help
