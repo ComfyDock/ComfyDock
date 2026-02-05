@@ -619,6 +619,8 @@ class EnvironmentCommands:
         RESTART_EXIT_CODE = 42
         env = self._get_env(args)
         comfyui_args = args.args if hasattr(args, 'args') else []
+        if comfyui_args and comfyui_args[0] == "--":
+            comfyui_args = comfyui_args[1:]
         no_sync = getattr(args, 'no_sync', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
