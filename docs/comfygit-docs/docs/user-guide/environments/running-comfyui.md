@@ -26,6 +26,14 @@ ComfyUI then outputs its startup logs and opens on **http://localhost:8188**
 !!! tip "First run"
     The first time you run ComfyUI in an environment, it may take a few seconds to initialize. Subsequent runs are faster.
 
+## Passing ComfyUI args
+
+Use `--` to pass arguments directly to ComfyUI when you need to avoid conflicts with ComfyGit flags:
+
+```bash
+cg run --all-extras -- --listen 0.0.0.0
+```
+
 ## Optional extras during run
 
 `cg run` performs a sync before launching. If you need optional extras for this run, pass them explicitly:

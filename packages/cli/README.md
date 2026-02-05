@@ -258,6 +258,7 @@ cg run [COMFYUI_ARGS...]
   --no-sync            Skip environment sync before running
   --extra EXTRA        Install optional dependency extra (can be repeated)
   --all-extras         Install all optional dependency extras
+  --                   Pass remaining args to ComfyUI
 
 # Environment config (per environment)
 cg env-config torch-backend show

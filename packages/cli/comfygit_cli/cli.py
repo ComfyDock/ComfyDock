@@ -96,7 +96,13 @@ def main() -> None:
         # Parse known args, pass unknown to ComfyUI
         args, unknown = parser.parse_known_args()
         if getattr(args, 'command', None) == 'run':
-            args.args = unknown
+            if '--' in sys.argv:
+                passthrough = list(getattr(args, 'args', []) or [])
+            else:
+                passthrough = list(unknown) if unknown else list(getattr(args, 'args', []) or [])
+            if passthrough and passthrough[0] == "--":
+                passthrough = passthrough[1:]
+            args.args = passthrough
         else:
             # Not actually the run command, do normal parsing
             args = parser.parse_args()
@@ -526,6 +532,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         "--all-extras",
         action="store_true",
         help="Install all optional dependency extras"
+    )
+    run_parser.add_argument(
+        "args",
+        nargs=argparse.REMAINDER,
+        help="ComfyUI arguments (use -- to separate)"
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 

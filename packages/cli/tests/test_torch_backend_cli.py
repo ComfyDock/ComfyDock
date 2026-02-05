@@ -61,6 +61,14 @@ class TestTorchBackendArgumentDefaults:
 
         assert args.torch_backend == "cpu"
 
+    def test_run_command_accepts_double_dash_passthrough(self):
+        """Run command should accept ComfyUI args after --."""
+        parser = create_parser()
+        args = parser.parse_args(["run", "--", "--listen", "0.0.0.0"])
+
+        assert "--listen" in args.args
+        assert "0.0.0.0" in args.args
+
     def test_pull_command_accepts_explicit_override(self):
         """Pull command should accept explicit --torch-backend override."""
         parser = create_parser()
