@@ -80,6 +80,7 @@ def test_no_build_isolation_with_group_flag():
             upgrade=False,
             group="optional-cuda",
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
         )

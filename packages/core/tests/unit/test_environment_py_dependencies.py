@@ -43,6 +43,7 @@ class TestAddDependencies:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -63,6 +64,7 @@ class TestAddDependencies:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -81,6 +83,7 @@ class TestAddDependencies:
             upgrade=True,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False

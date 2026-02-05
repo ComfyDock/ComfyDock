@@ -235,8 +235,14 @@ and prefer the GitHub source if the PyPI release is missing or outdated.
 
 ```bash
 cg py add "git+https://github.com/thu-ml/SageAttention.git" \
-  --group optional-cuda \
+  --optional cuda \
   --no-build-isolation
+```
+
+If you want to keep the environment portable, install the extra only when needed:
+
+```bash
+cg sync --extra cuda
 ```
 
 If you need CUDA build variables:
@@ -244,7 +250,7 @@ If you need CUDA build variables:
 ```bash
 CUDA_HOME=/usr \
 TORCH_CUDA_ARCH_LIST="8.6;8.9" \
-cg py add "git+https://github.com/thu-ml/SageAttention.git" --no-build-isolation
+cg py add "git+https://github.com/thu-ml/SageAttention.git" --optional cuda --no-build-isolation
 ```
 
 ### Cache corruption
@@ -357,6 +363,10 @@ cg sync --verbose
 
 # Sync with specific backend
 cg sync --torch-backend cuda
+
+# Install optional extras
+cg sync --extra cuda
+cg sync --all-extras
 ```
 
 **When to use:**

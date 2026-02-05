@@ -631,6 +631,8 @@ class EnvironmentCommands:
         print(f"\n🔄 Syncing environment: {env.name}")
 
         verbose = getattr(args, 'verbose', False)
+        extras = getattr(args, 'extra', None) or []
+        all_extras = getattr(args, 'all_extras', False)
 
         try:
             # Use explicit override if provided, otherwise None (backend is now in file)
@@ -639,6 +641,8 @@ class EnvironmentCommands:
                 model_strategy="skip",  # Sync command focuses on packages
                 remove_extra_nodes=False,  # Don't remove nodes, just sync
                 verbose=verbose,
+                extras=extras,
+                all_extras=all_extras,
                 backend_override=torch_backend_override if torch_backend_override else None,
             )
 
@@ -1639,6 +1643,14 @@ class EnvironmentCommands:
             print("✗ Error: Cannot specify both packages and -r/--requirements", file=sys.stderr)
             sys.exit(1)
 
+        if getattr(args, 'optional', None):
+            if getattr(args, 'group', None) or getattr(args, 'dev', False):
+                print("✗ Error: --optional cannot be combined with --group or --dev", file=sys.stderr)
+                sys.exit(1)
+            if args.requirements:
+                print("✗ Error: --optional requires explicit package specifications (not -r/--requirements)", file=sys.stderr)
+                sys.exit(1)
+
         # Resolve requirements file path to absolute path (UV runs in .cec directory)
         requirements_file = None
         if args.requirements:
@@ -1661,6 +1673,7 @@ class EnvironmentCommands:
                 upgrade=args.upgrade,
                 group=getattr(args, 'group', None),
                 dev=getattr(args, 'dev', False),
+                optional=getattr(args, 'optional', None),
                 editable=getattr(args, 'editable', False),
                 bounds=getattr(args, 'bounds', None),
                 no_build_isolation=getattr(args, 'no_build_isolation', False)

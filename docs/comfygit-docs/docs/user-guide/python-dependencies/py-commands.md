@@ -142,8 +142,14 @@ PyTorch headers and CUDA libraries.
 
 ```bash
 cg py add "git+https://github.com/thu-ml/SageAttention.git" \
-  --group optional-cuda \
+  --optional cuda \
   --no-build-isolation
+```
+
+Then install it when you actually want the CUDA extras:
+
+```bash
+cg sync --extra cuda
 ```
 
 If you need to set CUDA build variables, pass them in the environment:
@@ -151,7 +157,7 @@ If you need to set CUDA build variables, pass them in the environment:
 ```bash
 CUDA_HOME=/usr \
 TORCH_CUDA_ARCH_LIST="8.6;8.9" \
-cg py add "git+https://github.com/thu-ml/SageAttention.git" --no-build-isolation
+cg py add "git+https://github.com/thu-ml/SageAttention.git" --optional cuda --no-build-isolation
 ```
 
 ## Removing packages
@@ -299,7 +305,8 @@ ComfyGit exposes advanced UV features for power users:
 
 #### Adding to dependency groups
 
-Add packages to optional dependency groups:
+Add packages to dependency groups (PEP 735). ComfyGit installs all dependency groups during `cg sync`.
+If a group name starts with `optional-`, sync will remove it on build failure to keep the environment usable.
 
 ```bash
 cg py add sageattention --group optional-cuda
@@ -308,13 +315,34 @@ cg py add sageattention --group optional-cuda
 **In pyproject.toml:**
 
 ```toml
-[project.optional-dependencies]
+[dependency-groups]
 optional-cuda = [
     "sageattention"
 ]
 ```
 
-**Use case:** Organize packages by feature (cuda-specific, dev tools, optional extras).
+**Use case:** Organize local-only or platform-specific groups. Prefix with `optional-` if it's safe to drop on failure.
+
+#### Adding optional extras
+
+Optional extras live in `[project.optional-dependencies]`. They are **not installed by default**.
+Install them only when needed with `cg sync --extra <name>` or `cg sync --all-extras`.
+
+```bash
+cg py add "git+https://github.com/thu-ml/SageAttention.git" --optional cuda --no-build-isolation
+cg sync --extra cuda
+```
+
+**In pyproject.toml:**
+
+```toml
+[project.optional-dependencies]
+cuda = [
+    "sageattention"
+]
+```
+
+**Use case:** Keep CUDA-only or platform-specific packages optional so the environment still syncs on machines that cannot build them.
 
 #### Adding development dependencies
 

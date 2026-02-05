@@ -75,6 +75,7 @@ class UVProjectManager:
         upgrade: bool = False,
         group: str | None = None,
         dev: bool = False,
+        optional: str | None = None,
         editable: bool = False,
         bounds: str | None = None,
         no_build_isolation: bool = False,
@@ -89,6 +90,7 @@ class UVProjectManager:
             upgrade: Whether to upgrade existing packages
             group: Dependency group name (e.g., 'optional-cuda')
             dev: Add to dev dependencies
+            optional: Optional dependency extra name (project.optional-dependencies)
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
             no_build_isolation: Disable build isolation for specified packages
@@ -127,6 +129,7 @@ class UVProjectManager:
             upgrade=upgrade,
             group=group,
             dev=dev,
+            optional=optional,
             editable=editable,
             bounds=bounds,
             **flags
@@ -204,6 +207,8 @@ class UVProjectManager:
         pytorch_manager: PyTorchBackendManager | None = None,
         local_uv_config_manager: LocalUVConfigManager | None = None,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
         **flags
     ) -> str:
         """Sync project dependencies.
@@ -216,6 +221,8 @@ class UVProjectManager:
                             Also forces reinstall of PyTorch packages to ensure correct backend.
             local_uv_config_manager: Optional local UV config manager for temporary injection.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
             **flags: Additional uv sync flags
 
         Returns:
@@ -245,10 +252,10 @@ class UVProjectManager:
                 local_uv_config_manager=local_manager,
                 backend_override=backend_override,
             ):
-                result = self.uv.sync(verbose=verbose, **flags)
+                result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
                 return result.stdout
 
-        result = self.uv.sync(verbose=verbose, **flags)
+        result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
         return result.stdout
 
     def lock_project(self, **flags) -> str:
@@ -556,6 +563,8 @@ class UVProjectManager:
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> dict:
         """Install dependencies progressively with graceful optional group handling.
 
@@ -575,6 +584,8 @@ class UVProjectManager:
             verbose: If True, show uv output in real-time
             pytorch_manager: Optional PyTorch backend manager for temporary injection
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
 
         Returns:
             Dict with keys:
@@ -610,6 +621,8 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
                     )
 
                     # Track successful installations
@@ -623,6 +636,8 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
                     )
 
                 result["packages_synced"] = True

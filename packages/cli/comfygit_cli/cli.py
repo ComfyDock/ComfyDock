@@ -524,6 +524,16 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     sync_parser.add_argument(
+        "--extra",
+        action="append",
+        help="Install optional dependency extra (can be repeated)"
+    )
+    sync_parser.add_argument(
+        "--all-extras",
+        action="store_true",
+        help="Install all optional dependency extras"
+    )
+    sync_parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Show full UV output during sync"
@@ -825,6 +835,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     # Tier 2: Power-user flags
     py_add_parser.add_argument("--group", help="Add to dependency group (e.g., optional-cuda)")
     py_add_parser.add_argument("--dev", action="store_true", help="Add to dev dependencies")
+    py_add_parser.add_argument(
+        "--optional",
+        metavar="EXTRA",
+        help="Add to optional dependency group (project.optional-dependencies)"
+    )
     py_add_parser.add_argument("--editable", action="store_true", help="Install as editable (for local development)")
     py_add_parser.add_argument("--bounds", choices=["lower", "major", "minor", "exact"], help="Version specifier style")
     py_add_parser.add_argument(

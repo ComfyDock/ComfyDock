@@ -572,6 +572,8 @@ class Environment:
         verbose: bool = False,
         preserve_workflows: bool = False,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> SyncResult:
         """Apply changes: sync packages, nodes, workflows, and models with environment.
 
@@ -586,6 +588,8 @@ class Environment:
                                Use True for runtime restarts (exit code 42) to keep user edits.
                                Use False (default) for git operations and repairs.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
 
         Returns:
             SyncResult with details of what was synced
@@ -618,6 +622,8 @@ class Environment:
                 verbose=verbose,
                 pytorch_manager=self.pytorch_manager,
                 backend_override=backend_override,
+                extras=extras,
+                all_extras=all_extras,
             )
             result.packages_synced = sync_result["packages_synced"]
             result.dependency_groups_installed.extend(sync_result["dependency_groups_installed"])
@@ -1784,6 +1790,7 @@ class Environment:
         upgrade: bool = False,
         group: str | None = None,
         dev: bool = False,
+        optional: str | None = None,
         editable: bool = False,
         bounds: str | None = None,
         no_build_isolation: bool = False
@@ -1800,6 +1807,7 @@ class Environment:
             upgrade: Whether to upgrade existing packages
             group: Dependency group name (e.g., 'optional-cuda')
             dev: Add to dev dependencies
+            optional: Optional dependency extra name (project.optional-dependencies)
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
             no_build_isolation: Disable build isolation for specified packages
@@ -1842,6 +1850,7 @@ class Environment:
             upgrade=upgrade,
             group=group,
             dev=dev,
+            optional=optional,
             editable=editable,
             bounds=bounds,
             no_build_isolation=no_build_isolation

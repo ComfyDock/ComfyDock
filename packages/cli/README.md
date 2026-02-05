@@ -370,6 +370,11 @@ cg workflow resolve NAME
 cg py add [PACKAGE...]
   -r, --requirements FILE  Add from requirements.txt
   --upgrade                Upgrade existing packages
+  --group GROUP            Add to dependency group
+  --dev                    Add to dev dependencies
+  --optional EXTRA         Add to optional dependency extra
+  --editable               Install as editable
+  --bounds MODE            Version specifier style (lower/major/minor/exact)
   --no-build-isolation     Build without isolation (for CUDA packages needing PyTorch at build time)
 
 # Remove Python package

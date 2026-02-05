@@ -42,6 +42,7 @@ class TestPyAdd:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -72,6 +73,7 @@ class TestPyAdd:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -102,6 +104,7 @@ class TestPyAdd:
             upgrade=True,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -133,9 +136,42 @@ class TestPyAdd:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=True
+        )
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_add_with_optional_flag(self, mock_workspace):
+        """Should pass optional extra when flag is specified."""
+        mock_env = MagicMock()
+        mock_workspace.return_value.get_active_environment.return_value = mock_env
+        mock_env.name = "test-env"
+        mock_env.add_dependencies.return_value = {"output": "Added: sageattention", "substitutions": {}}
+
+        cmd = EnvironmentCommands()
+        args = Namespace(
+            packages=["git+https://github.com/thu-ml/SageAttention.git"],
+            requirements=None,
+            upgrade=False,
+            optional="sage",
+            target_env=None
+        )
+
+        with patch('builtins.print'):
+            cmd.py_add(args)
+
+        mock_env.add_dependencies.assert_called_once_with(
+            packages=["git+https://github.com/thu-ml/SageAttention.git"],
+            requirements_file=None,
+            upgrade=False,
+            group=None,
+            dev=False,
+            optional="sage",
+            editable=False,
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -194,6 +230,7 @@ class TestPyAdd:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -229,6 +266,7 @@ class TestPyAdd:
             upgrade=True,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -465,6 +503,7 @@ class TestPyAddTier2Flags:
             upgrade=False,
             group="optional-cuda",
             dev=False,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -499,6 +538,7 @@ class TestPyAddTier2Flags:
             upgrade=False,
             group=None,
             dev=True,
+            optional=None,
             editable=False,
             bounds=None,
             no_build_isolation=False
@@ -533,6 +573,7 @@ class TestPyAddTier2Flags:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=True,
             bounds=None,
             no_build_isolation=False
@@ -567,6 +608,7 @@ class TestPyAddTier2Flags:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
             bounds="exact",
             no_build_isolation=False
@@ -601,6 +643,7 @@ class TestPyAddTier2Flags:
             upgrade=True,
             group="optional-features",
             dev=False,
+            optional=None,
             editable=True,
             bounds="minor",
             no_build_isolation=False
