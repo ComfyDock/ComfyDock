@@ -134,6 +134,26 @@ cg py add -r requirements.txt --upgrade
 
 Upgrades all packages listed in the file.
 
+### CUDA packages (no build isolation)
+
+Some CUDA-dependent packages (e.g., SageAttention, flash-attn, deepspeed) need to build
+against your installed PyTorch. Use `--no-build-isolation` so the build can access
+PyTorch headers and CUDA libraries.
+
+```bash
+cg py add "git+https://github.com/thu-ml/SageAttention.git" \
+  --group optional-cuda \
+  --no-build-isolation
+```
+
+If you need to set CUDA build variables, pass them in the environment:
+
+```bash
+CUDA_HOME=/usr \
+TORCH_CUDA_ARCH_LIST="8.6;8.9" \
+cg py add "git+https://github.com/thu-ml/SageAttention.git" --no-build-isolation
+```
+
 ## Removing packages
 
 Remove packages you no longer need:

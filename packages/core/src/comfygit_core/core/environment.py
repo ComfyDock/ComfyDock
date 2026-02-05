@@ -1785,7 +1785,8 @@ class Environment:
         group: str | None = None,
         dev: bool = False,
         editable: bool = False,
-        bounds: str | None = None
+        bounds: str | None = None,
+        no_build_isolation: bool = False
     ) -> dict:
         """Add Python dependencies to the environment.
 
@@ -1801,6 +1802,7 @@ class Environment:
             dev: Add to dev dependencies
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
+            no_build_isolation: Disable build isolation for specified packages
 
         Returns:
             Dict with:
@@ -1841,7 +1843,8 @@ class Environment:
             group=group,
             dev=dev,
             editable=editable,
-            bounds=bounds
+            bounds=bounds,
+            no_build_isolation=no_build_isolation
         )
 
         return {"output": output, "substitutions": substitutions}

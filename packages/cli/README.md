@@ -370,6 +370,7 @@ cg workflow resolve NAME
 cg py add [PACKAGE...]
   -r, --requirements FILE  Add from requirements.txt
   --upgrade                Upgrade existing packages
+  --no-build-isolation     Build without isolation (for CUDA packages needing PyTorch at build time)
 
 # Remove Python package
 cg py remove PACKAGE [PACKAGE...]

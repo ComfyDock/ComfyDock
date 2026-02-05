@@ -962,6 +962,24 @@ class UVConfigHandler(BaseHandler):
         config['tool']['uv']['constraint-dependencies'] = constraints
         self.save(config)
 
+    def add_no_build_isolation_package(self, package_name: str) -> None:
+        """Add package to no-build-isolation-package list."""
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        packages = config['tool']['uv'].get('no-build-isolation-package', [])
+        if not isinstance(packages, list):
+            packages = [packages] if packages else []
+
+        normalized = package_name.lower().replace('_', '-')
+        existing = {p.lower().replace('_', '-') for p in packages}
+
+        if normalized not in existing:
+            packages.append(normalized)
+            config['tool']['uv']['no-build-isolation-package'] = packages
+            self.save(config)
+            logger.info(f"Added no-build-isolation package: {normalized}")
+
     def remove_constraint(self, package_name: str) -> bool:
         """Remove a constraint dependency from [tool.uv]."""
         config = self.load()

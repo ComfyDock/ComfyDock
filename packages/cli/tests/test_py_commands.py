@@ -43,7 +43,8 @@ class TestPyAdd:
             group=None,
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -72,7 +73,8 @@ class TestPyAdd:
             group=None,
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -101,7 +103,39 @@ class TestPyAdd:
             group=None,
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
+        )
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_add_with_no_build_isolation_flag(self, mock_workspace):
+        """Should pass no_build_isolation=True when flag is specified."""
+        mock_env = MagicMock()
+        mock_workspace.return_value.get_active_environment.return_value = mock_env
+        mock_env.name = "test-env"
+        mock_env.add_dependencies.return_value = {"output": "Added: flash-attn", "substitutions": {}}
+
+        cmd = EnvironmentCommands()
+        args = Namespace(
+            packages=["flash-attn"],
+            requirements=None,
+            upgrade=False,
+            no_build_isolation=True,
+            target_env=None
+        )
+
+        with patch('builtins.print'):
+            cmd.py_add(args)
+
+        mock_env.add_dependencies.assert_called_once_with(
+            packages=["flash-attn"],
+            requirements_file=None,
+            upgrade=False,
+            group=None,
+            dev=False,
+            editable=False,
+            bounds=None,
+            no_build_isolation=True
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -161,7 +195,8 @@ class TestPyAdd:
             group=None,
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -195,7 +230,8 @@ class TestPyAdd:
             group=None,
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -430,7 +466,8 @@ class TestPyAddTier2Flags:
             group="optional-cuda",
             dev=False,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -463,7 +500,8 @@ class TestPyAddTier2Flags:
             group=None,
             dev=True,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -496,7 +534,8 @@ class TestPyAddTier2Flags:
             group=None,
             dev=False,
             editable=True,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -529,7 +568,8 @@ class TestPyAddTier2Flags:
             group=None,
             dev=False,
             editable=False,
-            bounds="exact"
+            bounds="exact",
+            no_build_isolation=False
         )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
@@ -562,7 +602,8 @@ class TestPyAddTier2Flags:
             group="optional-features",
             dev=False,
             editable=True,
-            bounds="minor"
+            bounds="minor",
+            no_build_isolation=False
         )
 
 

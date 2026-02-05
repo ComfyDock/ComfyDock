@@ -243,6 +243,7 @@ cg py [-h] {add,remove,remove-group,list,uv} ...
 ```bash
 cg py add [-h] [-r REQUIREMENTS] [--upgrade] [--group GROUP] [--dev]
                  [--editable] [--bounds {lower,major,minor,exact}]
+                 [--no-build-isolation]
                  [packages ...]
 ```
 
@@ -258,6 +259,7 @@ cg py add [-h] [-r REQUIREMENTS] [--upgrade] [--group GROUP] [--dev]
 - `--dev` - Add to dev dependencies (default: `False`)
 - `--editable` - Install as editable (for local development) (default: `False`)
 - `--bounds` - Version specifier style (choices: `lower`, `major`, `minor`, `exact`)
+- `--no-build-isolation` - Build without isolation (for CUDA packages needing PyTorch at build time) (default: `False`)
 
 
 ### `remove`

@@ -77,6 +77,7 @@ class UVProjectManager:
         dev: bool = False,
         editable: bool = False,
         bounds: str | None = None,
+        no_build_isolation: bool = False,
         **flags
     ) -> str:
         """Add one or more dependencies to the project.
@@ -90,6 +91,7 @@ class UVProjectManager:
             dev: Add to dev dependencies
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
+            no_build_isolation: Disable build isolation for specified packages
             **flags: Additional UV flags
 
         Returns:
@@ -107,6 +109,18 @@ class UVProjectManager:
         else:
             raise ValueError("Either 'package', 'packages', or 'requirements_file' must be provided")
 
+        if no_build_isolation:
+            if requirements_file:
+                raise ValueError("--no-build-isolation requires explicit package specifications (not requirements file)")
+
+            if pkg_list:
+                for pkg in pkg_list:
+                    pkg_name = self._extract_no_build_isolation_package(pkg)
+                    if pkg_name:
+                        self.pyproject.uv_config.add_no_build_isolation_package(pkg_name)
+                    else:
+                        logger.warning(f"Could not determine package name for no-build-isolation: {pkg}")
+
         result = self.uv.add(
             packages=pkg_list,
             requirements_file=requirements_file,
@@ -118,6 +132,25 @@ class UVProjectManager:
             **flags
         )
         return result.stdout
+
+    def _extract_no_build_isolation_package(self, package_spec: str) -> str | None:
+        """Extract a normalized package name for no-build-isolation entries."""
+        spec = package_spec.strip()
+
+        if ' @ ' in spec:
+            name = spec.split(' @ ', 1)[0].strip()
+        elif spec.startswith(("git+", "http://", "https://", "file://")):
+            name = self._extract_package_from_url(spec)
+        elif spec.startswith(("./", "../", "/")):
+            name = Path(spec).name
+        else:
+            from ..utils.dependency_parser import parse_dependency_string
+            name, _ = parse_dependency_string(spec)
+
+        if not name:
+            return None
+
+        return name.lower().replace('_', '-')
 
     def remove_dependency(self, package: str | None = None, packages: list[str] | None = None, **flags) -> dict:
         """Remove one or more dependencies from the project.

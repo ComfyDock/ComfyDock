@@ -827,6 +827,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     py_add_parser.add_argument("--dev", action="store_true", help="Add to dev dependencies")
     py_add_parser.add_argument("--editable", action="store_true", help="Install as editable (for local development)")
     py_add_parser.add_argument("--bounds", choices=["lower", "major", "minor", "exact"], help="Version specifier style")
+    py_add_parser.add_argument(
+        "--no-build-isolation",
+        action="store_true",
+        help="Build without isolation (for CUDA packages needing PyTorch at build time)"
+    )
     py_add_parser.set_defaults(func=env_cmds.py_add)
 
     # py remove

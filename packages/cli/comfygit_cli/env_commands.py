@@ -1662,7 +1662,8 @@ class EnvironmentCommands:
                 group=getattr(args, 'group', None),
                 dev=getattr(args, 'dev', False),
                 editable=getattr(args, 'editable', False),
-                bounds=getattr(args, 'bounds', None)
+                bounds=getattr(args, 'bounds', None),
+                no_build_isolation=getattr(args, 'no_build_isolation', False)
             )
         except UVCommandError as e:
             if logger:
