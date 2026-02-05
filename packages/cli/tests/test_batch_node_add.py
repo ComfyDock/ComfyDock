@@ -51,6 +51,37 @@ class TestBatchNodeAdd:
         mock_env.install_nodes_with_progress.assert_not_called()
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_single_node_passes_extras(self, mock_workspace):
+        """Test that extras flags are passed to add_node."""
+        mock_env = MagicMock()
+        mock_workspace.return_value.get_active_environment.return_value = mock_env
+        mock_workspace.return_value.get_environment.return_value = mock_env
+
+        mock_node_info = MagicMock()
+        mock_node_info.name = "test-node"
+        mock_env.add_node.return_value = mock_node_info
+        mock_env.name = "test-env"
+
+        cmd = EnvironmentCommands()
+
+        args = Namespace(
+            node_names=["test-node"],
+            dev=False,
+            no_test=False,
+            force=False,
+            target_env=None,
+            extra=["cuda"],
+            all_extras=False,
+        )
+
+        with patch('builtins.print'):
+            cmd.node_add(args)
+
+        call_kwargs = mock_env.add_node.call_args.kwargs
+        assert call_kwargs["extras"] == ["cuda"]
+        assert call_kwargs["all_extras"] is False
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_multiple_nodes_uses_batch_flow(self, mock_workspace):
         """Test that multiple nodes trigger batch installation flow."""
         # Setup mocks

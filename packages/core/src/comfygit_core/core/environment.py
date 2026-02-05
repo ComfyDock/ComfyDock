@@ -160,6 +160,18 @@ class Environment:
         from ..configs.package_config import PackageConfigManager
         return PackageConfigManager(self.cec_path)
 
+    def get_sync_extras(self) -> list[str]:
+        """Get default optional extras installed during sync."""
+        return self.pyproject.get_sync_extras()
+
+    def add_sync_extra(self, extra: str) -> bool:
+        """Add a default optional extra (returns True if added)."""
+        return self.pyproject.add_sync_extra(extra)
+
+    def remove_sync_extra(self, extra: str) -> bool:
+        """Remove a default optional extra (returns True if removed)."""
+        return self.pyproject.remove_sync_extra(extra)
+
     @cached_property
     def node_manager(self) -> NodeManager:
         return NodeManager(
@@ -611,6 +623,8 @@ class Environment:
         self.pyproject.uv_config.set_exclude_dependencies(
             self.package_config.exclude_packages
         )
+
+        extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
 
         logger.info("Syncing environment...")
 
@@ -1290,6 +1304,8 @@ class Environment:
         force: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
         strict: bool = False,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1300,6 +1316,8 @@ class Environment:
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
             strict: If True, fail on dependency conflicts instead of auto-resolving
+            extras: Optional list of extras to install during sync
+            all_extras: Install all optional extras during sync
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -1313,19 +1331,25 @@ class Environment:
             force=force,
             confirmation_strategy=confirmation_strategy,
             strict=strict,
+            extras=extras,
+            all_extras=all_extras,
         )
 
     @_requires_env_lock
     def install_nodes_with_progress(
         self,
         node_ids: list[str],
-        callbacks: NodeInstallCallbacks | None = None
+        callbacks: NodeInstallCallbacks | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Install multiple nodes with callback support for progress tracking.
 
         Args:
             node_ids: List of node identifiers to install
             callbacks: Optional callbacks for progress feedback
+            extras: Optional list of extras to install during sync
+            all_extras: Install all optional extras during sync
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1345,7 +1369,7 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.add_node(node_id)
+                self.add_node(node_id, extras=extras, all_extras=all_extras)
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)

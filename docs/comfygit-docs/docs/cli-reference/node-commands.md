@@ -20,6 +20,7 @@ cg node [-h] {add,remove,prune,list,update} ...
 
 ```bash
 cg node add [-h] [--dev] [--no-test] [--force] [--verbose] [--strict]
+                   [--extra EXTRA] [--all-extras]
                    node_names [node_names ...]
 ```
 
@@ -34,6 +35,8 @@ cg node add [-h] [--dev] [--no-test] [--force] [--verbose] [--strict]
 - `--force` - Force overwrite existing directory (default: `False`)
 - `--verbose, -v` - Show full UV error output for dependency conflicts (default: `False`)
 - `--strict` - Fail on dependency conflicts instead of auto-resolving (default: `False`)
+- `--extra` - Install optional dependency extra during sync (can be repeated)
+- `--all-extras` - Install all optional dependency extras during sync (default: `False`)
 
 
 ### `remove`

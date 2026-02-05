@@ -734,3 +734,27 @@ class TestExcludeDependencies:
         config = manager.load(force_reload=True)
         # Key should be removed (or uv section might not exist if it was the only key)
         assert "exclude-dependencies" not in config.get("tool", {}).get("uv", {})
+
+
+class TestSyncExtrasConfig:
+    """Tests for default sync extras configuration."""
+
+    def test_set_and_get_sync_extras(self, temp_pyproject):
+        """Should store normalized sync extras under tool.comfygit.sync."""
+        manager = PyprojectManager(temp_pyproject)
+
+        manager.set_sync_extras(["CUDA", "vision"])
+
+        assert manager.get_sync_extras() == ["cuda", "vision"]
+        config = manager.load(force_reload=True)
+        assert config["tool"]["comfygit"]["sync"]["extras"] == ["cuda", "vision"]
+
+    def test_resolve_sync_extras_merges_defaults(self, temp_pyproject):
+        """resolve_sync_extras should merge defaults with explicit extras."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.set_sync_extras(["cuda"])
+
+        extras, all_extras = manager.resolve_sync_extras(["vision"], False)
+
+        assert all_extras is False
+        assert extras == ["cuda", "vision"]

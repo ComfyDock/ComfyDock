@@ -256,6 +256,8 @@ Commands that operate IN environments (require `-e` or active environment):
 # Run ComfyUI
 cg run [COMFYUI_ARGS...]
   --no-sync            Skip environment sync before running
+  --extra EXTRA        Install optional dependency extra (can be repeated)
+  --all-extras         Install all optional dependency extras
 
 # Environment config (per environment)
 cg env-config torch-backend show
@@ -265,6 +267,10 @@ cg env-config torch-backend detect
 cg env-config local-sources show
 cg env-config local-sources add <package> --path /local/path [--editable]
 cg env-config local-sources remove <package>
+
+cg env-config extras show
+cg env-config extras add <extra> [extra...]
+cg env-config extras remove <extra> [extra...]
 
 # View debug logs
 cg debug
@@ -336,6 +342,8 @@ cg node add IDENTIFIER [IDENTIFIER...]
   --dev                Track existing directory as development node
   --no-test            Skip dependency resolution test
   --force              Force overwrite existing directory
+  --extra EXTRA        Install optional dependency extra during sync (can be repeated)
+  --all-extras         Install all optional dependency extras during sync
 
 # Remove custom node
 cg node remove IDENTIFIER [IDENTIFIER...]

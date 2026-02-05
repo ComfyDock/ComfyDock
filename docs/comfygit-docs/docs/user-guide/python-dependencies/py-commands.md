@@ -344,6 +344,20 @@ cuda = [
 
 **Use case:** Keep CUDA-only or platform-specific packages optional so the environment still syncs on machines that cannot build them.
 
+#### Default extras for sync/run/node add
+
+Optional extras are only installed when requested. If you want an environment to always install certain extras, set defaults:
+
+```bash
+cg env-config extras add cuda
+cg env-config extras show
+cg env-config extras remove cuda
+```
+
+These defaults are stored in `pyproject.toml` under `tool.comfygit.sync.extras` and are applied on every
+sync (including `cg run` and `cg node add`). You can still add one-off extras with `cg sync --extra <name>`
+or install everything with `cg sync --all-extras`.
+
 #### Adding development dependencies
 
 Mark packages as development-only:

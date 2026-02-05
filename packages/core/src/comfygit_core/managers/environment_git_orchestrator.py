@@ -315,7 +315,13 @@ class EnvironmentGitOrchestrator:
         self.node_manager.reconcile_nodes_for_rollback(old_nodes, new_nodes)
 
         # Sync Python environment with PyTorch injection
-        self.uv.sync_project(all_groups=True, pytorch_manager=self.pytorch_manager)
+        extras, all_extras = self.pyproject.resolve_sync_extras(None, False)
+        self.uv.sync_project(
+            all_groups=True,
+            pytorch_manager=self.pytorch_manager,
+            extras=extras,
+            all_extras=all_extras,
+        )
 
         # Restore workflows
         self.workflow_manager.restore_all_from_cec(preserve_uncommitted=preserve_uncommitted)

@@ -62,13 +62,16 @@ cg delete [-h] [-y] name
 **Usage:**
 
 ```bash
-cg run [-h] [--no-sync] [--torch-backend BACKEND]
+cg run [-h] [--no-sync] [--torch-backend BACKEND] [--extra EXTRA]
+              [--all-extras]
 ```
 
 **Options:**
 
 - `--no-sync` - Skip environment sync before running (default: `False`)
 - `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
+- `--extra` - Install optional dependency extra (can be repeated)
+- `--all-extras` - Install all optional dependency extras (default: `False`)
 
 
 ## `status`
@@ -240,6 +243,156 @@ cg remote remove [-h] name
 ```bash
 cg remote list [-h]
 ```
+
+
+## `env-config`
+
+**Usage:**
+
+```bash
+cg env-config [-h] {torch-backend,local-sources,extras} ...
+```
+
+### Subcommands
+
+
+### `torch-backend`
+
+**Usage:**
+
+```bash
+cg env-config torch-backend [-h] {show,set,detect} ...
+```
+
+#### Subcommands
+
+
+#### `show`
+
+**Usage:**
+
+```bash
+cg env-config torch-backend show [-h]
+```
+
+
+#### `set`
+
+**Usage:**
+
+```bash
+cg env-config torch-backend set [-h] backend
+```
+
+**Arguments:**
+
+- `backend` - Backend to set (e.g., cu128, cpu, rocm6.3, xpu)
+
+
+#### `detect`
+
+**Usage:**
+
+```bash
+cg env-config torch-backend detect [-h]
+```
+
+
+### `local-sources`
+
+**Usage:**
+
+```bash
+cg env-config local-sources [-h] {show,add,remove} ...
+```
+
+#### Subcommands
+
+
+#### `show`
+
+**Usage:**
+
+```bash
+cg env-config local-sources show [-h]
+```
+
+
+#### `add`
+
+**Usage:**
+
+```bash
+cg env-config local-sources add [-h] --path PATH [--editable] package
+```
+
+**Arguments:**
+
+- `package` - Package name to override
+
+**Options:**
+
+- `--path` - Local path to package (absolute or relative) **[required]**
+- `--editable` - Install as editable (default: `False`)
+
+
+#### `remove`
+
+**Usage:**
+
+```bash
+cg env-config local-sources remove [-h] package
+```
+
+**Arguments:**
+
+- `package` - Package name to remove
+
+
+### `extras`
+
+**Usage:**
+
+```bash
+cg env-config extras [-h] {show,add,remove} ...
+```
+
+#### Subcommands
+
+
+#### `show`
+
+**Usage:**
+
+```bash
+cg env-config extras show [-h]
+```
+
+
+#### `add`
+
+**Usage:**
+
+```bash
+cg env-config extras add [-h] extras [extras ...]
+```
+
+**Arguments:**
+
+- `extras` - Extra name(s) to add (multiple values allowed)
+
+
+#### `remove`
+
+**Usage:**
+
+```bash
+cg env-config extras remove [-h] extras [extras ...]
+```
+
+**Arguments:**
+
+- `extras` - Extra name(s) to remove (multiple values allowed)
 
 
 ## `py`

@@ -339,6 +339,85 @@ class PyprojectManager:
         self.save(config)
         logger.info(f"Set manifest state to: {state}")
 
+    @staticmethod
+    def _normalize_extra(extra: str) -> str:
+        """Normalize optional extras for comparison."""
+        return extra.strip().lower().replace('_', '-')
+
+    def _dedupe_extras(self, extras: list[str]) -> list[str]:
+        """Normalize and deduplicate extras, preserving first-seen order."""
+        seen = set()
+        result = []
+        for extra in extras:
+            normalized = self._normalize_extra(extra)
+            if not normalized or normalized in seen:
+                continue
+            result.append(normalized)
+            seen.add(normalized)
+        return result
+
+    def get_sync_extras(self) -> list[str]:
+        """Get default optional extras to install during sync."""
+        config = self.load()
+        return list(
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("sync", {})
+            .get("extras", [])
+        )
+
+    def set_sync_extras(self, extras: list[str]) -> None:
+        """Set default optional extras to install during sync."""
+        normalized = self._dedupe_extras(extras)
+        config = self.load()
+        config.setdefault("tool", {})
+        config["tool"].setdefault("comfygit", {})
+
+        if normalized:
+            sync_config = config["tool"]["comfygit"].get("sync", {})
+            sync_config["extras"] = normalized
+            config["tool"]["comfygit"]["sync"] = sync_config
+        else:
+            sync_config = config["tool"]["comfygit"].get("sync", {})
+            if isinstance(sync_config, dict):
+                sync_config.pop("extras", None)
+                if not sync_config:
+                    config["tool"]["comfygit"].pop("sync", None)
+
+        self.save(config)
+
+    def add_sync_extra(self, extra: str) -> bool:
+        """Add a default sync extra (returns True if added)."""
+        current = self.get_sync_extras()
+        updated = self._dedupe_extras(current + [extra])
+        if updated == self._dedupe_extras(current):
+            return False
+        self.set_sync_extras(updated)
+        return True
+
+    def remove_sync_extra(self, extra: str) -> bool:
+        """Remove a default sync extra (returns True if removed)."""
+        target = self._normalize_extra(extra)
+        if not target:
+            return False
+        current = self.get_sync_extras()
+        updated = [e for e in current if self._normalize_extra(e) != target]
+        if updated == current:
+            return False
+        self.set_sync_extras(updated)
+        return True
+
+    def resolve_sync_extras(
+        self,
+        extras: list[str] | None,
+        all_extras: bool
+    ) -> tuple[list[str] | None, bool]:
+        """Merge default sync extras with explicit extras."""
+        if all_extras:
+            return None, True
+        merged = self._dedupe_extras(self.get_sync_extras() + (extras or []))
+        return (merged or None), False
+
     def snapshot(self) -> bytes:
         """Capture current pyproject.toml file contents for rollback.
 

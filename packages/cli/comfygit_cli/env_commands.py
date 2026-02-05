@@ -563,6 +563,56 @@ class EnvironmentCommands:
 
         print(f"✓ Removed local source: {args.package}")
 
+    @with_env_logging("env-config extras show")
+    def env_config_extras_show(self, args: argparse.Namespace, logger=None) -> None:
+        """Show default optional extras installed during sync."""
+        env = self._get_env(args)
+        extras = env.get_sync_extras()
+
+        if not extras:
+            print("No default sync extras configured")
+            return
+
+        print("Default sync extras:")
+        for extra in extras:
+            print(f"  • {extra}")
+
+    @with_env_logging("env-config extras add")
+    def env_config_extras_add(self, args: argparse.Namespace, logger=None) -> None:
+        """Add default optional extras to install during sync."""
+        env = self._get_env(args)
+        added = []
+        skipped = []
+
+        for extra in args.extras:
+            if env.add_sync_extra(extra):
+                added.append(extra)
+            else:
+                skipped.append(extra)
+
+        if added:
+            print(f"✓ Added default extras: {', '.join(added)}")
+        if skipped:
+            print(f"ℹ️  Already present: {', '.join(skipped)}")
+
+    @with_env_logging("env-config extras remove")
+    def env_config_extras_remove(self, args: argparse.Namespace, logger=None) -> None:
+        """Remove default optional extras from sync."""
+        env = self._get_env(args)
+        removed = []
+        missing = []
+
+        for extra in args.extras:
+            if env.remove_sync_extra(extra):
+                removed.append(extra)
+            else:
+                missing.append(extra)
+
+        if removed:
+            print(f"✓ Removed default extras: {', '.join(removed)}")
+        if missing:
+            print(f"ℹ️  Not configured: {', '.join(missing)}")
+
     @with_env_logging("run")
     def run(self, args: argparse.Namespace) -> None:
         """Run ComfyUI in the specified environment."""
@@ -570,6 +620,8 @@ class EnvironmentCommands:
         env = self._get_env(args)
         comfyui_args = args.args if hasattr(args, 'args') else []
         no_sync = getattr(args, 'no_sync', False)
+        extras = getattr(args, 'extra', None) or []
+        all_extras = getattr(args, 'all_extras', False)
 
         # Handle torch-backend: use override, read from file, or probe if missing
         torch_backend_override = getattr(args, 'torch_backend', None)
@@ -596,6 +648,8 @@ class EnvironmentCommands:
                     remove_extra_nodes=False,
                     backend_override=torch_backend_override if torch_backend_override else None,
                     verbose=True,
+                    extras=extras,
+                    all_extras=all_extras,
                 )
 
             print(f"🎮 Starting ComfyUI in environment: {env.name}{branch_display}")
@@ -1240,6 +1294,8 @@ class EnvironmentCommands:
     def node_add(self, args: argparse.Namespace, logger=None) -> None:
         """Add custom node(s) - directly modifies pyproject.toml."""
         env = self._get_env(args)
+        extras = getattr(args, 'extra', None) or []
+        all_extras = getattr(args, 'all_extras', False)
 
         # Batch mode: multiple nodes
         if len(args.node_names) > 1:
@@ -1264,7 +1320,9 @@ class EnvironmentCommands:
             # Install nodes with progress feedback
             installed_count, failed_nodes = env.install_nodes_with_progress(
                 args.node_names,
-                callbacks=callbacks
+                callbacks=callbacks,
+                extras=extras,
+                all_extras=all_extras,
             )
 
             if installed_count > 0:
@@ -1299,6 +1357,8 @@ class EnvironmentCommands:
                 force=args.force,
                 confirmation_strategy=confirmation_strategy,
                 strict=getattr(args, "strict", False),
+                extras=extras,
+                all_extras=all_extras,
             )
         except CDRegistryDataError as e:
             # Registry data unavailable

@@ -389,10 +389,13 @@ class StatusScanner:
         try:
             # Use UV's dry-run to check if sync would change anything
             # PyTorch injection ensures the check uses the correct backend
+            extras, all_extras = self._pyproject.resolve_sync_extras(None, False)
             self._uv.sync_project(
                 dry_run=True,
                 all_groups=True,
-                pytorch_manager=self._pytorch_manager
+                pytorch_manager=self._pytorch_manager,
+                extras=extras,
+                all_extras=all_extras,
             )
             return PackageSyncStatus(
                 in_sync=True, message="Packages match pyproject.toml"

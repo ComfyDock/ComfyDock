@@ -473,6 +473,37 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_local_sources_remove_parser.add_argument("package", help="Package name to remove")
     env_config_local_sources_remove_parser.set_defaults(func=env_cmds.env_config_local_sources_remove)
 
+    # env-config extras - Manage default optional extras for sync
+    env_config_extras_parser = env_config_subparsers.add_parser(
+        "extras",
+        help="Manage default optional extras for sync"
+    )
+    env_config_extras_subparsers = env_config_extras_parser.add_subparsers(
+        dest="extras_command",
+        help="Extras commands"
+    )
+    env_config_extras_parser.set_defaults(func=_make_help_func(env_config_extras_parser))
+
+    # env-config extras show
+    env_config_extras_show_parser = env_config_extras_subparsers.add_parser(
+        "show", help="Show default sync extras"
+    )
+    env_config_extras_show_parser.set_defaults(func=env_cmds.env_config_extras_show)
+
+    # env-config extras add <extra>
+    env_config_extras_add_parser = env_config_extras_subparsers.add_parser(
+        "add", help="Add a default sync extra"
+    )
+    env_config_extras_add_parser.add_argument("extras", nargs="+", help="Extra name(s) to add")
+    env_config_extras_add_parser.set_defaults(func=env_cmds.env_config_extras_add)
+
+    # env-config extras remove <extra>
+    env_config_extras_remove_parser = env_config_extras_subparsers.add_parser(
+        "remove", help="Remove a default sync extra"
+    )
+    env_config_extras_remove_parser.add_argument("extras", nargs="+", help="Extra name(s) to remove")
+    env_config_extras_remove_parser.set_defaults(func=env_cmds.env_config_extras_remove)
+
     # run - Run ComfyUI (special handling for ComfyUI args)
     run_parser = subparsers.add_parser("run", help="Run ComfyUI")
     run_parser.add_argument("--no-sync", action="store_true", help="Skip environment sync before running")
@@ -485,6 +516,16 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
             "cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). "
             "Reads from .pytorch-backend file if not specified."
         ),
+    )
+    run_parser.add_argument(
+        "--extra",
+        action="append",
+        help="Install optional dependency extra (can be repeated)"
+    )
+    run_parser.add_argument(
+        "--all-extras",
+        action="store_true",
+        help="Install all optional dependency extras"
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 
@@ -727,6 +768,16 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     node_add_parser.add_argument("--force", action="store_true", help="Force overwrite existing directory")
     node_add_parser.add_argument("--verbose", "-v", action="store_true", help="Show full UV error output for dependency conflicts")
     node_add_parser.add_argument("--strict", action="store_true", help="Fail on dependency conflicts instead of auto-resolving")
+    node_add_parser.add_argument(
+        "--extra",
+        action="append",
+        help="Install optional dependency extra during sync (can be repeated)"
+    )
+    node_add_parser.add_argument(
+        "--all-extras",
+        action="store_true",
+        help="Install all optional dependency extras during sync"
+    )
     node_add_parser.set_defaults(func=env_cmds.node_add)
 
     # node remove

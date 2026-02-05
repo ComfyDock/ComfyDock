@@ -274,10 +274,13 @@ class EnvironmentFactory:
         _progress("install_dependencies", "Installing PyTorch and dependencies", 40)
         logger.info(f"Installing dependencies with PyTorch backend: {resolved_backend}")
 
+        extras, all_extras = env.pyproject.resolve_sync_extras(None, False)
         env.uv_manager.sync_project(
             verbose=True,
             pytorch_manager=env.pytorch_manager,
             all_groups=True,
+            extras=extras,
+            all_extras=all_extras,
         )
 
         _complete("install_dependencies")
