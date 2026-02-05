@@ -41,7 +41,7 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 |--------|---------|--------------|
 | **core/** | Public API | Workspace (multi-env), Environment (single env) |
 | **models/** | Type safety | Data classes, protocols, exceptions with context |
-| **managers/** | Orchestration | Node, Workflow, Git, Model, PyProject operations |
+| **managers/** | Orchestration | Environment orchestrators (Git, Model), Resource managers (Node, Workflow, Model symlinks), Config managers (PyProject, UV, PyTorch backend) |
 | **analyzers/** | Analysis | Parse workflows/git/status; classify nodes |
 | **resolvers/** | Resolution | Map workflow nodes to packages; resolve model sources |
 | **services/** | Business logic | Lookup, registry, downloads, import analysis |
@@ -56,8 +56,9 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 
 **Library Design**
 - No print/input - all UI through callback protocols (NodeResolutionStrategy, ConfirmationStrategy)
-- Immutable managers - stateless for testability and composability
+- Stateful service managers - encapsulate domain operations with filesystem state
 - Protocol-based plugins - strategies injected via constructor
+- Concurrency control - environment-level operation locks prevent concurrent mutations
 
 **Data Flow**
 - Environment → Managers → Services/Analyzers → Repositories → External APIs
@@ -75,16 +76,21 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 - `Workspace.create()` - Create new workspace with validation
 - `Workspace.environments()` / `get_environment()` - List/get environments
 - `WorkspaceFactory.find()` - Discover existing workspace from environment variables
+- `Workspace.get_schema_version()` / `is_legacy_schema()` - Check workspace version
+- `Workspace.upgrade_schema_if_needed()` - Migrate to current schema
 
 **Environment Operations:**
 - `Environment.add_node()` / `remove_node()` - Install/uninstall custom nodes
 - `Environment.add_model()` - Download and install models
-- `Environment.sync_workflow()` - Install dependencies for workflow
+- `Environment.sync()` - Synchronize packages, nodes, workflows, and models
 - `Environment.export()` - Bundle for portability
+- `Environment.preview_pull()` / `preview_merge()` - Preview changes before merge
+- `Environment.validate_merge()` / `execute_atomic_merge()` - Semantic merge with rollback
 
 **Resolution:**
-- `GlobalNodeResolver.resolve_workflow_nodes()` - Map unknown nodes to packages
-- `ModelResolver.resolve_reference()` - Find model download source
+- `GlobalNodeResolver.resolve_single_node_with_context()` - Enhanced node resolution with context
+- `GlobalNodeResolver.search_packages()` - Fuzzy search with heuristic boosting
+- `ModelResolver.resolve_model()` - Resolve model sources using multiple strategies
 
 ## Dependencies
 

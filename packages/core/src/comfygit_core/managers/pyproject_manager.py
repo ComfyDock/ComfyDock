@@ -21,6 +21,7 @@ from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyp
 if TYPE_CHECKING:
     from ..models.shared import NodeInfo
     from .pytorch_backend_manager import PyTorchBackendManager
+    from .local_uv_config_manager import LocalUVConfigManager
 
 from ..utils.dependency_parser import parse_dependency_string
 
@@ -338,6 +339,85 @@ class PyprojectManager:
         self.save(config)
         logger.info(f"Set manifest state to: {state}")
 
+    @staticmethod
+    def _normalize_extra(extra: str) -> str:
+        """Normalize optional extras for comparison."""
+        return extra.strip().lower().replace('_', '-')
+
+    def _dedupe_extras(self, extras: list[str]) -> list[str]:
+        """Normalize and deduplicate extras, preserving first-seen order."""
+        seen = set()
+        result = []
+        for extra in extras:
+            normalized = self._normalize_extra(extra)
+            if not normalized or normalized in seen:
+                continue
+            result.append(normalized)
+            seen.add(normalized)
+        return result
+
+    def get_sync_extras(self) -> list[str]:
+        """Get default optional extras to install during sync."""
+        config = self.load()
+        return list(
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("sync", {})
+            .get("extras", [])
+        )
+
+    def set_sync_extras(self, extras: list[str]) -> None:
+        """Set default optional extras to install during sync."""
+        normalized = self._dedupe_extras(extras)
+        config = self.load()
+        config.setdefault("tool", {})
+        config["tool"].setdefault("comfygit", {})
+
+        if normalized:
+            sync_config = config["tool"]["comfygit"].get("sync", {})
+            sync_config["extras"] = normalized
+            config["tool"]["comfygit"]["sync"] = sync_config
+        else:
+            sync_config = config["tool"]["comfygit"].get("sync", {})
+            if isinstance(sync_config, dict):
+                sync_config.pop("extras", None)
+                if not sync_config:
+                    config["tool"]["comfygit"].pop("sync", None)
+
+        self.save(config)
+
+    def add_sync_extra(self, extra: str) -> bool:
+        """Add a default sync extra (returns True if added)."""
+        current = self.get_sync_extras()
+        updated = self._dedupe_extras(current + [extra])
+        if updated == self._dedupe_extras(current):
+            return False
+        self.set_sync_extras(updated)
+        return True
+
+    def remove_sync_extra(self, extra: str) -> bool:
+        """Remove a default sync extra (returns True if removed)."""
+        target = self._normalize_extra(extra)
+        if not target:
+            return False
+        current = self.get_sync_extras()
+        updated = [e for e in current if self._normalize_extra(e) != target]
+        if updated == current:
+            return False
+        self.set_sync_extras(updated)
+        return True
+
+    def resolve_sync_extras(
+        self,
+        extras: list[str] | None,
+        all_extras: bool
+    ) -> tuple[list[str] | None, bool]:
+        """Merge default sync extras with explicit extras."""
+        if all_extras:
+            return None, True
+        merged = self._dedupe_extras(self.get_sync_extras() + (extras or []))
+        return (merged or None), False
+
     def snapshot(self) -> bytes:
         """Capture current pyproject.toml file contents for rollback.
 
@@ -378,10 +458,35 @@ class PyprojectManager:
         Yields:
             None - the context manager just handles inject/restore
         """
+        return self.uv_injection_context(
+            pytorch_manager=pytorch_manager,
+            backend_override=backend_override,
+        )
+
+    def uv_injection_context(
+        self,
+        pytorch_manager: PyTorchBackendManager | None = None,
+        local_uv_config_manager: LocalUVConfigManager | None = None,
+        backend_override: str | None = None,
+    ):
+        """Context manager that temporarily injects UV config during sync.
+
+        Supports PyTorch backend config and machine-specific local UV overrides.
+        """
         from contextlib import contextmanager
 
         @contextmanager
         def _injection_context():
+            local_uv_config = None
+            if local_uv_config_manager:
+                candidate = local_uv_config_manager.get_uv_config()
+                if candidate and any(candidate.get(k) for k in ("indexes", "sources", "constraints")):
+                    local_uv_config = candidate
+
+            if not pytorch_manager and not local_uv_config:
+                yield
+                return
+
             # Capture original content before any modifications
             original_content = self.path.read_text()
             effective_backend = backend_override or "unknown"
@@ -391,26 +496,32 @@ class PyprojectManager:
                 config = self.load()
                 python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
 
-                # Get PyTorch config from manager
-                pytorch_config = pytorch_manager.get_pytorch_config(
-                    backend_override=backend_override,
-                    python_version=python_version,
-                )
+                # Inject local UV config first (PyTorch should win on conflicts)
+                if local_uv_config:
+                    self._inject_local_uv_config(config, local_uv_config)
+                    logger.debug("Injected local UV config from .local-uv-config")
 
-                # Load current config and inject PyTorch settings
-                config = self.load()
-                self._inject_pytorch_config(config, pytorch_config)
+                # Inject PyTorch config
+                if pytorch_manager:
+                    pytorch_config = pytorch_manager.get_pytorch_config(
+                        backend_override=backend_override,
+                        python_version=python_version,
+                    )
+                    self._inject_pytorch_config(config, pytorch_config)
+                    effective_backend = backend_override or pytorch_manager.get_backend()
+                    logger.debug(f"Injected PyTorch config for backend: {effective_backend}")
+
                 self.save(config)
-
-                effective_backend = backend_override or pytorch_manager.get_backend()
-                logger.debug(f"Injected PyTorch config for backend: {effective_backend}")
 
                 yield
 
             except Exception:
                 # Log full injected config for debugging on failure
-                logger.error("=== PyTorch Sync Failure ===")
-                logger.error(f"Backend: {effective_backend}")
+                logger.error("=== UV Sync Failure ===")
+                if pytorch_manager:
+                    logger.error(f"PyTorch backend: {effective_backend}")
+                if local_uv_config:
+                    logger.error("Local UV config: .local-uv-config")
                 try:
                     logger.error(f"Injected config:\n{self.path.read_text()}")
                 except Exception:
@@ -423,9 +534,22 @@ class PyprojectManager:
                 # Invalidate cache to ensure fresh reads
                 self._config_cache = None
                 self._cache_mtime = None
-                logger.debug("Restored original pyproject.toml after PyTorch injection")
+                logger.debug("Restored original pyproject.toml after UV injection")
 
         return _injection_context()
+
+    def strip_local_path_sources(self, config: dict | None = None) -> list[str]:
+        """Remove uv sources with local filesystem paths.
+
+        Returns list of removed package names.
+        """
+        config_to_use = config or self.load()
+        removed = self._strip_local_path_sources_from_config(config_to_use)
+
+        if removed and config is None:
+            self.save(config_to_use)
+
+        return removed
 
     def strip_pytorch_config(self) -> None:
         """Remove PyTorch-specific configuration from pyproject.toml.
@@ -559,7 +683,20 @@ class PyprojectManager:
         """
         from ..constants import PYTORCH_CORE_PACKAGES
 
-        # FIRST: Strip any existing PyTorch config (handles polluted commits)
+        self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
+        self._inject_uv_config(config, pytorch_config)
+
+    def _inject_local_uv_config(self, config: dict, local_uv_config: dict) -> None:
+        """Inject local UV config from .local-uv-config."""
+        if not local_uv_config:
+            return
+
+        # Strip any local path sources from tracked config before injecting
+        self._strip_local_path_sources_from_config(config)
+        self._inject_uv_config(config, local_uv_config)
+
+    def _strip_pytorch_config_from_config(self, config: dict, pytorch_packages: set[str]) -> None:
+        """Strip PyTorch uv config from an in-memory config dict."""
         if 'tool' in config and 'uv' in config['tool']:
             uv_config = config['tool']['uv']
 
@@ -575,7 +712,7 @@ class PyprojectManager:
             # Remove PyTorch sources
             if 'sources' in uv_config:
                 sources = uv_config['sources']
-                for pkg in PYTORCH_CORE_PACKAGES:
+                for pkg in pytorch_packages:
                     sources.pop(pkg, None)
 
             # Remove PyTorch constraints
@@ -584,10 +721,53 @@ class PyprojectManager:
                 if isinstance(constraints, list):
                     uv_config['constraint-dependencies'] = [
                         c for c in constraints
-                        if not any(pkg in c for pkg in PYTORCH_CORE_PACKAGES)
+                        if not any(pkg in c for pkg in pytorch_packages)
                     ]
 
-        # THEN: Inject the correct config
+    def _strip_local_path_sources_from_config(self, config: dict) -> list[str]:
+        """Remove uv sources with local filesystem paths from a config dict."""
+        uv_config = config.get('tool', {}).get('uv', {})
+        sources = uv_config.get('sources', {})
+
+        if not sources:
+            return []
+
+        def is_local_source(value: object) -> bool:
+            if isinstance(value, dict):
+                return "path" in value
+            if isinstance(value, list):
+                return any(is_local_source(item) for item in value)
+            return False
+
+        to_remove = []
+        for pkg_name, source_config in list(sources.items()):
+            if is_local_source(source_config):
+                to_remove.append(pkg_name)
+                sources.pop(pkg_name, None)
+
+        if not to_remove:
+            return []
+
+        # Clean up empty sections (safe for tomlkit containers)
+        def safe_del(container: dict, key: str) -> None:
+            try:
+                del container[key]
+            except (KeyError, Exception):
+                pass
+
+        if not sources:
+            safe_del(uv_config, 'sources')
+
+        if not uv_config:
+            safe_del(config.get('tool', {}), 'uv')
+
+        return to_remove
+
+    def _inject_uv_config(self, config: dict, uv_config_payload: dict) -> None:
+        """Inject uv config (indexes, sources, constraints) into config."""
+        if not uv_config_payload:
+            return
+
         # Ensure tool.uv section exists
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
@@ -601,21 +781,30 @@ class PyprojectManager:
         if not isinstance(existing_indexes, list):
             existing_indexes = [existing_indexes] if existing_indexes else []
 
-        for new_index in pytorch_config.get('indexes', []):
-            # Check if index already exists by name
-            exists = any(
-                idx.get('name') == new_index['name']
-                for idx in existing_indexes
-            )
-            if not exists:
-                # Create tomlkit table for proper formatting
-                index_table = tomlkit.table()
-                index_table['name'] = new_index['name']
-                index_table['url'] = new_index['url']
-                index_table['explicit'] = new_index.get('explicit', True)
+        new_indexes = uv_config_payload.get('indexes', [])
+        if new_indexes and not isinstance(new_indexes, list):
+            new_indexes = [new_indexes]
+
+        for new_index in new_indexes:
+            if not new_index:
+                continue
+
+            # Create tomlkit table for proper formatting
+            index_table = tomlkit.table()
+            for k, v in new_index.items():
+                index_table[k] = v
+
+            name = new_index.get('name')
+            updated = False
+            if name:
+                for i, existing in enumerate(existing_indexes):
+                    if existing.get('name') == name:
+                        existing_indexes[i] = index_table
+                        updated = True
+                        break
+            if not updated:
                 existing_indexes.append(index_table)
 
-        # Use array-of-tables format
         if existing_indexes:
             aot = tomlkit.aot()
             for idx in existing_indexes:
@@ -632,18 +821,36 @@ class PyprojectManager:
         if 'sources' not in uv_config:
             uv_config['sources'] = tomlkit.table()
 
-        for package_name, source in pytorch_config.get('sources', {}).items():
-            # Always set/overwrite sources (we've already stripped old ones)
+        for package_name, source in uv_config_payload.get('sources', {}).items():
             uv_config['sources'][package_name] = source
 
         # Inject constraints (if any)
-        constraints = pytorch_config.get('constraints', [])
+        constraints = uv_config_payload.get('constraints', [])
         if constraints:
             existing_constraints = uv_config.get('constraint-dependencies', [])
+            if not isinstance(existing_constraints, list):
+                existing_constraints = list(existing_constraints) if existing_constraints else []
+
+            # Remove constraints for packages we're about to inject
+            new_constraint_pkgs = {
+                parse_dependency_string(constraint)[0].lower()
+                for constraint in constraints
+            }
+            filtered = []
+            for existing in existing_constraints:
+                try:
+                    pkg_name = parse_dependency_string(existing)[0].lower()
+                except Exception:
+                    pkg_name = ""
+                if pkg_name and pkg_name in new_constraint_pkgs:
+                    continue
+                filtered.append(existing)
+
             for constraint in constraints:
-                if constraint not in existing_constraints:
-                    existing_constraints.append(constraint)
-            uv_config['constraint-dependencies'] = existing_constraints
+                if constraint not in filtered:
+                    filtered.append(constraint)
+
+            uv_config['constraint-dependencies'] = filtered
 
 
 class BaseHandler:
@@ -833,6 +1040,24 @@ class UVConfigHandler(BaseHandler):
 
         config['tool']['uv']['constraint-dependencies'] = constraints
         self.save(config)
+
+    def add_no_build_isolation_package(self, package_name: str) -> None:
+        """Add package to no-build-isolation-package list."""
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        packages = config['tool']['uv'].get('no-build-isolation-package', [])
+        if not isinstance(packages, list):
+            packages = [packages] if packages else []
+
+        normalized = package_name.lower().replace('_', '-')
+        existing = {p.lower().replace('_', '-') for p in packages}
+
+        if normalized not in existing:
+            packages.append(normalized)
+            config['tool']['uv']['no-build-isolation-package'] = packages
+            self.save(config)
+            logger.info(f"Added no-build-isolation package: {normalized}")
 
     def remove_constraint(self, package_name: str) -> bool:
         """Remove a constraint dependency from [tool.uv]."""
@@ -1726,4 +1951,3 @@ class ModelHandler(BaseHandler):
                 self.save(config)
 
             logger.info(f"Cleaned up {len(orphaned_hashes)} orphaned model(s)")
-

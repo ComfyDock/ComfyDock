@@ -19,7 +19,8 @@ cg node [-h] {add,remove,prune,list,update} ...
 **Usage:**
 
 ```bash
-cg node add [-h] [--dev] [--no-test] [--force] [--verbose]
+cg node add [-h] [--dev] [--no-test] [--force] [--verbose] [--strict]
+                   [--extra EXTRA] [--all-extras]
                    node_names [node_names ...]
 ```
 
@@ -33,6 +34,9 @@ cg node add [-h] [--dev] [--no-test] [--force] [--verbose]
 - `--no-test` - Don't test resolution (default: `False`)
 - `--force` - Force overwrite existing directory (default: `False`)
 - `--verbose, -v` - Show full UV error output for dependency conflicts (default: `False`)
+- `--strict` - Fail on dependency conflicts instead of auto-resolving (default: `False`)
+- `--extra` - Install optional dependency extra during sync (can be repeated)
+- `--all-extras` - Install all optional dependency extras during sync (default: `False`)
 
 
 ### `remove`
@@ -40,7 +44,7 @@ cg node add [-h] [--dev] [--no-test] [--force] [--verbose]
 **Usage:**
 
 ```bash
-cg node remove [-h] [--dev] node_names [node_names ...]
+cg node remove [-h] [--dev] [--untrack] node_names [node_names ...]
 ```
 
 **Arguments:**
@@ -50,6 +54,7 @@ cg node remove [-h] [--dev] node_names [node_names ...]
 **Options:**
 
 - `--dev` - Remove development node specifically (default: `False`)
+- `--untrack` - Only remove from tracking, leave filesystem unchanged (default: `False`)
 
 
 ### `prune`

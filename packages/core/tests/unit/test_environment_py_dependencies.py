@@ -43,8 +43,10 @@ class TestAddDependencies:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
         assert result["output"] == "Added: requests"
         assert result["substitutions"] == {}
@@ -62,8 +64,10 @@ class TestAddDependencies:
             upgrade=False,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
         assert result["output"] == "Added: 3 packages"
 
@@ -79,8 +83,10 @@ class TestAddDependencies:
             upgrade=True,
             group=None,
             dev=False,
+            optional=None,
             editable=False,
-            bounds=None
+            bounds=None,
+            no_build_isolation=False
         )
         assert result["output"] == "Upgraded: requests"
 

@@ -58,6 +58,24 @@ class NodeManager:
         self.pytorch_manager = pytorch_manager
         self.package_config = package_config
 
+    def _resolve_sync_extras(
+        self,
+        extras: list[str] | None,
+        all_extras: bool
+    ) -> tuple[list[str] | None, bool]:
+        resolver = getattr(self.pyproject, "resolve_sync_extras", None)
+        if callable(resolver):
+            resolved = resolver(extras, all_extras)
+            if isinstance(resolved, tuple) and len(resolved) == 2:
+                return resolved
+        return extras, all_extras
+
+    def _sync_uv(self, **kwargs) -> None:
+        extras = kwargs.pop("extras", None)
+        all_extras = kwargs.pop("all_extras", False)
+        resolved_extras, resolved_all = self._resolve_sync_extras(extras, all_extras)
+        self.uv.sync_project(extras=resolved_extras, all_extras=resolved_all, **kwargs)
+
     def _find_node_by_name(self, name: str) -> tuple[str, NodeInfo] | None:
         """Find a node by name across all identifiers (case-insensitive).
 
@@ -125,7 +143,7 @@ class NodeManager:
             self.add_node_package(node_package)
 
             # STEP 3: Environment sync (quiet - users see our high-level messages)
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
         except Exception as e:
             # === ROLLBACK ===
@@ -148,7 +166,7 @@ class NodeManager:
 
             # 3. Re-sync venv to match restored pyproject.toml
             try:
-                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
             except Exception as sync_err:
                 logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
                 logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
@@ -229,6 +247,8 @@ class NodeManager:
         force: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
         strict: bool = False,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -239,6 +259,8 @@ class NodeManager:
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
             strict: If True, fail on dependency conflicts instead of auto-resolving
+            extras: Optional list of extras to install during sync
+            all_extras: Install all optional extras during sync
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -445,7 +467,13 @@ class NodeManager:
                         rmtree(disabled_path)
                     shutil.move(target_path, disabled_path)
                 self.pyproject.nodes.remove(existing_identifier)
-                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(
+                    quiet=True,
+                    all_groups=True,
+                    pytorch_manager=self.pytorch_manager,
+                    extras=extras,
+                    all_extras=all_extras,
+                )
 
             # STEP 0b: Apply auto-discovered constraints (transactional)
             for constraint in discovered_constraints:
@@ -461,7 +489,13 @@ class NodeManager:
             self.add_node_package(node_package)
 
             # STEP 3: Environment sync (quiet - users see our high-level messages)
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            self._sync_uv(
+                quiet=True,
+                all_groups=True,
+                pytorch_manager=self.pytorch_manager,
+                extras=extras,
+                all_extras=all_extras,
+            )
 
         except Exception as e:
             # === ROLLBACK ===
@@ -492,7 +526,13 @@ class NodeManager:
 
             # 4. Re-sync venv to match restored pyproject.toml
             try:
-                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(
+                    quiet=True,
+                    all_groups=True,
+                    pytorch_manager=self.pytorch_manager,
+                    extras=extras,
+                    all_extras=all_extras,
+                )
             except Exception as sync_err:
                 logger.error(f"Failed to re-sync environment after rollback: {sync_err}")
                 logger.error("Environment may be inconsistent. Run 'cg env sync' to repair.")
@@ -603,7 +643,7 @@ class NodeManager:
             self.pyproject.uv_config.cleanup_orphaned_sources(removed_sources)
 
         # Sync Python environment to remove orphaned packages (quiet - users see our high-level messages)
-        self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+        self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
         logger.info(f"Removed node '{actual_identifier}' from tracking")
 
@@ -1286,7 +1326,7 @@ class NodeManager:
 
         # Sync Python environment to apply requirement changes
         if reqs_changed:
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
         logger.info(f"Updated dev node '{node_info.name}': {result.message}")
         return result
@@ -1344,7 +1384,7 @@ class NodeManager:
 
             # STEP 2: Remove old node from tracking
             self.pyproject.nodes.remove(identifier)
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
             # STEP 3: Get complete version data with downloadUrl from install endpoint
             complete_version = self.node_lookup.registry_client.install_node(
@@ -1396,7 +1436,7 @@ class NodeManager:
 
             # 4. Sync environment to restore old dependencies
             try:
-                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
             except Exception:
                 pass  # Best effort
 
@@ -1466,7 +1506,7 @@ class NodeManager:
 
             # STEP 2: Remove old node from tracking
             self.pyproject.nodes.remove(identifier)
-            self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+            self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
             # STEP 3: Create fresh node info from GitHub API response
             fresh_node_info = NodeInfo(
@@ -1513,7 +1553,7 @@ class NodeManager:
 
             # 4. Sync environment to restore old dependencies
             try:
-                self.uv.sync_project(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
             except Exception:
                 pass  # Best effort
 

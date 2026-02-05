@@ -51,6 +51,7 @@ if TYPE_CHECKING:
         SyncCallbacks,
     )
 
+    from ..managers.local_uv_config_manager import LocalUVConfigManager
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
@@ -136,6 +137,12 @@ class Environment:
         return PyTorchBackendManager(self.cec_path)
 
     @cached_property
+    def local_uv_config(self) -> "LocalUVConfigManager":
+        """Manager for machine-specific UV config overrides (.local-uv-config)."""
+        from ..managers.local_uv_config_manager import LocalUVConfigManager
+        return LocalUVConfigManager(self.cec_path)
+
+    @cached_property
     def node_lookup(self) -> NodeLookupService:
         from ..services.node_lookup_service import NodeLookupService
         return NodeLookupService(
@@ -152,6 +159,18 @@ class Environment:
         """Get package configuration manager for substitutions and exclusions."""
         from ..configs.package_config import PackageConfigManager
         return PackageConfigManager(self.cec_path)
+
+    def get_sync_extras(self) -> list[str]:
+        """Get default optional extras installed during sync."""
+        return self.pyproject.get_sync_extras()
+
+    def add_sync_extra(self, extra: str) -> bool:
+        """Add a default optional extra (returns True if added)."""
+        return self.pyproject.add_sync_extra(extra)
+
+    def remove_sync_extra(self, extra: str) -> bool:
+        """Remove a default optional extra (returns True if removed)."""
+        return self.pyproject.remove_sync_extra(extra)
 
     @cached_property
     def node_manager(self) -> NodeManager:
@@ -565,6 +584,8 @@ class Environment:
         verbose: bool = False,
         preserve_workflows: bool = False,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> SyncResult:
         """Apply changes: sync packages, nodes, workflows, and models with environment.
 
@@ -579,6 +600,8 @@ class Environment:
                                Use True for runtime restarts (exit code 42) to keep user edits.
                                Use False (default) for git operations and repairs.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
 
         Returns:
             SyncResult with details of what was synced
@@ -601,6 +624,8 @@ class Environment:
             self.package_config.exclude_packages
         )
 
+        extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
+
         logger.info("Syncing environment...")
 
         # Sync packages with UV - progressive installation with PyTorch injection
@@ -611,6 +636,8 @@ class Environment:
                 verbose=verbose,
                 pytorch_manager=self.pytorch_manager,
                 backend_override=backend_override,
+                extras=extras,
+                all_extras=all_extras,
             )
             result.packages_synced = sync_result["packages_synced"]
             result.dependency_groups_installed.extend(sync_result["dependency_groups_installed"])
@@ -1277,6 +1304,8 @@ class Environment:
         force: bool = False,
         confirmation_strategy: ConfirmationStrategy | None = None,
         strict: bool = False,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1287,6 +1316,8 @@ class Environment:
             force: Force replacement of existing nodes
             confirmation_strategy: Strategy for confirming replacements
             strict: If True, fail on dependency conflicts instead of auto-resolving
+            extras: Optional list of extras to install during sync
+            all_extras: Install all optional extras during sync
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -1300,19 +1331,25 @@ class Environment:
             force=force,
             confirmation_strategy=confirmation_strategy,
             strict=strict,
+            extras=extras,
+            all_extras=all_extras,
         )
 
     @_requires_env_lock
     def install_nodes_with_progress(
         self,
         node_ids: list[str],
-        callbacks: NodeInstallCallbacks | None = None
+        callbacks: NodeInstallCallbacks | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Install multiple nodes with callback support for progress tracking.
 
         Args:
             node_ids: List of node identifiers to install
             callbacks: Optional callbacks for progress feedback
+            extras: Optional list of extras to install during sync
+            all_extras: Install all optional extras during sync
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1332,7 +1369,7 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.add_node(node_id)
+                self.add_node(node_id, extras=extras, all_extras=all_extras)
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)
@@ -1777,8 +1814,10 @@ class Environment:
         upgrade: bool = False,
         group: str | None = None,
         dev: bool = False,
+        optional: str | None = None,
         editable: bool = False,
-        bounds: str | None = None
+        bounds: str | None = None,
+        no_build_isolation: bool = False
     ) -> dict:
         """Add Python dependencies to the environment.
 
@@ -1792,8 +1831,10 @@ class Environment:
             upgrade: Whether to upgrade existing packages
             group: Dependency group name (e.g., 'optional-cuda')
             dev: Add to dev dependencies
+            optional: Optional dependency extra name (project.optional-dependencies)
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
+            no_build_isolation: Disable build isolation for specified packages
 
         Returns:
             Dict with:
@@ -1833,8 +1874,10 @@ class Environment:
             upgrade=upgrade,
             group=group,
             dev=dev,
+            optional=optional,
             editable=editable,
-            bounds=bounds
+            bounds=bounds,
+            no_build_isolation=no_build_isolation
         )
 
         return {"output": output, "substitutions": substitutions}
@@ -2386,26 +2429,9 @@ class Environment:
         These paths don't exist on other machines and cause sync failures.
         This method removes any source entries that use local paths.
         """
-        config = self.pyproject.load()
-        sources = config.get("tool", {}).get("uv", {}).get("sources", {})
-
-        if not sources:
-            return
-
-        # Find sources with local paths (not URLs)
-        to_remove = []
-        for pkg_name, source_config in sources.items():
-            if isinstance(source_config, dict) and "path" in source_config:
-                path_value = source_config["path"]
-                # Local paths don't start with http:// or https://
-                if isinstance(path_value, str) and not path_value.startswith(("http://", "https://")):
-                    to_remove.append(pkg_name)
-                    logger.info(f"Stripping local path source: {pkg_name} -> {path_value}")
-
-        if to_remove:
-            for pkg_name in to_remove:
-                del sources[pkg_name]
-            self.pyproject.save(config)
+        removed = self.pyproject.strip_local_path_sources()
+        for pkg_name in removed:
+            logger.info(f"Stripped local path source: {pkg_name}")
 
     def _untrack_uvlock_if_tracked(self) -> None:
         """Untrack uv.lock if it was previously tracked in git.

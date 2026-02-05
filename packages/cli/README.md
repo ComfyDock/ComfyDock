@@ -18,9 +18,9 @@ See the [root README](../../README.md#installation) for installation instruction
 
 TL;DR:
 ```bash
-uv tool install comfydock-cli
+uv tool install comfygit
 # or
-pip install comfydock-cli
+pip install comfygit
 ```
 
 ## CLI-Specific Features
@@ -106,7 +106,7 @@ This only happens when the CLI can't automatically resolve dependencies. Most of
 Every command is logged to environment-specific files:
 
 ```
-~/comfydock/
+~/comfygit/
 └── logs/
     ├── production/
     │   ├── full.log        # All operations in 'production'
@@ -256,6 +256,22 @@ Commands that operate IN environments (require `-e` or active environment):
 # Run ComfyUI
 cg run [COMFYUI_ARGS...]
   --no-sync            Skip environment sync before running
+  --extra EXTRA        Install optional dependency extra (can be repeated)
+  --all-extras         Install all optional dependency extras
+  --                   Pass remaining args to ComfyUI
+
+# Environment config (per environment)
+cg env-config torch-backend show
+cg env-config torch-backend set <backend>
+cg env-config torch-backend detect
+
+cg env-config local-sources show
+cg env-config local-sources add <package> --path /local/path [--editable]
+cg env-config local-sources remove <package>
+
+cg env-config extras show
+cg env-config extras add <extra> [extra...]
+cg env-config extras remove <extra> [extra...]
 
 # View debug logs
 cg debug
@@ -327,6 +343,8 @@ cg node add IDENTIFIER [IDENTIFIER...]
   --dev                Track existing directory as development node
   --no-test            Skip dependency resolution test
   --force              Force overwrite existing directory
+  --extra EXTRA        Install optional dependency extra during sync (can be repeated)
+  --all-extras         Install all optional dependency extras during sync
 
 # Remove custom node
 cg node remove IDENTIFIER [IDENTIFIER...]
@@ -361,6 +379,12 @@ cg workflow resolve NAME
 cg py add [PACKAGE...]
   -r, --requirements FILE  Add from requirements.txt
   --upgrade                Upgrade existing packages
+  --group GROUP            Add to dependency group
+  --dev                    Add to dev dependencies
+  --optional EXTRA         Add to optional dependency extra
+  --editable               Install as editable
+  --bounds MODE            Version specifier style (lower/major/minor/exact)
+  --no-build-isolation     Build without isolation (for CUDA packages needing PyTorch at build time)
 
 # Remove Python package
 cg py remove PACKAGE [PACKAGE...]
@@ -532,7 +556,7 @@ cg debug --workspace
 
 **Log locations:**
 ```
-~/comfydock/logs/
+~/comfygit/logs/
 ├── <env-name>/
 │   ├── full.log        # Current log
 │   ├── full.log.1      # First rotation
@@ -604,10 +628,10 @@ cg init
 
 ## For Library Users
 
-If you want programmatic access without the CLI, use `comfydock-core` directly:
+If you want programmatic access without the CLI, use `comfygit-core` directly:
 
 ```python
-from comfydock_core.factories.workspace_factory import WorkspaceFactory
+from comfygit_core.factories.workspace_factory import WorkspaceFactory
 
 # Load workspace
 workspace = WorkspaceFactory.find()

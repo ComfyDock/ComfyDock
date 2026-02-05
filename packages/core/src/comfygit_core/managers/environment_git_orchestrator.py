@@ -305,9 +305,9 @@ class EnvironmentGitOrchestrator:
         # Reload pyproject
         self.pyproject.reset_lazy_handlers()
 
-        # NOTE: PyTorch config is now handled entirely by pytorch_injection_context()
-        # which strips existing config before injecting, then restores original after sync.
-        # This keeps pyproject.toml clean of machine-specific PyTorch configuration.
+        # NOTE: UV config injection (PyTorch + local overrides) is handled by uv_injection_context(),
+        # which strips existing config before injecting and restores original after sync.
+        # This keeps pyproject.toml clean of machine-specific configuration.
 
         new_nodes = self.pyproject.nodes.get_existing()
 
@@ -315,7 +315,13 @@ class EnvironmentGitOrchestrator:
         self.node_manager.reconcile_nodes_for_rollback(old_nodes, new_nodes)
 
         # Sync Python environment with PyTorch injection
-        self.uv.sync_project(all_groups=True, pytorch_manager=self.pytorch_manager)
+        extras, all_extras = self.pyproject.resolve_sync_extras(None, False)
+        self.uv.sync_project(
+            all_groups=True,
+            pytorch_manager=self.pytorch_manager,
+            extras=extras,
+            all_extras=all_extras,
+        )
 
         # Restore workflows
         self.workflow_manager.restore_all_from_cec(preserve_uncommitted=preserve_uncommitted)
@@ -359,4 +365,3 @@ class EnvironmentGitOrchestrator:
         except Exception as e:
             logger.warning(f"Could not check target branch workflows: {e}")
             return True
-

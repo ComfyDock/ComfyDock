@@ -108,6 +108,7 @@ For development nodes:
 
 - **Does not** run `git pull` (you manage git yourself)
 - **Does** re-scan `requirements.txt` and sync dependencies
+- **Does** update git info (repository URL, branch, commit) if the dev node is a git repo
 - **Shows** what dependencies were added or removed
 
 **Example output:**
@@ -119,6 +120,9 @@ For development nodes:
     + opencv-python>=4.8.0
   Removed dependencies:
     - pillow<9.0.0
+  Git info updated:
+    branch: feature-x → main
+    commit: abc1234 → def5678
 
 Run 'cg status' to review changes
 ```
@@ -190,17 +194,17 @@ cg node remove my-custom-node
 ```
 🗑 Removing node: my-custom-node
 ℹ️  Development node 'my-custom-node' removed from tracking
-   Files preserved at: custom_nodes/my-custom-node.disabled/
+   Filesystem unchanged
 ```
 
 Development nodes are:
 
 - **Removed from tracking** - No longer in pyproject.toml
-- **Directory renamed** - Moved to `.disabled` suffix to prevent ComfyUI from loading it
-- **Not deleted** - Your code is preserved
+- **Filesystem unchanged** - ComfyGit never modifies dev node directories
+- **Still loaded by ComfyUI** - The directory remains in `custom_nodes/`
 
-!!! info "Why preserve development nodes?"
-    ComfyGit assumes you want to keep local development work. The directory is disabled (renamed) so ComfyUI won't load it, but your code remains intact.
+!!! info "Why leave dev nodes unchanged?"
+    ComfyGit assumes developers manage their own code. Removing a dev node only removes it from tracking—you decide what to do with the directory (keep it, delete it, move it).
 
 ### Remove development nodes with --dev flag
 
@@ -210,7 +214,7 @@ Explicitly remove a development node:
 cg node remove my-custom-node --dev
 ```
 
-This has the same behavior as regular removal of dev nodes (renames to `.disabled`).
+This has the same behavior as regular removal of dev nodes (removes from tracking, leaves filesystem unchanged).
 
 ## Pruning unused nodes
 

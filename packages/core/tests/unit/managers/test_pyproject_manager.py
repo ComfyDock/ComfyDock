@@ -519,6 +519,36 @@ explicit = true
             f"Array-of-tables format should be preserved after roundtrip, got:\n{content}"
         )
 
+
+class TestStripLocalPathSources:
+    """Tests for stripping local path sources from pyproject."""
+
+    def test_strip_local_path_sources_removes_local_paths(self, temp_pyproject):
+        """Should remove sources that include local filesystem paths."""
+        manager = PyprojectManager(temp_pyproject)
+
+        config = manager.load()
+        config.setdefault("tool", {})
+        config["tool"].setdefault("uv", {})
+        config["tool"]["uv"]["sources"] = {
+            "local_pkg": {"path": "/tmp/local_pkg", "editable": True},
+            "remote_pkg": {"url": "https://example.com/remote_pkg.whl"},
+            "mixed_pkg": [
+                {"url": "https://example.com/one.whl"},
+                {"path": "/tmp/other"},
+            ],
+        }
+        manager.save(config)
+
+        removed = manager.strip_local_path_sources()
+        assert set(removed) == {"local_pkg", "mixed_pkg"}
+
+        updated = manager.load()
+        sources = updated.get("tool", {}).get("uv", {}).get("sources", {})
+        assert "local_pkg" not in sources
+        assert "mixed_pkg" not in sources
+        assert "remote_pkg" in sources
+
     def test_strip_and_readd_index_produces_array_of_tables(self, temp_pyproject):
         """Test that stripping indexes with list comprehension and re-adding preserves format.
 
@@ -704,3 +734,27 @@ class TestExcludeDependencies:
         config = manager.load(force_reload=True)
         # Key should be removed (or uv section might not exist if it was the only key)
         assert "exclude-dependencies" not in config.get("tool", {}).get("uv", {})
+
+
+class TestSyncExtrasConfig:
+    """Tests for default sync extras configuration."""
+
+    def test_set_and_get_sync_extras(self, temp_pyproject):
+        """Should store normalized sync extras under tool.comfygit.sync."""
+        manager = PyprojectManager(temp_pyproject)
+
+        manager.set_sync_extras(["CUDA", "vision"])
+
+        assert manager.get_sync_extras() == ["cuda", "vision"]
+        config = manager.load(force_reload=True)
+        assert config["tool"]["comfygit"]["sync"]["extras"] == ["cuda", "vision"]
+
+    def test_resolve_sync_extras_merges_defaults(self, temp_pyproject):
+        """resolve_sync_extras should merge defaults with explicit extras."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.set_sync_extras(["cuda"])
+
+        extras, all_extras = manager.resolve_sync_extras(["vision"], False)
+
+        assert all_extras is False
+        assert extras == ["cuda", "vision"]

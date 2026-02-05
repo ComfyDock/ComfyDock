@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, UVCommandError
+from ..managers.local_uv_config_manager import LocalUVConfigManager
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -38,9 +39,13 @@ class UVProjectManager:
         self,
         uv_command: UVCommand,
         pyproject_manager: PyprojectManager,
+        local_uv_config_manager: LocalUVConfigManager | None = None,
     ):
         self.uv = uv_command
         self.pyproject = pyproject_manager
+        self.local_uv_config_manager = local_uv_config_manager or LocalUVConfigManager(
+            self.pyproject.path.parent
+        )
 
     # ===== Properties =====
 
@@ -70,8 +75,10 @@ class UVProjectManager:
         upgrade: bool = False,
         group: str | None = None,
         dev: bool = False,
+        optional: str | None = None,
         editable: bool = False,
         bounds: str | None = None,
+        no_build_isolation: bool = False,
         **flags
     ) -> str:
         """Add one or more dependencies to the project.
@@ -83,8 +90,10 @@ class UVProjectManager:
             upgrade: Whether to upgrade existing packages
             group: Dependency group name (e.g., 'optional-cuda')
             dev: Add to dev dependencies
+            optional: Optional dependency extra name (project.optional-dependencies)
             editable: Install as editable (for local development)
             bounds: Version specifier style ('lower', 'major', 'minor', 'exact')
+            no_build_isolation: Disable build isolation for specified packages
             **flags: Additional UV flags
 
         Returns:
@@ -102,17 +111,49 @@ class UVProjectManager:
         else:
             raise ValueError("Either 'package', 'packages', or 'requirements_file' must be provided")
 
+        if no_build_isolation:
+            if requirements_file:
+                raise ValueError("--no-build-isolation requires explicit package specifications (not requirements file)")
+
+            if pkg_list:
+                for pkg in pkg_list:
+                    pkg_name = self._extract_no_build_isolation_package(pkg)
+                    if pkg_name:
+                        self.pyproject.uv_config.add_no_build_isolation_package(pkg_name)
+                    else:
+                        logger.warning(f"Could not determine package name for no-build-isolation: {pkg}")
+
         result = self.uv.add(
             packages=pkg_list,
             requirements_file=requirements_file,
             upgrade=upgrade,
             group=group,
             dev=dev,
+            optional=optional,
             editable=editable,
             bounds=bounds,
             **flags
         )
         return result.stdout
+
+    def _extract_no_build_isolation_package(self, package_spec: str) -> str | None:
+        """Extract a normalized package name for no-build-isolation entries."""
+        spec = package_spec.strip()
+
+        if ' @ ' in spec:
+            name = spec.split(' @ ', 1)[0].strip()
+        elif spec.startswith(("git+", "http://", "https://", "file://")):
+            name = self._extract_package_from_url(spec)
+        elif spec.startswith(("./", "../", "/")):
+            name = Path(spec).name
+        else:
+            from ..utils.dependency_parser import parse_dependency_string
+            name, _ = parse_dependency_string(spec)
+
+        if not name:
+            return None
+
+        return name.lower().replace('_', '-')
 
     def remove_dependency(self, package: str | None = None, packages: list[str] | None = None, **flags) -> dict:
         """Remove one or more dependencies from the project.
@@ -164,7 +205,10 @@ class UVProjectManager:
         self,
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
+        local_uv_config_manager: LocalUVConfigManager | None = None,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
         **flags
     ) -> str:
         """Sync project dependencies.
@@ -175,7 +219,10 @@ class UVProjectManager:
                             If provided, PyTorch config is injected before sync and
                             restored after (regardless of success/failure).
                             Also forces reinstall of PyTorch packages to ensure correct backend.
+            local_uv_config_manager: Optional local UV config manager for temporary injection.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
             **flags: Additional uv sync flags
 
         Returns:
@@ -197,15 +244,19 @@ class UVProjectManager:
                     lock_file.unlink()
                     logger.info(f"Deleted uv.lock for backend override to {backend_override}")
 
-            # Use PyprojectManager's injection context
-            with self.pyproject.pytorch_injection_context(
-                pytorch_manager, backend_override=backend_override
+        local_manager = local_uv_config_manager or self.local_uv_config_manager
+
+        if pytorch_manager or local_manager:
+            with self.pyproject.uv_injection_context(
+                pytorch_manager=pytorch_manager,
+                local_uv_config_manager=local_manager,
+                backend_override=backend_override,
             ):
-                result = self.uv.sync(verbose=verbose, **flags)
+                result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
                 return result.stdout
-        else:
-            result = self.uv.sync(verbose=verbose, **flags)
-            return result.stdout
+
+        result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
+        return result.stdout
 
     def lock_project(self, **flags) -> str:
         result = self.uv.lock(**flags)
@@ -512,6 +563,8 @@ class UVProjectManager:
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
         backend_override: str | None = None,
+        extras: list[str] | None = None,
+        all_extras: bool = False,
     ) -> dict:
         """Install dependencies progressively with graceful optional group handling.
 
@@ -531,6 +584,8 @@ class UVProjectManager:
             verbose: If True, show uv output in real-time
             pytorch_manager: Optional PyTorch backend manager for temporary injection
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            extras: Optional list of extras to install
+            all_extras: Install all optional extras
 
         Returns:
             Dict with keys:
@@ -566,6 +621,8 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
                     )
 
                     # Track successful installations
@@ -579,6 +636,8 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
                     )
 
                 result["packages_synced"] = True
