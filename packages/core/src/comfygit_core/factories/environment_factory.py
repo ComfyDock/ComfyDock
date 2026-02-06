@@ -507,11 +507,16 @@ class EnvironmentFactory:
         """
         from ..constants import PYPROJECT_SCHEMA_VERSION
 
+        # Pin to minor version band (e.g., "3.12" → "==3.12.*")
+        # This prevents UV from resolving for other minor versions (e.g., 3.13)
+        # which can cause dependency conflicts that don't exist on the actual runtime.
+        major_minor = ".".join(python_version.split(".")[:2])
+
         config = {
             "project": {
                 "name": f"comfygit-env-{name}",
                 "version": "0.1.0",
-                "requires-python": f">={python_version}",
+                "requires-python": f"=={major_minor}.*",
                 "dependencies": []
             },
             "tool": {

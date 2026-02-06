@@ -5,6 +5,43 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+class TestFindUvBinary:
+    """Tests for _find_uv_binary preferring bundled uv."""
+
+    def test_prefers_bundled_uv(self, monkeypatch):
+        """Should use bundled uv package when available."""
+        from comfygit_core.utils.pytorch_prober import _find_uv_binary
+
+        monkeypatch.setattr(
+            "comfygit_core.utils.pytorch_prober.shutil.which",
+            lambda _: "/usr/local/bin/uv",
+        )
+        # Bundled uv is available in dev environment
+        binary = _find_uv_binary()
+        assert "uv" in binary
+        # Should NOT be the system fallback
+        assert binary != "/usr/local/bin/uv"
+
+    def test_falls_back_to_system_uv(self, monkeypatch):
+        """Should fall back to system uv when bundled not available."""
+        from comfygit_core.utils import pytorch_prober
+        from comfygit_core.utils.pytorch_prober import _find_uv_binary
+
+        # Make the bundled uv import fail inside the function
+        real_import = __import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "uv":
+                raise ImportError("no uv package")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", mock_import)
+        monkeypatch.setattr(pytorch_prober.shutil, "which", lambda _: "/usr/local/bin/uv")
+
+        binary = _find_uv_binary()
+        assert binary == "/usr/local/bin/uv"
+
+
 class TestGetExactPythonVersion:
     """Tests for get_exact_python_version function."""
 

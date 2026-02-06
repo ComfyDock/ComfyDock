@@ -6,6 +6,31 @@ from comfygit_core.utils.dependency_probe import (
 )
 
 
+class TestDetectPythonVersion:
+    """Tests for _detect_python_version parsing requires-python."""
+
+    def test_parses_gte_format(self, tmp_path):
+        """Parses >=3.12 from legacy environments."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nrequires-python = ">=3.12"\n')
+        probe = DependencyProbe(cec_path=tmp_path, workspace_path=tmp_path / "ws")
+        assert probe._detect_python_version() == "3.12"
+
+    def test_parses_pinned_wildcard_format(self, tmp_path):
+        """Parses ==3.12.* from new environments."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nrequires-python = "==3.12.*"\n')
+        probe = DependencyProbe(cec_path=tmp_path, workspace_path=tmp_path / "ws")
+        assert probe._detect_python_version() == "3.12"
+
+    def test_parses_pinned_311(self, tmp_path):
+        """Parses ==3.11.* correctly."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nrequires-python = "==3.11.*"\n')
+        probe = DependencyProbe(cec_path=tmp_path, workspace_path=tmp_path / "ws")
+        assert probe._detect_python_version() == "3.11"
+
+
 class TestVersionToConstraint:
     """Tests for _version_to_constraint method."""
 
