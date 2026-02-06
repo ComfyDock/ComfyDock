@@ -122,6 +122,80 @@ class TestNodeManager:
         assert not (custom_nodes_dir / "test-node.disabled").exists()
 
 
+class TestUpdateDevelopmentNode:
+    """Tests for _update_development_node version tracking."""
+
+    def test_update_dev_node_picks_up_new_version(self, tmp_path):
+        """Dev node update should detect version change from node's pyproject.toml."""
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        # Create the node directory with a pyproject.toml containing new version
+        node_dir = custom_nodes_dir / "test-node"
+        node_dir.mkdir()
+        (node_dir / "pyproject.toml").write_text(
+            '[project]\nname = "test-node"\nversion = "0.0.18"\n'
+        )
+
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abc123"
+        mock_pyproject.dependencies.get_groups.return_value = {}
+
+        node_info = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            version="0.0.16",
+            source="development",
+        )
+
+        mock_node_lookup = Mock()
+        mock_node_lookup.scan_requirements.return_value = []
+
+        nm = NodeManager(
+            mock_pyproject, Mock(), mock_node_lookup, Mock(), custom_nodes_dir, Mock()
+        )
+
+        result = nm._update_development_node("test-node", node_info, no_test=True)
+
+        assert result.changed is True
+        assert "version" in result.message
+        assert node_info.version == "0.0.18"
+
+    def test_update_dev_node_no_change_when_version_matches(self, tmp_path):
+        """Dev node update should not report change when version is the same."""
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        node_dir = custom_nodes_dir / "test-node"
+        node_dir.mkdir()
+        (node_dir / "pyproject.toml").write_text(
+            '[project]\nname = "test-node"\nversion = "1.0.0"\n'
+        )
+
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abc123"
+        mock_pyproject.dependencies.get_groups.return_value = {}
+
+        node_info = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            version="1.0.0",
+            source="development",
+        )
+
+        mock_node_lookup = Mock()
+        mock_node_lookup.scan_requirements.return_value = []
+
+        nm = NodeManager(
+            mock_pyproject, Mock(), mock_node_lookup, Mock(), custom_nodes_dir, Mock()
+        )
+
+        result = nm._update_development_node("test-node", node_info, no_test=True)
+
+        assert result.changed is False
+        assert node_info.version == "1.0.0"
+
+
 class TestInstallTransactionSafety:
     """Tests for install rollback and transaction safety (cg-ckh.1)."""
 

@@ -1256,6 +1256,20 @@ class NodeManager:
 
         changes = []
 
+        # Update version from node's pyproject.toml
+        try:
+            import tomllib
+            node_pyproject = node_path / "pyproject.toml"
+            if node_pyproject.exists():
+                with open(node_pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                    disk_version = data.get("project", {}).get("version")
+                    if disk_version and disk_version != node_info.version:
+                        node_info.version = disk_version
+                        changes.append("version")
+        except Exception:
+            pass
+
         # Update git info (repo, branch, commit)
         git_info = get_node_git_info(node_path)
         if git_info and git_info.remote_url:
