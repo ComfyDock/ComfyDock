@@ -529,7 +529,10 @@ class EnvironmentFactory:
                     "nodes": {}
                 },
                 "uv": {}
-            }
+            },
+            "dependency-groups": {
+                "comfygit-system": ["uv>=0.7"],
+            },
         }
 
         return config

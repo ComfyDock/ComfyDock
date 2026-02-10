@@ -106,6 +106,7 @@ class TestNodeManager:
 
         # Mock get_existing to return empty dict (no existing nodes)
         mock_pyproject.nodes.get_existing.return_value = {}
+        mock_pyproject.dependencies.get_groups.return_value = {}
 
         node_manager = NodeManager(
             mock_pyproject, Mock(), mock_node_lookup, Mock(), custom_nodes_dir, Mock()
@@ -120,6 +121,35 @@ class TestNodeManager:
         # Verify .disabled was removed
         assert not disabled_dir.exists()
         assert not (custom_nodes_dir / "test-node.disabled").exists()
+
+
+class TestNodeManagerSystemDependencyGroup:
+    def test_sync_uv_adds_system_group_when_missing(self):
+        mock_pyproject = Mock()
+        mock_pyproject.dependencies.get_groups.return_value = {}
+
+        mock_uv = Mock()
+        nm = NodeManager(mock_pyproject, mock_uv, Mock(), Mock(), Mock(), Mock())
+
+        nm._sync_uv(quiet=True, all_groups=True)
+
+        mock_pyproject.dependencies.add_to_group.assert_called_once_with(
+            "comfygit-system",
+            ["uv>=0.7"],
+        )
+        mock_uv.sync_project.assert_called_once()
+
+    def test_sync_uv_does_not_duplicate_system_group(self):
+        mock_pyproject = Mock()
+        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.7"]}
+
+        mock_uv = Mock()
+        nm = NodeManager(mock_pyproject, mock_uv, Mock(), Mock(), Mock(), Mock())
+
+        nm._sync_uv(quiet=True, all_groups=True)
+
+        mock_pyproject.dependencies.add_to_group.assert_not_called()
+        mock_uv.sync_project.assert_called_once()
 
 
 class TestUpdateDevelopmentNode:
@@ -212,6 +242,7 @@ class TestInstallTransactionSafety:
         mock_pyproject.snapshot.return_value = {"snapshot": "data"}
         mock_pyproject.restore = Mock()
         mock_pyproject.nodes.get_existing.return_value = {}
+        mock_pyproject.dependencies.get_groups.return_value = {}
 
         mock_uv = Mock()
         mock_node_lookup = Mock()

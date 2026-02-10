@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
+SYSTEM_DEPENDENCIES = ["uv>=0.7"]
+
 
 class NodeManager:
     """Manages all node operations for an environment."""
@@ -70,7 +73,18 @@ class NodeManager:
                 return resolved
         return extras, all_extras
 
+    def _ensure_system_group(self) -> None:
+        """Ensure the system dependency group exists.
+
+        This prevents essential tooling (notably `uv`) from being orphaned when
+        hash-named node dependency groups are removed during node upgrades.
+        """
+        groups = self.pyproject.dependencies.get_groups()
+        if SYSTEM_DEPENDENCY_GROUP not in groups:
+            self.pyproject.dependencies.add_to_group(SYSTEM_DEPENDENCY_GROUP, SYSTEM_DEPENDENCIES)
+
     def _sync_uv(self, **kwargs) -> None:
+        self._ensure_system_group()
         extras = kwargs.pop("extras", None)
         all_extras = kwargs.pop("all_extras", False)
         resolved_extras, resolved_all = self._resolve_sync_extras(extras, all_extras)
@@ -467,13 +481,10 @@ class NodeManager:
                         rmtree(disabled_path)
                     shutil.move(target_path, disabled_path)
                 self.pyproject.nodes.remove(existing_identifier)
-                self._sync_uv(
-                    quiet=True,
-                    all_groups=True,
-                    pytorch_manager=self.pytorch_manager,
-                    extras=extras,
-                    all_extras=all_extras,
-                )
+                # Note: No intermediate sync here. STEP 3 sync handles both removal of
+                # old deps and installation of new deps in one pass. Syncing in between
+                # can temporarily orphan packages (e.g. `uv`) that are only referenced
+                # via the removed node dependency group.
 
             # STEP 0b: Apply auto-discovered constraints (transactional)
             for constraint in discovered_constraints:
