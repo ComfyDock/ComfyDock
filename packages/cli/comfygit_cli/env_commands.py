@@ -5,6 +5,7 @@ import argparse
 import os
 import subprocess
 import sys
+import shutil
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
@@ -2102,6 +2103,115 @@ class EnvironmentCommands:
 
         print("✓ Changes applied successfully!")
         print(f"\nEnvironment '{env.name}' is ready to use")
+
+    @with_env_logging("doctor")
+    def doctor(self, args: argparse.Namespace, logger=None) -> None:
+        """Diagnose and (optionally) repair essential tooling for the environment venv.
+
+        Initial scope: ensure `uv` is importable in the environment's `.venv`.
+        """
+        from comfygit_core.utils.filesystem import get_venv_python
+
+        env = self._get_env(args)
+        check_only = bool(getattr(args, "check_only", False))
+
+        venv_python = get_venv_python(env.path)
+        if not venv_python or not venv_python.exists():
+            system_uv = shutil.which("uv")
+            if system_uv and not check_only:
+                python_version = self._get_python_version(env)
+                print(f"⚙️ Creating missing venv for: {env.name}")
+                result = subprocess.run(
+                    [system_uv, "venv", str(env.venv_path), "--python", python_version, "--seed"],
+                    text=True,
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    print("✗ Failed to create venv using system uv.", file=sys.stderr)
+                    if result.stderr:
+                        print(result.stderr.strip(), file=sys.stderr)
+                    sys.exit(1)
+                venv_python = get_venv_python(env.path)
+
+            if not venv_python or not venv_python.exists():
+                print(f"✗ No environment venv python found for: {env.name}", file=sys.stderr)
+                print(f"  Expected: {env.path / '.venv'}", file=sys.stderr)
+                print("  Fix: install system uv and re-run `cg doctor`.", file=sys.stderr)
+                sys.exit(1)
+
+        def _check_uv_installed() -> tuple[bool, str | None]:
+            check = subprocess.run(
+                [str(venv_python), "-c", "import uv; print(getattr(uv, '__version__', 'unknown'))"],
+                text=True,
+                capture_output=True,
+            )
+            if check.returncode == 0:
+                return True, (check.stdout.strip() or None)
+            return False, None
+
+        ok, version = _check_uv_installed()
+        if ok:
+            ver = f" ({version})" if version else ""
+            print(f"✓ uv is installed in {env.name} venv{ver}")
+            return
+
+        print(f"✗ uv is missing from {env.name} venv", file=sys.stderr)
+        if check_only:
+            sys.exit(1)
+
+        system_uv = shutil.which("uv")
+        if system_uv:
+            print("⚙️ Repair: using system uv to reinstall uv into the environment venv")
+            install = subprocess.run(
+                [system_uv, "pip", "install", "--python", str(venv_python), "uv>=0.7"],
+                text=True,
+                capture_output=True,
+            )
+            if install.returncode != 0:
+                print("✗ Failed to reinstall uv using system uv.", file=sys.stderr)
+                if install.stderr:
+                    print(install.stderr.strip(), file=sys.stderr)
+                sys.exit(1)
+        else:
+            print("⚙️ Repair: reinstalling uv using the environment venv pip")
+
+            pip_check = subprocess.run(
+                [str(venv_python), "-m", "pip", "--version"],
+                text=True,
+                capture_output=True,
+            )
+            if pip_check.returncode != 0:
+                ensurepip = subprocess.run(
+                    [str(venv_python), "-m", "ensurepip", "--upgrade"],
+                    text=True,
+                    capture_output=True,
+                )
+                if ensurepip.returncode != 0:
+                    print("✗ pip is not available in the environment venv, and ensurepip failed.", file=sys.stderr)
+                    if ensurepip.stderr:
+                        print(ensurepip.stderr.strip(), file=sys.stderr)
+                    print("  Fix: install system uv and re-run `cg doctor`.", file=sys.stderr)
+                    sys.exit(1)
+
+            install = subprocess.run(
+                [str(venv_python), "-m", "pip", "install", "uv>=0.7"],
+                text=True,
+                capture_output=True,
+            )
+            if install.returncode != 0:
+                print("✗ Failed to reinstall uv using pip.", file=sys.stderr)
+                if install.stderr:
+                    print(install.stderr.strip(), file=sys.stderr)
+                sys.exit(1)
+
+        ok, version = _check_uv_installed()
+        if not ok:
+            print("✗ Repair attempted, but uv is still not importable in the environment venv.", file=sys.stderr)
+            sys.exit(1)
+
+        ver = f" ({version})" if version else ""
+        print(f"✓ Reinstalled uv into {env.name} venv{ver}")
+        print("  Next: re-run your update/sync command (e.g. `cg sync` or node update).")
 
     @with_env_logging("checkout")
     def checkout(self, args: argparse.Namespace, logger=None) -> None:

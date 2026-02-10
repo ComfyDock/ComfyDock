@@ -19,6 +19,7 @@ class TestGitHubURLInstallation:
         pyproject.snapshot.return_value = {}
         pyproject.restore = Mock()
         pyproject.uv_config.get_source_names.return_value = set()
+        pyproject.dependencies.get_groups.return_value = {}
 
         uv = Mock()
         uv.add_requirements_with_sources = Mock()

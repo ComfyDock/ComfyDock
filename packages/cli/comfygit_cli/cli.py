@@ -554,6 +554,18 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     repair_parser.set_defaults(func=env_cmds.repair)
 
+    # doctor - Diagnose and repair core tooling (uv) in the environment venv
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose and repair environment tooling (uv)",
+    )
+    doctor_parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Only check; do not attempt repairs",
+    )
+    doctor_parser.set_defaults(func=env_cmds.doctor)
+
     # sync - Sync environment (packages, nodes, models)
     sync_parser = subparsers.add_parser("sync", help="Sync environment packages and dependencies")
     sync_parser.add_argument(
