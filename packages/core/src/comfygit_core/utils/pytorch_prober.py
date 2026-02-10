@@ -26,6 +26,19 @@ class PyTorchProbeError(Exception):
     pass
 
 
+def _find_uv_binary() -> str:
+    """Find the uv binary, preferring the bundled package version."""
+    try:
+        from uv import find_uv_bin
+        return find_uv_bin()
+    except (ImportError, FileNotFoundError):
+        pass
+    binary = shutil.which("uv")
+    if binary:
+        return binary
+    raise PyTorchProbeError("uv is not installed")
+
+
 def get_exact_python_version(requested_version: str) -> str:
     """Get exact Python version that uv would use.
 
@@ -38,7 +51,8 @@ def get_exact_python_version(requested_version: str) -> str:
     Raises:
         PyTorchProbeError: If version cannot be determined
     """
-    result = run_command(["uv", "python", "find", requested_version])
+    uv = _find_uv_binary()
+    result = run_command([uv, "python", "find", requested_version])
 
     if result.returncode != 0:
         raise PyTorchProbeError(
@@ -93,12 +107,14 @@ def probe_pytorch_versions(
     # Create temp probe venv
     temp_dir = tempfile.mkdtemp(prefix=".comfygit-probe-")
 
+    uv = _find_uv_binary()
+
     try:
         logger.info(f"Probing PyTorch versions for Python {exact_py} + {backend}...")
 
         # 1. Create minimal venv
         venv_result = run_command(
-            ["uv", "venv", temp_dir, "--python", exact_py],
+            [uv, "venv", temp_dir, "--python", exact_py],
             timeout=PROBE_TIMEOUT,
         )
 
@@ -110,7 +126,7 @@ def probe_pytorch_versions(
         # 2. Run dry-run install with --torch-backend
         dry_run_result = run_command(
             [
-                "uv", "pip", "install",
+                uv, "pip", "install",
                 "--dry-run",
                 "--reinstall-package", "torch",
                 "--reinstall-package", "torchvision",

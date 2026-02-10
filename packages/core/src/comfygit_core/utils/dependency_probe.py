@@ -114,9 +114,11 @@ class DependencyProbe:
         try:
             data = tomlkit.loads(self.pyproject_path.read_text(encoding="utf-8"))
             python_req = data.get("project", {}).get("requires-python", "")
-            # Extract version from requires-python (e.g., ">=3.12" -> "3.12")
+            # Extract version from requires-python
+            # Handles ">=3.12", "==3.12.*", ">=3.12,<3.13", etc.
             if python_req:
                 version = python_req.lstrip(">=<~! ")
+                version = version.rstrip(".*").split(",")[0]
                 if version:
                     return version
         except Exception as e:

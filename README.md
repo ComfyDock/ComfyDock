@@ -6,6 +6,8 @@
 
 Git for your ComfyUI environments — version control, package management, and reproducible sharing.
 
+**Status:** Early release, actively developed. Feedback welcome via [GitHub Issues](https://github.com/comfygit-ai/comfygit/issues) or [Discord](https://discord.gg/2h5rSTeh6Y).
+
 <img width="2400" height="813" alt="Gemini_Generated_Image_gg9thvgg9thvgg9t - Copy" src="https://github.com/user-attachments/assets/8d215b1a-c59e-4f03-855c-170e05cfa5f7" />
 
 ## Highlights
@@ -16,6 +18,14 @@ Git for your ComfyUI environments — version control, package management, and r
 - 💾 **Smart model management** — content-addressable index, no duplicate storage
 - 🔧 **Standard tooling** — built on UV and pyproject.toml, works with Python ecosystem
 - 🖥️ **Cross-platform** — Windows, Linux, macOS
+
+## How Is This Different From ComfyUI Manager?
+
+ComfyUI Manager helps you browse, install, and update custom nodes in a single shared ComfyUI setup. ComfyGit focuses on **isolated, version-controlled environments** you can reproduce and share anywhere.
+
+- **ComfyUI Manager:** manage nodes in-place (one environment)
+- **ComfyGit:** create per-project environments with commits, branches, rollback, export/import
+- **Together:** install ComfyUI Manager inside a ComfyGit environment and use both
 
 ## Installation
 
@@ -48,9 +58,17 @@ $ cg commit -m "Initial setup with Impact Pack"
 [main a28f333] Initial setup with Impact Pack
  1 file changed, 15 insertions(+)
 
-$ cg run
+$ cg -e my-project run
 Starting ComfyUI at http://localhost:8188
 ```
+
+## What About My Existing Setup?
+
+ComfyGit creates **new, isolated** ComfyUI environments inside your ComfyGit workspace. Your existing ComfyUI install (and anything in it) is **untouched**.
+
+Models are stored once and **symlinked into environments**, so you can share the same model library across projects without duplicating storage.
+
+For your first environment, expect roughly **~2GB** of downloads for ComfyUI and base dependencies.
 
 See the [documentation](https://docs.comfygit.org/getting-started/installation/) for more examples including version control workflows, sharing environments, and team collaboration.
 
