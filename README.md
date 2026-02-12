@@ -19,6 +19,9 @@ Git for your ComfyUI environments — version control, package management, and r
 - 🔧 **Standard tooling** — built on UV and pyproject.toml, works with Python ecosystem
 - 🖥️ **Cross-platform** — Windows, Linux, macOS
 
+> [!NOTE] 
+> For a visual UI inside ComfyUI, check out [ComfyGit Manager](https://github.com/comfygit-ai/comfygit-manager)
+
 ## How Is This Different From ComfyUI Manager?
 
 ComfyUI Manager helps you browse, install, and update custom nodes in a single shared ComfyUI setup. ComfyGit focuses on **isolated, version-controlled environments** you can reproduce and share anywhere.
