@@ -99,7 +99,8 @@ class DependencyProbe:
             self._sync_probe_to_current_state()
 
             before = self._freeze_packages()
-            failures = self._install_one_by_one(reqs)
+            constraints_path = self._build_constraints_file(before)
+            failures = self._install_one_by_one(reqs, constraints_path=constraints_path)
             after = self._freeze_packages()
 
             return self._analyze(before, after, failures)
@@ -203,11 +204,38 @@ class DependencyProbe:
 
         return packages
 
-    def _install_one_by_one(self, requirements: list[str]) -> list[str]:
+    def _build_constraints_file(self, before: dict[str, str]) -> Path | None:
+        """Build constraint file pinning current protected package versions.
+
+        Args:
+            before: Package versions before probe installs
+
+        Returns:
+            Path to constraints file, or None if no protected packages found
+        """
+        constraint_lines: list[str] = []
+
+        for package in sorted(self.PROTECTED_PACKAGES):
+            normalized = self._normalize_name(package)
+            if normalized not in before:
+                continue
+            constraint_lines.append(f"{normalized}=={before[normalized]}")
+
+        if not constraint_lines:
+            return None
+
+        constraints_path = self.probe_venv / "constraints.txt"
+        constraints_path.write_text("\n".join(constraint_lines) + "\n", encoding="utf-8")
+        return constraints_path
+
+    def _install_one_by_one(
+        self, requirements: list[str], constraints_path: Path | None = None
+    ) -> list[str]:
         """Install requirements one-by-one, recording failures.
 
         Args:
             requirements: List of requirements to install
+            constraints_path: Optional constraints file for install pinning
 
         Returns:
             List of requirements that failed to install
@@ -226,6 +254,7 @@ class DependencyProbe:
                     packages=[req],
                     python=self._get_probe_python(),
                     torch_backend=self.torch_backend,
+                    constraints=constraints_path,
                 )
                 logger.debug(f"Probe installed: {req}")
             except Exception as e:

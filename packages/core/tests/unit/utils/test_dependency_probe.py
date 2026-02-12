@@ -1,5 +1,9 @@
 """Tests for dependency probe utilities."""
 
+from pathlib import Path
+
+import pytest
+
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,
@@ -94,6 +98,136 @@ class TestProbeVenvPath:
         assert probe_one.probe_venv != probe_two.probe_venv
         assert probe_one.probe_venv.name.startswith(".venv-probe-")
         assert probe_two.probe_venv.name.startswith(".venv-probe-")
+
+
+class TestProtectedConstraints:
+    """Tests for protected package constraint-file pinning."""
+
+    def test_build_constraints_file_pins_available_protected_packages(self, tmp_path):
+        """Should write pins for protected packages present in before snapshot."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+        probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        before = {
+            "numpy": "2.2.3",
+            "torch": "2.6.0",
+            "requests": "2.32.4",
+        }
+        constraints_path = probe._build_constraints_file(before)
+
+        assert constraints_path == probe.probe_venv / "constraints.txt"
+        assert constraints_path is not None and constraints_path.exists()
+        lines = constraints_path.read_text(encoding="utf-8").splitlines()
+        assert "numpy==2.2.3" in lines
+        assert "torch==2.6.0" in lines
+        assert all(not line.startswith("requests==") for line in lines)
+
+    def test_build_constraints_file_returns_none_without_protected_packages(self, tmp_path):
+        """Should return None when before snapshot has no protected packages."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+        probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        constraints_path = probe._build_constraints_file({"requests": "2.32.4"})
+        assert constraints_path is None
+
+    def test_install_one_by_one_passes_constraints_to_uv(self, tmp_path, monkeypatch):
+        """Each uv pip install call should include constraints when provided."""
+        calls: list[dict] = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.timeout = None
+
+            def pip_install(self, **kwargs):
+                calls.append(kwargs)
+
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+        constraints_path = tmp_path / "constraints.txt"
+        constraints_path.write_text("numpy==2.2.3\n", encoding="utf-8")
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+        monkeypatch.setattr(probe, "_get_probe_python", lambda: Path("/tmp/probe-python"))
+
+        failures = probe._install_one_by_one(["numpy"], constraints_path=constraints_path)
+
+        assert failures == []
+        assert len(calls) == 1
+        assert calls[0]["constraints"] == constraints_path
+
+    def test_run_with_bare_numpy_uses_constraints_and_avoids_protected_changes(self, tmp_path, monkeypatch):
+        """Bare numpy requirement should not report protected changes with constraints active."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+            keep_venv=True,
+        )
+        before = {"numpy": "2.2.3"}
+        after = {"numpy": "2.2.3"}
+
+        def fake_create_probe_venv():
+            probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        install_calls: list[Path | None] = []
+
+        def fake_install(requirements, constraints_path=None):
+            install_calls.append(constraints_path)
+            return []
+
+        monkeypatch.setattr(probe, "_create_probe_venv", fake_create_probe_venv)
+        monkeypatch.setattr(probe, "_sync_probe_to_current_state", lambda: None)
+        monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
+        monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
+
+        result = probe.run(["numpy"])
+
+        assert result.success is True
+        assert result.install_failures == []
+        assert result.protected_changes == []
+        assert len(install_calls) == 1
+        assert install_calls[0] is not None
+        assert install_calls[0].read_text(encoding="utf-8").strip() == "numpy==2.2.3"
+
+    def test_run_reports_install_failure_for_requirement_conflicting_with_constraint(self, tmp_path, monkeypatch):
+        """Conflicting numpy spec should surface as install failure under constraints."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+            keep_venv=True,
+        )
+        before = {"numpy": "2.2.3"}
+        after = {"numpy": "2.2.3"}
+        failure_req = "numpy<2.0"
+
+        def fake_create_probe_venv():
+            probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        install_calls: list[Path | None] = []
+
+        def fake_install(requirements, constraints_path=None):
+            install_calls.append(constraints_path)
+            return [failure_req]
+
+        monkeypatch.setattr(probe, "_create_probe_venv", fake_create_probe_venv)
+        monkeypatch.setattr(probe, "_sync_probe_to_current_state", lambda: None)
+        monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
+        monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
+
+        result = probe.run([failure_req])
+
+        assert result.success is False
+        assert result.install_failures == [failure_req]
+        assert len(install_calls) == 1
+        assert install_calls[0] is not None
+        assert install_calls[0].read_text(encoding="utf-8").strip() == "numpy==2.2.3"
 
 
 class TestAnalyzeDetectDowngrades:

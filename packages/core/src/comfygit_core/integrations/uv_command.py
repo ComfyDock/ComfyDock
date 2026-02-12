@@ -224,9 +224,16 @@ class UVCommand:
 
     # ===== Pip Compatibility =====
 
-    def pip_install(self, packages: list[str] | None = None, requirements_file: Path | None = None,
-                   python: Path | None = None, torch_backend: str | None = None,
-                   verbose: bool = False, **flags) -> CommandResult:
+    def pip_install(
+        self,
+        packages: list[str] | None = None,
+        requirements_file: Path | None = None,
+        python: Path | None = None,
+        torch_backend: str | None = None,
+        constraints: Path | None = None,
+        verbose: bool = False,
+        **flags,
+    ) -> CommandResult:
         cmd = [self._binary, "pip", "install"]
 
         if python:
@@ -234,6 +241,9 @@ class UVCommand:
 
         if torch_backend:
             cmd.extend(["--torch-backend", torch_backend])
+
+        if constraints:
+            cmd.extend(["--constraint", str(constraints)])
 
         for key, value in flags.items():
             if value is None or value is False:
