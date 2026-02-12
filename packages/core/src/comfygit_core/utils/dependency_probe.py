@@ -258,7 +258,7 @@ class DependencyProbe:
                 )
                 logger.debug(f"Probe installed: {req}")
             except Exception as e:
-                logger.debug(f"Probe failed to install {req}: {e}")
+                logger.warning(f"Probe failed to install {req}: {e}")
                 failures.append(req)
 
         return failures
