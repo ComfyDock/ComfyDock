@@ -1823,7 +1823,7 @@ class Environment:
 
         Uses uv add to add packages to [project.dependencies] and install them.
         Applies package substitutions from package_config.toml (e.g., opencv-python
-        is automatically replaced with opencv-python-headless).
+        is automatically replaced with opencv-contrib-python-headless).
 
         Args:
             packages: List of package specifications (e.g., ['requests>=2.0.0', 'pillow'])

@@ -1,17 +1,17 @@
 """Integration test for opencv package conflict resolution.
 
 This test verifies that the package substitution system correctly handles
-the opencv-python vs opencv-python-headless conflict.
+the opencv package family conflict.
 
 Bug scenario (before fix):
-1. Install node A with opencv-python-headless
+1. Install node A with opencv-contrib-python-headless
 2. Install node B with opencv-python (overwrites cv2)
 3. Uninstall node B
 4. cv2 is now missing (corrupted state)
 
 Expected behavior (after fix):
-- opencv-python is always substituted with opencv-python-headless
-- opencv-python is in exclude-dependencies, never installed
+- non-canonical opencv families are substituted with opencv-contrib-python-headless
+- non-canonical opencv families are in exclude-dependencies, never installed
 - cv2 always works regardless of install/uninstall order
 """
 import pytest
@@ -52,7 +52,7 @@ class TestOpencvConflictResolution:
         assert config_path.exists(), "package_config.toml should exist"
 
     def test_opencv_substitution_in_requirements(self, test_environment):
-        """Verify opencv-python gets substituted to headless in requirements."""
+        """Verify opencv-python gets substituted to contrib-headless in requirements."""
         # Create mock requirements with opencv-python
         mock_reqs = ["opencv-python>=4.5.0", "numpy"]
 
@@ -60,25 +60,38 @@ class TestOpencvConflictResolution:
         pkg_config = test_environment.package_config
         transformed = [pkg_config.apply_substitution(r) for r in mock_reqs]
 
-        assert "opencv-python-headless>=4.5.0" in transformed, "Should substitute opencv-python with headless"
+        assert "opencv-contrib-python-headless>=4.5.0" in transformed, "Should substitute opencv-python with contrib-headless"
         assert "opencv-python>=4.5.0" not in transformed, "Original opencv-python should not be in result"
         assert "numpy" in transformed, "Unchanged packages should remain"
+
+    def test_all_non_canonical_opencv_variants_substitute(self, test_environment):
+        """Verify all non-canonical opencv packages map to contrib-headless."""
+        pkg_config = test_environment.package_config
+
+        test_cases = [
+            "opencv-python",
+            "opencv-contrib-python",
+            "opencv-python-headless",
+        ]
+
+        transformed = [pkg_config.apply_substitution(pkg) for pkg in test_cases]
+        assert transformed == ["opencv-contrib-python-headless"] * 3
 
     def test_opencv_substitution_without_version(self, test_environment):
         """Verify opencv-python substitution works without version specifier."""
         pkg_config = test_environment.package_config
         result = pkg_config.apply_substitution("opencv-python")
 
-        assert result == "opencv-python-headless", "Should substitute to headless without version"
+        assert result == "opencv-contrib-python-headless", "Should substitute to contrib-headless without version"
 
     def test_opencv_substitution_preserves_complex_version(self, test_environment):
         """Verify version specifiers are preserved during substitution."""
         pkg_config = test_environment.package_config
 
         test_cases = [
-            ("opencv-python==4.8.0.76", "opencv-python-headless==4.8.0.76"),
-            ("opencv-python>=4.5.0,<5.0.0", "opencv-python-headless>=4.5.0,<5.0.0"),
-            ("opencv-python~=4.8.0", "opencv-python-headless~=4.8.0"),
+            ("opencv-python==4.8.0.76", "opencv-contrib-python-headless==4.8.0.76"),
+            ("opencv-python>=4.5.0,<5.0.0", "opencv-contrib-python-headless>=4.5.0,<5.0.0"),
+            ("opencv-python~=4.8.0", "opencv-contrib-python-headless~=4.8.0"),
         ]
 
         for original, expected in test_cases:
@@ -90,12 +103,16 @@ class TestPackageSubstitutionConfig:
     """Test package substitution configuration."""
 
     def test_default_substitutions_include_opencv(self, test_environment):
-        """Verify default substitutions include opencv mapping."""
+        """Verify default substitutions include all non-canonical opencv mappings."""
         pkg_config = test_environment.package_config
         subs = pkg_config.substitutions
 
         assert "opencv-python" in subs, "Default substitutions should include opencv-python"
-        assert subs["opencv-python"] == "opencv-python-headless", "Should map to headless version"
+        assert "opencv-contrib-python" in subs, "Default substitutions should include opencv-contrib-python"
+        assert "opencv-python-headless" in subs, "Default substitutions should include opencv-python-headless"
+        assert subs["opencv-python"] == "opencv-contrib-python-headless", "Should map to contrib-headless"
+        assert subs["opencv-contrib-python"] == "opencv-contrib-python-headless", "Should map to contrib-headless"
+        assert subs["opencv-python-headless"] == "opencv-contrib-python-headless", "Should map to contrib-headless"
 
     def test_custom_substitution_can_be_added(self, test_environment):
         """Verify users can add custom substitutions."""
@@ -111,15 +128,19 @@ class TestPackageSubstitutionConfig:
         subs = pkg_config.substitutions
 
         assert subs["pillow"] == "pillow-simd", "Custom substitution should persist"
-        assert subs["opencv-python"] == "opencv-python-headless", "Default substitutions should remain"
+        assert subs["opencv-python"] == "opencv-contrib-python-headless", "Default substitutions should remain"
 
-    def test_exclude_packages_list_empty_by_default(self, test_environment):
-        """Verify excluded packages list is empty by default (exclude section commented out)."""
+    def test_exclude_packages_list_has_non_canonical_opencv_defaults(self, test_environment):
+        """Verify excluded package defaults block non-canonical opencv families."""
         pkg_config = test_environment.package_config
         excludes = pkg_config.exclude_packages
 
         assert isinstance(excludes, list), "exclude_packages should return a list"
-        assert excludes == [], "exclude_packages should be empty by default"
+        assert excludes == [
+            "opencv-python",
+            "opencv-contrib-python",
+            "opencv-python-headless",
+        ]
 
     def test_package_config_structure(self, test_environment):
         """Verify package_config.toml has expected structure."""
@@ -131,8 +152,12 @@ class TestPackageSubstitutionConfig:
 
         # Check substitutions section exists
         assert "substitutions" in config, "Should have substitutions section"
-        # exclude section is commented out by default
-        assert "exclude" not in config, "exclude section should be commented out by default"
+        assert "exclude" in config, "exclude section should exist by default"
+        assert list(config["exclude"]["packages"]) == [
+            "opencv-python",
+            "opencv-contrib-python",
+            "opencv-python-headless",
+        ]
 
     def test_case_insensitive_substitution(self, test_environment):
         """Verify substitution works case-insensitively."""
@@ -148,4 +173,4 @@ class TestPackageSubstitutionConfig:
         for pkg in test_cases:
             result = pkg_config.apply_substitution(pkg)
             # Result should always use the replacement name (which is lowercase)
-            assert "opencv-python-headless" in result.lower(), f"Should substitute {pkg} case-insensitively"
+            assert "opencv-contrib-python-headless" in result.lower(), f"Should substitute {pkg} case-insensitively"

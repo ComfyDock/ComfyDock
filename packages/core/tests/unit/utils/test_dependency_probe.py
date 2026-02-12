@@ -123,14 +123,14 @@ class TestAnalyzeDetectDowngrades:
             workspace_path=tmp_path / "workspace",
         )
 
-        before = {"numpy": "2.4.1"}
-        after = {"numpy": "2.3.5"}
+        before = {"scipy": "1.15.1"}
+        after = {"scipy": "1.14.0"}
         failures = []
 
         result = probe._analyze(before, after, failures)
 
         assert len(result.suggested_constraints) > 0
-        assert any("numpy" in c for c in result.suggested_constraints)
+        assert any("scipy" in c for c in result.suggested_constraints)
 
     def test_analyze_detects_upgrade(self, tmp_path):
         """Detects when package version goes up."""
@@ -223,15 +223,32 @@ class TestAnalyzeProtectedPackages:
             workspace_path=tmp_path / "workspace",
         )
 
-        # Test that torch-related packages are protected (MVP: torch-only)
-        before = {"torch": "2.4.0", "torchvision": "0.19.0"}
-        after = {"torch": "2.3.0", "torchvision": "0.18.0"}
+        before = {"torch": "2.4.0", "torchvision": "0.19.0", "numpy": "2.3.0"}
+        after = {"torch": "2.3.0", "torchvision": "0.18.0", "numpy": "2.2.0"}
         failures = []
 
         result = probe._analyze(before, after, failures)
 
         assert "torch" in result.protected_changes
         assert "torchvision" in result.protected_changes
+        assert "numpy" in result.protected_changes
+
+    def test_does_not_suggest_constraint_for_protected_numpy(self, tmp_path):
+        """numpy downgrade should be protected and should not generate constraints."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        before = {"numpy": "2.3.0"}
+        after = {"numpy": "2.2.0"}
+        failures = []
+
+        result = probe._analyze(before, after, failures)
+
+        assert "numpy" in result.downgraded
+        assert "numpy" in result.protected_changes
+        assert not any("numpy" in c for c in result.suggested_constraints)
 
 
 class TestAnalyzeFailures:

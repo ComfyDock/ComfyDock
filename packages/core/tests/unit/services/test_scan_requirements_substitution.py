@@ -44,14 +44,14 @@ class TestScanRequirementsSubstitution:
         with tempfile.TemporaryDirectory() as tmpdir:
             cec_path = Path(tmpdir)
             config = PackageConfigManager(cec_path)
-            # ensure_exists creates the config with defaults (opencv-python -> opencv-python-headless)
+            # ensure_exists creates the config with defaults
             config.ensure_exists()
             yield config
 
     def test_scan_requirements_applies_substitution_with_config(
         self, cache_dir, node_dir, package_config
     ):
-        """SHOULD substitute opencv-python with opencv-python-headless when config provided."""
+        """SHOULD substitute opencv-python with opencv-contrib-python-headless when config provided."""
         # ARRANGE
         service = NodeLookupService(cache_path=cache_dir)
 
@@ -59,7 +59,7 @@ class TestScanRequirementsSubstitution:
         requirements = service.scan_requirements(node_dir, package_config=package_config)
 
         # ASSERT
-        assert "opencv-python-headless>=4.0" in requirements
+        assert "opencv-contrib-python-headless>=4.0" in requirements
         assert "opencv-python>=4.0" not in requirements
         # Other packages should be unchanged
         assert "numpy>=1.20" in requirements
@@ -76,7 +76,7 @@ class TestScanRequirementsSubstitution:
         # ASSERT
         # Without config, opencv-python should remain unchanged
         assert "opencv-python>=4.0" in requirements
-        assert "opencv-python-headless>=4.0" not in requirements
+        assert "opencv-contrib-python-headless>=4.0" not in requirements
         assert "numpy>=1.20" in requirements
         assert "pillow" in requirements
 
@@ -119,7 +119,7 @@ class TestScanRequirementsSubstitution:
             # Various version specifier formats
             (node_path / "requirements.txt").write_text(
                 "opencv-python>=4.5.3\n"
-                "opencv-python-contrib==4.8.0\n"  # Should not be substituted (different package)
+                "opencv-contrib-python==4.8.0\n"
             )
 
             service = NodeLookupService(cache_path=cache_dir)
@@ -128,6 +128,5 @@ class TestScanRequirementsSubstitution:
             requirements = service.scan_requirements(node_path, package_config=package_config)
 
             # ASSERT
-            assert "opencv-python-headless>=4.5.3" in requirements
-            # opencv-python-contrib is a different package, not in substitutions
-            assert "opencv-python-contrib==4.8.0" in requirements
+            assert "opencv-contrib-python-headless>=4.5.3" in requirements
+            assert "opencv-contrib-python-headless==4.8.0" in requirements

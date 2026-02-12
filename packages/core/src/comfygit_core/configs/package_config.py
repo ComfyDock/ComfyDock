@@ -11,8 +11,17 @@ logger = get_logger(__name__)
 # Default package substitutions - maps package to its preferred alternative
 # When a node requests the key package, we install the value instead
 DEFAULT_PACKAGE_SUBSTITUTIONS = {
-    "opencv-python": "opencv-python-headless",
+    "opencv-python": "opencv-contrib-python-headless",
+    "opencv-contrib-python": "opencv-contrib-python-headless",
+    "opencv-python-headless": "opencv-contrib-python-headless",
 }
+
+# Default packages to exclude from installation
+DEFAULT_EXCLUDE_PACKAGES = [
+    "opencv-python",
+    "opencv-contrib-python",
+    "opencv-python-headless",
+]
 
 class PackageConfigManager:
     """Manages package_config.toml for an environment."""
@@ -77,12 +86,12 @@ class PackageConfigManager:
 
         doc.add(tomlkit.nl())
 
-        # Exclusions section (commented out by default)
+        # Exclusions section
         doc.add(tomlkit.comment("Packages to exclude - these will NEVER be installed"))
         doc.add(tomlkit.comment("Use with substitutions to prevent conflicting packages"))
-        doc.add(tomlkit.nl())
-        doc.add(tomlkit.comment("[exclude]"))
-        doc.add(tomlkit.comment('packages = ["opencv-python"]'))
+        exclude = tomlkit.table()
+        exclude["packages"] = list(DEFAULT_EXCLUDE_PACKAGES)
+        doc["exclude"] = exclude
 
         return doc
 

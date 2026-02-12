@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from comfygit_core.configs.package_config import (
+    DEFAULT_EXCLUDE_PACKAGES,
     DEFAULT_PACKAGE_SUBSTITUTIONS,
     PackageConfigManager,
 )
@@ -12,18 +13,22 @@ class TestPackageConfigManagerDefaults:
     """Test default configuration values."""
 
     def test_default_substitutions_include_opencv(self):
-        """Default substitutions should include opencv-python -> opencv-python-headless."""
+        """Default substitutions should map non-canonical opencv packages to contrib-headless."""
         assert "opencv-python" in DEFAULT_PACKAGE_SUBSTITUTIONS
-        assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-python"] == "opencv-python-headless"
+        assert "opencv-contrib-python" in DEFAULT_PACKAGE_SUBSTITUTIONS
+        assert "opencv-python-headless" in DEFAULT_PACKAGE_SUBSTITUTIONS
+        assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-python"] == "opencv-contrib-python-headless"
+        assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-contrib-python"] == "opencv-contrib-python-headless"
+        assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-python-headless"] == "opencv-contrib-python-headless"
 
     def test_create_default_config_structure(self, tmp_path: Path):
-        """Default config should have substitutions section (exclude is commented out)."""
+        """Default config should have substitutions and exclude sections."""
         manager = PackageConfigManager(tmp_path)
         config = manager._create_default_config()
 
         assert "substitutions" in config
-        # exclude section is commented out by default
-        assert "exclude" not in config
+        assert "exclude" in config
+        assert list(config["exclude"]["packages"]) == DEFAULT_EXCLUDE_PACKAGES
 
 
 class TestPackageConfigLoadSave:
@@ -42,8 +47,7 @@ class TestPackageConfigLoadSave:
         config = manager.load()
 
         assert "substitutions" in config
-        # exclude section is commented out by default
-        assert "exclude" not in config
+        assert "exclude" in config
 
     def test_load_reads_saved_config(self, tmp_path: Path):
         """Load should read previously saved config."""
@@ -57,7 +61,7 @@ class TestPackageConfigLoadSave:
         config = manager2.load()
 
         # Should have the default substitutions
-        assert config.get("substitutions", {}).get("opencv-python") == "opencv-python-headless"
+        assert config.get("substitutions", {}).get("opencv-python") == "opencv-contrib-python-headless"
 
     def test_ensure_exists_creates_file(self, tmp_path: Path):
         """ensure_exists should create config file with defaults."""
@@ -90,21 +94,35 @@ class TestApplySubstitutionWithVersion:
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("opencv-python")
-        assert result == "opencv-python-headless"
+        assert result == "opencv-contrib-python-headless"
+
+    def test_substitutes_opencv_contrib_python(self, tmp_path: Path):
+        """opencv-contrib-python should map to the canonical contrib-headless package."""
+        manager = PackageConfigManager(tmp_path)
+
+        result = manager.apply_substitution("opencv-contrib-python")
+        assert result == "opencv-contrib-python-headless"
+
+    def test_substitutes_opencv_python_headless(self, tmp_path: Path):
+        """opencv-python-headless should map to canonical contrib-headless package."""
+        manager = PackageConfigManager(tmp_path)
+
+        result = manager.apply_substitution("opencv-python-headless")
+        assert result == "opencv-contrib-python-headless"
 
     def test_substitution_with_version_spec(self, tmp_path: Path):
         """Version specifier should be preserved during substitution."""
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("opencv-python>=4.0")
-        assert result == "opencv-python-headless>=4.0"
+        assert result == "opencv-contrib-python-headless>=4.0"
 
     def test_substitution_with_exact_pin(self, tmp_path: Path):
         """Exact version pin should be preserved."""
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("opencv-python==4.8.0")
-        assert result == "opencv-python-headless==4.8.0"
+        assert result == "opencv-contrib-python-headless==4.8.0"
 
     def test_no_substitution_for_unknown_package(self, tmp_path: Path):
         """Unknown packages should be returned unchanged."""
@@ -122,21 +140,21 @@ class TestApplySubstitutionCaseInsensitive:
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("OpenCV-Python")
-        assert result == "opencv-python-headless"
+        assert result == "opencv-contrib-python-headless"
 
     def test_mixed_case_package_substituted(self, tmp_path: Path):
         """Mixed case package name should match."""
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("OPENCV-python")
-        assert result == "opencv-python-headless"
+        assert result == "opencv-contrib-python-headless"
 
     def test_mixed_case_with_version(self, tmp_path: Path):
         """Mixed case with version should work."""
         manager = PackageConfigManager(tmp_path)
 
         result = manager.apply_substitution("OpenCV-Python>=4.0")
-        assert result == "opencv-python-headless>=4.0"
+        assert result == "opencv-contrib-python-headless>=4.0"
 
 
 class TestPackageConfigProperties:
@@ -151,12 +169,12 @@ class TestPackageConfigProperties:
         assert "opencv-python" in subs
 
     def test_exclude_packages_property(self, tmp_path: Path):
-        """exclude_packages property should return empty list by default."""
+        """exclude_packages property should return default excluded packages."""
         manager = PackageConfigManager(tmp_path)
 
         excludes = manager.exclude_packages
         assert isinstance(excludes, list)
-        assert excludes == []  # exclude section is commented out by default
+        assert excludes == DEFAULT_EXCLUDE_PACKAGES
 
 
 class TestPackageConfigCacheInvalidation:
@@ -172,7 +190,7 @@ class TestPackageConfigCacheInvalidation:
 
         # Load and cache
         config1 = manager.load()
-        assert config1["substitutions"]["opencv-python"] == "opencv-python-headless"
+        assert config1["substitutions"]["opencv-python"] == "opencv-contrib-python-headless"
 
         # Modify file externally with different mtime
         time.sleep(0.01)  # Ensure mtime differs

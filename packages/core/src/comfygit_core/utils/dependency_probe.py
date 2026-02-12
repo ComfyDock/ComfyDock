@@ -50,6 +50,7 @@ class DependencyProbe:
         "torchvision",
         "torchaudio",
         "torchsde",
+        "numpy",
     }
 
     def __init__(
