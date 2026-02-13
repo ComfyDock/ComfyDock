@@ -5,6 +5,7 @@ from pathlib import Path
 from comfygit_core.configs.package_config import (
     DEFAULT_EXCLUDE_PACKAGES,
     DEFAULT_PACKAGE_SUBSTITUTIONS,
+    DEFAULT_PROBE_PROTECTED,
     PackageConfigManager,
 )
 
@@ -22,13 +23,15 @@ class TestPackageConfigManagerDefaults:
         assert DEFAULT_PACKAGE_SUBSTITUTIONS["opencv-python-headless"] == "opencv-contrib-python-headless"
 
     def test_create_default_config_structure(self, tmp_path: Path):
-        """Default config should have substitutions and exclude sections."""
+        """Default config should have substitutions, exclude, and probe sections."""
         manager = PackageConfigManager(tmp_path)
         config = manager._create_default_config()
 
         assert "substitutions" in config
         assert "exclude" in config
+        assert "probe" in config
         assert list(config["exclude"]["packages"]) == DEFAULT_EXCLUDE_PACKAGES
+        assert list(config["probe"]["protected"]) == DEFAULT_PROBE_PROTECTED
 
 
 class TestPackageConfigLoadSave:
@@ -175,6 +178,61 @@ class TestPackageConfigProperties:
         excludes = manager.exclude_packages
         assert isinstance(excludes, list)
         assert excludes == DEFAULT_EXCLUDE_PACKAGES
+
+    def test_probe_protected_packages_defaults_when_no_file(self, tmp_path: Path):
+        """probe_protected_packages should default when no config file exists."""
+        manager = PackageConfigManager(tmp_path)
+
+        protected = manager.probe_protected_packages
+        assert protected == DEFAULT_PROBE_PROTECTED
+
+    def test_probe_protected_packages_defaults_when_probe_missing(self, tmp_path: Path):
+        """Existing config without [probe] should still return defaults."""
+        config_path = tmp_path / "package_config.toml"
+        config_path.write_text("""
+[substitutions]
+opencv-python = "opencv-contrib-python-headless"
+""")
+
+        manager = PackageConfigManager(tmp_path)
+        protected = manager.probe_protected_packages
+        assert protected == DEFAULT_PROBE_PROTECTED
+
+    def test_probe_protected_packages_defaults_when_protected_key_missing(self, tmp_path: Path):
+        """[probe] section without protected key should fall back to defaults."""
+        config_path = tmp_path / "package_config.toml"
+        config_path.write_text("""
+[probe]
+enabled = true
+""")
+
+        manager = PackageConfigManager(tmp_path)
+        protected = manager.probe_protected_packages
+        assert protected == DEFAULT_PROBE_PROTECTED
+
+    def test_probe_protected_packages_normalizes_names(self, tmp_path: Path):
+        """Configured packages are normalized to PEP 503 canonical names."""
+        config_path = tmp_path / "package_config.toml"
+        config_path.write_text("""
+[probe]
+protected = ["TorchSDE", "foo_bar", "foo-bar"]
+""")
+
+        manager = PackageConfigManager(tmp_path)
+        protected = manager.probe_protected_packages
+        assert protected == ["torchsde", "foo-bar"]
+
+    def test_probe_protected_packages_allows_explicit_empty(self, tmp_path: Path):
+        """Explicit empty list should disable the protected package list."""
+        config_path = tmp_path / "package_config.toml"
+        config_path.write_text("""
+[probe]
+protected = []
+""")
+
+        manager = PackageConfigManager(tmp_path)
+        protected = manager.probe_protected_packages
+        assert protected == []
 
 
 class TestPackageConfigCacheInvalidation:
