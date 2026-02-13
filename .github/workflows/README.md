@@ -13,14 +13,14 @@ Both use manual triggers (`workflow_dispatch`) and trusted publishing via PyPI.
 
 ### Documentation Publishing
 
-- **`publish-docs.yml`** - Deploys documentation to https://comfygit.com
+- **`publish-docs.yml`** - Deploys documentation to https://docs.comfygit.org
 
 **Trigger:** Manual via GitHub Actions UI
 
 **What it does:**
 1. Builds MkDocs site from `docs/comfygit-docs/`
-2. Pushes built site to `ComfyGit/ComfyGit.github.io:main`
-3. GitHub Pages serves the site at `comfygit.com`
+2. Pushes built site to `comfygit-ai/comfygit-ai.github.io:main`
+3. GitHub Pages serves the site at `docs.comfygit.org`
 
 **Setup required:**
 See "Required Secrets" section below.
@@ -32,18 +32,18 @@ No secrets needed - uses PyPI trusted publishing with OIDC.
 
 ### For Documentation Publishing
 
-**`DOCS_PUBLISH_TOKEN`** - Personal Access Token with write access to `ComfyGit/ComfyGit.github.io`
+**`DOCS_PUBLISH_TOKEN`** - Personal Access Token with write access to `comfygit-ai/comfygit-ai.github.io`
 
 **To create:**
 1. Go to https://github.com/settings/tokens
 2. Create new token (classic)
 3. Select scopes: `repo` (full control)
 4. Copy token
-5. Add to repository secrets at https://github.com/ComfyGit/comfygit/settings/secrets/actions
+5. Add to repository secrets at https://github.com/comfygit-ai/comfygit/settings/secrets/actions
 6. Name: `DOCS_PUBLISH_TOKEN`
 7. Value: (paste token)
 
-**Note:** Token must belong to a user with write access to the `ComfyGit.github.io` repository.
+**Note:** Token must belong to a user with write access to the `comfygit-ai.github.io` repository.
 
 ## Running Workflows
 
@@ -80,15 +80,15 @@ gh run view <run-id>
 - Check that `DOCS_PUBLISH_TOKEN` secret exists
 - Verify token hasn't expired
 - Ensure token has `repo` scope
-- Confirm token owner has write access to `ComfyGit.github.io`
+- Confirm token owner has write access to `comfygit-ai.github.io`
 
 ### Package publishing fails
 - Check PyPI trusted publishing is configured for the package
 - Verify package version hasn't been published already
 - Check workflow logs for specific error
 
-### Documentation not updating on comfygit.com
+### Documentation not updating on docs.comfygit.org
 - Wait 1-2 minutes for GitHub Pages to rebuild
-- Check `ComfyGit.github.io` repository for new commits
+- Check `comfygit-ai.github.io` repository for new commits
 - Verify CNAME file exists in deployed site
-- Check GitHub Pages settings in `ComfyGit.github.io` repository
+- Check GitHub Pages settings in `comfygit-ai.github.io` repository

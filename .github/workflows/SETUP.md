@@ -19,7 +19,7 @@ pip install comfygit-core  # Also works (normalized)
 
 Add a `pypi` environment to your repository for approval gates:
 
-1. Go to https://github.com/ComfyGit/ComfyGit/settings/environments
+1. Go to https://github.com/comfygit-ai/comfygit/settings/environments
 2. Click **New environment**
 3. Name: `pypi`
 4. Configure protection rules (optional):
@@ -34,8 +34,8 @@ This adds an approval step before packages are published to PyPI, preventing acc
 For **comfygit_core**:
 1. Go to https://pypi.org/manage/project/comfygit_core/settings/publishing/
 2. Add publisher:
-   - **Owner**: ComfyGit
-   - **Repository name**: ComfyGit
+   - **Owner**: comfygit-ai
+   - **Repository name**: comfygit
    - **Workflow name**: publish-core.yml
    - **Environment name**: pypi
 
@@ -44,8 +44,8 @@ For **comfygit_cli** (new project):
 2. Click "Add a new pending publisher"
 3. Fill in:
    - **PyPI Project Name**: comfygit_cli
-   - **Owner**: ComfyGit
-   - **Repository name**: ComfyGit
+   - **Owner**: comfygit-ai
+   - **Repository name**: comfygit
    - **Workflow name**: publish-cli.yml
    - **Environment name**: pypi
 
