@@ -391,7 +391,7 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # create - Create new environment
     create_parser = subparsers.add_parser("create", help="Create new environment")
-    create_parser.add_argument("name", help="Environment name")
+    create_parser.add_argument("name", help="Environment name (letters, numbers, hyphens, underscores, dots)")
     create_parser.add_argument("--template", type=Path, help="Template manifest")
     create_parser.add_argument("--python", default="3.11", help="Python version")
     create_parser.add_argument("--comfyui", help="ComfyUI version")

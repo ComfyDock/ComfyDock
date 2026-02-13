@@ -1,6 +1,7 @@
 """ComfyGit workspace - manages multiple environments within a validated workspace."""
 
 import json
+import re
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,6 +35,15 @@ if TYPE_CHECKING:
     from ..models.shared import LegacyCleanupResult
 
 logger = get_logger(__name__)
+
+
+# Environment names must be valid as part of a PEP 508 package name
+# (used in pyproject.toml as "comfygit-env-{name}") and safe as directory names.
+# Allowed: letters, digits, hyphens, underscores, dots.
+# Must start and end with a letter or digit.
+_ENV_NAME_PATTERN = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$')
+
+_ENV_NAME_MAX_LENGTH = 128
 
 
 def _validate_environment_name(name: str) -> None:
@@ -70,6 +80,22 @@ def _validate_environment_name(name: str) -> None:
     if name.startswith('.'):
         raise CDEnvironmentError(
             "Environment name cannot start with '.'"
+        )
+
+    # Enforce max length
+    if len(name) > _ENV_NAME_MAX_LENGTH:
+        raise CDEnvironmentError(
+            f"Environment name is too long ({len(name)} chars). "
+            f"Maximum length is {_ENV_NAME_MAX_LENGTH} characters."
+        )
+
+    # Validate character set (PEP 508 compatible + safe directory name)
+    if not _ENV_NAME_PATTERN.match(name):
+        raise CDEnvironmentError(
+            f"Invalid environment name '{name}'. "
+            f"Names can only contain letters, numbers, hyphens (-), "
+            f"underscores (_), and dots (.). "
+            f"Must start and end with a letter or number."
         )
 
 
