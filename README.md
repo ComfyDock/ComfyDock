@@ -1,7 +1,7 @@
 # ComfyGit
 
 [![Documentation](https://img.shields.io/badge/docs-comfygit.org-blue)](https://docs.comfygit.org/)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE.txt)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE.txt)
 [![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?logo=discord&logoColor=white)](https://discord.gg/2h5rSTeh6Y)
 
 Git for your ComfyUI environments — version control, package management, and reproducible sharing.
@@ -124,4 +124,4 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-ComfyGit is dual-licensed under [AGPL-3.0](LICENSE.txt) for open-source use and proprietary licenses for commercial use. See the [LICENSE.txt](LICENSE.txt) for more information.
+ComfyGit is dual-licensed under [GPL-3.0](LICENSE.txt) for open-source use and proprietary licenses for commercial use. See the [LICENSE.txt](LICENSE.txt) for more information.
