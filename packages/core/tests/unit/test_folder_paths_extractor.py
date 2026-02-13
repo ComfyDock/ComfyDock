@@ -223,3 +223,26 @@ def map_legacy(folder_name: str) -> str:
 
         assert result["legacy_aliases"]["unet"] == "diffusion_models"
         assert result["legacy_aliases"]["clip"] == "text_encoders"
+
+    def test_ignores_dynamic_folder_key_assignments(self, tmp_path):
+        """Static mappings should still extract when dynamic keys are present."""
+        from comfygit_core.utils.folder_paths_extractor import extract_folder_paths
+
+        comfyui_path = tmp_path / "ComfyUI"
+        comfyui_path.mkdir()
+
+        folder_paths_py = comfyui_path / "folder_paths.py"
+        folder_paths_py.write_text('''
+import os
+folder_names_and_paths = {}
+models_dir = "models"
+folder_name = "runtime_value"
+
+folder_names_and_paths["checkpoints"] = ([os.path.join(models_dir, "checkpoints")], supported_pt_extensions)
+folder_names_and_paths[folder_name] = ([os.path.join(models_dir, "dynamic")], supported_pt_extensions)
+''')
+
+        output_path = tmp_path / "folder_paths.json"
+        result = extract_folder_paths(comfyui_path, output_path)
+
+        assert result["folder_mappings"]["checkpoints"] == ["checkpoints"]
