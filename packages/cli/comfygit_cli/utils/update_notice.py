@@ -55,7 +55,7 @@ def maybe_print_update_notice(handle: UpdateCheckHandle | None) -> None:
     """Print a one-line update notice to stderr if a completed result says to."""
     if handle is None:
         return
-    if not handle.done.is_set():
+    if not handle.done.wait(timeout=0.5):
         return
     result = handle.result
     if result is None or not result.should_notify:
@@ -66,4 +66,3 @@ def maybe_print_update_notice(handle: UpdateCheckHandle | None) -> None:
         file=sys.stderr,
     )
     update_checker.mark_notified(result.latest_version)
-
