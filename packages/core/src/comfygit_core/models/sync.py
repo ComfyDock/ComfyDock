@@ -1,4 +1,4 @@
-"""Simplified sync models for ComfyDock - workflow sync removed."""
+"""Simplified sync models for ComfyGit - workflow sync removed."""
 
 from dataclasses import dataclass, field
 

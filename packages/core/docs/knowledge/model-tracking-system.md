@@ -1,8 +1,8 @@
-# ComfyDock Model Tracking and Download System
+# ComfyGit Model Tracking and Download System
 
 ## Overview
 
-ComfyDock tracks models through a two-layer system:
+ComfyGit tracks models through a two-layer system:
 1. **pyproject.toml** - Configuration and manifest layer (committed to git)
 2. **SQLite Database** - Fast indexed access and source tracking (runtime state)
 
@@ -14,10 +14,10 @@ This document explains how models flow through the system from tracking to downl
 
 ### 1.1 Global Models Table
 
-All models that have been resolved are stored in `[tool.comfydock.models]`:
+All models that have been resolved are stored in `[tool.comfygit.models]`:
 
 ```toml
-[tool.comfydock.models]
+[tool.comfygit.models]
 "abc1234567890abc" = { filename = "my_model.safetensors", size = 5368709120, relative_path = "checkpoints/my_model.safetensors", category = "checkpoints", sources = ["https://civitai.com/..."] }
 ```
 
@@ -33,10 +33,10 @@ All models that have been resolved are stored in `[tool.comfydock.models]`:
 
 ### 1.2 Per-Workflow Models
 
-Each workflow stores its own model list in `[tool.comfydock.workflows.<name>.models]`:
+Each workflow stores its own model list in `[tool.comfygit.workflows.<name>.models]`:
 
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 models = [
   { filename = "my_model.safetensors", category = "checkpoints", criticality = "required", status = "resolved", hash = "abc1234567890abc", nodes = [{ node_id = "123", node_type = "LoadImage", widget_idx = 0, widget_value = "my_model.safetensors" }] },
   { filename = "lora.safetensors", category = "loras", criticality = "optional", status = "unresolved", sources = ["https://..."], relative_path = "loras/lora.safetensors", nodes = [...] }
@@ -57,7 +57,7 @@ models = [
 
 1. **Resolved** (`status: "resolved"`, `hash` set):
    - Model exists locally and has been verified
-   - Hash links to `[tool.comfydock.models]` global table
+   - Hash links to `[tool.comfygit.models]` global table
    - No `sources` field needed (can be looked up in global table)
 
 2. **Unresolved** (`status: "unresolved"`, `hash` is null):
@@ -144,7 +144,7 @@ URL Download
    - model_locations.add_location(hash, base_dir, relative_path, ...)
    - model_sources.add_source(hash, source_type, url)
 5. Update pyproject.toml:
-   - Add to [tool.comfydock.models.<hash>]
+   - Add to [tool.comfygit.models.<hash>]
    - Update workflow model reference with hash
 ```
 
@@ -299,7 +299,7 @@ workspace.import_environment(tarball, name, model_strategy)
     ↓
 1. EnvironmentFactory.import_from_bundle():
    - Extract .tar.gz to environment/.cec/
-   - Create pyproject.toml with [tool.comfydock.models] and [tool.comfydock.workflows]
+   - Create pyproject.toml with [tool.comfygit.models] and [tool.comfygit.workflows]
     
 2. environment.finalize_import(model_strategy):
    
@@ -400,7 +400,7 @@ workspace.sync_model_directory(progress_callback)
 
 ## Part 7: Data Structure Summary
 
-### ManifestModel (Stored in [tool.comfydock.models])
+### ManifestModel (Stored in [tool.comfygit.models])
 ```python
 @dataclass
 class ManifestModel:
@@ -412,7 +412,7 @@ class ManifestModel:
     sources: list[str] = field(default_factory=list)
 ```
 
-### ManifestWorkflowModel (Stored in [tool.comfydock.workflows.<name>.models])
+### ManifestWorkflowModel (Stored in [tool.comfygit.workflows.<name>.models])
 ```python
 @dataclass
 class ManifestWorkflowModel:

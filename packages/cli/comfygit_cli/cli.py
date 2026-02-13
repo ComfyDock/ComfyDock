@@ -21,6 +21,8 @@ from .completion_commands import CompletionCommands
 from .env_commands import EnvironmentCommands
 from .global_commands import GlobalCommands
 from .logging.logging_config import setup_logging
+from .update_commands import UpdateCommands
+from .utils.update_notice import maybe_print_update_notice, start_update_check_async
 
 
 def _make_help_func(parser: argparse.ArgumentParser) -> Callable[[argparse.Namespace], None]:
@@ -110,9 +112,12 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
+    update_handle = start_update_check_async(args)
+
     try:
         # Execute the command
         args.func(args)
+        maybe_print_update_notice(update_handle)
     except KeyboardInterrupt:
         print("\n✗ Interrupted")
         sys.exit(130)
@@ -161,6 +166,7 @@ def create_parser() -> argparse.ArgumentParser:
 def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     """Add global workspace-level commands."""
     global_cmds = GlobalCommands()
+    update_cmds = UpdateCommands()
 
     # init - Initialize workspace
     init_parser = subparsers.add_parser("init", help="Initialize ComfyGit workspace")
@@ -172,6 +178,11 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     # list - List all environments
     list_parser = subparsers.add_parser("list", help="List all environments")
     list_parser.set_defaults(func=global_cmds.list_envs)
+
+    # update - Update ComfyGit CLI (self-update)
+    update_parser = subparsers.add_parser("update", help="Update ComfyGit CLI")
+    update_parser.add_argument("--check", action="store_true", help="Check for updates without upgrading")
+    update_parser.set_defaults(func=update_cmds.update)
 
     # migrate - Import existing ComfyUI
     # migrate_parser = subparsers.add_parser("migrate", help="Scan and import existing ComfyUI instance")
@@ -380,7 +391,7 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # create - Create new environment
     create_parser = subparsers.add_parser("create", help="Create new environment")
-    create_parser.add_argument("name", help="Environment name")
+    create_parser.add_argument("name", help="Environment name (letters, numbers, hyphens, underscores, dots)")
     create_parser.add_argument("--template", type=Path, help="Template manifest")
     create_parser.add_argument("--python", default="3.11", help="Python version")
     create_parser.add_argument("--comfyui", help="ComfyUI version")

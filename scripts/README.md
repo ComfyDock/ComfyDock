@@ -1,15 +1,15 @@
-# ComfyDock Scripts
+# ComfyGit Scripts
 
-Utility scripts for ComfyDock development and workflow management.
+Utility scripts for ComfyGit development and workflow management.
 
 ## sync-env-to-collection.sh
 
-Sync your active ComfyDock environment to an examples collection repository.
+Sync your active ComfyGit environment to an examples collection repository.
 
 ### Purpose
 
-When developing ComfyDock example environments, you want to:
-1. Work in ComfyDock with full `comfydock` command support
+When developing ComfyGit example environments, you want to:
+1. Work in ComfyGit with full `comfygit` command support
 2. Test workflows in actual ComfyUI
 3. Publish finished examples to a collection repository
 4. Preserve custom documentation (README.md) in the examples repo
@@ -43,26 +43,26 @@ sync-env-to-collection <path-to-examples-repo> -m "feat: add new workflow"
 
 ```bash
 # Make script available globally
-ln -s ~/path/to/comfydock/scripts/sync-env-to-collection.sh ~/bin/sync-env-to-collection
+ln -s ~/path/to/comfygit/scripts/sync-env-to-collection.sh ~/bin/sync-env-to-collection
 # Or add to PATH
-export PATH="$PATH:~/path/to/comfydock/scripts"
+export PATH="$PATH:~/path/to/comfygit/scripts"
 ```
 
 ### Workflow Example
 
 ```bash
-# 1. Create and develop environment in ComfyDock
-comfydock create txt2img
-comfydock activate txt2img
-comfydock node add ComfyUI-Manager
+# 1. Create and develop environment in ComfyGit
+comfygit create txt2img
+comfygit activate txt2img
+comfygit node add ComfyUI-Manager
 comfyui  # Create workflows in web interface
-comfydock commit -m "feat: initial setup"
+comfygit commit -m "feat: initial setup"
 
 # 2. Sync to examples repo (without commit)
-sync-env-to-collection ~/comfydock-examples
+sync-env-to-collection ~/comfygit-examples
 
 # 3. Add documentation in examples repo
-cd ~/comfydock-examples/txt2img
+cd ~/comfygit-examples/txt2img
 cat > README.md << 'EOF'
 # Text-to-Image Example
 
@@ -77,7 +77,7 @@ This environment demonstrates basic text-to-image generation.
 
 Import with:
 ```
-comfydock import https://github.com/you/comfydock-examples#txt2img -n my-txt2img
+comfygit import https://github.com/you/comfygit-examples#txt2img -n my-txt2img
 ```
 EOF
 
@@ -86,14 +86,14 @@ git add txt2img
 git commit -m "feat: add txt2img example with documentation"
 git push origin main
 
-# 5. Later: Update workflows in ComfyDock
-comfydock activate txt2img
+# 5. Later: Update workflows in ComfyGit
+comfygit activate txt2img
 # Edit workflows in ComfyUI
-comfydock commit -m "feat: add ControlNet workflow"
+comfygit commit -m "feat: add ControlNet workflow"
 
 # 6. Sync updates (README preserved!)
-sync-env-to-collection ~/comfydock-examples -m "feat: add ControlNet workflow"
-cd ~/comfydock-examples
+sync-env-to-collection ~/comfygit-examples -m "feat: add ControlNet workflow"
+cd ~/comfygit-examples
 git push origin main
 ```
 
@@ -105,7 +105,7 @@ git push origin main
 
 ### Environment Variables
 
-- `COMFYGIT_HOME` - ComfyDock workspace location (default: `~/.comfydock`)
+- `COMFYGIT_HOME` - ComfyGit workspace location (default: `~/.comfygit`)
 
 ### How It Works
 
@@ -122,7 +122,7 @@ git push origin main
 The script uses **environment name** as the **directory name** in examples repo:
 
 ```
-ComfyDock:           Examples Repo:
+ComfyGit:           Examples Repo:
 txt2img       →      txt2img/
 img2img       →      img2img/
 video-gen     →      video-gen/
@@ -148,7 +148,7 @@ A: They're ignored during sync. Add them to `SYNC_ITEMS` array in the script if 
 
 **"No active environment set"**
 ```bash
-comfydock activate <environment-name>
+comfygit activate <environment-name>
 ```
 
 **"No workspace.json found"**
@@ -176,9 +176,9 @@ Potential improvements (not yet implemented):
 - Pre-sync validation hooks
 - Reverse sync (examples → .cec)
 
-# Example Workflow: Creating a ComfyDock Examples Collection
+# Example Workflow: Creating a ComfyGit Examples Collection
 
-Complete walkthrough of creating and maintaining a collection of ComfyDock example environments.
+Complete walkthrough of creating and maintaining a collection of ComfyGit example environments.
 
 ## Initial Setup
 
@@ -186,15 +186,15 @@ Complete walkthrough of creating and maintaining a collection of ComfyDock examp
 
 ```bash
 # Create and initialize examples repository
-mkdir ~/comfydock-examples
-cd ~/comfydock-examples
+mkdir ~/comfygit-examples
+cd ~/comfygit-examples
 
 git init
-git remote add origin git@github.com:yourusername/comfydock-examples.git
+git remote add origin git@github.com:yourusername/comfygit-examples.git
 
 # Create main README
 cat > README.md << 'EOF'
-# ComfyDock Examples
+# ComfyGit Examples
 
 Collection of ready-to-use ComfyUI environment examples.
 
@@ -209,12 +209,12 @@ Collection of ready-to-use ComfyUI environment examples.
 Import any example with:
 
 ```bash
-comfydock import https://github.com/yourusername/comfydock-examples#<example-name> -n my-env
+comfygit import https://github.com/yourusername/comfygit-examples#<example-name> -n my-env
 ```
 
 For example:
 ```bash
-comfydock import https://github.com/yourusername/comfydock-examples#txt2img -n my-txt2img
+comfygit import https://github.com/yourusername/comfygit-examples#txt2img -n my-txt2img
 ```
 EOF
 
@@ -227,7 +227,7 @@ git push -u origin main
 
 ```bash
 # Make script globally available
-ln -s ~/projects/comfydock/scripts/sync-env-to-collection.sh ~/bin/sync-env-to-collection
+ln -s ~/projects/comfygit/scripts/sync-env-to-collection.sh ~/bin/sync-env-to-collection
 chmod +x ~/bin/sync-env-to-collection
 
 # Test it's accessible
@@ -236,19 +236,19 @@ which sync-env-to-collection
 
 ## Creating Your First Example
 
-### Step 1: Develop in ComfyDock
+### Step 1: Develop in ComfyGit
 
 ```bash
 # Create environment
-comfydock create txt2img
-comfydock activate txt2img
+comfygit create txt2img
+comfygit activate txt2img
 
 # Add nodes you need
-comfydock node add ComfyUI-Manager
-comfydock node add https://github.com/pythongosssss/ComfyUI-Custom-Scripts
+comfygit node add ComfyUI-Manager
+comfygit node add https://github.com/pythongosssss/ComfyUI-Custom-Scripts
 
 # Download models
-comfydock model download "sd_xl_base_1.0.safetensors"
+comfygit model download "sd_xl_base_1.0.safetensors"
 
 # Test in ComfyUI
 comfyui
@@ -256,14 +256,14 @@ comfyui
 # Save workflows in ComfyUI (they auto-save to .cec/workflows/)
 
 # Commit your work
-comfydock commit -m "feat: initial txt2img setup"
+comfygit commit -m "feat: initial txt2img setup"
 ```
 
 ### Step 2: Sync to Examples Repo
 
 ```bash
 # Sync without committing (preview first)
-sync-env-to-collection ~/comfydock-examples
+sync-env-to-collection ~/comfygit-examples
 
 # You'll see:
 # ✓ Active environment: txt2img
@@ -277,7 +277,7 @@ sync-env-to-collection ~/comfydock-examples
 
 ```bash
 # Go to examples repo
-cd ~/comfydock-examples/txt2img
+cd ~/comfygit-examples/txt2img
 
 # Create README for this example
 cat > README.md << 'EOF'
@@ -309,8 +309,8 @@ Advanced workflow with:
 ## Import
 
 ```bash
-comfydock import \
-  https://github.com/yourusername/comfydock-examples#txt2img \
+comfygit import \
+  https://github.com/yourusername/comfygit-examples#txt2img \
   -n my-txt2img
 ```
 
@@ -337,7 +337,7 @@ ls -la
 
 ```bash
 # Back to repo root
-cd ~/comfydock-examples
+cd ~/comfygit-examples
 
 # Review all changes
 git status
@@ -356,24 +356,24 @@ git push origin main
 ### Create Second Example
 
 ```bash
-# Create in ComfyDock
-comfydock create img2img
-comfydock activate img2img
+# Create in ComfyGit
+comfygit create img2img
+comfygit activate img2img
 
 # Set it up
-comfydock node add ComfyUI-Advanced-ControlNet
+comfygit node add ComfyUI-Advanced-ControlNet
 # ... develop workflows ...
-comfydock commit -m "feat: img2img setup"
+comfygit commit -m "feat: img2img setup"
 
 # Sync and commit in one step
-sync-env-to-collection ~/comfydock-examples -m "feat: add img2img example"
+sync-env-to-collection ~/comfygit-examples -m "feat: add img2img example"
 
 # Add README
-cd ~/comfydock-examples/img2img
+cd ~/comfygit-examples/img2img
 vim README.md
 
 # Update main index
-cd ~/comfydock-examples
+cd ~/comfygit-examples
 # (README.md already lists img2img)
 git add .
 git commit -m "docs: add img2img README"
@@ -386,24 +386,24 @@ git push origin main
 
 ```bash
 # Switch to environment
-comfydock activate txt2img
+comfygit activate txt2img
 
 # Create new workflow in ComfyUI
 comfyui
 # ... create advanced-controlnet.json workflow ...
 
-# Commit in ComfyDock
-comfydock commit -m "feat: add ControlNet workflow"
+# Commit in ComfyGit
+comfygit commit -m "feat: add ControlNet workflow"
 
 # Sync to examples (README preserved!)
-sync-env-to-collection ~/comfydock-examples -m "feat: add ControlNet workflow to txt2img"
+sync-env-to-collection ~/comfygit-examples -m "feat: add ControlNet workflow to txt2img"
 
 # Optionally update README
-cd ~/comfydock-examples/txt2img
+cd ~/comfygit-examples/txt2img
 # Edit README.md to document new workflow
 vim README.md
 
-cd ~/comfydock-examples
+cd ~/comfygit-examples
 git add txt2img/README.md
 git commit -m "docs: document ControlNet workflow"
 git push origin main
@@ -412,18 +412,18 @@ git push origin main
 ### Scenario: Update Dependencies
 
 ```bash
-comfydock activate txt2img
+comfygit activate txt2img
 
 # Add new node
-comfydock node add https://github.com/new/node
+comfygit node add https://github.com/new/node
 
 # Update pyproject.toml
-comfydock commit -m "feat: add new node dependency"
+comfygit commit -m "feat: add new node dependency"
 
 # Sync (pyproject.toml updated, README preserved)
-sync-env-to-collection ~/comfydock-examples -m "feat: add new node to txt2img"
+sync-env-to-collection ~/comfygit-examples -m "feat: add new node to txt2img"
 
-cd ~/comfydock-examples
+cd ~/comfygit-examples
 git push origin main
 ```
 
@@ -432,7 +432,7 @@ git push origin main
 After creating several examples:
 
 ```
-comfydock-examples/
+comfygit-examples/
 ├── README.md                      # Main index
 ├── txt2img/
 │   ├── README.md                  # Example docs (you write this)
@@ -457,22 +457,22 @@ comfydock-examples/
 
 ```bash
 # Morning: Start working on example
-comfydock activate txt2img
+comfygit activate txt2img
 comfyui  # Develop workflows
 
 # Throughout day: Make commits
-comfydock commit -m "wip: testing new approach"
-comfydock commit -m "feat: add advanced workflow"
+comfygit commit -m "wip: testing new approach"
+comfygit commit -m "feat: add advanced workflow"
 
 # End of day: Publish when ready
-sync-env-to-collection ~/comfydock-examples -m "feat: add advanced workflow"
-cd ~/comfydock-examples
+sync-env-to-collection ~/comfygit-examples -m "feat: add advanced workflow"
+cd ~/comfygit-examples
 git push origin main
 ```
 
 ## Tips
 
-1. **Commit often in ComfyDock** - Your local `.cec` history is separate from examples repo
+1. **Commit often in ComfyGit** - Your local `.cec` history is separate from examples repo
 2. **README is sacred** - Script never overwrites your documentation
 3. **Preview first** - Run sync without `-m` to see what changes before committing
 4. **Keep examples focused** - One environment = one clear use case
@@ -484,8 +484,8 @@ git push origin main
 When users import your example:
 
 ```bash
-comfydock import \
-  https://github.com/yourusername/comfydock-examples#txt2img \
+comfygit import \
+  https://github.com/yourusername/comfygit-examples#txt2img \
   -n my-txt2img
 ```
 

@@ -157,6 +157,42 @@ NODE_CLASS_MAPPINGS = {"TestNode": TestNode}
         assert "Note" in result["all_builtin_nodes"]
         assert "PrimitiveNode" in result["all_builtin_nodes"]
 
+    def test_ast_node_mapping_with_dynamic_key(self, tmp_path):
+        """AST parser should ignore dynamic dict keys without crashing."""
+        from comfygit_core.utils.builtin_extractor import _extract_from_ast
+
+        nodes_py = tmp_path / "nodes.py"
+        nodes_py.write_text('''
+dynamic_key = "DynamicNode"
+NODE_CLASS_MAPPINGS = {
+    dynamic_key: DynamicNode,
+    "KSampler": KSampler,
+}
+''')
+
+        extracted = _extract_from_ast(str(nodes_py))
+        assert "KSampler" in extracted
+
+    def test_ast_comfynode_with_non_constant_node_id(self, tmp_path):
+        """AST parser should skip non-constant node_id values without crashing."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+NODE_ID = "DynamicComfyNode"
+
+class DynamicNode(io.ComfyNode):
+    def define_schema(self):
+        return IO.NodeSchema(node_id=NODE_ID)
+
+class StaticNode(io.ComfyNode):
+    def define_schema(self):
+        return IO.NodeSchema(node_id="StaticComfyNode")
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "StaticComfyNode" in extracted
+
 
 class TestNodeClassifierWithEnvironment:
     """Tests for NodeClassifier loading from environment-specific config."""

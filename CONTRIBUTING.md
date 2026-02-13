@@ -1,6 +1,6 @@
-# Contributing to ComfyDock
+# Contributing to ComfyGit
 
-Thanks for your interest in contributing! ComfyDock is currently a single-developer MVP project, but contributions are welcome.
+Thanks for your interest in contributing! ComfyGit is currently a single-developer MVP project, but contributions are welcome.
 
 ## Getting Started
 
@@ -14,8 +14,8 @@ Thanks for your interest in contributing! ComfyDock is currently a single-develo
 
 ```bash
 # Clone the repository
-git clone https://github.com/ComfyDock/ComfyDock.git
-cd ComfyDock
+git clone https://github.com/ComfyGit/ComfyGit.git
+cd ComfyGit
 
 # Install all packages in development mode
 make install
@@ -26,10 +26,10 @@ uv sync --all-packages
 
 ### Project Structure
 
-ComfyDock is a Python monorepo with two main packages:
+ComfyGit is a Python monorepo with two main packages:
 
-- **`packages/core/`** - Core library (`comfydock_core`) for programmatic access
-- **`packages/cli/`** - CLI wrapper (`comfydock_cli`) providing the `cfd` command
+- **`packages/core/`** - Core library (`comfygit_core`) for programmatic access
+- **`packages/cli/`** - CLI wrapper (`comfygit_cli`) providing the `cfd` command
 
 See the codebase maps for detailed architecture:
 - [Root codebase map](docs/codebase-map.md)
@@ -199,7 +199,7 @@ export COMFYGIT_HOME=/home/user/ComfyGit/packages/core/.comfygit_workspace
 uv run cfd --help
 
 # Run specific module
-uv run python -m comfydock_core
+uv run python -m comfygit_core
 
 # Check version compatibility
 make check-versions
@@ -242,21 +242,21 @@ import requests
 from pydantic import BaseModel
 
 # Local
-from comfydock_core.models.exceptions import ComfyDockError
-from comfydock_core.utils.git import parse_git_url
+from comfygit_core.models.exceptions import ComfyDockError
+from comfygit_core.utils.git import parse_git_url
 ```
 
 ## Questions?
 
-- **Bugs/Features**: [Open an issue](https://github.com/ComfyDock/ComfyDock/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/ComfyDock/ComfyDock/discussions)
+- **Bugs/Features**: [Open an issue](https://github.com/ComfyGit/ComfyGit/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ComfyGit/ComfyGit/discussions)
 - **Documentation**: Check the codebase maps and package READMEs
 
 ## Contributor License Agreement (CLA)
 
 ### Why We Need a CLA
 
-ComfyDock is dual-licensed:
+ComfyGit is dual-licensed:
 - **AGPL-3.0** for open-source use (free forever)
 - **Commercial licenses** for businesses requiring proprietary use
 

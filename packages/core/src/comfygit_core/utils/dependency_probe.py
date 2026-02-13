@@ -7,9 +7,11 @@ handles installations.
 
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import tomlkit
@@ -19,9 +21,13 @@ from packaging.version import parse as parse_version
 
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
+from ..utils.dependency_parser import parse_dependency_string
 from ..utils.filesystem import rmtree
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from ..configs.package_config import PackageConfigManager
 
 
 @dataclass
@@ -36,6 +42,7 @@ class ProbeResult:
     protected_changes: list[str] = field(default_factory=list)
     suggested_constraints: list[str] = field(default_factory=list)
     install_failures: list[str] = field(default_factory=list)
+    skipped_requirements: list[str] = field(default_factory=list)
 
 
 class DependencyProbe:
@@ -57,6 +64,7 @@ class DependencyProbe:
         cec_path: Path,
         workspace_path: Path,
         *,
+        package_config: PackageConfigManager | None = None,
         python_version: str | None = None,
         torch_backend: str | None = None,
         keep_venv: bool = False,
@@ -66,6 +74,7 @@ class DependencyProbe:
         Args:
             cec_path: Path to the .cec directory containing pyproject.toml
             workspace_path: Path to ComfyGit workspace for UV cache/python
+            package_config: Optional package config for probe protected package list
             python_version: Python version to use (auto-detected if not provided)
             torch_backend: PyTorch backend (auto-detected if not provided)
             keep_venv: If True, don't cleanup probe venv after run (for debugging)
@@ -76,6 +85,7 @@ class DependencyProbe:
         self.uv_cache_path = workspace_path / "uv_cache"
         self.uv_python_path = workspace_path / "uv" / "python"
         self.keep_venv = keep_venv
+        self.package_config = package_config
 
         self.python_version = python_version or self._detect_python_version()
         self.torch_backend = torch_backend or self._detect_torch_backend()
@@ -93,15 +103,21 @@ class DependencyProbe:
         if not reqs:
             return ProbeResult(success=True)
 
+        reqs_to_install, skipped_requirements = self._filter_protected_requirements(reqs)
+        if not reqs_to_install:
+            return ProbeResult(success=True, skipped_requirements=skipped_requirements)
+
         try:
             self._create_probe_venv()
             self._sync_probe_to_current_state()
 
             before = self._freeze_packages()
-            failures = self._install_one_by_one(reqs)
+            failures = self._install_one_by_one(reqs_to_install)
             after = self._freeze_packages()
 
-            return self._analyze(before, after, failures)
+            result = self._analyze(before, after, failures)
+            result.skipped_requirements = skipped_requirements
+            return result
         finally:
             if not self.keep_venv:
                 self._cleanup()
@@ -228,7 +244,7 @@ class DependencyProbe:
                 )
                 logger.debug(f"Probe installed: {req}")
             except Exception as e:
-                logger.debug(f"Probe failed to install {req}: {e}")
+                logger.warning(f"Probe failed to install {req}: {e}")
                 failures.append(req)
 
         return failures
@@ -275,15 +291,9 @@ class DependencyProbe:
                 if new_v < old_v:
                     # Downgrade detected
                     result.downgraded[name] = (old_version, new_version)
-
-                    # Check if protected
-                    if self._is_protected(name):
-                        result.protected_changes.append(name)
-                    else:
-                        # Generate constraint from downgraded version
-                        constraint = self._version_to_constraint(name, new_version)
-                        if constraint:
-                            result.suggested_constraints.append(constraint)
+                    constraint = self._version_to_constraint(name, new_version)
+                    if constraint:
+                        result.suggested_constraints.append(constraint)
                 else:
                     # Upgrade detected
                     result.upgraded[name] = (old_version, new_version)
@@ -323,9 +333,70 @@ class DependencyProbe:
 
     def _is_protected(self, name: str) -> bool:
         """Check if a package is protected from auto-constraining."""
-        return self._normalize_name(name) in {
-            self._normalize_name(p) for p in self.PROTECTED_PACKAGES
-        }
+        return self._normalize_name(name) in self._protected_packages()
+
+    def _protected_packages(self) -> set[str]:
+        """Return normalized protected packages from config or hardcoded fallback."""
+        if self.package_config is not None:
+            return {self._normalize_name(name) for name in self.package_config.probe_protected_packages}
+
+        return {self._normalize_name(name) for name in self.PROTECTED_PACKAGES}
+
+    def _filter_protected_requirements(
+        self, requirements: list[str]
+    ) -> tuple[list[str], list[str]]:
+        """Split requirements into installable and skipped protected entries."""
+        installable: list[str] = []
+        skipped: list[str] = []
+
+        for requirement in requirements:
+            package_name = self._extract_requirement_name(requirement)
+            if package_name is None:
+                installable.append(requirement)
+                continue
+
+            if self._is_protected(package_name):
+                skipped.append(requirement)
+            else:
+                installable.append(requirement)
+
+        return installable, skipped
+
+    def _extract_requirement_name(self, requirement: str) -> str | None:
+        """Best-effort package extraction for requirement-line filtering."""
+        req = requirement.strip()
+        if not req or req.startswith("#"):
+            return None
+
+        if "#egg=" in req:
+            egg_part = req.split("#egg=", 1)[1]
+            egg_name = re.split(r"[&\s]", egg_part, maxsplit=1)[0]
+            return egg_name.strip() or None
+
+        if req.startswith("-e ") or req.startswith("--editable "):
+            parts = req.split(maxsplit=1)
+            if len(parts) < 2:
+                return None
+            req = parts[1].strip()
+
+        if req.startswith("-"):
+            return None
+
+        if " @ " in req:
+            name_part = req.split(" @ ", 1)[0].strip()
+            if not name_part:
+                return None
+            return name_part.split("[", 1)[0].strip() or None
+
+        if req.startswith(("./", "../", "/", "file:")):
+            return None
+
+        name, _ = parse_dependency_string(req)
+        if not name:
+            return None
+        if any(separator in name for separator in ("/", "\\", ":")):
+            return None
+        return name
 
     def _normalize_name(self, name: str) -> str:
         """Normalize package name per PEP 503.

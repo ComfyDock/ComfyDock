@@ -1,8 +1,11 @@
 """Package configuration for substitutions and exclusions."""
 
+from collections.abc import Mapping
+
 from pathlib import Path
 
 import tomlkit
+from packaging.utils import canonicalize_name
 
 from ..logging.logging_config import get_logger
 
@@ -11,8 +14,25 @@ logger = get_logger(__name__)
 # Default package substitutions - maps package to its preferred alternative
 # When a node requests the key package, we install the value instead
 DEFAULT_PACKAGE_SUBSTITUTIONS = {
-    "opencv-python": "opencv-python-headless",
+    "opencv-python": "opencv-contrib-python-headless",
+    "opencv-contrib-python": "opencv-contrib-python-headless",
+    "opencv-python-headless": "opencv-contrib-python-headless",
 }
+
+# Default packages to exclude from installation
+DEFAULT_EXCLUDE_PACKAGES = [
+    "opencv-python",
+    "opencv-contrib-python",
+    "opencv-python-headless",
+]
+
+# Default packages protected during dependency probing
+DEFAULT_PROBE_PROTECTED = [
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "torchsde",
+]
 
 class PackageConfigManager:
     """Manages package_config.toml for an environment."""
@@ -77,12 +97,20 @@ class PackageConfigManager:
 
         doc.add(tomlkit.nl())
 
-        # Exclusions section (commented out by default)
+        # Exclusions section
         doc.add(tomlkit.comment("Packages to exclude - these will NEVER be installed"))
         doc.add(tomlkit.comment("Use with substitutions to prevent conflicting packages"))
+        exclude = tomlkit.table()
+        exclude["packages"] = list(DEFAULT_EXCLUDE_PACKAGES)
+        doc["exclude"] = exclude
+
         doc.add(tomlkit.nl())
-        doc.add(tomlkit.comment("[exclude]"))
-        doc.add(tomlkit.comment('packages = ["opencv-python"]'))
+
+        # Probe section
+        doc.add(tomlkit.comment("Packages protected during dependency probing"))
+        probe = tomlkit.table()
+        probe["protected"] = list(DEFAULT_PROBE_PROTECTED)
+        doc["probe"] = probe
 
         return doc
 
@@ -97,6 +125,33 @@ class PackageConfigManager:
         """Get list of packages to exclude."""
         config = self.load()
         return list(config.get("exclude", {}).get("packages", []))
+
+    @property
+    def probe_protected_packages(self) -> list[str]:
+        """Packages protected from version changes during dependency probing."""
+        config = self.load()
+        probe_config = config.get("probe")
+
+        if not isinstance(probe_config, Mapping):
+            values: list[str] = list(DEFAULT_PROBE_PROTECTED)
+        elif "protected" not in probe_config:
+            values = list(DEFAULT_PROBE_PROTECTED)
+        else:
+            protected = probe_config.get("protected")
+            if not isinstance(protected, (list, tuple)):
+                values = list(DEFAULT_PROBE_PROTECTED)
+            else:
+                values = [item for item in protected if isinstance(item, str)]
+
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for package in values:
+            canonical = canonicalize_name(package)
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            normalized.append(canonical)
+        return normalized
 
     def apply_substitution(self, package: str) -> str:
         """Apply substitution to a package name if applicable.

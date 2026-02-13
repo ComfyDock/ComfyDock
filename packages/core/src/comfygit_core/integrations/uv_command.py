@@ -62,7 +62,7 @@ class UVCommand:
         if binary_path and binary_path.is_file():
             return str(binary_path)
 
-        # Try UV from Python package (installed with comfydock)
+        # Try UV from Python package (installed with comfygit)
         try:
             from uv import find_uv_bin
             binary = find_uv_bin()
@@ -77,13 +77,13 @@ class UVCommand:
         binary = shutil.which("uv")
         if binary is None:
             raise UVNotInstalledError(
-                "uv is not installed. Install comfydock with: pip install comfygit"
+                "uv is not installed. Install comfygit with: pip install comfygit"
             )
 
         logger.warning(
             f"Using system UV from PATH: {binary}. "
             f"This may cause version compatibility issues. "
-            f"Recommended: pip install --force-reinstall comfydock-cli"
+            f"Recommended: pip install --force-reinstall comfygit-cli"
         )
         return binary
 
@@ -224,9 +224,16 @@ class UVCommand:
 
     # ===== Pip Compatibility =====
 
-    def pip_install(self, packages: list[str] | None = None, requirements_file: Path | None = None,
-                   python: Path | None = None, torch_backend: str | None = None,
-                   verbose: bool = False, **flags) -> CommandResult:
+    def pip_install(
+        self,
+        packages: list[str] | None = None,
+        requirements_file: Path | None = None,
+        python: Path | None = None,
+        torch_backend: str | None = None,
+        constraints: Path | None = None,
+        verbose: bool = False,
+        **flags,
+    ) -> CommandResult:
         cmd = [self._binary, "pip", "install"]
 
         if python:
@@ -234,6 +241,9 @@ class UVCommand:
 
         if torch_backend:
             cmd.extend(["--torch-backend", torch_backend])
+
+        if constraints:
+            cmd.extend(["--constraint", str(constraints)])
 
         for key, value in flags.items():
             if value is None or value is False:

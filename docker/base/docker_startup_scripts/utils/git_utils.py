@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Git utilities for ComfyDock scripts
+Git utilities for ComfyGit scripts
 """
 
 import subprocess

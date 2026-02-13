@@ -1,7 +1,7 @@
 """Test custom node path preservation during workflow commit.
 
 This test suite verifies the fix for the custom node path stripping bug where
-comfydock incorrectly modified model paths for custom nodes, breaking workflow
+comfygit incorrectly modified model paths for custom nodes, breaking workflow
 validation.
 
 Bug context:

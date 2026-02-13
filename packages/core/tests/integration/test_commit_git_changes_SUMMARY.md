@@ -2,13 +2,13 @@
 
 ## Summary
 
-Fixed critical architectural issue where `comfydock commit` would refuse to commit when only git had changes (pyproject.toml modifications) but workflows were synced. Implemented clean core API to properly check for ALL committable changes.
+Fixed critical architectural issue where `comfygit commit` would refuse to commit when only git had changes (pyproject.toml modifications) but workflows were synced. Implemented clean core API to properly check for ALL committable changes.
 
 ## The Bugs
 
 ### Bug 1: CLI Only Checks Workflow File Changes
 
-**Location:** `packages/cli/comfydock_cli/env_commands.py:791-793`
+**Location:** `packages/cli/comfygit_cli/env_commands.py:791-793`
 
 **Symptom:**
 ```bash
@@ -34,7 +34,7 @@ if not workflow_status.sync_status.has_changes:
 
 ### Bug 2: CLI Blocks Commits Without Workflows
 
-**Location:** `packages/cli/comfydock_cli/env_commands.py:786-788`
+**Location:** `packages/cli/comfygit_cli/env_commands.py:786-788`
 
 **Symptom:**
 ```bash

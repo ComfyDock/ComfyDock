@@ -1,4 +1,4 @@
-"""Core logging utilities for ComfyDock."""
+"""Core logging utilities for ComfyGit."""
 
 import logging
 

@@ -14,6 +14,13 @@ from .git import git_rev_parse
 logger = get_logger(__name__)
 
 
+def _extract_string_constant(node: ast.AST | None) -> str | None:
+    """Extract string literals from Python 3.10+ AST nodes."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
 def _is_valid_node_name(name: str) -> bool:
     """Check if a string is likely to be a valid node name."""
     invalid_patterns = [
@@ -49,12 +56,9 @@ def _extract_from_ast(file_path: str) -> list[str]:
                     if isinstance(target, ast.Name) and target.id == "NODE_CLASS_MAPPINGS":
                         if isinstance(node.value, ast.Dict):
                             for key in node.value.keys:
-                                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                                    name = key.value.strip()
-                                    if _is_valid_node_name(name):
-                                        node_names.append(name)
-                                elif isinstance(key, ast.Str):  # Python 3.7 compatibility
-                                    name = key.s.strip()
+                                name = _extract_string_constant(key)
+                                if name:
+                                    name = name.strip()
                                     if _is_valid_node_name(name):
                                         node_names.append(name)
 
@@ -86,12 +90,8 @@ def _extract_comfynode_from_ast(file_path: str) -> list[str]:
                             if isinstance(item, ast.FunctionDef) and item.name == "define_schema":
                                 for func_node in ast.walk(item):
                                     if isinstance(func_node, ast.keyword) and func_node.arg == "node_id":
-                                        if isinstance(func_node.value, ast.Constant):
-                                            name = func_node.value.value
-                                            if _is_valid_node_name(str(name)):
-                                                node_names.append(name)
-                                        elif isinstance(func_node.value, ast.Str):
-                                            name = func_node.value.s
+                                        name = _extract_string_constant(func_node.value)
+                                        if name:
                                             if _is_valid_node_name(name):
                                                 node_names.append(name)
 

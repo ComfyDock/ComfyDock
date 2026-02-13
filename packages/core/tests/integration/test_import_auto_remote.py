@@ -14,7 +14,7 @@ class TestImportAutoRemote:
         subprocess.run(["git", "config", "user.name", "Test"], cwd=remote_repo, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=remote_repo, check=True, capture_output=True)
 
-        # Create ComfyDock environment structure
+        # Create ComfyGit environment structure
         pyproject_content = """
 [project]
 name = "test-env"
@@ -105,7 +105,7 @@ nodes = {}
         subprocess.run(["git", "config", "user.name", "Test"], cwd=remote_repo, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=remote_repo, check=True, capture_output=True)
 
-        # Create subdirectory with ComfyDock environment
+        # Create subdirectory with ComfyGit environment
         subdir = remote_repo / "environments" / "prod"
         subdir.mkdir(parents=True)
 

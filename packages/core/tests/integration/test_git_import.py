@@ -78,7 +78,7 @@ nodes = {}
         # Create a mock git repo WITHOUT pyproject.toml
         git_repo = tmp_path / "invalid-repo"
         git_repo.mkdir()
-        (git_repo / "README.md").write_text("# Not a ComfyDock repo")
+        (git_repo / "README.md").write_text("# Not a ComfyGit repo")
 
         # Initialize as git repo
         subprocess.run(["git", "init"], cwd=git_repo, check=True, capture_output=True)

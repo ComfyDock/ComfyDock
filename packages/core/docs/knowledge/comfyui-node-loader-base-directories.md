@@ -163,14 +163,14 @@ class LoraLoader:
 
 ---
 
-## ComfyDock's Data Model
+## ComfyGit's Data Model
 
 We maintain **two different path representations** for the same model:
 
 ### Internal Storage (pyproject.toml)
 
 ```toml
-[tool.comfydock.models.required]
+[tool.comfygit.models.required]
 "abc123hash" = {
   filename = "my-model.ckpt",
   relative_path = "checkpoints/sd15/my-model.ckpt",  # ✅ FULL path WITH base

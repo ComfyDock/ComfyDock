@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Python entrypoint script for ComfyDock
+Python entrypoint script for ComfyGit
 """
 
 import os
@@ -15,8 +15,8 @@ from utils.permission_utils import OwnershipManager, run_callable_as_user
 from check_permissions import ComfyUIPermissionChecker
 
 
-class ComfyDockEntrypoint:
-    """Main entrypoint class for ComfyDock"""
+class ComfyGitEntrypoint:
+    """Main entrypoint class for ComfyGit"""
     
     def __init__(self):
         self.env = self._setup_environment()
@@ -92,7 +92,7 @@ class ComfyDockEntrypoint:
         if has_issues:
             Logger.log("⚠️  Permission issues detected!")
             Logger.log("To fix these issues run:")
-            Logger.log("  comfydock dev exec (pick running container)")
+            Logger.log("  comfygit dev exec (pick running container)")
             Logger.log("  fix-permissions")
             Logger.log("This will show you all affected files and ask for confirmation before making changes.")
         
@@ -265,7 +265,7 @@ except Exception as e:
         code = """
 import sys
 import os
-sys.path.insert(0, '/usr/local/lib/comfydock')
+sys.path.insert(0, '/usr/local/lib/comfygit')
 sys.path.insert(0, '/usr/local/bin')
 
 from utils.package_utils import PackageManager
@@ -328,7 +328,7 @@ if os.path.exists(manager_reqs):
 
 def main():
     """Main function"""
-    entrypoint = ComfyDockEntrypoint()
+    entrypoint = ComfyGitEntrypoint()
     entrypoint.run()
 
 

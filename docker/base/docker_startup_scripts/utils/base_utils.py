@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Base utilities for ComfyDock scripts
+Base utilities for ComfyGit scripts
 """
 
 import os

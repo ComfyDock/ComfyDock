@@ -1,5 +1,9 @@
 """Tests for dependency probe utilities."""
 
+from pathlib import Path
+
+import pytest
+
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,
@@ -96,6 +100,147 @@ class TestProbeVenvPath:
         assert probe_two.probe_venv.name.startswith(".venv-probe-")
 
 
+class TestRequirementFiltering:
+    """Tests for protected requirement filtering in probe installs."""
+
+    def test_install_one_by_one_no_constraints(self, tmp_path, monkeypatch):
+        """uv pip_install calls should not include constraints pinning."""
+        calls: list[dict] = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.timeout = None
+
+            def pip_install(self, **kwargs):
+                calls.append(kwargs)
+
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+        monkeypatch.setattr(probe, "_get_probe_python", lambda: Path("/tmp/probe-python"))
+
+        failures = probe._install_one_by_one(["numpy"])
+
+        assert failures == []
+        assert len(calls) == 1
+        assert "constraints" not in calls[0]
+
+    def test_filter_protected_requirements_handles_simple_url_and_editable(self, tmp_path):
+        """Protected names should be skipped across common requirement forms."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        installable, skipped = probe._filter_protected_requirements([
+            "numpy>=2.0",
+            "torch @ https://download.pytorch.org/whl/cu129",
+            "-e git+https://example.com/repo.git#egg=torchsde",
+            "requests>=2.32.0",
+        ])
+
+        assert "torch @ https://download.pytorch.org/whl/cu129" in skipped
+        assert "-e git+https://example.com/repo.git#egg=torchsde" in skipped
+        assert "numpy>=2.0" in installable
+        assert "requests>=2.32.0" in installable
+
+    def test_filter_protected_requirements_does_not_skip_unparseable_path(self, tmp_path):
+        """Unparseable path/url requirements should be installed, not skipped."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        installable, skipped = probe._filter_protected_requirements([
+            "./local_package",
+            "https://example.com/custom.whl",
+        ])
+
+        assert installable == ["./local_package", "https://example.com/custom.whl"]
+        assert skipped == []
+
+    def test_is_protected_uses_package_config_list(self, tmp_path):
+        """Protected checks should use package config when provided."""
+
+        class FakePackageConfig:
+            @property
+            def probe_protected_packages(self):
+                return ["my_pkg"]
+
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+            package_config=FakePackageConfig(),
+        )
+
+        assert probe._is_protected("my-pkg")
+        assert not probe._is_protected("torch")
+
+    def test_run_skips_protected_requirements_and_tracks_them(self, tmp_path, monkeypatch):
+        """Protected requirements should be tracked and omitted from installs."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+            keep_venv=True,
+        )
+        before = {"torch": "2.2.3"}
+        after = {"torch": "2.2.3", "requests": "2.32.4"}
+        install_calls: list[list[str]] = []
+
+        def fake_create_probe_venv():
+            probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        def fake_install(requirements):
+            install_calls.append(list(requirements))
+            return []
+
+        monkeypatch.setattr(probe, "_create_probe_venv", fake_create_probe_venv)
+        monkeypatch.setattr(probe, "_sync_probe_to_current_state", lambda: None)
+        monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
+        monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
+
+        result = probe.run(["torch", "requests>=2.0"])
+
+        assert result.success is True
+        assert result.install_failures == []
+        assert result.skipped_requirements == ["torch"]
+        assert install_calls == [["requests>=2.0"]]
+
+    def test_run_reports_install_failure_for_non_skipped_requirement(self, tmp_path, monkeypatch):
+        """Install failures should still fail the probe after skip filtering."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+            keep_venv=True,
+        )
+        before = {"torch": "2.2.3"}
+        after = {"torch": "2.2.3"}
+        failure_req = "librosa<0.1"
+        install_calls: list[list[str]] = []
+
+        def fake_create_probe_venv():
+            probe.probe_venv.mkdir(parents=True, exist_ok=True)
+
+        def fake_install(requirements):
+            install_calls.append(list(requirements))
+            return [failure_req]
+
+        monkeypatch.setattr(probe, "_create_probe_venv", fake_create_probe_venv)
+        monkeypatch.setattr(probe, "_sync_probe_to_current_state", lambda: None)
+        monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
+        monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
+
+        result = probe.run(["torch", failure_req])
+
+        assert result.success is False
+        assert result.install_failures == [failure_req]
+        assert result.skipped_requirements == ["torch"]
+        assert install_calls == [[failure_req]]
+
+
 class TestAnalyzeDetectDowngrades:
     """Tests for _analyze detecting downgrades and suggesting constraints."""
 
@@ -123,14 +268,14 @@ class TestAnalyzeDetectDowngrades:
             workspace_path=tmp_path / "workspace",
         )
 
-        before = {"numpy": "2.4.1"}
-        after = {"numpy": "2.3.5"}
+        before = {"scipy": "1.15.1"}
+        after = {"scipy": "1.14.0"}
         failures = []
 
         result = probe._analyze(before, after, failures)
 
         assert len(result.suggested_constraints) > 0
-        assert any("numpy" in c for c in result.suggested_constraints)
+        assert any("scipy" in c for c in result.suggested_constraints)
 
     def test_analyze_detects_upgrade(self, tmp_path):
         """Detects when package version goes up."""
@@ -182,10 +327,10 @@ class TestAnalyzeDetectDowngrades:
 
 
 class TestAnalyzeProtectedPackages:
-    """Tests for protected package detection."""
+    """Tests for protected package analyze compatibility behavior."""
 
-    def test_does_not_suggest_constraint_for_protected_torch(self, tmp_path):
-        """torch downgrade should NOT generate constraint."""
+    def test_protected_changes_remain_empty_for_compatibility(self, tmp_path):
+        """protected_changes should remain empty in permissive probe mode."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
@@ -197,41 +342,24 @@ class TestAnalyzeProtectedPackages:
 
         result = probe._analyze(before, after, failures)
 
-        # torch downgrade should be captured in downgraded but NO constraint suggested
         assert "torch" in result.downgraded
-        assert not any("torch" in c for c in result.suggested_constraints)
+        assert result.protected_changes == []
 
-    def test_marks_protected_change_for_torch(self, tmp_path):
-        """Protected packages are flagged in protected_changes."""
+    def test_protected_package_downgrade_still_generates_constraint(self, tmp_path):
+        """Downgrades discovered transitively still produce suggested constraints."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
         )
 
-        before = {"torch": "2.4.0"}
-        after = {"torch": "2.3.0"}
+        before = {"numpy": "2.3.0"}
+        after = {"numpy": "2.2.0"}
         failures = []
 
         result = probe._analyze(before, after, failures)
 
-        assert "torch" in result.protected_changes
-
-    def test_all_protected_packages_detected(self, tmp_path):
-        """All packages in PROTECTED_PACKAGES are flagged."""
-        probe = DependencyProbe(
-            cec_path=tmp_path,
-            workspace_path=tmp_path / "workspace",
-        )
-
-        # Test that torch-related packages are protected (MVP: torch-only)
-        before = {"torch": "2.4.0", "torchvision": "0.19.0"}
-        after = {"torch": "2.3.0", "torchvision": "0.18.0"}
-        failures = []
-
-        result = probe._analyze(before, after, failures)
-
-        assert "torch" in result.protected_changes
-        assert "torchvision" in result.protected_changes
+        assert "numpy" in result.downgraded
+        assert any("numpy<" in constraint for constraint in result.suggested_constraints)
 
 
 class TestAnalyzeFailures:
@@ -383,6 +511,7 @@ class TestProbeResultDataclass:
         assert result.protected_changes == []
         assert result.suggested_constraints == []
         assert result.install_failures == []
+        assert result.skipped_requirements == []
 
     def test_probe_result_with_values(self):
         """ProbeResult stores all provided values."""
@@ -391,9 +520,11 @@ class TestProbeResultDataclass:
             added={"scipy": "1.15.0"},
             suggested_constraints=["numpy<2.4"],
             install_failures=["librosa"],
+            skipped_requirements=["numpy"],
         )
 
         assert result.success is False
         assert result.added == {"scipy": "1.15.0"}
         assert result.suggested_constraints == ["numpy<2.4"]
         assert result.install_failures == ["librosa"]
+        assert result.skipped_requirements == ["numpy"]

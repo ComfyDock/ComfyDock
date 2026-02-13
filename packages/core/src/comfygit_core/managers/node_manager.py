@@ -440,6 +440,7 @@ class NodeManager:
                 probe = DependencyProbe(
                     cec_path=self.pyproject.path.parent,
                     workspace_path=self.resolution_tester.workspace_path,
+                    package_config=self.package_config,
                 )
                 probe_result = probe.run(node_package.requirements)
 
@@ -447,9 +448,20 @@ class NodeManager:
                 if probe_result.install_failures:
                     self._raise_probe_install_failures(node_package.name, probe_result)
 
-                # If the probe would change protected packages, bail out
+                if probe_result.skipped_requirements:
+                    logger.info(
+                        "Probe skipped protected requirements for '%s': %s",
+                        node_package.name,
+                        ", ".join(probe_result.skipped_requirements),
+                    )
+
+                # Should normally be empty now that protected requirements are skipped.
                 if probe_result.protected_changes:
-                    self._raise_probe_protected_changes(node_package.name, probe_result)
+                    logger.warning(
+                        "Probe detected protected package changes for '%s': %s",
+                        node_package.name,
+                        ", ".join(probe_result.protected_changes),
+                    )
 
                 discovered_constraints = probe_result.suggested_constraints
 
@@ -1778,44 +1790,6 @@ class NodeManager:
 
         raise CDDependencyConflictError(
             f"Node '{node_name}' dependencies could not be probed (install failures)",
-            context=context,
-        )
-
-    def _raise_probe_protected_changes(self, node_name: str, probe_result) -> None:
-        """Raise a dependency conflict if probe would change protected packages.
-
-        Args:
-            node_name: Name of the node being installed
-            probe_result: ProbeResult from dependency probing
-        """
-        from ..utils.dependency_probe import ProbeResult
-
-        result: ProbeResult = probe_result
-
-        suggestions = [
-            NodeAction(
-                action_type="skip_node",
-                description=f"Skip installing '{node_name}'",
-            ),
-            NodeAction(
-                action_type="add_node_force",
-                node_identifier=node_name,
-                description="Install with --no-test flag (skip dependency check, risk breaking environment)",
-            ),
-        ]
-
-        context = DependencyConflictContext(
-            node_name=node_name,
-            conflicting_packages=[(pkg, "") for pkg in result.protected_changes],
-            conflict_descriptions=[
-                f"Would change protected package: {pkg}" for pkg in result.protected_changes
-            ],
-            raw_stderr="",
-            suggested_actions=suggestions,
-        )
-
-        raise CDDependencyConflictError(
-            f"Node '{node_name}' would change protected packages: {', '.join(result.protected_changes)}",
             context=context,
         )
 

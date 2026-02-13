@@ -36,7 +36,14 @@ def test_new_environment_has_package_config(test_workspace, mock_comfyui_clone, 
 
     # Check for substitutions section
     assert "substitutions" in config
-    assert config["substitutions"].get("opencv-python") == "opencv-python-headless"
+    assert config["substitutions"].get("opencv-python") == "opencv-contrib-python-headless"
+    assert config["substitutions"].get("opencv-contrib-python") == "opencv-contrib-python-headless"
+    assert config["substitutions"].get("opencv-python-headless") == "opencv-contrib-python-headless"
 
-    # exclude section is commented out by default
-    assert "exclude" not in config
+    # exclude section should be enabled by default
+    assert "exclude" in config
+    assert list(config["exclude"]["packages"]) == [
+        "opencv-python",
+        "opencv-contrib-python",
+        "opencv-python-headless",
+    ]

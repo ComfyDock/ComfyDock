@@ -340,7 +340,7 @@ class CivitAIClient:
 
         # Build request
         req = urllib.request.Request(url)
-        req.add_header("User-Agent", "ComfyDock/1.0")
+        req.add_header("User-Agent", "ComfyGit/1.0")
         req.add_header("Content-Type", "application/json")
 
         # Add authentication if available

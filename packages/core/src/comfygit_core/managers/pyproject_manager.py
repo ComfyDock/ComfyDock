@@ -237,13 +237,13 @@ class PyprojectManager:
         if 'tool' not in config or 'comfygit' not in config['tool']:
             return
 
-        comfydock = config['tool']['comfygit']
+        comfygit = config['tool']['comfygit']
 
         # Track which sections exist
-        has_metadata = any(k in comfydock for k in ['comfyui_version', 'python_version', 'manifest_state'])
-        has_nodes = 'nodes' in comfydock
-        has_workflows = 'workflows' in comfydock
-        has_models = 'models' in comfydock
+        has_metadata = any(k in comfygit for k in ['comfyui_version', 'python_version', 'manifest_state'])
+        has_nodes = 'nodes' in comfygit
+        has_workflows = 'workflows' in comfygit
+        has_models = 'models' in comfygit
 
         # Only rebuild if we have workflows or models (need spacing)
         if not (has_workflows or has_models):
@@ -287,26 +287,26 @@ class PyprojectManager:
 
         # Add metadata fields first
         for key in ['schema_version', 'comfyui_version', 'python_version', 'manifest_state']:
-            if key in comfydock:
-                new_table[key] = comfydock[key]
+            if key in comfygit:
+                new_table[key] = comfygit[key]
 
         # Add nodes if it exists
         if has_nodes:
-            new_table['nodes'] = deep_copy_table(comfydock['nodes'])
+            new_table['nodes'] = deep_copy_table(comfygit['nodes'])
 
         # Add workflows with preceding newline if needed
         if has_workflows:
             if has_metadata or has_nodes:
                 new_table.add(tomlkit.nl())
-            new_table['workflows'] = deep_copy_table(comfydock['workflows'])
+            new_table['workflows'] = deep_copy_table(comfygit['workflows'])
 
         # Add models with preceding newline if needed
         if has_models:
             if has_metadata or has_nodes or has_workflows:
                 new_table.add(tomlkit.nl())
-            new_table['models'] = deep_copy_table(comfydock['models'])
+            new_table['models'] = deep_copy_table(comfygit['models'])
 
-        # Replace the comfydock table
+        # Replace the comfygit table
         config['tool']['comfygit'] = new_table
 
     def get_manifest_state(self) -> str:

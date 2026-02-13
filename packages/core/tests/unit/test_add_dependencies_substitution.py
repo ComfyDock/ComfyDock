@@ -34,27 +34,43 @@ class TestAddDependenciesSubstitution:
             yield env
 
     def test_substitutes_opencv_python(self, mock_environment):
-        """Should substitute opencv-python with opencv-python-headless."""
+        """Should substitute opencv-python with opencv-contrib-python-headless."""
         result = mock_environment.add_dependencies(packages=["opencv-python"])
 
         # Check substitution was recorded
         assert "substitutions" in result
         assert "opencv-python" in result["substitutions"]
-        assert result["substitutions"]["opencv-python"] == "opencv-python-headless"
+        assert result["substitutions"]["opencv-python"] == "opencv-contrib-python-headless"
 
         # Check UV was called with substituted package
         mock_environment.uv_manager.add_dependency.assert_called_once()
         call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
-        assert call_kwargs["packages"] == ["opencv-python-headless"]
+        assert call_kwargs["packages"] == ["opencv-contrib-python-headless"]
+
+    def test_substitutes_opencv_contrib_python(self, mock_environment):
+        """Should substitute opencv-contrib-python with opencv-contrib-python-headless."""
+        result = mock_environment.add_dependencies(packages=["opencv-contrib-python"])
+
+        assert result["substitutions"]["opencv-contrib-python"] == "opencv-contrib-python-headless"
+        call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
+        assert call_kwargs["packages"] == ["opencv-contrib-python-headless"]
+
+    def test_substitutes_opencv_python_headless(self, mock_environment):
+        """Should substitute opencv-python-headless with opencv-contrib-python-headless."""
+        result = mock_environment.add_dependencies(packages=["opencv-python-headless"])
+
+        assert result["substitutions"]["opencv-python-headless"] == "opencv-contrib-python-headless"
+        call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
+        assert call_kwargs["packages"] == ["opencv-contrib-python-headless"]
 
     def test_preserves_version_specifier(self, mock_environment):
         """Should preserve version specifiers during substitution."""
         result = mock_environment.add_dependencies(packages=["opencv-python>=4.5.0,<5.0"])
 
-        assert result["substitutions"]["opencv-python>=4.5.0,<5.0"] == "opencv-python-headless>=4.5.0,<5.0"
+        assert result["substitutions"]["opencv-python>=4.5.0,<5.0"] == "opencv-contrib-python-headless>=4.5.0,<5.0"
 
         call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
-        assert call_kwargs["packages"] == ["opencv-python-headless>=4.5.0,<5.0"]
+        assert call_kwargs["packages"] == ["opencv-contrib-python-headless>=4.5.0,<5.0"]
 
     def test_no_substitution_for_regular_packages(self, mock_environment):
         """Should not substitute packages not in config."""
@@ -75,7 +91,7 @@ class TestAddDependenciesSubstitution:
         assert "opencv-python" in result["substitutions"]
 
         call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
-        assert call_kwargs["packages"] == ["requests", "opencv-python-headless", "pillow"]
+        assert call_kwargs["packages"] == ["requests", "opencv-contrib-python-headless", "pillow"]
 
     def test_substitutes_from_requirements_file(self, mock_environment):
         """Should substitute packages when reading from requirements file."""
@@ -93,7 +109,7 @@ class TestAddDependenciesSubstitution:
         assert "opencv-python>=4.0" in result["substitutions"]
 
         call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
-        assert call_kwargs["packages"] == ["requests", "opencv-python-headless>=4.0", "pillow"]
+        assert call_kwargs["packages"] == ["requests", "opencv-contrib-python-headless>=4.0", "pillow"]
         assert call_kwargs["requirements_file"] is None  # We parse it ourselves now
 
     def test_case_insensitive_substitution(self, mock_environment):
@@ -103,4 +119,4 @@ class TestAddDependenciesSubstitution:
         assert "OpenCV-Python" in result["substitutions"]
 
         call_kwargs = mock_environment.uv_manager.add_dependency.call_args.kwargs
-        assert call_kwargs["packages"] == ["opencv-python-headless"]
+        assert call_kwargs["packages"] == ["opencv-contrib-python-headless"]

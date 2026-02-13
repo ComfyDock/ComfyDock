@@ -16,15 +16,15 @@ logger = get_logger(__name__)
 
 
 class WorkspaceFactory:
-    """Factory for creating and discovering ComfyDock workspaces."""
+    """Factory for creating and discovering ComfyGit workspaces."""
 
     @staticmethod
     def get_paths(path: Path | None = None) -> WorkspacePaths:
         # Determine workspace path
         if path:
             workspace_path = path
-        elif comfydock_home := os.environ.get("COMFYGIT_HOME"):
-            workspace_path = Path(comfydock_home)
+        elif comfygit_home := os.environ.get("COMFYGIT_HOME"):
+            workspace_path = Path(comfygit_home)
         else:
             workspace_path = Path.home() / "comfygit"
         return WorkspacePaths(workspace_path)
@@ -51,7 +51,7 @@ class WorkspaceFactory:
 
     @staticmethod
     def create(path: Path | None = None) -> Workspace:
-        """Create a new ComfyDock workspace.
+        """Create a new ComfyGit workspace.
 
         Args:
             path: Workspace directory (defaults to ~/comfygit)

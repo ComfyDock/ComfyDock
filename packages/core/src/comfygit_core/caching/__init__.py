@@ -1,4 +1,4 @@
-"""Caching modules for ComfyDock."""
+"""Caching modules for ComfyGit."""
 
 from .api_cache import APICacheManager
 from .base import CacheBase, ContentCacheBase

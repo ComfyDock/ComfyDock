@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Permission and mount utilities for ComfyDock scripts
+Permission and mount utilities for ComfyGit scripts
 """
 
 import os
@@ -53,7 +53,7 @@ data = pickle.loads(base64.b64decode('{serialized}'))
 os.environ.update(data['env'])
 
 # Set up Python path
-sys.path.insert(0, '/usr/local/lib/comfydock')
+sys.path.insert(0, '/usr/local/lib/comfygit')
 sys.path.insert(0, '/usr/local/bin')
 
 # Execute the function
@@ -120,7 +120,7 @@ for key, value in {dict(os.environ)!r}.items():
     os.environ[key] = value
 
 # Set up Python path
-sys.path.insert(0, '/usr/local/lib/comfydock')
+sys.path.insert(0, '/usr/local/lib/comfygit')
 sys.path.insert(0, '/usr/local/bin')
 
 # Import and run

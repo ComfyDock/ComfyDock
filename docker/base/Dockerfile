@@ -60,17 +60,17 @@ EXPOSE 8188
 
 # 8) Copy scripts and set up permissions
 # First, create the directory structure for our Python package
-RUN mkdir -p /usr/local/lib/comfydock/utils
+RUN mkdir -p /usr/local/lib/comfygit/utils
 
 # Copy the utility modules
-COPY docker_startup_scripts/*.py /usr/local/lib/comfydock/
-COPY docker_startup_scripts/utils/*.py /usr/local/lib/comfydock/utils/
+COPY docker_startup_scripts/*.py /usr/local/lib/comfygit/
+COPY docker_startup_scripts/utils/*.py /usr/local/lib/comfygit/utils/
 
 # Copy the main scripts
 COPY docker_startup_scripts/*.py /usr/local/bin/
 
 # Set up Python path to find our modules
-ENV PYTHONPATH="/usr/local/lib/comfydock:${PYTHONPATH}"
+ENV PYTHONPATH="/usr/local/lib/comfygit:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
 
 # Create temporary virtual environment for script setup and make scripts executable
@@ -93,7 +93,7 @@ RUN uv venv --python 3.12 /tmp/setup_venv && \
     /tmp/setup_venv/bin/python -m py_compile /usr/local/bin/install_pytorch.py && \
     /tmp/setup_venv/bin/python -m py_compile /usr/local/bin/install_from_migration.py && \
     # Also compile the utility modules to catch any syntax errors
-    /tmp/setup_venv/bin/python -m py_compile /usr/local/lib/comfydock/utils/*.py && \
+    /tmp/setup_venv/bin/python -m py_compile /usr/local/lib/comfygit/utils/*.py && \
     # Clean up temporary venv
     rm -rf /tmp/setup_venv
 

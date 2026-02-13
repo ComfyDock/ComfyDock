@@ -1,14 +1,14 @@
-# ComfyDock Individual Contributor License Agreement
+# ComfyGit Individual Contributor License Agreement
 
-Thank you for your interest in contributing to ComfyDock ("We" or "Us").
+Thank you for your interest in contributing to ComfyGit ("We" or "Us").
 
-This Contributor License Agreement ("Agreement") documents the intellectual property rights You grant to Us when contributing to ComfyDock. This is for Your protection as a Contributor as well as the protection of ComfyDock and its users; it does not change Your rights to use Your own Contributions for any other purpose.
+This Contributor License Agreement ("Agreement") documents the intellectual property rights You grant to Us when contributing to ComfyGit. This is for Your protection as a Contributor as well as the protection of ComfyGit and its users; it does not change Your rights to use Your own Contributions for any other purpose.
 
 ## 1. Definitions
 
 **"You"** means the individual who Submits a Contribution to Us.
 
-**"Contribution"** means any work of authorship, including the original version of the work and any modifications or additions to that work or Derivative Works thereof, that is intentionally Submitted by You to Us for inclusion in, or documentation of, ComfyDock. For the purposes of this definition, **"Submit"** means any form of electronic, verbal, or written communication sent to Us or Our representatives, including but not limited to communication on electronic mailing lists, source code control systems, and issue tracking systems.
+**"Contribution"** means any work of authorship, including the original version of the work and any modifications or additions to that work or Derivative Works thereof, that is intentionally Submitted by You to Us for inclusion in, or documentation of, ComfyGit. For the purposes of this definition, **"Submit"** means any form of electronic, verbal, or written communication sent to Us or Our representatives, including but not limited to communication on electronic mailing lists, source code control systems, and issue tracking systems.
 
 **"Material"** means the work of authorship which is made available by Us to third parties. When this Agreement covers more than one software project, the Material means the work of authorship to which the Contribution was Submitted.
 
@@ -30,7 +30,7 @@ If any entity institutes patent litigation against You or any other entity (incl
 
 ### 2.3 Outbound License
 
-**ComfyDock is dual-licensed:**
+**ComfyGit is dual-licensed:**
 - GNU Affero General Public License v3.0 (AGPL-3.0) for open-source use
 - Commercial proprietary licenses for businesses requiring non-copyleft terms
 
@@ -68,12 +68,12 @@ You agree to notify Us of any facts or circumstances of which You become aware t
 
 You understand that:
 
-- This Agreement is for Your protection as well as the protection of ComfyDock and its users
+- This Agreement is for Your protection as well as the protection of ComfyGit and its users
 - You retain full copyright ownership of Your Contributions
 - Your Contributions will be available under the AGPL-3.0 license
 - Your Contributions may also be made available under commercial proprietary licenses
-- This dual-licensing model helps fund the continued development of ComfyDock
-- The decision to accept Your Contribution is at the discretion of ComfyDock maintainers
+- This dual-licensing model helps fund the continued development of ComfyGit
+- The decision to accept Your Contribution is at the discretion of ComfyGit maintainers
 
 ---
 

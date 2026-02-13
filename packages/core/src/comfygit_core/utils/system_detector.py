@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from ..logging.logging_config import get_logger
-from ..models.shared import SystemInfo
+from ..models.system import SystemInfo
 from .common import run_command
 
 

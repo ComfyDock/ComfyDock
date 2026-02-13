@@ -1,12 +1,12 @@
 #!/bin/bash
-# sync-env-to-collection - Sync active ComfyDock environment to examples collection
+# sync-env-to-collection - Sync active ComfyGit environment to examples collection
 #
 # Usage:
 #   sync-env-to-collection <path-to-examples-repo> [-m <message>]
 #
 # Examples:
-#   sync-env-to-collection ~/comfydock-examples
-#   sync-env-to-collection ~/comfydock-examples -m "feat: add new workflow"
+#   sync-env-to-collection ~/comfygit-examples
+#   sync-env-to-collection ~/comfygit-examples -m "feat: add new workflow"
 #
 # What it syncs (whitelist):
 #   - workflows/       (all workflow files)
@@ -53,14 +53,14 @@ if [ -z "$EXAMPLES_REPO" ]; then
 fi
 
 # Detect COMFYGIT_HOME
-COMFYGIT_HOME="${COMFYGIT_HOME:-$HOME/comfydock}"
-echo "📂 ComfyDock workspace: $COMFYGIT_HOME"
+COMFYGIT_HOME="${COMFYGIT_HOME:-$HOME/comfygit}"
+echo "📂 ComfyGit workspace: $COMFYGIT_HOME"
 
 # Read workspace.json to get active environment
 WORKSPACE_FILE="$COMFYGIT_HOME/.metadata/workspace.json"
 if [ ! -f "$WORKSPACE_FILE" ]; then
     echo "❌ No workspace.json found at $WORKSPACE_FILE"
-    echo "   Is this a valid ComfyDock workspace?"
+    echo "   Is this a valid ComfyGit workspace?"
     exit 1
 fi
 
@@ -74,7 +74,7 @@ fi
 
 if [ -z "$ACTIVE_ENV" ] || [ "$ACTIVE_ENV" = "null" ] || [ "$ACTIVE_ENV" = "" ]; then
     echo "❌ No active environment set"
-    echo "   Run: comfydock activate <environment>"
+    echo "   Run: comfygit activate <environment>"
     exit 1
 fi
 
@@ -100,7 +100,7 @@ if [ -d "$CEC_PATH/.git" ]; then
     cd "$CEC_PATH"
     if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
         echo "⚠️  Warning: .cec has uncommitted changes"
-        echo "   Consider running: comfydock commit -m 'message' first"
+        echo "   Consider running: comfygit commit -m 'message' first"
         read -p "Continue anyway? (y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then

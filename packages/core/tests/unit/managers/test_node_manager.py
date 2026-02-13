@@ -4,8 +4,13 @@ from unittest.mock import Mock
 
 import pytest
 from comfygit_core.managers.node_manager import NodeManager
-from comfygit_core.models.exceptions import CDEnvironmentError, CDNodeConflictError
+from comfygit_core.models.exceptions import (
+    CDDependencyConflictError,
+    CDEnvironmentError,
+    CDNodeConflictError,
+)
 from comfygit_core.models.shared import NodeInfo
+from comfygit_core.utils.dependency_probe import ProbeResult
 from comfygit_core.utils.git import is_github_url
 
 
@@ -121,6 +126,120 @@ class TestNodeManager:
         # Verify .disabled was removed
         assert not disabled_dir.exists()
         assert not (custom_nodes_dir / "test-node.disabled").exists()
+
+
+class TestNodeManagerProbeMode:
+    """Tests for permissive dependency probe behavior."""
+
+    def _make_probe_manager(self, tmp_path):
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        cache_dir = tmp_path / "cache" / "test-node"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "node.py").write_text("node content")
+
+        cec_dir = tmp_path / ".cec"
+        cec_dir.mkdir()
+        pyproject_path = cec_dir / "pyproject.toml"
+        pyproject_path.write_text('[project]\nname = "test-env"\n')
+
+        mock_pyproject = Mock()
+        mock_pyproject.path = pyproject_path
+        mock_pyproject.snapshot.return_value = {"snapshot": "data"}
+        mock_pyproject.restore = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {}
+        mock_pyproject.dependencies.get_groups.return_value = {}
+
+        mock_node_lookup = Mock()
+        mock_node_lookup.get_node.return_value = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            source="registry",
+        )
+        mock_node_lookup.download_to_cache.return_value = cache_dir
+        mock_node_lookup.scan_requirements.return_value = ["numpy", "requests>=2.0"]
+
+        mock_resolution_tester = Mock()
+        mock_resolution_tester.workspace_path = tmp_path / "workspace"
+
+        package_config = object()
+        node_manager = NodeManager(
+            mock_pyproject,
+            Mock(),
+            mock_node_lookup,
+            mock_resolution_tester,
+            custom_nodes_dir,
+            Mock(),
+            package_config=package_config,
+        )
+        node_manager.add_node_package = Mock()
+        return node_manager, package_config
+
+    def test_add_node_passes_package_config_and_logs_skips(self, tmp_path, monkeypatch, caplog):
+        """Probe should receive package_config and node manager should log skips."""
+        node_manager, package_config = self._make_probe_manager(tmp_path)
+        captured: dict = {}
+
+        class FakeProbe:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def run(self, requirements):
+                return ProbeResult(
+                    success=True,
+                    skipped_requirements=["numpy"],
+                )
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.DependencyProbe", FakeProbe)
+
+        with caplog.at_level("INFO"):
+            node_manager.add_node("test-node", no_test=False, strict=False)
+
+        assert captured["package_config"] is package_config
+        assert "skipped protected requirements" in caplog.text
+        assert node_manager.add_node_package.call_count == 1
+
+    def test_add_node_warns_instead_of_failing_on_protected_changes(self, tmp_path, monkeypatch, caplog):
+        """protected_changes should log a warning and continue installation."""
+        node_manager, _ = self._make_probe_manager(tmp_path)
+
+        class FakeProbe:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, requirements):
+                return ProbeResult(
+                    success=True,
+                    protected_changes=["torch"],
+                )
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.DependencyProbe", FakeProbe)
+
+        with caplog.at_level("WARNING"):
+            node_manager.add_node("test-node", no_test=False, strict=False)
+
+        assert "detected protected package changes" in caplog.text
+        assert node_manager.add_node_package.call_count == 1
+
+    def test_add_node_still_fails_on_probe_install_failures(self, tmp_path, monkeypatch):
+        """Install failures should still raise dependency conflict."""
+        node_manager, _ = self._make_probe_manager(tmp_path)
+
+        class FakeProbe:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, requirements):
+                return ProbeResult(
+                    success=False,
+                    install_failures=["requests>=2.0"],
+                )
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.DependencyProbe", FakeProbe)
+
+        with pytest.raises(CDDependencyConflictError):
+            node_manager.add_node("test-node", no_test=False, strict=False)
 
 
 class TestNodeManagerSystemDependencyGroup:

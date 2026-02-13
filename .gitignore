@@ -22,6 +22,7 @@ htmlcov/
 .dmypy.json
 dmypy.json
 .pyre/
+packages/*/uv.lock
 
 # Node
 node_modules/
@@ -53,7 +54,7 @@ dev/test-environments/
 
 # Documentation build
 docs/site/
-docs/comfydock-docs/site/
+docs/comfygit-docs/site/
 
 # Logs
 *.log

@@ -13,6 +13,13 @@ from .git import git_rev_parse
 logger = get_logger(__name__)
 
 
+def _extract_string_constant(node: ast.AST | None) -> str | None:
+    """Extract string literals from Python 3.10+ AST nodes."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
 def _extract_directory_name(node: ast.expr) -> str | None:
     """
     Extract the directory name from an os.path.join call.
@@ -27,10 +34,7 @@ def _extract_directory_name(node: ast.expr) -> str | None:
             # Get the last argument (the folder name)
             if node.args:
                 last_arg = node.args[-1]
-                if isinstance(last_arg, ast.Constant) and isinstance(last_arg.value, str):
-                    return last_arg.value
-                elif isinstance(last_arg, ast.Str):  # Python 3.7 compatibility
-                    return last_arg.s
+                return _extract_string_constant(last_arg)
     return None
 
 
@@ -61,16 +65,7 @@ def _extract_folder_mappings_from_ast(content: str) -> dict[str, list[str]]:
                     # Check if subscripting folder_names_and_paths
                     if isinstance(target.value, ast.Name) and target.value.id == "folder_names_and_paths":
                         # Get the key
-                        key = None
-                        if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str):
-                            key = target.slice.value
-                        elif isinstance(target.slice, ast.Str):  # Python 3.7 compatibility
-                            key = target.slice.s
-                        elif isinstance(target.slice, ast.Index):  # Python 3.8 compatibility
-                            if isinstance(target.slice.value, ast.Constant):
-                                key = target.slice.value.value
-                            elif isinstance(target.slice.value, ast.Str):
-                                key = target.slice.value.s
+                        key = _extract_string_constant(target.slice)
 
                         if key and isinstance(node.value, ast.Tuple) and len(node.value.elts) >= 1:
                             # First element of tuple is the list of paths
@@ -116,18 +111,8 @@ def _extract_legacy_aliases_from_ast(content: str) -> dict[str, str]:
                         if isinstance(target, ast.Name) and target.id == "legacy":
                             if isinstance(stmt.value, ast.Dict):
                                 for key, value in zip(stmt.value.keys, stmt.value.values, strict=False):
-                                    key_str = None
-                                    value_str = None
-
-                                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                                        key_str = key.value
-                                    elif isinstance(key, ast.Str):
-                                        key_str = key.s
-
-                                    if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                                        value_str = value.value
-                                    elif isinstance(value, ast.Str):
-                                        value_str = value.s
+                                    key_str = _extract_string_constant(key)
+                                    value_str = _extract_string_constant(value)
 
                                     if key_str and value_str:
                                         aliases[key_str] = value_str
