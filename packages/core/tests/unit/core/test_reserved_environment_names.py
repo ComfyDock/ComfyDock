@@ -29,7 +29,7 @@ def test_reserved_name_models():
         _validate_environment_name("models")
 
 
-def test_reserved_name_dotcomfydock():
+def test_reserved_name_dotcomfygit():
     """Environment name '.comfygit' should be rejected as reserved."""
     from comfygit_core.core.workspace import _validate_environment_name
 

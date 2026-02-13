@@ -1,6 +1,6 @@
 # Core Package Layer Hierarchy
 
-This document defines the import hierarchy and functional responsibilities for the `comfydock-core` package. Layers are ordered from lowest (foundation) to highest (orchestration).
+This document defines the import hierarchy and functional responsibilities for the `comfygit-core` package. Layers are ordered from lowest (foundation) to highest (orchestration).
 
 ## Import Rules
 

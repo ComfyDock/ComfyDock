@@ -18,7 +18,7 @@
 - `uv add <package>` - Install dependencies
 - `uv run ruff check --fix` - Lint and auto-fix with ruff
 - `uv pip list` - View dependencies
-- `uv run <command>` - Run cli tools locally installed (e.g. uv run comfydock)
+- `uv run <command>` - Run cli tools locally installed (e.g. uv run comfygit)
 
 ## Testing
 

@@ -17,7 +17,7 @@ User choice > embedded metadata > registry default.
 ## Pyproject.toml Structure
 
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a", "package-b"]  # Required dependencies
 custom_node_map = {
   NodeTypeB = "package-b"      # User resolved ambiguous match
@@ -55,7 +55,7 @@ C → None → UNRESOLVED
 
 **Step 3: Save to pyproject.toml**
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a"]  # Only auto-resolved nodes
 ```
 
@@ -92,10 +92,10 @@ Actions:
 
 **Final state**:
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a", "package-b"]
 
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeB = "package-b"
 NodeTypeC = false
 ```
@@ -104,10 +104,10 @@ NodeTypeC = false
 
 **Existing pyproject.toml**:
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a", "package-b"]
 
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeB = "package-b"
 NodeTypeC = false
 ```
@@ -142,10 +142,10 @@ Compare resolutions against existing pyproject:
 
 **Updated state**:
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a", "package-b", "package-d"]  # Added package-d
 
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeB = "package-b"
 NodeTypeC = false
 ```
@@ -157,10 +157,10 @@ No unresolved issues, skip.
 
 **Existing pyproject.toml** (same as Case 2):
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-a", "package-b", "package-d"]
 
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeB = "package-b"
 NodeTypeC = false
 ```
@@ -192,7 +192,7 @@ Existing pyproject:
 
 **Final state**:
 ```toml
-[tool.comfydock.workflows.my_workflow]
+[tool.comfygit.workflows.my_workflow]
 nodes = ["package-d"]
 
 # custom_node_map section removed entirely (empty)
@@ -232,11 +232,11 @@ When user enters GitHub URL:
 
 ```toml
 # Found in registry
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeX = "registry-package-id"
 
 # Not found in registry
-[tool.comfydock.workflows.my_workflow.custom_node_map]
+[tool.comfygit.workflows.my_workflow.custom_node_map]
 NodeTypeX = "https://github.com/user/repo"
 ```
 

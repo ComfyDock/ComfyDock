@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Package management utilities for ComfyDock scripts
+Package management utilities for ComfyGit scripts
 """
 
 import os

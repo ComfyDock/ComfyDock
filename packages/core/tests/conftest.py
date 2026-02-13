@@ -34,7 +34,7 @@ def test_workspace(tmp_path):
     """Create isolated workspace for each test."""
     from comfygit_core.factories.workspace_factory import WorkspaceFactory
 
-    workspace_path = tmp_path / "comfydock_workspace"
+    workspace_path = tmp_path / "comfygit_workspace"
 
     # Use factory to create properly initialized workspace
     workspace = WorkspaceFactory.create(workspace_path)

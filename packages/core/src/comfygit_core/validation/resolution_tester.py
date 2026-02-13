@@ -36,7 +36,7 @@ class ResolutionTester:
         """Initialize the resolution tester.
 
         Args:
-            workspace_path: Path to ComfyDock workspace
+            workspace_path: Path to ComfyGit workspace
         """
         self.workspace_path = workspace_path
         self.uv_cache_path = workspace_path / "uv_cache"

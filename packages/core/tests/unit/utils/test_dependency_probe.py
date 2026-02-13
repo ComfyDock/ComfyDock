@@ -142,10 +142,10 @@ class TestRequirementFiltering:
             "requests>=2.32.0",
         ])
 
-        assert "numpy>=2.0" in skipped
         assert "torch @ https://download.pytorch.org/whl/cu129" in skipped
         assert "-e git+https://example.com/repo.git#egg=torchsde" in skipped
-        assert installable == ["requests>=2.32.0"]
+        assert "numpy>=2.0" in installable
+        assert "requests>=2.32.0" in installable
 
     def test_filter_protected_requirements_does_not_skip_unparseable_path(self, tmp_path):
         """Unparseable path/url requirements should be installed, not skipped."""
@@ -186,8 +186,8 @@ class TestRequirementFiltering:
             workspace_path=tmp_path / "workspace",
             keep_venv=True,
         )
-        before = {"numpy": "2.2.3"}
-        after = {"numpy": "2.2.3", "requests": "2.32.4"}
+        before = {"torch": "2.2.3"}
+        after = {"torch": "2.2.3", "requests": "2.32.4"}
         install_calls: list[list[str]] = []
 
         def fake_create_probe_venv():
@@ -202,11 +202,11 @@ class TestRequirementFiltering:
         monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
         monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
 
-        result = probe.run(["numpy", "requests>=2.0"])
+        result = probe.run(["torch", "requests>=2.0"])
 
         assert result.success is True
         assert result.install_failures == []
-        assert result.skipped_requirements == ["numpy"]
+        assert result.skipped_requirements == ["torch"]
         assert install_calls == [["requests>=2.0"]]
 
     def test_run_reports_install_failure_for_non_skipped_requirement(self, tmp_path, monkeypatch):
@@ -216,8 +216,8 @@ class TestRequirementFiltering:
             workspace_path=tmp_path / "workspace",
             keep_venv=True,
         )
-        before = {"numpy": "2.2.3"}
-        after = {"numpy": "2.2.3"}
+        before = {"torch": "2.2.3"}
+        after = {"torch": "2.2.3"}
         failure_req = "librosa<0.1"
         install_calls: list[list[str]] = []
 
@@ -233,11 +233,11 @@ class TestRequirementFiltering:
         monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
         monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
 
-        result = probe.run(["numpy", failure_req])
+        result = probe.run(["torch", failure_req])
 
         assert result.success is False
         assert result.install_failures == [failure_req]
-        assert result.skipped_requirements == ["numpy"]
+        assert result.skipped_requirements == ["torch"]
         assert install_calls == [[failure_req]]
 
 

@@ -4,13 +4,13 @@
 
 Your packages are now consistently named with underscores to match your existing PyPI package:
 
-- `comfydock_core` (was: comfydock-core)
-- `comfydock_cli` (new)
+- `comfygit_core` (was: comfygit-core)
+- `comfygit_cli` (new)
 
-**Note:** PyPI normalizes names, so `comfydock_core` and `comfydock-core` are treated as the same package. Users can install with either:
+**Note:** PyPI normalizes names, so `comfygit_core` and `comfygit-core` are treated as the same package. Users can install with either:
 ```bash
-pip install comfydock_core  # Matches package name
-pip install comfydock-core  # Also works (normalized)
+pip install comfygit_core  # Matches package name
+pip install comfygit-core  # Also works (normalized)
 ```
 
 ## Before First Publish
@@ -19,7 +19,7 @@ pip install comfydock-core  # Also works (normalized)
 
 Add a `pypi` environment to your repository for approval gates:
 
-1. Go to https://github.com/ComfyDock/ComfyDock/settings/environments
+1. Go to https://github.com/ComfyGit/ComfyGit/settings/environments
 2. Click **New environment**
 3. Name: `pypi`
 4. Configure protection rules (optional):
@@ -31,21 +31,21 @@ This adds an approval step before packages are published to PyPI, preventing acc
 
 ### 2. Configure PyPI Trusted Publishing
 
-For **comfydock_core**:
-1. Go to https://pypi.org/manage/project/comfydock_core/settings/publishing/
+For **comfygit_core**:
+1. Go to https://pypi.org/manage/project/comfygit_core/settings/publishing/
 2. Add publisher:
-   - **Owner**: ComfyDock
-   - **Repository name**: ComfyDock
+   - **Owner**: ComfyGit
+   - **Repository name**: ComfyGit
    - **Workflow name**: publish-core.yml
    - **Environment name**: pypi
 
-For **comfydock_cli** (new project):
+For **comfygit_cli** (new project):
 1. Go to https://pypi.org/manage/account/publishing/
 2. Click "Add a new pending publisher"
 3. Fill in:
-   - **PyPI Project Name**: comfydock_cli
-   - **Owner**: ComfyDock
-   - **Repository name**: ComfyDock
+   - **PyPI Project Name**: comfygit_cli
+   - **Owner**: ComfyGit
+   - **Repository name**: ComfyGit
    - **Workflow name**: publish-cli.yml
    - **Environment name**: pypi
 
@@ -59,10 +59,10 @@ make build-all
 ls -lh dist/
 
 # Should see:
-# comfydock_core-1.0.0-py3-none-any.whl
-# comfydock_core-1.0.0.tar.gz
-# comfydock_cli-1.0.0-py3-none-any.whl
-# comfydock_cli-1.0.0.tar.gz
+# comfygit_core-1.0.0-py3-none-any.whl
+# comfygit_core-1.0.0.tar.gz
+# comfygit_cli-1.0.0-py3-none-any.whl
+# comfygit_cli-1.0.0.tar.gz
 ```
 
 ## Publishing Workflow
@@ -129,7 +129,7 @@ git push
 
 ## Troubleshooting
 
-### CLI Build Fails: "comfydock_core not found"
+### CLI Build Fails: "comfygit_core not found"
 
 The CLI depends on core from PyPI. Make sure:
 1. Core has been published to PyPI first

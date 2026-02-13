@@ -62,7 +62,7 @@ class UVCommand:
         if binary_path and binary_path.is_file():
             return str(binary_path)
 
-        # Try UV from Python package (installed with comfydock)
+        # Try UV from Python package (installed with comfygit)
         try:
             from uv import find_uv_bin
             binary = find_uv_bin()
@@ -77,13 +77,13 @@ class UVCommand:
         binary = shutil.which("uv")
         if binary is None:
             raise UVNotInstalledError(
-                "uv is not installed. Install comfydock with: pip install comfygit"
+                "uv is not installed. Install comfygit with: pip install comfygit"
             )
 
         logger.warning(
             f"Using system UV from PATH: {binary}. "
             f"This may cause version compatibility issues. "
-            f"Recommended: pip install --force-reinstall comfydock-cli"
+            f"Recommended: pip install --force-reinstall comfygit-cli"
         )
         return binary
 

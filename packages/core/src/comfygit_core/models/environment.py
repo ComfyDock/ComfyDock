@@ -1,4 +1,4 @@
-"""models/environment.py - Environment models for ComfyDock."""
+"""models/environment.py - Environment models for ComfyGit."""
 
 from dataclasses import dataclass, field
 from enum import Enum

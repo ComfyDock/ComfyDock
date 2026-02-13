@@ -31,7 +31,7 @@ class PermissionFixer:
     
     def setup_audit_log(self) -> str:
         """Set up audit logging"""
-        audit_dir = Path("/var/log/comfydock")
+        audit_dir = Path("/var/log/comfygit")
         audit_dir.mkdir(exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -39,7 +39,7 @@ class PermissionFixer:
         
         # Write header
         with open(audit_log, 'w') as f:
-            f.write("=== ComfyDock Permission Fix Audit Log ===\n")
+            f.write("=== ComfyGit Permission Fix Audit Log ===\n")
             f.write(f"Date: {datetime.now()}\n")
             f.write(f"User: {os.getenv('USER', 'root')}\n")
             f.write(f"Target UID:GID: {self.comfy_uid}:{self.comfy_gid}\n")
@@ -237,7 +237,7 @@ class PermissionFixer:
     def run(self) -> None:
         """Main execution method"""
         # Header
-        Logger.log(Colors.colorize("=== ComfyDock Permission Fix Tool ===", Colors.BLUE))
+        Logger.log(Colors.colorize("=== ComfyGit Permission Fix Tool ===", Colors.BLUE))
         Logger.log(f"This tool will fix permission issues for the comfy user (UID={self.comfy_uid}, GID={self.comfy_gid})")
         print()
         

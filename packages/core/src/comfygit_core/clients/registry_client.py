@@ -156,7 +156,7 @@ class ComfyRegistryClient:
         self.rate_limiter.wait_if_needed("registry_api")
 
         req = urllib.request.Request(url)
-        req.add_header("User-Agent", "ComfyDock/1.0")
+        req.add_header("User-Agent", "ComfyGit/1.0")
 
         try:
             with urllib.request.urlopen(req, timeout=30) as response:

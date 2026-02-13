@@ -1,4 +1,4 @@
-"""High-level Git workflow manager for ComfyDock environments.
+"""High-level Git workflow manager for ComfyGit environments.
 
 This module provides higher-level git workflows that combine multiple git operations
 with business logic. It builds on top of the low-level git utilities in git.py.
@@ -122,7 +122,7 @@ uv.lock
         except Exception:
             pass
 
-        return "ComfyDock User"
+        return "ComfyGit User"
 
     def _get_git_email(self) -> str:
         """Get a suitable git email with smart fallbacks."""

@@ -41,7 +41,7 @@ uv run scripts/build_registry_cache.py \
 ```bash
 # Traditional approach - all phases in one run
 uv run scripts/build_registry_cache.py \
-  --output src/comfydock_core/data/registry_cache.json \
+  --output src/comfygit_core/data/registry_cache.json \
   --concurrency 10 \
   --max-versions 10
 ```
@@ -51,16 +51,16 @@ uv run scripts/build_registry_cache.py \
 ```bash
 # Build mappings from cache
 uv run scripts/build_global_mappings.py \
-  --cache src/comfydock_core/data/registry_cache.json \
-  --output src/comfydock_core/data/node_mappings.json \
+  --cache src/comfygit_core/data/registry_cache.json \
+  --output src/comfygit_core/data/node_mappings.json \
   --concurrency 10 \
   --checkpoint-interval 20
 
 # Incremental update (only process new versions)
 uv run scripts/build_global_mappings.py \
-  --cache src/comfydock_core/data/registry_cache.json \
-  --input src/comfydock_core/data/node_mappings.json \
-  --output src/comfydock_core/data/node_mappings.json \
+  --cache src/comfygit_core/data/registry_cache.json \
+  --input src/comfygit_core/data/node_mappings.json \
+  --output src/comfygit_core/data/node_mappings.json \
   --max-versions 10
 ```
 

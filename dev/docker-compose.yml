@@ -53,23 +53,23 @@ services:
         GID: "${USER_GID:-1000}"
     volumes:
       # Mount entire workspace
-      - ../:/workspace/comfydock
+      - ../:/workspace/comfygit
       # Exclude all virtual environments
-      - /workspace/comfydock/.venv
-      - /workspace/comfydock/packages/cec/.venv
-      - /workspace/comfydock/packages/core/.venv
-      - /workspace/comfydock/packages/server/.venv
-      - /workspace/comfydock/packages/cli/.venv
+      - /workspace/comfygit/.venv
+      - /workspace/comfygit/packages/cec/.venv
+      - /workspace/comfygit/packages/core/.venv
+      - /workspace/comfygit/packages/server/.venv
+      - /workspace/comfygit/packages/cli/.venv
       # Mount test environments
       - ./test-environments:/env
       # Cache mount
       - uv-cache:/home/comfy/.cache/uv
     environment:
       - UV_CACHE_DIR=/home/comfy/.cache/uv
-      - UV_PROJECT_ENVIRONMENT=/workspace/comfydock/packages/cec/.venv
-      - PYTHONPATH=/workspace/comfydock/packages/cec/src
+      - UV_PROJECT_ENVIRONMENT=/workspace/comfygit/packages/cec/.venv
+      - PYTHONPATH=/workspace/comfygit/packages/cec/src
       - COMFYGIT_CACHE=/env/comfygit_cache
-    working_dir: /workspace/comfydock/packages/cec
+    working_dir: /workspace/comfygit/packages/cec
     stdin_open: true
     tty: true
     user: "${USER_UID:-1000}:${USER_GID:-1000}"

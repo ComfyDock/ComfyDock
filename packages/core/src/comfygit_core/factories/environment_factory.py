@@ -458,11 +458,11 @@ class EnvironmentFactory:
             logger.info(f"Cloning {base_url} to {cec_path}")
             git_clone(base_url, cec_path, ref=branch)
 
-            # Validate it's a ComfyDock environment (only for non-subdir imports)
+            # Validate it's a ComfyGit environment (only for non-subdir imports)
             pyproject_path = cec_path / "pyproject.toml"
             if not pyproject_path.exists():
                 raise ValueError(
-                    "Repository does not contain pyproject.toml - not a valid ComfyDock environment"
+                    "Repository does not contain pyproject.toml - not a valid ComfyGit environment"
                 )
 
             # Auto-add the clone URL as 'origin' remote

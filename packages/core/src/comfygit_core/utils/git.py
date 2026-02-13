@@ -513,12 +513,12 @@ def git_clone_subdirectory(
         if not subdir_path.is_dir():
             raise ValueError(f"Path '{subdir}' exists but is not a directory")
 
-        # Validate it's a ComfyDock environment
+        # Validate it's a ComfyGit environment
         pyproject_path = subdir_path / "pyproject.toml"
         if not pyproject_path.exists():
             raise ValueError(
                 f"Subdirectory '{subdir}' does not contain pyproject.toml - "
-                f"not a valid ComfyDock environment"
+                f"not a valid ComfyGit environment"
             )
 
         # Copy subdirectory contents to target

@@ -18,7 +18,7 @@ Release/*
 config.json
 environments.json
 user.settings.json
-comfydock.log
+comfygit.log
 
 # Docs
 docs/archive

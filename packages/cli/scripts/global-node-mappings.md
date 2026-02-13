@@ -49,12 +49,12 @@ uv run scripts/build_global_mappings.py --input node_mappings.json --node-limit 
 uv run scripts/build_global_mappings.py --node-limit 10 --mvp
 ```
 
-### 2. Global Node Resolver (`src/comfydock_core/services/global_node_resolver.py`)
+### 2. Global Node Resolver (`src/comfygit_core/services/global_node_resolver.py`)
 
 Service that resolves unknown nodes using the mappings:
 
 ```python
-from comfydock_core.services.global_node_resolver import GlobalNodeResolver
+from comfygit_core.services.global_node_resolver import GlobalNodeResolver
 
 resolver = GlobalNodeResolver()
 result = resolver.resolve_workflow_nodes(unknown_nodes)
@@ -101,7 +101,7 @@ uv run scripts/build_global_mappings.py --limit 2 --max-versions 2
 uv run scripts/build_global_mappings.py --node-ids comfyui_tinyterranodes --max-versions 2
 
 # Check the output
-cat src/comfydock_core/data/node_mappings.json | jq '.stats'
+cat src/comfygit_core/data/node_mappings.json | jq '.stats'
 
 # Test resolver works
 uv run scripts/test_global_resolver.py --stats
@@ -182,7 +182,7 @@ The global resolver integrates with the existing workflow system:
 
 ```bash
 # Track a workflow (will use global mappings for unknown nodes)
-comfydock workflow track my_workflow
+comfygit workflow track my_workflow
 
 # The system will:
 # 1. Parse workflow for custom nodes

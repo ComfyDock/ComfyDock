@@ -86,7 +86,7 @@ DEFAULT_REGISTRY_URL = "https://api.comfy.org"
 DEFAULT_GITHUB_URL = "https://github.com"
 GITHUB_API_BASE = "https://api.github.com"
 
-GITHUB_NODE_MAPPINGS_URL = "https://raw.githubusercontent.com/ComfyDock/ComfyDock-Registry-Data/main/data/node_mappings.json"
+GITHUB_NODE_MAPPINGS_URL = "https://raw.githubusercontent.com/comfygit-ai/comfygit-registry-data/main/data/node_mappings.json"
 
 MAX_REGISTRY_DATA_AGE_HOURS = 24
 

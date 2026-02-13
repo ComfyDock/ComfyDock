@@ -1,4 +1,4 @@
-"""ComfyDock workspace - manages multiple environments within a validated workspace."""
+"""ComfyGit workspace - manages multiple environments within a validated workspace."""
 
 import json
 from functools import cached_property
@@ -142,7 +142,7 @@ class WorkspacePaths:
         # Note: system_nodes is NOT created anymore (legacy, schema v1 only)
 
 class Workspace:
-    """Manages ComfyDock workspace and all environments within it.
+    """Manages ComfyGit workspace and all environments within it.
 
     Represents an existing, validated workspace - no nullable state.
     """

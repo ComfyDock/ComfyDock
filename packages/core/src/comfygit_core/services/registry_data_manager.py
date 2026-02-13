@@ -76,7 +76,7 @@ class RegistryDataManager:
         try:
             # Create request with timeout
             req = Request(GITHUB_NODE_MAPPINGS_URL, headers={
-                'User-Agent': 'ComfyDock/1.0',
+                'User-Agent': 'ComfyGit/1.0',
                 'Accept': 'application/json'
             })
 
