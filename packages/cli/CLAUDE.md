@@ -165,9 +165,14 @@ uv run ruff check --fix packages/cli/
 ```
 comfygit_cli/
 ├── cli.py                    # Main entry point, argument parsing
-├── env_commands.py           # Environment-scoped commands
-├── global_commands.py        # Workspace-scoped commands
-├── completers.py             # Shell completion logic
+├── env_commands.py           # Environment-scoped commands (node, py, sync, run, git, env-config, etc.)
+├── global_commands.py        # Workspace-scoped commands (init, create, import, export, etc.)
+├── update_commands.py        # Update/upgrade commands (cg update)
+├── completion_commands.py    # Shell completion setup commands
+├── completers.py             # Shell completion logic (tab completion)
+├── cli_utils.py              # CLI utility helpers
+├── resolution_strategies.py  # Node/model resolution strategies
+├── interactive/              # Interactive prompts and wizards
 ├── strategies/
 │   └── interactive.py        # Interactive resolution strategies
 ├── formatters/
@@ -177,5 +182,9 @@ comfygit_cli/
 │   └── environment_logger.py # Environment-specific logging
 └── utils/
     ├── progress.py           # Download progress display
-    └── pagination.py         # Terminal pagination
+    ├── pagination.py         # Terminal pagination
+    ├── orchestrator.py       # Orchestrator process management
+    ├── civitai_errors.py     # CivitAI error handling
+    ├── update_checker.py     # Background PyPI update checker (24h cache)
+    └── update_notice.py      # One-line update notice on stderr
 ```

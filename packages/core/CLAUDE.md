@@ -6,7 +6,32 @@
 ## Core Package
 - Code under packages/core should be assumed to be a library and properly abstracted from client rendering code.
 - DO NOT couple this code with a particular frontend implementation like the CLI!
-- We should NOT see any print() or input() in the core libary code.
+- We should NOT see any print() or input() in the core library code.
+- All user interaction happens through callback protocols (see `models/protocols.py`).
+
+## Key Managers
+
+| Manager | File | Purpose |
+|---------|------|---------|
+| `PyprojectManager` | `managers/pyproject_manager.py` | pyproject.toml CRUD, UV config injection/restoration |
+| `UVProjectManager` | `managers/uv_project_manager.py` | UV sync, add, remove with injection context |
+| `PyTorchBackendManager` | `managers/pytorch_backend_manager.py` | `.pytorch-backend` file, GPU probing, config generation |
+| `LocalUVConfigManager` | `managers/local_uv_config_manager.py` | `.local-uv-config` file, machine-local UV overrides |
+| `NodeManager` | `managers/node_manager.py` | Node install/remove/update |
+| `WorkflowManager` | `managers/workflow_manager.py` | Workflow tracking/resolution |
+| `GitManager` | `managers/git_manager.py` | Git operations (auto-strips local paths before commit) |
+| `ExportImportManager` | `managers/export_import_manager.py` | Environment export/import |
+
+## Injection System
+
+The core uses a temporary injection pattern for machine-specific config:
+1. `uv_injection_context()` in `PyprojectManager` saves original pyproject.toml
+2. Injects `.local-uv-config` sources/indexes/constraints
+3. Injects `.pytorch-backend` config (wins on torch conflicts)
+4. UV resolves against the merged config
+5. Original pyproject.toml is restored in `finally` block
+
+Both `.pytorch-backend` and `.local-uv-config` are auto-gitignored.
 
 ## Python Environment Management
 
