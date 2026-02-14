@@ -198,119 +198,47 @@ Publishing is automated via `.github/workflows/publish.yml` - push version bump 
 ## Development Commands
 
 ```bash
-make install    # Install all packages in dev mode
-make dev        # Start dev environment
-make test       # Run all tests
-make lint       # Run linting
+make install / make dev / make test / make lint
 ```
 
-Cross-platform testing: `python dev/scripts/cross-platform-test.py` (see `dev/cross-platform-test.toml` for config).
+Cross-platform testing: `python dev/scripts/cross-platform-test.py` (config: `dev/cross-platform-test.toml`).
 
 ## Running Tests
 
-**IMPORTANT:** Always use `uv run pytest`, never bare `pytest`. The project uses uv for dependency management and pytest is only available through the virtual environment.
+**Always use `uv run pytest`** (never bare `pytest`).
 
 ```bash
-# From repo root - run all tests
-uv run pytest packages/core/tests/ -v
-
-# Run specific test file
-uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v
-
-# Run specific test class or function
-uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py::TestStripLocalPathSources -v
-
-# Run tests matching a pattern
-uv run pytest packages/core/tests/ -k "injection" -v
-
-# Quick run (no verbose)
-uv run pytest packages/core/tests/unit/managers/test_local_uv_config_manager.py -q
+uv run pytest packages/core/tests/ -v                    # All core tests
+uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v  # Specific file
+uv run pytest packages/core/tests/ -k "injection" -v     # Pattern match
 ```
 
-**Test locations:**
-- `packages/core/tests/unit/` - Unit tests for core library
-- `packages/core/tests/integration/` - Integration tests
-- `packages/cli/tests/` - CLI tests
-- `packages/deploy/tests/` - Deploy tests
+Test locations: `packages/core/tests/{unit,integration}/`, `packages/cli/tests/`, `packages/deploy/tests/`
 
 ## Validation
 
-Use `/validate` after features or fixes that change observable behavior. The skill covers quick checks against the shared workspace and full validation with disposable workspaces via `dev/scripts/validation-workspace.sh`.
+Use `/validate` after features or fixes that change observable behavior (uses `dev/scripts/validation-workspace.sh`).
 
 ## Important Notes
 
-- Both packages must always have the same version (lockstep)
-- Never manually edit version numbers - use `make bump-version`
+- All packages must have the same version (lockstep) — use `make bump-version`
 - Code should work across Linux, Windows, and Mac
 
 ## Issue Tracking (Beads)
 
-This project uses beads (`bd`) for issue tracking with the **`cg-`** prefix.
+Uses beads (`bd`) with prefix **`cg-`**. Use for multi-session or dependent work; skip for simple single-session fixes.
 
-### When to Use Beads
-- **Use beads** for multi-session work, work with dependencies, or discovered tasks
-- **Skip beads** for simple single-session fixes where tracking adds no value
-- When in doubt, prefer beads - persistence you don't need beats lost context
-
-### Session Workflow
 ```bash
-# 1. Find available work
-bd ready                    # Show unblocked issues
-
-# 2. Read the issue details
-bd show cg-xxx              # Full context, acceptance criteria, files to modify
-
-# 3. Claim the work
-bd update cg-xxx --status=in_progress
-
-# 4. Implement the task...
-
-# 5. Close when done
-bd close cg-xxx --reason="Implemented in commit abc123"
-
-# 6. Sync at session end
-bd sync
-```
-
-### Common Commands
-```bash
+# Workflow: bd ready → bd show cg-xxx → bd update cg-xxx --status=in_progress → implement → bd close cg-xxx --reason="..." → bd sync
 bd ready                           # Show unblocked work
+bd show cg-xxx                     # Full context + acceptance criteria
 bd list --status=open              # All open issues
-bd show cg-xxx                     # View issue details
-bd blocked                         # Show blocked issues and why
-
-# Creating issues
-bd create --title="Fix the bug" --type=bug --priority=2
-bd create --title="New feature" --type=feature --priority=2
-
-# Priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
-# Types: task, bug, feature, epic
-
-# Dependencies
-bd dep add cg-yyy cg-xxx           # cg-yyy depends on cg-xxx (xxx blocks yyy)
-
-# Closing
-bd close cg-xxx                    # Close single issue
-bd close cg-xxx cg-yyy cg-zzz      # Close multiple at once
-bd close cg-xxx --reason="Done in commit abc"  # Close with reason
+bd create --title="..." --type=bug --priority=2  # Types: task/bug/feature/epic, Priority: 0-4
+bd dep add cg-yyy cg-xxx           # cg-yyy depends on cg-xxx
+bd close cg-xxx cg-yyy             # Close one or more
 ```
 
-### For Epics with Child Tasks
-```bash
-bd create --title="Big feature" --type=epic
-bd create --title="Phase 1" --type=task --parent=cg-xxx
-bd create --title="Phase 2" --type=task --parent=cg-xxx
-bd dep add cg-xxx.2 cg-xxx.1       # Phase 2 depends on Phase 1
-```
-
-### Reading Bead Notes
-Beads contain detailed implementation context in their notes:
-- **Context & Goal** - Why this matters
-- **Current vs Target State** - Code before/after with file paths
-- **Files Inventory** - What to read/modify/create
-- **Acceptance Criteria** - How to verify completion
-
-Always run `bd show <id>` before starting work to get full context.
+Always run `bd show <id>` before starting work — beads contain implementation context, file lists, and acceptance criteria.
 
 ## General
 
