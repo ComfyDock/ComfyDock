@@ -1,3 +1,5 @@
+<!-- NOTE: This file must stay in sync with AGENTS.md. If you update one, update the other. -->
+
 ## Project Overview
 
 ComfyGit is a monorepo workspace using uv for Python package management. It provides unified environment management for ComfyUI through multiple coordinated packages. Licensed under GPL-3.0.

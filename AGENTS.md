@@ -1,6 +1,16 @@
+<!-- NOTE: This file must stay in sync with CLAUDE.md. If you update one, update the other. -->
+
 ## Project Overview
 
-ComfyGit is a monorepo workspace using uv for Python package management. It provides unified environment management for ComfyUI through multiple coordinated packages.
+ComfyGit is a monorepo workspace using uv for Python package management. It provides unified environment management for ComfyUI through multiple coordinated packages. Licensed under GPL-3.0.
+
+### Packages
+
+| Package | PyPI Name | CLI Commands | Description |
+|---------|-----------|--------------|-------------|
+| `packages/core/` | comfygit-core | — | Core library for environment management |
+| `packages/cli/` | comfygit | `comfygit`, `cg` | Main CLI |
+| `packages/deploy/` | comfygit-deploy | `cg-deploy` | Remote deployment |
 
 ### Codebase Navigation
 
@@ -27,6 +37,154 @@ pyast deps "Environment.sync" packages/core/src/comfygit_core/core/environment.p
 - `packages/core/src/comfygit_core/utils/` - git, filesystem, retry, parsing helpers
 - `packages/core/src/comfygit_core/services/` - downloads, lookups, registry
 
+## CLI Reference
+
+### Global Commands
+```bash
+cg init                          # Initialize workspace
+cg list                          # List all environments
+cg update                        # Upgrade ComfyGit CLI to latest version
+cg update --check                # Check for updates without upgrading
+cg import <source>               # Import environment from tarball or git URL
+cg export                        # Export environment
+cg config                        # Manage configuration settings
+cg completion                    # Manage shell tab completion
+```
+
+### Environment Lifecycle
+```bash
+cg create <name>                 # Create new environment
+cg use <name>                    # Set active environment
+cg delete <name>                 # Delete environment
+cg -e <name> run                 # Run ComfyUI
+cg -e <name> run --no-sync       # Run without syncing first
+cg -e <name> run -- --port 8189  # Pass args to ComfyUI via --
+cg -e <name> status              # Show sync + git status
+cg -e <name> manifest            # Show pyproject.toml contents
+cg -e <name> sync                # Sync packages and dependencies
+cg -e <name> repair              # Repair environment to match pyproject
+cg -e <name> doctor              # Diagnose and repair uv tooling
+cg -e <name> doctor --check-only # Check only, don't repair
+```
+
+### Node Management
+```bash
+cg -e <name> node add <id>           # Add node (registry ID, GitHub URL, or local dir)
+cg -e <name> node add <id> --dev     # Track existing local development node
+cg -e <name> node add <id> --strict  # Fail on dependency conflicts
+cg -e <name> node remove <id>        # Remove node
+cg -e <name> node update <id>        # Update node to latest
+cg -e <name> node list               # List installed nodes
+```
+
+### Python Dependencies
+```bash
+cg -e <name> py add <packages>              # Add Python dependencies
+cg -e <name> py add <pkg> --no-build-isolation  # For CUDA packages needing PyTorch at build time
+cg -e <name> py add <pkg> --optional <extra> # Add to optional dependency group
+cg -e <name> py add <pkg> --group <group>    # Add to dependency group
+cg -e <name> py add <pkg> --dev              # Add to dev dependencies
+cg -e <name> py add <pkg> --editable         # Install as editable
+cg -e <name> py add -r requirements.txt      # Add from requirements file
+cg -e <name> py remove <packages>            # Remove dependencies
+cg -e <name> py remove-group <group>         # Remove entire dependency group
+cg -e <name> py list                         # List dependencies
+cg -e <name> py uv <args>                    # Direct UV passthrough (advanced)
+```
+
+### Git Operations
+```bash
+cg -e <name> commit -m "message"  # Commit environment changes
+cg -e <name> log                  # Show commit history
+cg -e <name> branch               # List/create/delete branches
+cg -e <name> switch <branch>      # Switch branches
+cg -e <name> checkout <ref>       # Checkout commits/branches/files
+cg -e <name> pull                 # Pull and repair environment
+cg -e <name> push                 # Push to remote
+cg -e <name> remote               # Manage git remotes
+cg -e <name> merge <branch>       # Merge branch
+cg -e <name> reset                # Reset HEAD
+cg -e <name> revert               # Revert a commit
+```
+
+### Environment Configuration
+```bash
+# PyTorch backend (machine-specific, gitignored)
+cg -e <name> env-config torch-backend show     # Show current backend
+cg -e <name> env-config torch-backend set <be>  # Set backend (cu128, cpu, etc.)
+cg -e <name> env-config torch-backend detect    # Auto-detect recommended backend
+
+# Local UV source overrides (machine-specific, gitignored)
+cg -e <name> env-config local-sources show       # Show local overrides
+cg -e <name> env-config local-sources add <pkg> --path /path --editable  # Add local source
+cg -e <name> env-config local-sources remove <pkg>  # Remove local source
+
+# Default sync extras
+cg -e <name> env-config extras show              # Show default extras
+cg -e <name> env-config extras add <extra>       # Add default extra for sync
+cg -e <name> env-config extras remove <extra>    # Remove default extra
+```
+
+### Optional Extras (one-time flags)
+```bash
+cg -e <name> sync --extra <extra>      # Sync with optional extra
+cg -e <name> sync --all-extras         # Sync with all extras
+cg -e <name> run --extra <extra>       # Run with optional extra
+cg -e <name> run --all-extras          # Run with all extras
+cg -e <name> node add <id> --extra <e> # Install node with optional extra
+```
+
+### PyTorch Backend Override (one-time)
+```bash
+cg -e <name> sync --torch-backend cu128   # Override for this sync only
+cg -e <name> run --torch-backend cpu      # Override for this run only
+# Valid backends: cpu, cu124, cu126, cu128, rocm6.3, xpu
+```
+
+### Manager (comfygit-manager custom node)
+```bash
+cg -e <name> manager status   # Show manager version and update availability
+cg -e <name> manager update   # Update or migrate comfygit-manager
+```
+
+### Other
+```bash
+cg -e <name> workflow list    # List tracked workflows
+cg -e <name> constraint       # Manage UV constraint dependencies
+cg -e <name> model            # Manage model index
+cg -e <name> metadata         # Manage environment metadata
+cg registry                   # Manage node registry cache
+cg orch                       # Monitor/control orchestrator
+cg debug                      # Show debug logs
+```
+
+## Machine-Specific Dependency Injection
+
+ComfyGit keeps environments portable by separating machine-specific config from the tracked `pyproject.toml`. Two gitignored files handle this:
+
+### `.pytorch-backend`
+Auto-detected per machine. Stores the PyTorch CUDA backend (e.g., `cu128`, `cpu`) and exact wheel versions. On import/create, ComfyGit probes the local GPU and writes this file. During sync, the PyTorch config is temporarily injected into pyproject.toml, resolved by UV, then removed.
+
+### `.local-uv-config`
+Machine-specific TOML file for overriding package sources, adding custom indexes, or pinning constraint dependencies. Managed via `cg env-config local-sources`. Contents are injected at sync time but never committed.
+
+```toml
+# Example: Use local editable build of sageattention
+[sources]
+sageattention = { path = "/home/user/SageAttention", editable = true }
+
+# Example: Custom package index
+[[index]]
+name = "corp"
+url = "https://pypi.corp/simple/"
+```
+
+### Update Notice System
+Background PyPI check runs on every CLI invocation. If a newer version exists, a one-line notice is printed to stderr. Cached in `~/.config/comfygit/update_state.json` with 24h recheck window. Disable with `COMFYGIT_NO_UPDATE_CHECK=1`.
+
+### Environment Name Validation
+Names must be 1-64 chars, alphanumeric + hyphens/underscores, no leading/trailing hyphens. Applied at create and import time.
+
 ## Version Management
 
 All packages use **lockstep versioning** - same version number, always.
@@ -42,121 +200,47 @@ Publishing is automated via `.github/workflows/publish.yml` - push version bump 
 ## Development Commands
 
 ```bash
-make install    # Install all packages in dev mode
-make dev        # Start dev environment
-make test       # Run all tests
-make lint       # Run linting
+make install / make dev / make test / make lint
 ```
 
-**Python commands:** Use `uv run` for running Python scripts and tools (e.g., `uv run docs/comfygit-docs/scripts/generate_cli_reference.py`). Avoid calling `python` directly.
-
-Cross-platform testing: `uv run dev/scripts/cross-platform-test.py` (see `dev/cross-platform-test.toml` for config).
+Cross-platform testing: `python dev/scripts/cross-platform-test.py` (config: `dev/cross-platform-test.toml`).
 
 ## Running Tests
 
-**IMPORTANT:** Always use `uv run pytest`, never bare `pytest`. The project uses uv for dependency management and pytest is only available through the virtual environment.
+**Always use `uv run pytest`** (never bare `pytest`).
 
 ```bash
-# From repo root - run all tests
-uv run pytest packages/core/tests/ -v
-
-# Run specific test file
-uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v
-
-# Run specific test class or function
-uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py::TestStripLocalPathSources -v
-
-# Run tests matching a pattern
-uv run pytest packages/core/tests/ -k "injection" -v
-
-# Quick run (no verbose)
-uv run pytest packages/core/tests/unit/managers/test_local_uv_config_manager.py -q
+uv run pytest packages/core/tests/ -v                    # All core tests
+uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v  # Specific file
+uv run pytest packages/core/tests/ -k "injection" -v     # Pattern match
 ```
 
-**Test locations:**
-- `packages/core/tests/unit/` - Unit tests for core library
-- `packages/core/tests/integration/` - Integration tests
-- `packages/cli/tests/` - CLI tests
-- `packages/deploy/tests/` - Deploy tests
+Test locations: `packages/core/tests/{unit,integration}/`, `packages/cli/tests/`, `packages/deploy/tests/`
 
 ## Validation
 
-Use `/validate` after features or fixes that change observable behavior. The skill covers quick checks against the shared workspace and full validation with disposable workspaces via `dev/scripts/validation-workspace.sh`.
+Use `/validate` after features or fixes that change observable behavior (uses `dev/scripts/validation-workspace.sh`).
 
 ## Important Notes
 
-- Both packages must always have the same version (lockstep)
-- Never manually edit version numbers - use `make bump-version`
+- All packages must have the same version (lockstep) — use `make bump-version`
 - Code should work across Linux, Windows, and Mac
 
 ## Issue Tracking (Beads)
 
-This project uses beads (`bd`) for issue tracking with the **`cg-`** prefix.
+Uses beads (`bd`) with prefix **`cg-`**. Use for multi-session or dependent work; skip for simple single-session fixes.
 
-### When to Use Beads
-- **Use beads** for multi-session work, work with dependencies, or discovered tasks
-- **Skip beads** for simple single-session fixes where tracking adds no value
-- When in doubt, prefer beads - persistence you don't need beats lost context
-
-### Session Workflow
 ```bash
-# 1. Find available work
-bd ready                    # Show unblocked issues
-
-# 2. Read the issue details
-bd show cg-xxx              # Full context, acceptance criteria, files to modify
-
-# 3. Claim the work
-bd update cg-xxx --status=in_progress
-
-# 4. Implement the task...
-
-# 5. Close when done
-bd close cg-xxx --reason="Implemented in commit abc123"
-
-# 6. Sync at session end
-bd sync
-```
-
-### Common Commands
-```bash
+# Workflow: bd ready → bd show cg-xxx → bd update cg-xxx --status=in_progress → implement → bd close cg-xxx --reason="..." → bd sync
 bd ready                           # Show unblocked work
+bd show cg-xxx                     # Full context + acceptance criteria
 bd list --status=open              # All open issues
-bd show cg-xxx                     # View issue details
-bd blocked                         # Show blocked issues and why
-
-# Creating issues
-bd create --title="Fix the bug" --type=bug --priority=2
-bd create --title="New feature" --type=feature --priority=2
-
-# Priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
-# Types: task, bug, feature, epic
-
-# Dependencies
-bd dep add cg-yyy cg-xxx           # cg-yyy depends on cg-xxx (xxx blocks yyy)
-
-# Closing
-bd close cg-xxx                    # Close single issue
-bd close cg-xxx cg-yyy cg-zzz      # Close multiple at once
-bd close cg-xxx --reason="Done in commit abc"  # Close with reason
+bd create --title="..." --type=bug --priority=2  # Types: task/bug/feature/epic, Priority: 0-4
+bd dep add cg-yyy cg-xxx           # cg-yyy depends on cg-xxx
+bd close cg-xxx cg-yyy             # Close one or more
 ```
 
-### For Epics with Child Tasks
-```bash
-bd create --title="Big feature" --type=epic
-bd create --title="Phase 1" --type=task --parent=cg-xxx
-bd create --title="Phase 2" --type=task --parent=cg-xxx
-bd dep add cg-xxx.2 cg-xxx.1       # Phase 2 depends on Phase 1
-```
-
-### Reading Bead Notes
-Beads contain detailed implementation context in their notes:
-- **Context & Goal** - Why this matters
-- **Current vs Target State** - Code before/after with file paths
-- **Files Inventory** - What to read/modify/create
-- **Acceptance Criteria** - How to verify completion
-
-Always run `bd show <id>` before starting work to get full context.
+Always run `bd show <id>` before starting work — beads contain implementation context, file lists, and acceptance criteria.
 
 ## General
 
