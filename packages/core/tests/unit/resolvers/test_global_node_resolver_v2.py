@@ -538,6 +538,218 @@ class TestWorkflowManagerDisambiguation:
         assert result.nodes_ambiguous[0][1].package_id == "fuzzy-match-2"
 
 
+class TestPropertiesCnrIdUpgrade:
+    """Test cnr_id property behavior with mapping-table cross-reference."""
+
+    def _create_resolver(self, mappings_data: dict) -> GlobalNodeResolver:
+        """Create resolver from inline mappings fixture."""
+        tmpdir = tempfile.TemporaryDirectory()
+        mappings_path = Path(tmpdir.name) / "mappings.json"
+        with open(mappings_path, "w") as f:
+            json.dump(mappings_data, f)
+
+        from unittest.mock import Mock
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_path
+
+        repository = NodeMappingsRepository(data_manager=mock_data_manager)
+        resolver = GlobalNodeResolver(repository)
+        resolver._test_tmpdir = tmpdir  # Keep temp directory alive during test
+        return resolver
+
+    def test_superseded_cnr_id_upgraded_to_rank1(self):
+        """Stale rank-2 cnr_id should upgrade to rank-1 package."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": ["1.0"], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": ["0.9"], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2", "ver": "abc123"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank1"
+        assert result[0].match_type == "properties_upgraded"
+
+    def test_cnr_id_matching_rank1_not_upgraded(self):
+        """Rank-1 cnr_id should remain properties match without upgrade."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank1", "ver": "def456"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank1"
+        assert result[0].match_type == "properties"
+
+    def test_cnr_id_no_mapping_data_uses_package_directly(self):
+        """No mapping entry should fall back to direct cnr_id lookup."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "OtherNode::_": [
+                    {"package_id": "pkg-other", "versions": [], "rank": 1}
+                ]
+            },
+            "packages": {
+                "pkg-direct": {"id": "pkg-direct", "versions": {}},
+                "pkg-other": {"id": "pkg-other", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-direct"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-direct"
+        assert result[0].match_type == "properties"
+
+    def test_builtin_cnr_id_never_superseded(self):
+        """Builtin cnr_id should never be upgraded by mapping table."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "KSampler::_": [
+                    {"package_id": "lth_extended_prompting_nodes", "versions": [], "rank": 1}
+                ]
+            },
+            "packages": {
+                "comfy-core": {"id": "comfy-core", "versions": {}},
+                "lth_extended_prompting_nodes": {
+                    "id": "lth_extended_prompting_nodes",
+                    "versions": {}
+                }
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="KSampler",
+            properties={"cnr_id": "comfy-core"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "comfy-core"
+        assert result[0].match_type == "properties"
+
+    def test_installed_rank2_preferred_over_uninstalled_rank1(self):
+        """Installed rank-2 package should be kept over uninstalled rank-1."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(
+            installed_packages={"pkg-rank2": NodeInfo(name="pkg-rank2", source="registry")},
+            workflow_name="test"
+        )
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
+
+    def test_rank1_package_data_missing_falls_through(self):
+        """Missing package_data on rank-1 candidate should not force upgrade."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1-missing", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
+
+
 class TestRankFieldPersistence:
     """Test that rank information is preserved through resolution."""
 

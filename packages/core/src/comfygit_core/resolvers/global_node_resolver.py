@@ -17,6 +17,8 @@ from ..utils.input_signature import create_node_key, normalize_workflow_inputs
 
 logger = get_logger(__name__)
 
+BUILTIN_CNR_IDS = {"comfy-core"}
+
 
 class GlobalNodeResolver:
     """Resolves unknown nodes using global mappings repository.
@@ -138,11 +140,12 @@ class GlobalNodeResolver:
             List of resolved packages, empty list for skip, or None for unresolved
         """
         node_type = node.type
+        mapping_result: list[ResolvedNodePackage] | None = None
 
         # Priority 1: Custom mappings
         if context and node_type in context.custom_mappings:
             mapping = context.custom_mappings[node_type]
-            if isinstance(mapping, bool): # Node marked as optional
+            if isinstance(mapping, bool):  # Node marked as optional
                 logger.debug(f"Found optional {node_type} (user-configured optional)")
                 return [
                     ResolvedNodePackage(
@@ -151,37 +154,51 @@ class GlobalNodeResolver:
                         match_type="custom_mapping"
                     )
                 ]
-            assert isinstance(mapping, str) # Should be Package ID
+            assert isinstance(mapping, str)  # Should be Package ID
             logger.debug(f"Custom mapping for {node_type}: {mapping}")
-            result = [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
-            return result
+            return [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
 
         # Priority 2: Properties field (cnr_id from ComfyUI)
-        if node.properties:
-            cnr_id = node.properties.get('cnr_id')
-            ver = node.properties.get('ver')  # Git commit hash
+        cnr_id = node.properties.get('cnr_id') if node.properties else None
+        ver = node.properties.get('ver') if node.properties else None
 
-            if cnr_id:
-                logger.debug(f"Found cnr_id in properties: {cnr_id} @ {ver}")
+        if cnr_id:
+            logger.debug(f"Found cnr_id in properties: {cnr_id} @ {ver}")
 
-                # Validate package exists in global mappings
-                pkg_data = self.repository.get_package(cnr_id)
-                if pkg_data:
+            # Builtins are never superseded by registry mappings.
+            # package_data=None is fine — downstream falls back to package_id.
+            if cnr_id in BUILTIN_CNR_IDS:
+                return [ResolvedNodePackage(
+                    package_id=cnr_id,
+                    package_data=None,
+                    node_type=node_type,
+                    versions=[ver] if ver else [],
+                    match_type="properties",
+                    match_confidence=1.0
+                )]
 
-                    result = [ResolvedNodePackage(
-                        package_id=cnr_id,
-                        package_data=pkg_data,
-                        node_type=node_type,
-                        versions=[ver] if ver else [],
-                        match_type="properties",
-                        match_confidence=1.0
-                    )]
-                    return result
-                else:
-                    logger.warning(f"cnr_id {cnr_id} from properties not in registry")
+            # Check if mapping table suggests a better package than cnr_id
+            mapping_result = self.resolve_single_node_from_mapping(node)
+            if mapping_result:
+                upgraded = self._try_cnr_id_upgrade(cnr_id, node_type, mapping_result, context)
+                if upgraded:
+                    return [upgraded]
+
+            # No upgrade — use cnr_id directly if it's a known package
+            pkg_data = self.repository.get_package(cnr_id)
+            if pkg_data:
+                return [ResolvedNodePackage(
+                    package_id=cnr_id,
+                    package_data=pkg_data,
+                    node_type=node_type,
+                    versions=[ver] if ver else [],
+                    match_type="properties",
+                    match_confidence=1.0
+                )]
+            logger.warning(f"cnr_id {cnr_id} from properties not in registry")
 
         # Priority 3: Global table (existing logic)
-        result = self.resolve_single_node_from_mapping(node)
+        result = mapping_result if mapping_result is not None else self.resolve_single_node_from_mapping(node)
         if result:
             # Apply auto-selection logic if enabled and multiple packages found
             if context and context.auto_select_ambiguous and len(result) > 1:
@@ -192,6 +209,48 @@ class GlobalNodeResolver:
         # Priority 4: No match - return None to trigger interactive strategy with unified search
         logger.debug(f"No resolution found for {node_type} - will use interactive strategy")
         return None
+
+    def _try_cnr_id_upgrade(
+        self,
+        cnr_id: str,
+        node_type: str,
+        mapping_result: list[ResolvedNodePackage],
+        context: NodeResolutionContext | None
+    ) -> ResolvedNodePackage | None:
+        """Check if mapping table has a better package than cnr_id.
+
+        Returns upgraded ResolvedNodePackage, or None to keep cnr_id.
+        """
+        if context is not None:
+            selected = self._auto_select_best_package(
+                mapping_result, context.installed_packages
+            )
+        else:
+            selected = min(mapping_result, key=lambda x: x.rank or 999)
+
+        if selected.package_id == cnr_id:
+            return None
+
+        if not selected.package_data:
+            logger.warning(
+                f"Mapped package {selected.package_id} has no package data; "
+                f"falling back to properties cnr_id {cnr_id}"
+            )
+            return None
+
+        logger.info(
+            f"Upgraded properties cnr_id {cnr_id} to "
+            f"{selected.package_id} for {node_type}"
+        )
+        return ResolvedNodePackage(
+            package_id=selected.package_id,
+            package_data=selected.package_data,
+            node_type=node_type,
+            versions=selected.versions,
+            match_type="properties_upgraded",
+            match_confidence=selected.match_confidence,
+            rank=selected.rank
+        )
 
     def _auto_select_best_package(
         self,
