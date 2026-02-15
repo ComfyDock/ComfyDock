@@ -78,6 +78,21 @@ def _extract_comfynode_from_ast(file_path: str) -> list[str]:
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
+                class_string_constants: dict[str, str] = {}
+                for class_item in node.body:
+                    if isinstance(class_item, ast.Assign):
+                        value = _extract_string_constant(class_item.value)
+                        if not value:
+                            continue
+                        for target in class_item.targets:
+                            if isinstance(target, ast.Name):
+                                class_string_constants[target.id] = value
+                    elif isinstance(class_item, ast.AnnAssign):
+                        if isinstance(class_item.target, ast.Name):
+                            value = _extract_string_constant(class_item.value)
+                            if value:
+                                class_string_constants[class_item.target.id] = value
+
                 for base in node.bases:
                     base_name = ""
                     if isinstance(base, ast.Attribute):
@@ -91,6 +106,9 @@ def _extract_comfynode_from_ast(file_path: str) -> list[str]:
                                 for func_node in ast.walk(item):
                                     if isinstance(func_node, ast.keyword) and func_node.arg == "node_id":
                                         name = _extract_string_constant(func_node.value)
+                                        if not name and isinstance(func_node.value, ast.Attribute):
+                                            if isinstance(func_node.value.value, ast.Name) and func_node.value.value.id == "cls":
+                                                name = class_string_constants.get(func_node.value.attr)
                                         if name:
                                             if _is_valid_node_name(name):
                                                 node_names.append(name)

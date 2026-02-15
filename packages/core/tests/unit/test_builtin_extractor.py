@@ -193,6 +193,71 @@ class StaticNode(io.ComfyNode):
         extracted = _extract_comfynode_from_ast(str(api_py))
         assert "StaticComfyNode" in extracted
 
+    def test_ast_comfynode_with_class_constant_node_id(self, tmp_path):
+        """AST parser should resolve cls.NODE_ID when class constant is a string."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class FluxNode(io.ComfyNode):
+    NODE_ID = "FluxKontextProImageNode"
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.NODE_ID)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "FluxKontextProImageNode" in extracted
+
+    def test_ast_comfynode_with_custom_class_constant_name(self, tmp_path):
+        """AST parser should resolve cls.<CONST> for non-NODE_ID names."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class FluxNode(io.ComfyNode):
+    SOME_OTHER_CONST = "Flux2ProImageNode"
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.SOME_OTHER_CONST)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "Flux2ProImageNode" in extracted
+
+    def test_ast_comfynode_ignores_non_string_class_constant(self, tmp_path):
+        """AST parser should ignore cls.<CONST> when class constant is not a string."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class BadNode(io.ComfyNode):
+    NODE_ID = 123
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.NODE_ID)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "123" not in extracted
+        assert extracted == []
+
+    def test_extract_node_names_supports_nodeid_pattern(self, tmp_path):
+        """Regex fallback should still support old-style NodeId patterns."""
+        from comfygit_core.utils.builtin_extractor import _extract_node_names
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class LegacyNode:
+    NodeId = "LegacyNodeIdPattern"
+''')
+
+        extracted = _extract_node_names(str(api_py))
+        assert "LegacyNodeIdPattern" in extracted
+
 
 class TestNodeClassifierWithEnvironment:
     """Tests for NodeClassifier loading from environment-specific config."""
