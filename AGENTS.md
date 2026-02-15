@@ -242,6 +242,22 @@ bd close cg-xxx cg-yyy             # Close one or more
 
 Always run `bd show <id>` before starting work — beads contain implementation context, file lists, and acceptance criteria.
 
+### Commit Convention — Bead References
+
+**When a commit implements, fixes, or closes a bead, include the bead ID(s) in the commit message.** This creates traceability between git history and issue tracking.
+
+Format: `<description> [<bead-id>]` or `<description> [<bead-id>, <bead-id>]`
+
+```
+Fix cnr_id mapping upgrade flow and add resolver tests [cg-e7u]
+Add version-indexed builtins pipeline [crd-5pa, cg-2ih]
+Fix builtin extraction for cls constant node IDs [cg-2ih]
+```
+
+- Place bead ID(s) at the end of the first line in square brackets
+- Use this for commits that directly address bead work — skip for unrelated housekeeping commits
+- If a commit fully resolves a bead, also close it with `bd close`
+
 ## General
 
 Don't make any implementation overly complex. This is a one-person dev MVP project.
