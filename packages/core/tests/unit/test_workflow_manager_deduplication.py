@@ -29,6 +29,7 @@ class TestModelDeduplication:
         manager.pyproject.workflows = Mock()
         manager.model_repository = Mock()
         manager.workflow_cache = Mock()
+        manager.builtin_versions_repository = None
 
         # Make the actual methods we're testing real
         manager._write_model_resolution_grouped = WorkflowManager._write_model_resolution_grouped.__get__(manager)
@@ -320,6 +321,7 @@ class TestResolveWorkflowDeduplication:
         manager.global_node_resolver = Mock()
         manager.model_resolver = Mock()
         manager.workflow_cache = Mock()
+        manager.builtin_versions_repository = None
         manager.get_workflow_path = Mock(return_value=Path("/fake/path.json"))
 
         # Mock WorkflowRepository to avoid file I/O

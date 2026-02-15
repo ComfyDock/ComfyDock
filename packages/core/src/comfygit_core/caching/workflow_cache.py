@@ -545,18 +545,20 @@ class WorkflowCacheRepository:
 
         # Reconstruct nested dataclasses
         builtin_nodes = [WorkflowNode(**node) for node in deps_dict.get('builtin_nodes', [])]
+        version_gated_nodes = [WorkflowNode(**node) for node in deps_dict.get('version_gated_nodes', [])]
         non_builtin_nodes = [WorkflowNode(**node) for node in deps_dict.get('non_builtin_nodes', [])]
         found_models = [WorkflowNodeWidgetRef(**ref) for ref in deps_dict.get('found_models', [])]
 
         # Auto-forward all other fields, override nested objects
         simple_fields = {
             k: v for k, v in deps_dict.items()
-            if k not in ('builtin_nodes', 'non_builtin_nodes', 'found_models')
+            if k not in ('builtin_nodes', 'version_gated_nodes', 'non_builtin_nodes', 'found_models')
         }
 
         return WorkflowDependencies(
             **simple_fields,
             builtin_nodes=builtin_nodes,
+            version_gated_nodes=version_gated_nodes,
             non_builtin_nodes=non_builtin_nodes,
             found_models=found_models
         )
@@ -661,6 +663,10 @@ class WorkflowCacheRepository:
 
         # Reconstruct nested dataclasses
         nodes_resolved = [reconstruct_node_package(node) for node in res_dict.get('nodes_resolved', [])]
+        nodes_version_gated = [WorkflowNode(**node) for node in res_dict.get('nodes_version_gated', [])]
+        nodes_uninstallable = [
+            reconstruct_node_package(node) for node in res_dict.get('nodes_uninstallable', [])
+        ]
         nodes_unresolved = [WorkflowNode(**node) for node in res_dict.get('nodes_unresolved', [])]
         nodes_ambiguous = [
             [reconstruct_node_package(pkg) for pkg in group]
@@ -680,7 +686,8 @@ class WorkflowCacheRepository:
         simple_fields = {
             k: v for k, v in res_dict.items()
             if k not in (
-                'nodes_resolved', 'nodes_unresolved', 'nodes_ambiguous',
+                'nodes_resolved', 'nodes_version_gated', 'nodes_uninstallable',
+                'nodes_unresolved', 'nodes_ambiguous',
                 'models_resolved', 'models_unresolved', 'models_ambiguous',
                 'download_results'
             )
@@ -689,6 +696,8 @@ class WorkflowCacheRepository:
         return ResolutionResult(
             **simple_fields,
             nodes_resolved=nodes_resolved,
+            nodes_version_gated=nodes_version_gated,
+            nodes_uninstallable=nodes_uninstallable,
             nodes_unresolved=nodes_unresolved,
             nodes_ambiguous=nodes_ambiguous,
             models_resolved=models_resolved,

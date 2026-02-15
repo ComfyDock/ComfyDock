@@ -24,7 +24,8 @@ def workflow_manager(tmp_path):
                 node_mapping_repository=Mock(),
                 model_downloader=Mock(),
                 workflow_cache=cache_db,
-                environment_name="test-env"
+                environment_name="test-env",
+                builtin_versions_repository=None,
             )
             return manager
 
@@ -292,7 +293,8 @@ class TestStripBaseDirectoryForNode:
                 node_mapping_repository=Mock(),
                 model_downloader=Mock(),
                 workflow_cache=cache_db,
-                environment_name="test-env"
+                environment_name="test-env",
+                builtin_versions_repository=None,
             )
             # Set the model_config on the model_resolver
             manager.model_resolver.model_config = model_config

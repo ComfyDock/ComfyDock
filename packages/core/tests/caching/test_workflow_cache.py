@@ -775,3 +775,69 @@ class TestResolutionRoundTrip:
         # Existing fields should still work
         assert model.needs_path_sync
         assert model.match_type == "filename"
+
+    def test_resolution_version_gated_and_uninstallable_fields_survive_cache(
+        self,
+        tmp_path,
+        sample_workflow_file,
+        sample_dependencies
+    ):
+        """New node-resolution buckets should survive cache round-trip."""
+        from comfygit_core.models.workflow import (
+            ResolutionResult,
+            ResolvedNodePackage,
+            WorkflowNode,
+        )
+
+        db_path = tmp_path / "test.db"
+        cache = WorkflowCacheRepository(db_path)
+
+        pyproject_path = tmp_path / "pyproject.toml"
+        pyproject_path.write_text("[project]\nname = 'test'\n")
+
+        version_gated_node = WorkflowNode(id="1", type="FutureBuiltin")
+        uninstallable_pkg = ResolvedNodePackage(
+            node_type="ManagerOnlyNode",
+            package_id="manager-only-pkg",
+            versions=[],
+            match_type="type_only",
+            source="manager",
+        )
+
+        resolution = ResolutionResult(
+            workflow_name="test_workflow",
+            nodes_version_gated=[version_gated_node],
+            nodes_uninstallable=[uninstallable_pkg],
+            node_guidance={
+                "FutureBuiltin": "Node FutureBuiltin requires ComfyUI >= v0.3.10 (current v0.3.0).",
+                "ManagerOnlyNode": (
+                    "Node ManagerOnlyNode matched manager-only mapping "
+                    "'manager-only-pkg' with no installable versions."
+                ),
+            },
+        )
+
+        cache.set(
+            env_name="test-env",
+            workflow_name="test_workflow",
+            workflow_path=sample_workflow_file,
+            dependencies=sample_dependencies,
+            resolution=resolution,
+            pyproject_path=pyproject_path,
+        )
+
+        cache._session_cache.clear()
+        result = cache.get(
+            "test-env",
+            "test_workflow",
+            sample_workflow_file,
+            pyproject_path=pyproject_path,
+        )
+
+        assert result is not None
+        assert result.resolution is not None
+        assert len(result.resolution.nodes_version_gated) == 1
+        assert result.resolution.nodes_version_gated[0].type == "FutureBuiltin"
+        assert len(result.resolution.nodes_uninstallable) == 1
+        assert result.resolution.nodes_uninstallable[0].package_id == "manager-only-pkg"
+        assert result.resolution.node_guidance["FutureBuiltin"].startswith("Node FutureBuiltin")

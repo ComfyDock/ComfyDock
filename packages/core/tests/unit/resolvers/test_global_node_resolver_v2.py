@@ -955,3 +955,167 @@ class TestBackwardCompatibility:
 
             # Empty list should be treated as "not found"
             assert result is None
+
+
+class TestVersionGatedAndUninstallableHandling:
+    """Tests for manager-only uninstallable mapping behavior in resolver/workflow manager."""
+
+    def test_resolver_prefers_installable_over_manager_only(self):
+        """Resolver should filter manager-only empty-version candidates when installable options exist."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {
+                        "package_id": "manager-only-pkg",
+                        "versions": [],
+                        "rank": 1,
+                        "source": "manager",
+                    },
+                    {
+                        "package_id": "installable-pkg",
+                        "versions": ["1.0.0"],
+                        "rank": 2,
+                    },
+                ]
+            },
+            "packages": {
+                "manager-only-pkg": {"id": "manager-only-pkg", "source": "manager", "versions": {}},
+                "installable-pkg": {"id": "installable-pkg", "versions": {"1.0.0": {"version": "1.0.0"}}},
+            },
+            "stats": {}
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mappings_path = Path(tmpdir) / "mappings.json"
+            with open(mappings_path, "w") as f:
+                json.dump(mappings_data, f)
+
+            from unittest.mock import Mock
+            mock_data_manager = Mock()
+            mock_data_manager.get_mappings_path.return_value = mappings_path
+
+            repository = NodeMappingsRepository(data_manager=mock_data_manager)
+            resolver = GlobalNodeResolver(repository)
+            context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+
+            node = WorkflowNode(id="1", type="TestNode")
+            result = resolver.resolve_single_node_with_context(node, context)
+
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].package_id == "installable-pkg"
+
+    def test_workflow_manager_marks_manager_only_as_uninstallable(self, test_env, monkeypatch):
+        """Single manager-only empty-version match should not be counted as resolved."""
+        from comfygit_core.models.workflow import (
+            ResolvedNodePackage,
+            WorkflowDependencies,
+        )
+
+        node = WorkflowNode(id="1", type="ManagerOnlyNode")
+        deps = WorkflowDependencies(
+            workflow_name="test-workflow",
+            builtin_nodes=[],
+            version_gated_nodes=[],
+            non_builtin_nodes=[node],
+            found_models=[],
+        )
+
+        def mock_resolve(_node, _ctx):
+            return [
+                ResolvedNodePackage(
+                    node_type="ManagerOnlyNode",
+                    package_id="manager-only-pkg",
+                    versions=[],
+                    match_type="type_only",
+                    source="manager",
+                )
+            ]
+
+        monkeypatch.setattr(
+            test_env.workflow_manager.global_node_resolver,
+            "resolve_single_node_with_context",
+            mock_resolve,
+        )
+
+        result = test_env.workflow_manager.resolve_workflow(deps)
+
+        assert len(result.nodes_resolved) == 0
+        assert len(result.nodes_uninstallable) == 1
+        assert result.nodes_uninstallable[0].package_id == "manager-only-pkg"
+        assert "manager-only mapping" in result.node_guidance["ManagerOnlyNode"]
+
+    def test_workflow_manager_marks_known_builtin_as_version_gated(self, test_env, monkeypatch):
+        """Manager-only matches for known builtins should route to version-gated guidance."""
+        from comfygit_core.models.comfyui_builtin_versions import ComfyUIBuiltinVersions
+        from comfygit_core.models.workflow import (
+            ResolvedNodePackage,
+            WorkflowDependencies,
+        )
+
+        # Ensure environment version is parseable for deterministic guidance.
+        builtins_file = test_env.cec_path / "comfyui_builtins.json"
+        with open(builtins_file, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"comfyui_version": "v0.3.0", "total_nodes": 1},
+                    "all_builtin_nodes": ["ExistingBuiltin"],
+                },
+                f,
+            )
+
+        db = ComfyUIBuiltinVersions.from_dict(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": ["v0.3.0", "v0.3.10"],
+                "stats": {},
+                "builtins": {
+                    "FutureBuiltin": {"introduced_in": "v0.3.10", "category": "core"}
+                },
+            }
+        )
+
+        class _StubRepo:
+            def __init__(self, database):
+                self.database = database
+
+            def get_version_gate_info(self, node_type: str, current_version: str | None):
+                return self.database.get_version_gate_info(node_type, current_version)
+
+        test_env.workflow_manager.builtin_versions_repository = _StubRepo(db)
+
+        node = WorkflowNode(id="1", type="FutureBuiltin")
+        deps = WorkflowDependencies(
+            workflow_name="test-workflow",
+            builtin_nodes=[],
+            version_gated_nodes=[],
+            non_builtin_nodes=[node],
+            found_models=[],
+        )
+
+        def mock_resolve(_node, _ctx):
+            return [
+                ResolvedNodePackage(
+                    node_type="FutureBuiltin",
+                    package_id="manager-only-pkg",
+                    versions=[],
+                    match_type="type_only",
+                    source="manager",
+                )
+            ]
+
+        monkeypatch.setattr(
+            test_env.workflow_manager.global_node_resolver,
+            "resolve_single_node_with_context",
+            mock_resolve,
+        )
+
+        result = test_env.workflow_manager.resolve_workflow(deps)
+
+        assert len(result.nodes_resolved) == 0
+        assert len(result.nodes_uninstallable) == 0
+        assert len(result.nodes_version_gated) == 1
+        assert result.nodes_version_gated[0].type == "FutureBuiltin"
+        assert ">= v0.3.10" in result.node_guidance["FutureBuiltin"]

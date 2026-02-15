@@ -79,14 +79,16 @@ class GlobalNodeResolver:
                     # Return ALL packages from this mapping, sorted by rank
                     resolved_packages = []
                     for pkg_mapping in sorted(mapping.packages, key=lambda x: x.rank):
+                        pkg_data = packages.get(pkg_mapping.package_id)
                         resolved_packages.append(ResolvedNodePackage(
                             package_id=pkg_mapping.package_id,
-                            package_data=packages.get(pkg_mapping.package_id),
+                            package_data=pkg_data,
                             node_type=node_type,
                             versions=pkg_mapping.versions,
                             match_type="exact",
                             match_confidence=1.0,
-                            rank=pkg_mapping.rank
+                            rank=pkg_mapping.rank,
+                            source=pkg_mapping.source or (pkg_data.source if pkg_data else None)
                         ))
 
                     return resolved_packages
@@ -104,14 +106,16 @@ class GlobalNodeResolver:
             # Return ALL packages from this mapping, sorted by rank
             resolved_packages = []
             for pkg_mapping in sorted(mapping.packages, key=lambda x: x.rank):
+                pkg_data = packages.get(pkg_mapping.package_id)
                 resolved_packages.append(ResolvedNodePackage(
                     package_id=pkg_mapping.package_id,
-                    package_data=packages.get(pkg_mapping.package_id),
+                    package_data=pkg_data,
                     node_type=node_type,
                     versions=pkg_mapping.versions,
                     match_type="type_only",
                     match_confidence=0.9,
-                    rank=pkg_mapping.rank
+                    rank=pkg_mapping.rank,
+                    source=pkg_mapping.source or (pkg_data.source if pkg_data else None)
                 ))
 
             return resolved_packages
@@ -180,7 +184,13 @@ class GlobalNodeResolver:
             # Check if mapping table suggests a better package than cnr_id
             mapping_result = self.resolve_single_node_from_mapping(node)
             if mapping_result:
-                upgraded = self._try_cnr_id_upgrade(cnr_id, node_type, mapping_result, context)
+                mapping_upgrade_candidates = self._prefer_installable_candidates(mapping_result)
+                upgraded = self._try_cnr_id_upgrade(
+                    cnr_id,
+                    node_type,
+                    mapping_upgrade_candidates,
+                    context
+                )
                 if upgraded:
                     return [upgraded]
 
@@ -193,13 +203,15 @@ class GlobalNodeResolver:
                     node_type=node_type,
                     versions=[ver] if ver else [],
                     match_type="properties",
-                    match_confidence=1.0
+                    match_confidence=1.0,
+                    source=pkg_data.source if pkg_data else None
                 )]
             logger.warning(f"cnr_id {cnr_id} from properties not in registry")
 
         # Priority 3: Global table (existing logic)
         result = mapping_result if mapping_result is not None else self.resolve_single_node_from_mapping(node)
         if result:
+            result = self._prefer_installable_candidates(result)
             # Apply auto-selection logic if enabled and multiple packages found
             if context and context.auto_select_ambiguous and len(result) > 1:
                 selected = self._auto_select_best_package(result, context.installed_packages)
@@ -249,7 +261,8 @@ class GlobalNodeResolver:
             versions=selected.versions,
             match_type="properties_upgraded",
             match_confidence=selected.match_confidence,
-            rank=selected.rank
+            rank=selected.rank,
+            source=selected.source
         )
 
     def _auto_select_best_package(
@@ -317,8 +330,27 @@ class GlobalNodeResolver:
             node_type=node_type,
             versions=[],
             match_type=match_type,
-            match_confidence=1.0
+            match_confidence=1.0,
+            source=pkg_data.source if pkg_data else None
         )
+
+    def _prefer_installable_candidates(
+        self,
+        packages: list[ResolvedNodePackage]
+    ) -> list[ResolvedNodePackage]:
+        """Filter manager-only empty-version candidates when installable options exist."""
+        installable = [
+            pkg for pkg in packages
+            if not pkg.is_manager_only_uninstallable
+        ]
+        if installable:
+            if len(installable) != len(packages):
+                logger.debug(
+                    "Filtered %s manager-only uninstallable candidate(s)",
+                    len(packages) - len(installable)
+                )
+            return installable
+        return packages
 
     def search_packages(
         self,

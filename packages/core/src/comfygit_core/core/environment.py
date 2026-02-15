@@ -96,6 +96,9 @@ class Environment:
         # Workspace-level services
         self.model_repository = workspace.model_repository
         self.node_mapping_repository = workspace.node_mapping_repository
+        self.comfyui_builtin_versions_repository = (
+            workspace.comfyui_builtin_versions_repository
+        )
         self.workspace_config_manager = workspace.workspace_config_manager
         self.model_downloader = workspace.model_downloader
 
@@ -232,7 +235,8 @@ class Environment:
             self.node_mapping_repository,
             self.model_downloader,
             self.workflow_cache,
-            self.name
+            self.name,
+            builtin_versions_repository=self.comfyui_builtin_versions_repository,
         )
 
     @cached_property
