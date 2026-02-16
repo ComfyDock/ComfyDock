@@ -5,7 +5,7 @@ invalidation based on resolution context changes.
 """
 import json
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -549,18 +549,29 @@ class WorkflowCacheRepository:
         non_builtin_nodes = [WorkflowNode(**node) for node in deps_dict.get('non_builtin_nodes', [])]
         found_models = [WorkflowNodeWidgetRef(**ref) for ref in deps_dict.get('found_models', [])]
 
-        # Auto-forward all other fields, override nested objects
+        # Auto-forward all other fields, override nested objects.
+        # Filter by runtime dataclass fields to tolerate mixed package versions
+        # (e.g., cache contains version_gated_nodes but older runtime class does not).
+        dependency_field_names = {f.name for f in fields(WorkflowDependencies)}
         simple_fields = {
             k: v for k, v in deps_dict.items()
-            if k not in ('builtin_nodes', 'version_gated_nodes', 'non_builtin_nodes', 'found_models')
+            if (
+                k in dependency_field_names
+                and k not in ('builtin_nodes', 'version_gated_nodes', 'non_builtin_nodes', 'found_models')
+            )
         }
 
-        return WorkflowDependencies(
+        kwargs = {
             **simple_fields,
-            builtin_nodes=builtin_nodes,
-            version_gated_nodes=version_gated_nodes,
-            non_builtin_nodes=non_builtin_nodes,
-            found_models=found_models
+            "builtin_nodes": builtin_nodes,
+            "non_builtin_nodes": non_builtin_nodes,
+            "found_models": found_models,
+        }
+        if "version_gated_nodes" in dependency_field_names:
+            kwargs["version_gated_nodes"] = version_gated_nodes
+
+        return WorkflowDependencies(
+            **kwargs
         )
 
     def _serialize_resolution(self, resolution: ResolutionResult) -> str:

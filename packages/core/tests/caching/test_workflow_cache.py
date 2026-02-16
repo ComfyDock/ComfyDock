@@ -841,3 +841,34 @@ class TestResolutionRoundTrip:
         assert len(result.resolution.nodes_uninstallable) == 1
         assert result.resolution.nodes_uninstallable[0].package_id == "manager-only-pkg"
         assert result.resolution.node_guidance["FutureBuiltin"].startswith("Node FutureBuiltin")
+
+    def test_dependencies_deserialize_tolerates_runtime_without_version_gated_field(self, tmp_path, monkeypatch):
+        """Dependency deserialization should not crash if runtime class lacks new fields."""
+        from dataclasses import dataclass, field
+
+        from comfygit_core.caching import workflow_cache as cache_module
+
+        @dataclass
+        class LegacyWorkflowDependencies:
+            workflow_name: str
+            found_models: list = field(default_factory=list)
+            builtin_nodes: list = field(default_factory=list)
+            non_builtin_nodes: list = field(default_factory=list)
+
+        db_path = tmp_path / "test.db"
+        cache = WorkflowCacheRepository(db_path)
+
+        # Simulate mixed-version cache payload containing a newer field.
+        deps_dict = {
+            "workflow_name": "test_workflow",
+            "found_models": [],
+            "builtin_nodes": [],
+            "version_gated_nodes": [{"id": "1", "type": "FutureBuiltin"}],
+            "non_builtin_nodes": [],
+        }
+
+        monkeypatch.setattr(cache_module, "WorkflowDependencies", LegacyWorkflowDependencies)
+        deserialized = cache._deserialize_dependencies(json.dumps(deps_dict))
+
+        assert isinstance(deserialized, LegacyWorkflowDependencies)
+        assert deserialized.workflow_name == "test_workflow"
