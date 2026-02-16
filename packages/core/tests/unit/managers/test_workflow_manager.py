@@ -109,6 +109,39 @@ def test_workflows_differ_detects_real_changes():
     # Skipping for now as it's integration-level
 
 
+def test_normalize_package_id_canonicalizes_alias(workflow_manager):
+    """Legacy package IDs should canonicalize via repository aliases."""
+    workflow_manager.node_mapping_repository.canonicalize_package_id.return_value = "canonical-pkg"
+
+    normalized = workflow_manager._normalize_package_id("legacy-pkg")
+
+    assert normalized == "canonical-pkg"
+    workflow_manager.node_mapping_repository.canonicalize_package_id.assert_called_once_with("legacy-pkg")
+
+
+def test_normalize_package_id_git_url_resolves_and_canonicalizes(workflow_manager):
+    """Git URLs should resolve to registry package then canonicalize alias."""
+    registry_pkg = Mock()
+    registry_pkg.id = "legacy-registry-id"
+    workflow_manager.global_node_resolver.resolve_github_url.return_value = registry_pkg
+    workflow_manager.node_mapping_repository.canonicalize_package_id.return_value = "canonical-registry-id"
+
+    normalized = workflow_manager._normalize_package_id("https://github.com/user/repo.git")
+
+    assert normalized == "canonical-registry-id"
+    workflow_manager.global_node_resolver.resolve_github_url.assert_called_once()
+    workflow_manager.node_mapping_repository.canonicalize_package_id.assert_called_once_with("legacy-registry-id")
+
+
+def test_normalize_package_id_keeps_original_when_alias_unknown(workflow_manager):
+    """Unknown alias should preserve original package ID."""
+    workflow_manager.node_mapping_repository.canonicalize_package_id.return_value = None
+
+    normalized = workflow_manager._normalize_package_id("unknown-pkg")
+
+    assert normalized == "unknown-pkg"
+
+
 def test_apply_resolution_preserves_existing_sources(workflow_manager):
     """Test that apply_resolution preserves sources from existing models in global table."""
     from comfygit_core.models.manifest import ManifestModel

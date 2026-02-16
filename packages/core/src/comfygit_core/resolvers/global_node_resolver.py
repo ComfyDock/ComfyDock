@@ -144,7 +144,6 @@ class GlobalNodeResolver:
             List of resolved packages, empty list for skip, or None for unresolved
         """
         node_type = node.type
-        mapping_result: list[ResolvedNodePackage] | None = None
 
         # Priority 1: Custom mappings
         if context and node_type in context.custom_mappings:
@@ -163,11 +162,12 @@ class GlobalNodeResolver:
             return [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
 
         # Priority 2: Properties field (cnr_id from ComfyUI)
-        cnr_id = node.properties.get('cnr_id') if node.properties else None
+        raw_cnr_id = node.properties.get('cnr_id') if node.properties else None
         ver = node.properties.get('ver') if node.properties else None
+        cnr_id = self.repository.canonicalize_package_id(raw_cnr_id)
 
         if cnr_id:
-            logger.debug(f"Found cnr_id in properties: {cnr_id} @ {ver}")
+            logger.debug(f"Found cnr_id in properties: {raw_cnr_id} -> {cnr_id} @ {ver}")
 
             # Builtins are never superseded by registry mappings.
             # package_data=None is fine — downstream falls back to package_id.
@@ -181,20 +181,7 @@ class GlobalNodeResolver:
                     match_confidence=1.0
                 )]
 
-            # Check if mapping table suggests a better package than cnr_id
-            mapping_result = self.resolve_single_node_from_mapping(node)
-            if mapping_result:
-                mapping_upgrade_candidates = self._prefer_installable_candidates(mapping_result)
-                upgraded = self._try_cnr_id_upgrade(
-                    cnr_id,
-                    node_type,
-                    mapping_upgrade_candidates,
-                    context
-                )
-                if upgraded:
-                    return [upgraded]
-
-            # No upgrade — use cnr_id directly if it's a known package
+            # Canonical cnr_id wins when it resolves to known package metadata.
             pkg_data = self.repository.get_package(cnr_id)
             if pkg_data:
                 return [ResolvedNodePackage(
@@ -206,10 +193,10 @@ class GlobalNodeResolver:
                     match_confidence=1.0,
                     source=pkg_data.source if pkg_data else None
                 )]
-            logger.warning(f"cnr_id {cnr_id} from properties not in registry")
+            logger.warning(f"cnr_id {raw_cnr_id} (canonical: {cnr_id}) from properties not in registry")
 
         # Priority 3: Global table (existing logic)
-        result = mapping_result if mapping_result is not None else self.resolve_single_node_from_mapping(node)
+        result = self.resolve_single_node_from_mapping(node)
         if result:
             result = self._prefer_installable_candidates(result)
             # Apply auto-selection logic if enabled and multiple packages found
@@ -221,49 +208,6 @@ class GlobalNodeResolver:
         # Priority 4: No match - return None to trigger interactive strategy with unified search
         logger.debug(f"No resolution found for {node_type} - will use interactive strategy")
         return None
-
-    def _try_cnr_id_upgrade(
-        self,
-        cnr_id: str,
-        node_type: str,
-        mapping_result: list[ResolvedNodePackage],
-        context: NodeResolutionContext | None
-    ) -> ResolvedNodePackage | None:
-        """Check if mapping table has a better package than cnr_id.
-
-        Returns upgraded ResolvedNodePackage, or None to keep cnr_id.
-        """
-        if context is not None:
-            selected = self._auto_select_best_package(
-                mapping_result, context.installed_packages
-            )
-        else:
-            selected = min(mapping_result, key=lambda x: x.rank or 999)
-
-        if selected.package_id == cnr_id:
-            return None
-
-        if not selected.package_data:
-            logger.warning(
-                f"Mapped package {selected.package_id} has no package data; "
-                f"falling back to properties cnr_id {cnr_id}"
-            )
-            return None
-
-        logger.info(
-            f"Upgraded properties cnr_id {cnr_id} to "
-            f"{selected.package_id} for {node_type}"
-        )
-        return ResolvedNodePackage(
-            package_id=selected.package_id,
-            package_data=selected.package_data,
-            node_type=node_type,
-            versions=selected.versions,
-            match_type="properties_upgraded",
-            match_confidence=selected.match_confidence,
-            rank=selected.rank,
-            source=selected.source
-        )
 
     def _auto_select_best_package(
         self,
@@ -322,10 +266,11 @@ class GlobalNodeResolver:
         Returns:
             ResolvedNodePackage instance
         """
-        pkg_data = self.repository.get_package(pkg_id)
+        canonical_pkg_id = self.repository.canonicalize_package_id(pkg_id) or pkg_id
+        pkg_data = self.repository.get_package(canonical_pkg_id)
 
         return ResolvedNodePackage(
-            package_id=pkg_id,
+            package_id=canonical_pkg_id,
             package_data=pkg_data,
             node_type=node_type,
             versions=[],

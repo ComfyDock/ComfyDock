@@ -109,6 +109,16 @@ class NodeMappingsRepository:
                     packages=package_mappings
                 )
 
+            raw_aliases = data.get("package_aliases", {})
+            package_aliases = {}
+            if isinstance(raw_aliases, dict):
+                for legacy_id, canonical_id in raw_aliases.items():
+                    if not isinstance(legacy_id, str) or not isinstance(canonical_id, str):
+                        continue
+                    if legacy_id == canonical_id:
+                        continue
+                    package_aliases[legacy_id] = canonical_id
+
             # Convert packages dict to GlobalNodePackage objects
             packages = {}
             for pkg_id, pkg_data in data.get("packages", {}).items():
@@ -155,6 +165,7 @@ class NodeMappingsRepository:
                 stats=stats,
                 mappings=mappings,
                 packages=packages,
+                package_aliases=package_aliases,
             )
 
             if stats:
@@ -191,6 +202,25 @@ class NodeMappingsRepository:
 
     # Query Methods
 
+    def canonicalize_package_id(self, package_id: str | None) -> str | None:
+        """Convert alias package IDs to canonical IDs from mappings metadata."""
+        if not package_id:
+            return package_id
+
+        aliases = self.global_mappings.package_aliases
+        current = package_id
+        seen = set()
+        while current in aliases:
+            if current in seen:
+                logger.warning("Detected cyclic package alias while canonicalizing '%s'", package_id)
+                break
+            seen.add(current)
+            next_id = aliases[current]
+            if not next_id:
+                break
+            current = next_id
+        return current
+
     def get_package(self, package_id: str) -> GlobalNodePackage | None:
         """Get package by ID.
 
@@ -200,7 +230,10 @@ class NodeMappingsRepository:
         Returns:
             GlobalNodePackage or None if not found
         """
-        return self.global_mappings.packages.get(package_id)
+        canonical_id = self.canonicalize_package_id(package_id)
+        if not canonical_id:
+            return None
+        return self.global_mappings.packages.get(canonical_id)
 
     def get_mapping(self, node_key: str) -> GlobalNodeMapping | None:
         """Get mapping by node key (e.g., "NodeType::input_hash").

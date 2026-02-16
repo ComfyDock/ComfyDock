@@ -538,8 +538,8 @@ class TestWorkflowManagerDisambiguation:
         assert result.nodes_ambiguous[0][1].package_id == "fuzzy-match-2"
 
 
-class TestPropertiesCnrIdUpgrade:
-    """Test cnr_id property behavior with mapping-table cross-reference."""
+class TestPropertiesCnrIdPriority:
+    """Test canonicalized cnr_id properties priority behavior."""
 
     def _create_resolver(self, mappings_data: dict) -> GlobalNodeResolver:
         """Create resolver from inline mappings fixture."""
@@ -557,8 +557,8 @@ class TestPropertiesCnrIdUpgrade:
         resolver._test_tmpdir = tmpdir  # Keep temp directory alive during test
         return resolver
 
-    def test_superseded_cnr_id_upgraded_to_rank1(self):
-        """Stale rank-2 cnr_id should upgrade to rank-1 package."""
+    def test_cnr_id_is_trusted_even_if_mapping_has_higher_rank(self):
+        """Known cnr_id should not be superseded by rank-based mapping candidates."""
         mappings_data = {
             "version": "2025.10.10",
             "mappings": {
@@ -586,8 +586,8 @@ class TestPropertiesCnrIdUpgrade:
 
         assert result is not None
         assert len(result) == 1
-        assert result[0].package_id == "pkg-rank1"
-        assert result[0].match_type == "properties_upgraded"
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
 
     def test_cnr_id_matching_rank1_not_upgraded(self):
         """Rank-1 cnr_id should remain properties match without upgrade."""
@@ -650,6 +650,67 @@ class TestPropertiesCnrIdUpgrade:
         assert len(result) == 1
         assert result[0].package_id == "pkg-direct"
         assert result[0].match_type == "properties"
+
+    def test_legacy_cnr_id_alias_resolves_to_canonical_package(self):
+        """Legacy cnr_id should canonicalize through package_aliases metadata."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "package_aliases": {"legacy-pkg": "pkg-canonical"},
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-other", "versions": [], "rank": 1},
+                ]
+            },
+            "packages": {
+                "pkg-canonical": {"id": "pkg-canonical", "versions": {}},
+                "pkg-other": {"id": "pkg-other", "versions": {}},
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "legacy-pkg", "ver": "2.0.2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-canonical"
+        assert result[0].match_type == "properties"
+        assert "2.0.2" in result[0].versions
+
+    def test_unknown_cnr_id_falls_back_to_mapping_table(self):
+        """Unknown cnr_id should still allow regular mapping-table resolution."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-from-mapping", "versions": [], "rank": 1},
+                ]
+            },
+            "packages": {
+                "pkg-from-mapping": {"id": "pkg-from-mapping", "versions": {}},
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "missing-pkg"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-from-mapping"
+        assert result[0].match_type == "type_only"
 
     def test_builtin_cnr_id_never_superseded(self):
         """Builtin cnr_id should never be upgraded by mapping table."""

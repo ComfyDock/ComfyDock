@@ -122,10 +122,10 @@ class WorkflowManager:
         if is_git_url(package_id):
             # Try to resolve to registry package
             if registry_pkg := self.global_node_resolver.resolve_github_url(package_id):
-                return registry_pkg.id
+                return self.node_mapping_repository.canonicalize_package_id(registry_pkg.id) or registry_pkg.id
 
-        # Return as-is if not a GitHub URL or not in registry
-        return package_id
+        # Canonicalize legacy IDs directly
+        return self.node_mapping_repository.canonicalize_package_id(package_id) or package_id
 
 
     def _write_single_model_resolution(

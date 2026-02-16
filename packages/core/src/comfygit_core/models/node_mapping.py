@@ -199,3 +199,4 @@ class GlobalNodeMappings:
     stats: GlobalNodeMappingsStats | None
     mappings: dict[str, GlobalNodeMapping] = field(default_factory=dict)
     packages: dict[str, GlobalNodePackage] = field(default_factory=dict)
+    package_aliases: dict[str, str] = field(default_factory=dict)

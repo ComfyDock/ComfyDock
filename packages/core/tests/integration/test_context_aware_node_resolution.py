@@ -91,6 +91,61 @@ class TestWorkflowWithPropertiesField:
         assert "f754c4765849aa748abb35a1f030a5ed6474a69b" in resolved_node.versions
         assert len(resolution.nodes_unresolved) == 0, "No nodes should be unresolved"
 
+    def test_properties_field_alias_cnr_id_resolves_to_canonical(self, test_env):
+        """Legacy cnr_id in workflow properties should resolve through alias metadata."""
+        workflow_data = {
+            "nodes": [
+                {
+                    "id": "1",
+                    "type": "Mute / Bypass Repeater (rgthree)",
+                    "pos": [400, 100],
+                    "size": [200, 100],
+                    "flags": {},
+                    "order": 0,
+                    "mode": 0,
+                    "inputs": [],
+                    "outputs": [],
+                    "properties": {
+                        "Node name for S&R": "Mute / Bypass Repeater (rgthree)",
+                        "cnr_id": "rgthree-comfy-legacy",
+                        "ver": "legacy-sha"
+                    },
+                    "widgets_values": []
+                }
+            ],
+            "links": [],
+            "groups": [],
+            "config": {},
+            "extra": {},
+            "version": 0.4
+        }
+
+        mappings_path = test_env.workspace_paths.cache / "custom_nodes" / "node_mappings.json"
+        with open(mappings_path) as f:
+            mappings = json.load(f)
+
+        mappings["package_aliases"] = {"rgthree-comfy-legacy": "rgthree-comfy"}
+        mappings["packages"]["rgthree-comfy"] = {
+            "id": "rgthree-comfy",
+            "display_name": "rgthree's ComfyUI Nodes",
+            "description": "Various utility nodes",
+            "repository": "https://github.com/rgthree/rgthree-comfy",
+            "versions": {}
+        }
+
+        with open(mappings_path, 'w') as f:
+            json.dump(mappings, f)
+
+        simulate_comfyui_save_workflow(test_env, "test_workflow_alias", workflow_data)
+
+        analysis = test_env.workflow_manager.analyze_workflow("test_workflow_alias")
+        resolution = test_env.workflow_manager.resolve_workflow(analysis)
+
+        rgthree_resolved = [n for n in resolution.nodes_resolved if n.package_id == "rgthree-comfy"]
+        assert len(rgthree_resolved) == 1
+        assert rgthree_resolved[0].match_type == "properties"
+        assert len(resolution.nodes_unresolved) == 0
+
 
 class TestSessionDeduplication:
     """Test session-level deduplication across multiple nodes."""

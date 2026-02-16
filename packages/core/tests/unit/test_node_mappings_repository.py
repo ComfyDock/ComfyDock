@@ -59,6 +59,33 @@ class TestNodeMappingsRepositoryLoading:
         assert "TestNode::_" in repo.global_mappings.mappings
         assert "test-package" in repo.global_mappings.packages
 
+    def test_loads_package_alias_metadata(self, tmp_path):
+        """Repository should load package_aliases when present."""
+        mappings_file = tmp_path / "node_mappings.json"
+        global_data = {
+            "version": "test",
+            "generated_at": "2025-01-01",
+            "stats": {},
+            "package_aliases": {
+                "legacy-pkg": "canonical-pkg"
+            },
+            "mappings": {},
+            "packages": {
+                "canonical-pkg": {"id": "canonical-pkg", "versions": {}}
+            }
+        }
+
+        with open(mappings_file, 'w') as f:
+            json.dump(global_data, f)
+
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_file
+        repo = NodeMappingsRepository(data_manager=mock_data_manager)
+
+        assert repo.global_mappings.package_aliases == {"legacy-pkg": "canonical-pkg"}
+        assert repo.canonicalize_package_id("legacy-pkg") == "canonical-pkg"
+        assert repo.canonicalize_package_id("canonical-pkg") == "canonical-pkg"
+
     def test_raises_error_if_file_not_found(self, tmp_path):
         """Should raise CDRegistryDataError if mappings file doesn't exist."""
         from comfygit_core.models.exceptions import CDRegistryDataError
@@ -246,6 +273,35 @@ class TestNodeMappingsRepositoryQueries:
         assert package is not None
         assert package.id == "target-pkg"
         assert package.display_name == "Target Package"
+
+    def test_get_package_resolves_alias_to_canonical(self, tmp_path):
+        """Alias package ID should resolve to canonical package metadata."""
+        mappings_file = tmp_path / "node_mappings.json"
+        global_data = {
+            "version": "test",
+            "generated_at": "2025-01-01",
+            "stats": {},
+            "package_aliases": {"legacy-target": "target-pkg"},
+            "mappings": {},
+            "packages": {
+                "target-pkg": {
+                    "id": "target-pkg",
+                    "display_name": "Target Package",
+                    "versions": {}
+                }
+            }
+        }
+
+        with open(mappings_file, 'w') as f:
+            json.dump(global_data, f)
+
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_file
+        repo = NodeMappingsRepository(data_manager=mock_data_manager)
+
+        package = repo.get_package("legacy-target")
+        assert package is not None
+        assert package.id == "target-pkg"
 
     def test_get_package_returns_none_if_not_found(self, tmp_path):
         """Should return None if package doesn't exist."""
