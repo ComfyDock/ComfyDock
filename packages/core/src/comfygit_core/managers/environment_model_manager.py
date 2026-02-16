@@ -311,10 +311,16 @@ class EnvironmentModelManager:
         for workflow_name in all_workflows.keys():
             models = self.pyproject.workflows.get_workflow_models(workflow_name)
             models_modified = False
+            has_download_intents = False
+            has_required_download_intents = False
 
             for idx, model in enumerate(models):
-                # Skip if already unresolved
+                # Existing download intent (already unresolved with sources)
                 if model.status == "unresolved":
+                    if model.sources:
+                        has_download_intents = True
+                        if model.criticality == "required":
+                            has_required_download_intents = True
                     continue
 
                 # Check if model exists locally
@@ -348,22 +354,22 @@ class EnvironmentModelManager:
                         models[idx].relative_path = global_model.relative_path
                         models[idx].hash = None
                         models_modified = True
+                        has_download_intents = True
+                        if models[idx].criticality == "required":
+                            has_required_download_intents = True
                         logger.debug(f"Prepared download intent for {model.filename} in {workflow_name}")
 
             # Save modified models
             if models_modified:
                 self.pyproject.workflows.set_workflow_models(workflow_name, models)
 
-                # Add to workflows_with_intents based on strategy
-                if strategy == "all":
-                    workflows_with_intents.append(workflow_name)
-                elif strategy == "required":
-                    has_required_intents = any(
-                        m.status == "unresolved" and m.sources and m.criticality == "required"
-                        for m in models
-                    )
-                    if has_required_intents:
-                        workflows_with_intents.append(workflow_name)
+            # Add to workflows_with_intents based on strategy.
+            # Include workflows that already had unresolved download intents
+            # before this call, not just ones modified in this pass.
+            if strategy == "all" and has_download_intents:
+                workflows_with_intents.append(workflow_name)
+            elif strategy == "required" and has_required_download_intents:
+                workflows_with_intents.append(workflow_name)
 
         logger.info(f"Prepared {len(workflows_with_intents)} workflows with download intents")
         return workflows_with_intents

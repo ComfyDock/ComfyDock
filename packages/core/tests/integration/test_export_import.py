@@ -170,6 +170,95 @@ class TestPrepareImportModels:
         assert updated_model.sources == ["https://example.com/model.safetensors"], \
             f"Expected sources to be preserved, got {updated_model.sources}"
 
+    def test_prepare_import_includes_existing_download_intents_for_all(self, test_env):
+        """`all` strategy should include workflows with pre-existing download intents."""
+        from comfygit_core.models.manifest import ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+
+        workflow = {
+            "id": "test",
+            "nodes": [
+                {
+                    "id": "1",
+                    "type": "CheckpointLoaderSimple",
+                    "widgets_values": ["already_queued.safetensors"],
+                    "inputs": [],
+                    "outputs": [],
+                    "properties": {}
+                }
+            ],
+            "links": [],
+            "groups": [],
+            "config": {},
+            "extra": {}
+        }
+        simulate_comfyui_save_workflow(test_env, "test", workflow)
+
+        wf_model = ManifestWorkflowModel(
+            filename="already_queued.safetensors",
+            category="checkpoints",
+            criticality="flexible",
+            status="unresolved",
+            nodes=[WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="already_queued.safetensors"
+            )],
+            sources=["https://example.com/already_queued.safetensors"],
+            relative_path="checkpoints/already_queued.safetensors",
+        )
+        test_env.pyproject.workflows.set_workflow_models("test", [wf_model])
+
+        workflows_affected = test_env.model_manager.prepare_import_with_model_strategy("all")
+
+        assert workflows_affected == ["test"], \
+            f"Expected ['test'] for existing download intent, got {workflows_affected}"
+
+    def test_prepare_import_required_strategy_honors_existing_required_intents(self, test_env):
+        """`required` strategy should include only workflows with required download intents."""
+        from comfygit_core.models.manifest import ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+
+        required_model = ManifestWorkflowModel(
+            filename="required_model.safetensors",
+            category="checkpoints",
+            criticality="required",
+            status="unresolved",
+            nodes=[WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="required_model.safetensors"
+            )],
+            sources=["https://example.com/required_model.safetensors"],
+            relative_path="checkpoints/required_model.safetensors",
+        )
+        test_env.pyproject.workflows.set_workflow_models("required_workflow", [required_model])
+
+        flexible_model = ManifestWorkflowModel(
+            filename="flexible_model.safetensors",
+            category="checkpoints",
+            criticality="flexible",
+            status="unresolved",
+            nodes=[WorkflowNodeWidgetRef(
+                node_id="2",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="flexible_model.safetensors"
+            )],
+            sources=["https://example.com/flexible_model.safetensors"],
+            relative_path="checkpoints/flexible_model.safetensors",
+        )
+        test_env.pyproject.workflows.set_workflow_models("flexible_workflow", [flexible_model])
+
+        workflows_affected = test_env.model_manager.prepare_import_with_model_strategy("required")
+
+        assert workflows_affected == ["required_workflow"], (
+            "Expected only required workflow to be selected for required strategy, "
+            f"got {workflows_affected}"
+        )
+
 
 class TestExportWithWorkflows:
     """Test export with actual workflows and dependencies."""
