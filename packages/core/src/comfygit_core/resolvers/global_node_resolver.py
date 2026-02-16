@@ -17,6 +17,8 @@ from ..utils.input_signature import create_node_key, normalize_workflow_inputs
 
 logger = get_logger(__name__)
 
+BUILTIN_CNR_IDS = {"comfy-core"}
+
 
 class GlobalNodeResolver:
     """Resolves unknown nodes using global mappings repository.
@@ -77,14 +79,16 @@ class GlobalNodeResolver:
                     # Return ALL packages from this mapping, sorted by rank
                     resolved_packages = []
                     for pkg_mapping in sorted(mapping.packages, key=lambda x: x.rank):
+                        pkg_data = packages.get(pkg_mapping.package_id)
                         resolved_packages.append(ResolvedNodePackage(
                             package_id=pkg_mapping.package_id,
-                            package_data=packages.get(pkg_mapping.package_id),
+                            package_data=pkg_data,
                             node_type=node_type,
                             versions=pkg_mapping.versions,
                             match_type="exact",
                             match_confidence=1.0,
-                            rank=pkg_mapping.rank
+                            rank=pkg_mapping.rank,
+                            source=pkg_mapping.source or (pkg_data.source if pkg_data else None)
                         ))
 
                     return resolved_packages
@@ -102,14 +106,16 @@ class GlobalNodeResolver:
             # Return ALL packages from this mapping, sorted by rank
             resolved_packages = []
             for pkg_mapping in sorted(mapping.packages, key=lambda x: x.rank):
+                pkg_data = packages.get(pkg_mapping.package_id)
                 resolved_packages.append(ResolvedNodePackage(
                     package_id=pkg_mapping.package_id,
-                    package_data=packages.get(pkg_mapping.package_id),
+                    package_data=pkg_data,
                     node_type=node_type,
                     versions=pkg_mapping.versions,
                     match_type="type_only",
                     match_confidence=0.9,
-                    rank=pkg_mapping.rank
+                    rank=pkg_mapping.rank,
+                    source=pkg_mapping.source or (pkg_data.source if pkg_data else None)
                 ))
 
             return resolved_packages
@@ -142,7 +148,7 @@ class GlobalNodeResolver:
         # Priority 1: Custom mappings
         if context and node_type in context.custom_mappings:
             mapping = context.custom_mappings[node_type]
-            if isinstance(mapping, bool): # Node marked as optional
+            if isinstance(mapping, bool):  # Node marked as optional
                 logger.debug(f"Found optional {node_type} (user-configured optional)")
                 return [
                     ResolvedNodePackage(
@@ -151,38 +157,48 @@ class GlobalNodeResolver:
                         match_type="custom_mapping"
                     )
                 ]
-            assert isinstance(mapping, str) # Should be Package ID
+            assert isinstance(mapping, str)  # Should be Package ID
             logger.debug(f"Custom mapping for {node_type}: {mapping}")
-            result = [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
-            return result
+            return [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
 
         # Priority 2: Properties field (cnr_id from ComfyUI)
-        if node.properties:
-            cnr_id = node.properties.get('cnr_id')
-            ver = node.properties.get('ver')  # Git commit hash
+        raw_cnr_id = node.properties.get('cnr_id') if node.properties else None
+        ver = node.properties.get('ver') if node.properties else None
+        cnr_id = self.repository.canonicalize_package_id(raw_cnr_id)
 
-            if cnr_id:
-                logger.debug(f"Found cnr_id in properties: {cnr_id} @ {ver}")
+        if cnr_id:
+            logger.debug(f"Found cnr_id in properties: {raw_cnr_id} -> {cnr_id} @ {ver}")
 
-                # Validate package exists in global mappings
-                pkg_data = self.repository.get_package(cnr_id)
-                if pkg_data:
+            # Builtins are never superseded by registry mappings.
+            # package_data=None is fine — downstream falls back to package_id.
+            if cnr_id in BUILTIN_CNR_IDS:
+                return [ResolvedNodePackage(
+                    package_id=cnr_id,
+                    package_data=None,
+                    node_type=node_type,
+                    versions=[ver] if ver else [],
+                    match_type="properties",
+                    match_confidence=1.0
+                )]
 
-                    result = [ResolvedNodePackage(
-                        package_id=cnr_id,
-                        package_data=pkg_data,
-                        node_type=node_type,
-                        versions=[ver] if ver else [],
-                        match_type="properties",
-                        match_confidence=1.0
-                    )]
-                    return result
-                else:
-                    logger.warning(f"cnr_id {cnr_id} from properties not in registry")
+            # Canonical cnr_id wins when it resolves to known package metadata.
+            pkg_data = self.repository.get_package(cnr_id)
+            if pkg_data:
+                return [ResolvedNodePackage(
+                    package_id=cnr_id,
+                    package_data=pkg_data,
+                    node_type=node_type,
+                    versions=[ver] if ver else [],
+                    match_type="properties",
+                    match_confidence=1.0,
+                    source=pkg_data.source if pkg_data else None
+                )]
+            logger.warning(f"cnr_id {raw_cnr_id} (canonical: {cnr_id}) from properties not in registry")
 
         # Priority 3: Global table (existing logic)
         result = self.resolve_single_node_from_mapping(node)
         if result:
+            result = self._prefer_installable_candidates(result)
             # Apply auto-selection logic if enabled and multiple packages found
             if context and context.auto_select_ambiguous and len(result) > 1:
                 selected = self._auto_select_best_package(result, context.installed_packages)
@@ -250,16 +266,36 @@ class GlobalNodeResolver:
         Returns:
             ResolvedNodePackage instance
         """
-        pkg_data = self.repository.get_package(pkg_id)
+        canonical_pkg_id = self.repository.canonicalize_package_id(pkg_id) or pkg_id
+        pkg_data = self.repository.get_package(canonical_pkg_id)
 
         return ResolvedNodePackage(
-            package_id=pkg_id,
+            package_id=canonical_pkg_id,
             package_data=pkg_data,
             node_type=node_type,
             versions=[],
             match_type=match_type,
-            match_confidence=1.0
+            match_confidence=1.0,
+            source=pkg_data.source if pkg_data else None
         )
+
+    def _prefer_installable_candidates(
+        self,
+        packages: list[ResolvedNodePackage]
+    ) -> list[ResolvedNodePackage]:
+        """Filter manager-only empty-version candidates when installable options exist."""
+        installable = [
+            pkg for pkg in packages
+            if not pkg.is_manager_only_uninstallable
+        ]
+        if installable:
+            if len(installable) != len(packages):
+                logger.debug(
+                    "Filtered %s manager-only uninstallable candidate(s)",
+                    len(packages) - len(installable)
+                )
+            return installable
+        return packages
 
     def search_packages(
         self,

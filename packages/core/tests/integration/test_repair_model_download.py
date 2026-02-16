@@ -7,6 +7,7 @@ behavior before implementation.
 # Import helpers using sys.path manipulation
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from conftest import simulate_comfyui_save_workflow
 
@@ -177,3 +178,62 @@ class TestRepairModelDownload:
         assert len(missing.workflow_names) == 2, "Should track both workflows"
         assert "workflow1" in missing.workflow_names
         assert "workflow2" in missing.workflow_names
+
+    def test_sync_invalidates_stale_resolution_cache_before_downloads(self, test_env, monkeypatch):
+        """Sync should re-resolve after prepare_import updates, even with warm cache."""
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+
+        workflow = (
+            WorkflowBuilder()
+            .add_checkpoint_loader("queued_model.safetensors")
+            .build()
+        )
+        simulate_comfyui_save_workflow(test_env, "test_workflow", workflow)
+
+        model_hash = "abc123deadbeef00"
+        test_env.pyproject.models.add_model(ManifestModel(
+            hash=model_hash,
+            filename="queued_model.safetensors",
+            size=4 * 1024 * 1024,
+            relative_path="checkpoints/queued_model.safetensors",
+            category="checkpoints",
+            sources=["https://example.com/queued_model.safetensors"],
+        ))
+        test_env.pyproject.workflows.set_workflow_models("test_workflow", [ManifestWorkflowModel(
+            filename="queued_model.safetensors",
+            category="checkpoints",
+            criticality="required",
+            status="resolved",
+            nodes=[WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="queued_model.safetensors",
+            )],
+            hash=model_hash,
+        )])
+
+        # Warm cache with pre-intent resolution so sync must invalidate it.
+        test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
+
+        # Keep sync fast and local for this regression test.
+        monkeypatch.setattr(
+            test_env.uv_manager,
+            "sync_dependencies_progressive",
+            lambda **_kwargs: {
+                "packages_synced": True,
+                "dependency_groups_installed": [],
+                "dependency_groups_failed": [],
+            },
+        )
+        monkeypatch.setattr(test_env.node_manager, "sync_nodes_to_filesystem", lambda **_kwargs: None)
+        monkeypatch.setattr(test_env.workflow_manager, "restore_all_from_cec", lambda: None)
+
+        with patch.object(test_env.workflow_manager, "execute_pending_downloads", return_value=[]) as mock_downloads:
+            test_env.sync(model_strategy="all")
+
+        assert mock_downloads.called, (
+            "Expected execute_pending_downloads to be called after prepare_import "
+            "updates workflow model intents."
+        )

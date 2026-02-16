@@ -973,6 +973,14 @@ class EnvironmentCommands:
         """Print compact workflow issues summary using model properties only."""
         # Build compact summary using WorkflowAnalysisStatus properties (no pyproject access!)
         parts = []
+        resolution = wf_analysis.resolution
+        nodes_version_gated = getattr(resolution, "nodes_version_gated", [])
+        nodes_uninstallable = getattr(resolution, "nodes_uninstallable", [])
+        nodes_unresolved = getattr(resolution, "nodes_unresolved", [])
+        models_unresolved = getattr(resolution, "models_unresolved", [])
+        models_ambiguous = getattr(resolution, "models_ambiguous", [])
+        models_resolved = getattr(resolution, "models_resolved", [])
+        node_guidance = getattr(resolution, "node_guidance", {})
 
         # Path sync warnings (FIRST - most actionable fix)
         if wf_analysis.models_needing_path_sync_count > 0:
@@ -987,15 +995,19 @@ class EnvironmentCommands:
             parts.append(f"{wf_analysis.uninstalled_count} packages needed for installation")
 
         # Resolution issues
-        if wf_analysis.resolution.nodes_unresolved:
-            parts.append(f"{len(wf_analysis.resolution.nodes_unresolved)} nodes couldn't be resolved")
-        if wf_analysis.resolution.models_unresolved:
-            parts.append(f"{len(wf_analysis.resolution.models_unresolved)} models not found")
-        if wf_analysis.resolution.models_ambiguous:
-            parts.append(f"{len(wf_analysis.resolution.models_ambiguous)} ambiguous models")
+        if nodes_version_gated:
+            parts.append(f"{len(nodes_version_gated)} nodes require newer ComfyUI")
+        if nodes_uninstallable:
+            parts.append(f"{len(nodes_uninstallable)} nodes matched uninstallable mappings")
+        if nodes_unresolved:
+            parts.append(f"{len(nodes_unresolved)} nodes couldn't be resolved")
+        if models_unresolved:
+            parts.append(f"{len(models_unresolved)} models not found")
+        if models_ambiguous:
+            parts.append(f"{len(models_ambiguous)} ambiguous models")
 
         # Show download intents as pending work (not blocking but needs attention)
-        download_intents = [m for m in wf_analysis.resolution.models_resolved if m.match_type == "download_intent"]
+        download_intents = [m for m in models_resolved if m.match_type == "download_intent"]
         if download_intents:
             parts.append(f"{len(download_intents)} models queued for download")
 
@@ -1003,9 +1015,18 @@ class EnvironmentCommands:
         if parts:
             print(f"      {', '.join(parts)}")
 
+        # Version-gated/uninstallable node guidance
+        if node_guidance:
+            items = list(node_guidance.items())
+            limit = len(items) if verbose else 3
+            for node_type, message in items[:limit]:
+                print(f"        ↳ {node_type}: {message}")
+            if not verbose and len(items) > limit:
+                print(f"        ↳ ... and {len(items) - limit} more guidance item(s)")
+
         # Detailed category mismatch info (always show brief, verbose shows full details)
         if wf_analysis.has_category_mismatch_issues:
-            for model in wf_analysis.resolution.models_resolved:
+            for model in models_resolved:
                 if model.has_category_mismatch:
                     expected = model.expected_categories[0] if model.expected_categories else "unknown"
                     if verbose:
@@ -3208,6 +3229,10 @@ class EnvironmentCommands:
                 print(f"  ✓ Resolved {len(result.nodes_resolved)} nodes")
 
             # Show what's still broken
+            if result.nodes_version_gated:
+                print(f"  ✗ {len(result.nodes_version_gated)} nodes require newer ComfyUI")
+            if result.nodes_uninstallable:
+                print(f"  ✗ {len(result.nodes_uninstallable)} nodes matched uninstallable mappings")
             if result.nodes_unresolved:
                 print(f"  ✗ {len(result.nodes_unresolved)} nodes couldn't be resolved")
             if result.models_unresolved:
@@ -3226,6 +3251,10 @@ class EnvironmentCommands:
                     expected = m.expected_categories[0] if m.expected_categories else "unknown"
                     print(f"    {m.actual_category}/{m.name} → {expected}/")
             else:
+                if result.node_guidance:
+                    print("  Node guidance:")
+                    for _node_type, message in result.node_guidance.items():
+                        print(f"    {message}")
                 print(f"  Re-run: cg workflow resolve \"{args.name}\"")
             print("  Or commit with issues: cg commit -m \"...\" --allow-issues")
 

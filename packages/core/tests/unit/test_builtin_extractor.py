@@ -193,9 +193,81 @@ class StaticNode(io.ComfyNode):
         extracted = _extract_comfynode_from_ast(str(api_py))
         assert "StaticComfyNode" in extracted
 
+    def test_ast_comfynode_with_class_constant_node_id(self, tmp_path):
+        """AST parser should resolve cls.NODE_ID when class constant is a string."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class FluxNode(io.ComfyNode):
+    NODE_ID = "FluxKontextProImageNode"
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.NODE_ID)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "FluxKontextProImageNode" in extracted
+
+    def test_ast_comfynode_with_custom_class_constant_name(self, tmp_path):
+        """AST parser should resolve cls.<CONST> for non-NODE_ID names."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class FluxNode(io.ComfyNode):
+    SOME_OTHER_CONST = "Flux2ProImageNode"
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.SOME_OTHER_CONST)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "Flux2ProImageNode" in extracted
+
+    def test_ast_comfynode_ignores_non_string_class_constant(self, tmp_path):
+        """AST parser should ignore cls.<CONST> when class constant is not a string."""
+        from comfygit_core.utils.builtin_extractor import _extract_comfynode_from_ast
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class BadNode(io.ComfyNode):
+    NODE_ID = 123
+
+    @classmethod
+    def define_schema(cls):
+        return IO.NodeSchema(node_id=cls.NODE_ID)
+''')
+
+        extracted = _extract_comfynode_from_ast(str(api_py))
+        assert "123" not in extracted
+        assert extracted == []
+
+    def test_extract_node_names_supports_nodeid_pattern(self, tmp_path):
+        """Regex fallback should still support old-style NodeId patterns."""
+        from comfygit_core.utils.builtin_extractor import _extract_node_names
+
+        api_py = tmp_path / "nodes_api.py"
+        api_py.write_text('''
+class LegacyNode:
+    NodeId = "LegacyNodeIdPattern"
+''')
+
+        extracted = _extract_node_names(str(api_py))
+        assert "LegacyNodeIdPattern" in extracted
+
 
 class TestNodeClassifierWithEnvironment:
     """Tests for NodeClassifier loading from environment-specific config."""
+
+    class _StubBuiltinVersionsRepository:
+        def __init__(self, db):
+            self.database = db
+
+        def get_version_gate_info(self, node_type: str, current_version: str | None):
+            return self.database.get_version_gate_info(node_type, current_version)
 
     def test_classifier_loads_from_environment(self, tmp_path):
         """Test loading builtins from .cec/comfyui_builtins.json."""
@@ -327,6 +399,79 @@ class TestNodeClassifierWithEnvironment:
         classifier = NodeClassifier(cec_path)
         assert "KSampler" in classifier.builtin_nodes
 
+    def test_classifier_marks_known_future_builtin_as_version_gated(self, tmp_path):
+        """Known builtins introduced after current version should be version-gated."""
+        from comfygit_core.analyzers.node_classifier import NodeClassifier
+        from comfygit_core.models.comfyui_builtin_versions import ComfyUIBuiltinVersions
+        from comfygit_core.models.workflow import WorkflowNode
+
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        builtins_file = cec_path / "comfyui_builtins.json"
+        with open(builtins_file, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"comfyui_version": "v0.3.0", "total_nodes": 1},
+                    "all_builtin_nodes": ["ExistingBuiltin"]
+                },
+                f,
+            )
+
+        db = ComfyUIBuiltinVersions.from_dict(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": ["v0.3.0", "v0.3.10"],
+                "stats": {},
+                "builtins": {
+                    "FutureBuiltin": {"introduced_in": "v0.3.10", "category": "core"}
+                },
+            }
+        )
+        repo = self._StubBuiltinVersionsRepository(db)
+        classifier = NodeClassifier(cec_path, builtin_versions_repository=repo)
+
+        node = WorkflowNode(id="1", type="FutureBuiltin", widgets_values=[])
+        assert classifier.classify_single_node(node) == "version_gated"
+        info = classifier.get_version_gate_info("FutureBuiltin")
+        assert info is not None
+        assert ">= v0.3.10" in info.message
+
+    def test_classifier_with_unknown_version_keeps_known_builtin_conservative(self, tmp_path):
+        """Unknown current version should still classify known missing builtin as version-gated."""
+        from comfygit_core.analyzers.node_classifier import NodeClassifier
+        from comfygit_core.models.comfyui_builtin_versions import ComfyUIBuiltinVersions
+        from comfygit_core.models.workflow import WorkflowNode
+
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        builtins_file = cec_path / "comfyui_builtins.json"
+        with open(builtins_file, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"total_nodes": 1},
+                    "all_builtin_nodes": ["ExistingBuiltin"]
+                },
+                f,
+            )
+
+        db = ComfyUIBuiltinVersions.from_dict(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": ["v0.3.0"],
+                "stats": {},
+                "builtins": {
+                    "AnyVersionBuiltin": {"introduced_in": "v0.3.0", "category": "core"}
+                },
+            }
+        )
+        repo = self._StubBuiltinVersionsRepository(db)
+        classifier = NodeClassifier(cec_path, builtin_versions_repository=repo)
+
+        node = WorkflowNode(id="1", type="AnyVersionBuiltin", widgets_values=[])
+        assert classifier.classify_single_node(node) == "version_gated"
+
 
 class TestWorkflowDependencyParserWithCecPath:
     """Tests for WorkflowDependencyParser with cec_path support."""
@@ -371,3 +516,66 @@ class TestWorkflowDependencyParserWithCecPath:
         # CLIPTextEncode should be builtin
         assert len(deps.builtin_nodes) == 1
         assert deps.builtin_nodes[0].type == "CLIPTextEncode"
+
+    def test_parser_marks_comfy_core_node_as_version_gated_with_builtin_versions_data(self, tmp_path):
+        """Node with cnr_id=comfy-core should be version-gated when introduced in newer ComfyUI."""
+        from comfygit_core.analyzers.workflow_dependency_parser import WorkflowDependencyParser
+        from comfygit_core.models.comfyui_builtin_versions import ComfyUIBuiltinVersions
+
+        class StubRepo:
+            def __init__(self, db):
+                self.database = db
+
+            def get_version_gate_info(self, node_type: str, current_version: str | None):
+                return self.database.get_version_gate_info(node_type, current_version)
+
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        builtins_file = cec_path / "comfyui_builtins.json"
+        with open(builtins_file, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"comfyui_version": "v0.3.0", "total_nodes": 1},
+                    "all_builtin_nodes": ["CLIPTextEncode"],
+                },
+                f,
+            )
+
+        workflow_path = tmp_path / "test.json"
+        with open(workflow_path, "w") as f:
+            json.dump(
+                {
+                    "nodes": [
+                        {
+                            "id": 1,
+                            "type": "FutureBuiltin",
+                            "widgets_values": [],
+                            "properties": {"cnr_id": "comfy-core"},
+                        }
+                    ]
+                },
+                f,
+            )
+
+        db = ComfyUIBuiltinVersions.from_dict(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": ["v0.3.0", "v0.3.10"],
+                "stats": {},
+                "builtins": {
+                    "FutureBuiltin": {"introduced_in": "v0.3.10", "category": "core"}
+                },
+            }
+        )
+
+        parser = WorkflowDependencyParser(
+            workflow_path,
+            cec_path=cec_path,
+            builtin_versions_repository=StubRepo(db),
+        )
+        deps = parser.analyze_dependencies()
+
+        assert len(deps.version_gated_nodes) == 1
+        assert deps.version_gated_nodes[0].type == "FutureBuiltin"
+        assert len(deps.non_builtin_nodes) == 0

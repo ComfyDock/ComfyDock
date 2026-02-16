@@ -46,6 +46,20 @@ def test_workspace(tmp_path):
     with open(node_mappings, 'w') as f:
         json.dump({"mappings": {}, "packages": {}, "stats": {}}, f)
 
+    # Create minimal builtins-by-version file to avoid network fetch in tests
+    builtins_by_version = custom_nodes_cache / "comfyui_builtins_by_version.json"
+    with open(builtins_by_version, 'w') as f:
+        json.dump(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": [],
+                "stats": {},
+                "builtins": {}
+            },
+            f
+        )
+
     # Set up models directory inside workspace
     models_dir = workspace_path / "models"
     models_dir.mkdir(exist_ok=True)

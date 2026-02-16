@@ -659,6 +659,7 @@ class WorkflowDependencies:
     workflow_name: str
     found_models: list[WorkflowNodeWidgetRef] = field(default_factory=list)
     builtin_nodes: list[WorkflowNode] = field(default_factory=list)
+    version_gated_nodes: list[WorkflowNode] = field(default_factory=list)
     non_builtin_nodes: list[WorkflowNode] = field(default_factory=list)
 
     @property
@@ -677,12 +678,21 @@ class ResolvedNodePackage:
     match_confidence: float = 1.0
     is_optional: bool = False
     rank: int | None = None  # Popularity rank from registry (1 = most popular)
+    source: str | None = None  # "manager" for manager-only mappings, None/other for installable sources
 
     def __repr__(self) -> str:
         """Concise representation showing resolution details."""
         version_str = f"{len(self.versions)} version(s)" if self.versions else "no versions"
         rank_str = f", rank={self.rank}" if self.rank else ""
         return f"ResolvedNodePackage(package={self.package_id!r}, node={self.node_type!r}, match={self.match_type}, confidence={self.match_confidence:.2f}, {version_str}{rank_str})"
+
+    @property
+    def is_manager_only_uninstallable(self) -> bool:
+        """True when this mapping points to manager-only source with no installable versions."""
+        source = (self.source or "").lower()
+        if not source and self.package_data and self.package_data.source:
+            source = self.package_data.source.lower()
+        return source == "manager" and not self.versions
 
 @dataclass
 class ResolvedModel:
@@ -724,8 +734,11 @@ class ResolutionResult:
     """Result of resolution check or application."""
     workflow_name: str
     nodes_resolved: list[ResolvedNodePackage] = field(default_factory=list)  # Nodes resolved/added
+    nodes_version_gated: list[WorkflowNode] = field(default_factory=list)  # Known builtins unavailable at current ComfyUI version
+    nodes_uninstallable: list[ResolvedNodePackage] = field(default_factory=list)  # Mapping matches with no installable package version
     nodes_unresolved: list[WorkflowNode] = field(default_factory=list)  # Nodes not found
     nodes_ambiguous: list[list[ResolvedNodePackage]] = field(default_factory=list)  # Nodes with multiple matches
+    node_guidance: dict[str, str] = field(default_factory=dict)  # Node type -> actionable guidance message
     models_resolved: list[ResolvedModel] = field(default_factory=list)  # Models resolved (or candidates)
     models_unresolved: list[WorkflowNodeWidgetRef] = field(default_factory=list)  # Models not found
     models_ambiguous: list[list[ResolvedModel]] = field(default_factory=list)  # Models with multiple matches
@@ -737,6 +750,8 @@ class ResolutionResult:
         return bool(
             self.models_unresolved
             or self.models_ambiguous
+            or self.nodes_version_gated
+            or self.nodes_uninstallable
             or self.nodes_unresolved
             or self.nodes_ambiguous
         )
@@ -760,6 +775,10 @@ class ResolutionResult:
         parts = []
         if self.nodes_resolved:
             parts.append(f"{len(self.nodes_resolved)} nodes")
+        if self.nodes_version_gated:
+            parts.append(f"{len(self.nodes_version_gated)} version-gated nodes")
+        if self.nodes_uninstallable:
+            parts.append(f"{len(self.nodes_uninstallable)} uninstallable node matches")
         if self.nodes_unresolved:
             parts.append(f"{len(self.nodes_unresolved)} unresolved nodes")
         if self.nodes_ambiguous:
@@ -865,6 +884,10 @@ class WorkflowAnalysisStatus:
             parts.append(f"{len(self.resolution.models_ambiguous)} ambiguous models")
         if self.resolution.models_unresolved:
             parts.append(f"{len(self.resolution.models_unresolved)} unresolved models")
+        if self.resolution.nodes_version_gated:
+            parts.append(f"{len(self.resolution.nodes_version_gated)} nodes require newer ComfyUI")
+        if self.resolution.nodes_uninstallable:
+            parts.append(f"{len(self.resolution.nodes_uninstallable)} uninstallable node mappings")
         if self.resolution.nodes_unresolved:
             parts.append(f"{len(self.resolution.nodes_unresolved)} missing nodes")
         if self.resolution.nodes_ambiguous:
@@ -893,7 +916,11 @@ class WorkflowAnalysisStatus:
     @property
     def node_count(self) -> int:
         """Total number of nodes in workflow."""
-        return len(self.dependencies.builtin_nodes) + len(self.dependencies.non_builtin_nodes)
+        return (
+            len(self.dependencies.builtin_nodes)
+            + len(self.dependencies.version_gated_nodes)
+            + len(self.dependencies.non_builtin_nodes)
+        )
 
     @property
     def models_resolved_count(self) -> int:
@@ -970,7 +997,10 @@ class DetailedWorkflowStatus:
     def total_missing_nodes(self) -> int:
         """Total count of missing/ambiguous nodes across all workflows."""
         return sum(
-            len(w.resolution.nodes_unresolved) + len(w.resolution.nodes_ambiguous)
+            len(w.resolution.nodes_version_gated)
+            + len(w.resolution.nodes_uninstallable)
+            + len(w.resolution.nodes_unresolved)
+            + len(w.resolution.nodes_ambiguous)
             for w in self.analyzed_workflows
         )
 

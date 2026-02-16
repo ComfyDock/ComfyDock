@@ -4,6 +4,7 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS: dict[str, str] = {
+    "ComfyUIBuiltinVersionsRepository": "comfyui_builtin_versions_repository",
     "migrate_path_separators": "migrate_paths",
     "ModelRepository": "model_repository",
     "NodeMappingsRepository": "node_mappings_repository",
@@ -26,4 +27,3 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
-

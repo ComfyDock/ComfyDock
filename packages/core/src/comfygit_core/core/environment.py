@@ -96,6 +96,9 @@ class Environment:
         # Workspace-level services
         self.model_repository = workspace.model_repository
         self.node_mapping_repository = workspace.node_mapping_repository
+        self.comfyui_builtin_versions_repository = (
+            workspace.comfyui_builtin_versions_repository
+        )
         self.workspace_config_manager = workspace.workspace_config_manager
         self.model_downloader = workspace.model_downloader
 
@@ -232,7 +235,8 @@ class Environment:
             self.node_mapping_repository,
             self.model_downloader,
             self.workflow_cache,
-            self.name
+            self.name,
+            builtin_versions_repository=self.comfyui_builtin_versions_repository,
         )
 
     @cached_property
@@ -698,6 +702,12 @@ class Environment:
 
                 if workflows_with_intents:
                     logger.info(f"Downloading models for {len(workflows_with_intents)} workflow(s)")
+
+                    # prepare_import_with_model_strategy() may update pyproject model entries.
+                    # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
+                    # download intents instead of stale session-cached resolutions.
+                    for workflow_name in workflows_with_intents:
+                        self.workflow_cache.invalidate(self.name, workflow_name)
 
                     # Resolve each workflow (triggers downloads)
                     from ..strategies.auto import AutoModelStrategy, AutoNodeStrategy
@@ -2358,6 +2368,12 @@ class Environment:
 
         # Only auto-resolve if not "skip" strategy
         workflows_to_resolve = [] if model_strategy == "skip" else workflows_with_intents
+
+        # prepare_import_with_model_strategy() may update pyproject model entries.
+        # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
+        # download intents instead of stale session-cached resolutions.
+        for workflow_name in workflows_to_resolve:
+            self.workflow_cache.invalidate(self.name, workflow_name)
 
         # Resolve workflows with download intents
         from ..models.workflow import BatchDownloadCallbacks

@@ -538,6 +538,279 @@ class TestWorkflowManagerDisambiguation:
         assert result.nodes_ambiguous[0][1].package_id == "fuzzy-match-2"
 
 
+class TestPropertiesCnrIdPriority:
+    """Test canonicalized cnr_id properties priority behavior."""
+
+    def _create_resolver(self, mappings_data: dict) -> GlobalNodeResolver:
+        """Create resolver from inline mappings fixture."""
+        tmpdir = tempfile.TemporaryDirectory()
+        mappings_path = Path(tmpdir.name) / "mappings.json"
+        with open(mappings_path, "w") as f:
+            json.dump(mappings_data, f)
+
+        from unittest.mock import Mock
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_path
+
+        repository = NodeMappingsRepository(data_manager=mock_data_manager)
+        resolver = GlobalNodeResolver(repository)
+        resolver._test_tmpdir = tmpdir  # Keep temp directory alive during test
+        return resolver
+
+    def test_cnr_id_is_trusted_even_if_mapping_has_higher_rank(self):
+        """Known cnr_id should not be superseded by rank-based mapping candidates."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": ["1.0"], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": ["0.9"], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2", "ver": "abc123"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
+
+    def test_cnr_id_matching_rank1_not_upgraded(self):
+        """Rank-1 cnr_id should remain properties match without upgrade."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank1", "ver": "def456"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank1"
+        assert result[0].match_type == "properties"
+
+    def test_cnr_id_no_mapping_data_uses_package_directly(self):
+        """No mapping entry should fall back to direct cnr_id lookup."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "OtherNode::_": [
+                    {"package_id": "pkg-other", "versions": [], "rank": 1}
+                ]
+            },
+            "packages": {
+                "pkg-direct": {"id": "pkg-direct", "versions": {}},
+                "pkg-other": {"id": "pkg-other", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-direct"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-direct"
+        assert result[0].match_type == "properties"
+
+    def test_legacy_cnr_id_alias_resolves_to_canonical_package(self):
+        """Legacy cnr_id should canonicalize through package_aliases metadata."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "package_aliases": {"legacy-pkg": "pkg-canonical"},
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-other", "versions": [], "rank": 1},
+                ]
+            },
+            "packages": {
+                "pkg-canonical": {"id": "pkg-canonical", "versions": {}},
+                "pkg-other": {"id": "pkg-other", "versions": {}},
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "legacy-pkg", "ver": "2.0.2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-canonical"
+        assert result[0].match_type == "properties"
+        assert "2.0.2" in result[0].versions
+
+    def test_unknown_cnr_id_falls_back_to_mapping_table(self):
+        """Unknown cnr_id should still allow regular mapping-table resolution."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-from-mapping", "versions": [], "rank": 1},
+                ]
+            },
+            "packages": {
+                "pkg-from-mapping": {"id": "pkg-from-mapping", "versions": {}},
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "missing-pkg"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-from-mapping"
+        assert result[0].match_type == "type_only"
+
+    def test_builtin_cnr_id_never_superseded(self):
+        """Builtin cnr_id should never be upgraded by mapping table."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "KSampler::_": [
+                    {"package_id": "lth_extended_prompting_nodes", "versions": [], "rank": 1}
+                ]
+            },
+            "packages": {
+                "comfy-core": {"id": "comfy-core", "versions": {}},
+                "lth_extended_prompting_nodes": {
+                    "id": "lth_extended_prompting_nodes",
+                    "versions": {}
+                }
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="KSampler",
+            properties={"cnr_id": "comfy-core"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "comfy-core"
+        assert result[0].match_type == "properties"
+
+    def test_installed_rank2_preferred_over_uninstalled_rank1(self):
+        """Installed rank-2 package should be kept over uninstalled rank-1."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank1": {"id": "pkg-rank1", "versions": {}},
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        context = NodeResolutionContext(
+            installed_packages={"pkg-rank2": NodeInfo(name="pkg-rank2", source="registry")},
+            workflow_name="test"
+        )
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
+
+    def test_rank1_package_data_missing_falls_through(self):
+        """Missing package_data on rank-1 candidate should not force upgrade."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {"package_id": "pkg-rank1-missing", "versions": [], "rank": 1},
+                    {"package_id": "pkg-rank2", "versions": [], "rank": 2}
+                ]
+            },
+            "packages": {
+                "pkg-rank2": {"id": "pkg-rank2", "versions": {}}
+            },
+            "stats": {}
+        }
+
+        resolver = self._create_resolver(mappings_data)
+        node = WorkflowNode(
+            id="1",
+            type="TestNode",
+            properties={"cnr_id": "pkg-rank2"}
+        )
+
+        result = resolver.resolve_single_node_with_context(node)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "pkg-rank2"
+        assert result[0].match_type == "properties"
+
+
 class TestRankFieldPersistence:
     """Test that rank information is preserved through resolution."""
 
@@ -743,3 +1016,167 @@ class TestBackwardCompatibility:
 
             # Empty list should be treated as "not found"
             assert result is None
+
+
+class TestVersionGatedAndUninstallableHandling:
+    """Tests for manager-only uninstallable mapping behavior in resolver/workflow manager."""
+
+    def test_resolver_prefers_installable_over_manager_only(self):
+        """Resolver should filter manager-only empty-version candidates when installable options exist."""
+        mappings_data = {
+            "version": "2025.10.10",
+            "mappings": {
+                "TestNode::_": [
+                    {
+                        "package_id": "manager-only-pkg",
+                        "versions": [],
+                        "rank": 1,
+                        "source": "manager",
+                    },
+                    {
+                        "package_id": "installable-pkg",
+                        "versions": ["1.0.0"],
+                        "rank": 2,
+                    },
+                ]
+            },
+            "packages": {
+                "manager-only-pkg": {"id": "manager-only-pkg", "source": "manager", "versions": {}},
+                "installable-pkg": {"id": "installable-pkg", "versions": {"1.0.0": {"version": "1.0.0"}}},
+            },
+            "stats": {}
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mappings_path = Path(tmpdir) / "mappings.json"
+            with open(mappings_path, "w") as f:
+                json.dump(mappings_data, f)
+
+            from unittest.mock import Mock
+            mock_data_manager = Mock()
+            mock_data_manager.get_mappings_path.return_value = mappings_path
+
+            repository = NodeMappingsRepository(data_manager=mock_data_manager)
+            resolver = GlobalNodeResolver(repository)
+            context = NodeResolutionContext(installed_packages={}, workflow_name="test")
+
+            node = WorkflowNode(id="1", type="TestNode")
+            result = resolver.resolve_single_node_with_context(node, context)
+
+            assert result is not None
+            assert len(result) == 1
+            assert result[0].package_id == "installable-pkg"
+
+    def test_workflow_manager_marks_manager_only_as_uninstallable(self, test_env, monkeypatch):
+        """Single manager-only empty-version match should not be counted as resolved."""
+        from comfygit_core.models.workflow import (
+            ResolvedNodePackage,
+            WorkflowDependencies,
+        )
+
+        node = WorkflowNode(id="1", type="ManagerOnlyNode")
+        deps = WorkflowDependencies(
+            workflow_name="test-workflow",
+            builtin_nodes=[],
+            version_gated_nodes=[],
+            non_builtin_nodes=[node],
+            found_models=[],
+        )
+
+        def mock_resolve(_node, _ctx):
+            return [
+                ResolvedNodePackage(
+                    node_type="ManagerOnlyNode",
+                    package_id="manager-only-pkg",
+                    versions=[],
+                    match_type="type_only",
+                    source="manager",
+                )
+            ]
+
+        monkeypatch.setattr(
+            test_env.workflow_manager.global_node_resolver,
+            "resolve_single_node_with_context",
+            mock_resolve,
+        )
+
+        result = test_env.workflow_manager.resolve_workflow(deps)
+
+        assert len(result.nodes_resolved) == 0
+        assert len(result.nodes_uninstallable) == 1
+        assert result.nodes_uninstallable[0].package_id == "manager-only-pkg"
+        assert "manager-only mapping" in result.node_guidance["ManagerOnlyNode"]
+
+    def test_workflow_manager_marks_known_builtin_as_version_gated(self, test_env, monkeypatch):
+        """Manager-only matches for known builtins should route to version-gated guidance."""
+        from comfygit_core.models.comfyui_builtin_versions import ComfyUIBuiltinVersions
+        from comfygit_core.models.workflow import (
+            ResolvedNodePackage,
+            WorkflowDependencies,
+        )
+
+        # Ensure environment version is parseable for deterministic guidance.
+        builtins_file = test_env.cec_path / "comfyui_builtins.json"
+        with open(builtins_file, "w") as f:
+            json.dump(
+                {
+                    "metadata": {"comfyui_version": "v0.3.0", "total_nodes": 1},
+                    "all_builtin_nodes": ["ExistingBuiltin"],
+                },
+                f,
+            )
+
+        db = ComfyUIBuiltinVersions.from_dict(
+            {
+                "version": "test",
+                "generated_at": "1970-01-01T00:00:00Z",
+                "comfyui_versions_processed": ["v0.3.0", "v0.3.10"],
+                "stats": {},
+                "builtins": {
+                    "FutureBuiltin": {"introduced_in": "v0.3.10", "category": "core"}
+                },
+            }
+        )
+
+        class _StubRepo:
+            def __init__(self, database):
+                self.database = database
+
+            def get_version_gate_info(self, node_type: str, current_version: str | None):
+                return self.database.get_version_gate_info(node_type, current_version)
+
+        test_env.workflow_manager.builtin_versions_repository = _StubRepo(db)
+
+        node = WorkflowNode(id="1", type="FutureBuiltin")
+        deps = WorkflowDependencies(
+            workflow_name="test-workflow",
+            builtin_nodes=[],
+            version_gated_nodes=[],
+            non_builtin_nodes=[node],
+            found_models=[],
+        )
+
+        def mock_resolve(_node, _ctx):
+            return [
+                ResolvedNodePackage(
+                    node_type="FutureBuiltin",
+                    package_id="manager-only-pkg",
+                    versions=[],
+                    match_type="type_only",
+                    source="manager",
+                )
+            ]
+
+        monkeypatch.setattr(
+            test_env.workflow_manager.global_node_resolver,
+            "resolve_single_node_with_context",
+            mock_resolve,
+        )
+
+        result = test_env.workflow_manager.resolve_workflow(deps)
+
+        assert len(result.nodes_resolved) == 0
+        assert len(result.nodes_uninstallable) == 0
+        assert len(result.nodes_version_gated) == 1
+        assert result.nodes_version_gated[0].type == "FutureBuiltin"
+        assert ">= v0.3.10" in result.node_guidance["FutureBuiltin"]

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from comfygit_core.repositories.workflow_repository import WorkflowRepository
 
@@ -19,6 +19,12 @@ from .node_classifier import NodeClassifier
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    from ..repositories.comfyui_builtin_versions_repository import (
+        ComfyUIBuiltinVersionsRepository,
+    )
+
+
 class WorkflowDependencyParser:
     """Manages workflow dependency analysis and resolution."""
 
@@ -27,10 +33,12 @@ class WorkflowDependencyParser:
         workflow: Workflow | Path,
         workflow_name: str | None = None,
         model_config: ModelConfig | None = None,
-        cec_path: Path | None = None
+        cec_path: Path | None = None,
+        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None
     ):
         self.model_config = model_config or ModelConfig.load()
         self.cec_path = cec_path
+        self.builtin_versions_repository = builtin_versions_repository
 
         # Accept either Workflow object or Path
         if isinstance(workflow, Path):
@@ -53,10 +61,14 @@ class WorkflowDependencyParser:
 
             found_models: list[WorkflowNodeWidgetRef] = []
             builtin_nodes: list[WorkflowNode] = []
+            version_gated_nodes: list[WorkflowNode] = []
             missing_nodes: list[WorkflowNode] = []
 
             # Create classifier with environment-specific builtins
-            classifier = NodeClassifier(self.cec_path)
+            classifier = NodeClassifier(
+                self.cec_path,
+                builtin_versions_repository=self.builtin_versions_repository
+            )
 
             # Analyze and resolve models and nodes
             # Iterate over items() to preserve scoped IDs for subgraph nodes
@@ -68,6 +80,8 @@ class WorkflowDependencyParser:
 
                 if node_classification == 'builtin':
                     builtin_nodes.append(node_info)
+                elif node_classification == 'version_gated':
+                    version_gated_nodes.append(node_info)
                 else:
                     missing_nodes.append(node_info)
 
@@ -76,6 +90,8 @@ class WorkflowDependencyParser:
                 logger.debug(f"Found {len(found_models)} model references in workflow")
             if builtin_nodes:
                 logger.debug(f"Found {len(builtin_nodes)} builtin nodes in workflow")
+            if version_gated_nodes:
+                logger.debug(f"Found {len(version_gated_nodes)} version-gated builtin nodes in workflow")
             if missing_nodes:
                 logger.debug(f"Found {len(missing_nodes)} missing nodes in workflow")
 
@@ -83,6 +99,7 @@ class WorkflowDependencyParser:
                 workflow_name=self.workflow_name,
                 found_models=found_models,
                 builtin_nodes=builtin_nodes,
+                version_gated_nodes=version_gated_nodes,
                 non_builtin_nodes=missing_nodes
             )
 

@@ -118,6 +118,57 @@ class TestPropertiesFieldResolution:
         # For this test, we expect it to return None since no other strategies match
         assert result is None, "Should return None when properties cnr_id is invalid"
 
+    def test_properties_field_alias_cnr_id_resolves_to_canonical(self, tmp_path):
+        """Legacy cnr_id should resolve via package_aliases metadata."""
+        mappings_file = tmp_path / "node_mappings.json"
+
+        import json
+        global_data = {
+            "version": "test",
+            "generated_at": "2024-01-01",
+            "stats": {},
+            "package_aliases": {
+                "rgthree-comfy-legacy": "rgthree-comfy"
+            },
+            "mappings": {},
+            "packages": {
+                "rgthree-comfy": {
+                    "id": "rgthree-comfy",
+                    "display_name": "rgthree's ComfyUI Nodes",
+                    "versions": {}
+                }
+            }
+        }
+
+        with open(mappings_file, 'w') as f:
+            json.dump(global_data, f)
+
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_file
+        repository = NodeMappingsRepository(data_manager=mock_data_manager)
+        resolver = GlobalNodeResolver(repository)
+
+        node = WorkflowNode(
+            id="1",
+            type="Mute / Bypass Repeater (rgthree)",
+            pos=[0, 0],
+            size=[100, 100],
+            flags={},
+            order=0,
+            mode=0,
+            inputs=[],
+            outputs=[],
+            properties={"cnr_id": "rgthree-comfy-legacy", "ver": "abc123def456"},
+            widgets_values=[]
+        )
+
+        result = resolver.resolve_single_node_with_context(node, NodeResolutionContext())
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "rgthree-comfy"
+        assert result[0].match_type == "properties"
+
 
 class TestSessionCacheDeduplication:
     """Test session-level caching to avoid re-resolving same node types."""

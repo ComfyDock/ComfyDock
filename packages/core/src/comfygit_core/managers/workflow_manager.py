@@ -11,6 +11,7 @@ from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
 
+from ..analyzers.node_classifier import NodeClassifier
 from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
 from ..logging.logging_config import get_logger
 from ..models.protocols import ModelResolutionStrategy, NodeResolutionStrategy
@@ -37,6 +38,9 @@ from ..utils.workflow_hash import normalize_workflow
 if TYPE_CHECKING:
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.workflow import ResolvedNodePackage, WorkflowDependencies
+    from ..repositories.comfyui_builtin_versions_repository import (
+        ComfyUIBuiltinVersionsRepository,
+    )
     from ..repositories.model_repository import ModelRepository
     from .pyproject_manager import PyprojectManager
 
@@ -56,7 +60,11 @@ CATEGORY_CRITICALITY_DEFAULTS = {
 
 
 class WorkflowManager:
-    """Manages all workflows automatically - no explicit tracking needed."""
+    """Manages all workflows automatically - no explicit tracking needed.
+
+    Architectural note: repositories are injected by Environment/Workspace
+    instead of discovered lazily to keep dependencies explicit and testable.
+    """
 
     def __init__(
         self,
@@ -67,7 +75,8 @@ class WorkflowManager:
         node_mapping_repository: NodeMappingsRepository,
         model_downloader: ModelDownloader,
         workflow_cache: WorkflowCacheRepository,
-        environment_name: str
+        environment_name: str,
+        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None,
     ):
         self.comfyui_path = comfyui_path
         self.cec_path = cec_path
@@ -76,6 +85,9 @@ class WorkflowManager:
         self.node_mapping_repository = node_mapping_repository
         self.workflow_cache = workflow_cache
         self.environment_name = environment_name
+        # Keep this dependency explicit: Environment provides a workspace-owned
+        # repository so WorkflowManager does not reach through other services.
+        self.builtin_versions_repository = builtin_versions_repository
 
         self.comfyui_workflows = comfyui_path / "user" / "default" / "workflows"
         self.cec_workflows = cec_path / "workflows"
@@ -110,10 +122,10 @@ class WorkflowManager:
         if is_git_url(package_id):
             # Try to resolve to registry package
             if registry_pkg := self.global_node_resolver.resolve_github_url(package_id):
-                return registry_pkg.id
+                return self.node_mapping_repository.canonicalize_package_id(registry_pkg.id) or registry_pkg.id
 
-        # Return as-is if not a GitHub URL or not in registry
-        return package_id
+        # Canonicalize legacy IDs directly
+        return self.node_mapping_repository.canonicalize_package_id(package_id) or package_id
 
 
     def _write_single_model_resolution(
@@ -727,7 +739,11 @@ class WorkflowManager:
         logger.debug(f"Cache MISS for workflow '{name}' - running full analysis")
 
         # Cache miss - run full analysis
-        parser = WorkflowDependencyParser(workflow_path, cec_path=self.cec_path)
+        parser = WorkflowDependencyParser(
+            workflow_path,
+            cec_path=self.cec_path,
+            builtin_versions_repository=self.builtin_versions_repository,
+        )
         deps = parser.analyze_dependencies()
 
         # Store in cache (no resolution yet)
@@ -778,7 +794,11 @@ class WorkflowManager:
         else:
             # Full miss - analyze workflow
             logger.debug(f"Cache MISS for workflow '{name}' - full analysis + resolution")
-            parser = WorkflowDependencyParser(workflow_path, cec_path=self.cec_path)
+            parser = WorkflowDependencyParser(
+                workflow_path,
+                cec_path=self.cec_path,
+                builtin_versions_repository=self.builtin_versions_repository,
+            )
             dependencies = parser.analyze_dependencies()
 
         # Resolve (either from cache miss or stale resolution)
@@ -813,14 +833,43 @@ class WorkflowManager:
             ResolutionResult with resolved and unresolved dependencies
         """
         nodes_resolved: list[ResolvedNodePackage] = []
+        nodes_version_gated: list[WorkflowNode] = []
+        nodes_uninstallable: list[ResolvedNodePackage] = []
         nodes_unresolved: list[WorkflowNode] = []
         nodes_ambiguous: list[list[ResolvedNodePackage]] = []
+        node_guidance: dict[str, str] = {}
 
         models_resolved: list[ResolvedModel] = []
         models_unresolved: list[WorkflowNodeWidgetRef] = []
         models_ambiguous: list[list[ResolvedModel]] = []
 
         workflow_name = analysis.workflow_name
+        cec_path = getattr(self, "cec_path", None)
+        node_classifier = NodeClassifier(
+            cec_path,
+            builtin_versions_repository=self.builtin_versions_repository,
+        )
+
+        version_gated_types: set[str] = set()
+
+        def add_version_gated(node: WorkflowNode) -> None:
+            if node.type not in version_gated_types:
+                nodes_version_gated.append(node)
+                version_gated_types.add(node.type)
+
+            if node.type in node_guidance:
+                return
+
+            gate_info = node_classifier.get_version_gate_info(node.type)
+            if gate_info:
+                node_guidance[node.type] = gate_info.message
+            else:
+                node_guidance[node.type] = (
+                    f"Node {node.type} may require a newer ComfyUI version."
+                )
+
+        for node in analysis.version_gated_nodes:
+            add_version_gated(node)
 
         # Load workflow JSON for path comparison
         try:
@@ -862,12 +911,49 @@ class WorkflowManager:
                 logger.debug(f"Node not found: {node}")
                 nodes_unresolved.append(node)
             elif len(resolved_packages) == 1:
-                # Single match - cleanly resolved
-                logger.debug(f"Resolved node: {resolved_packages[0]}")
-                nodes_resolved.append(resolved_packages[0])
+                candidate = resolved_packages[0]
+                if candidate.is_manager_only_uninstallable:
+                    gate_info = node_classifier.get_version_gate_info(node.type)
+                    if gate_info:
+                        add_version_gated(node)
+                        node_guidance[node.type] = gate_info.message
+                    else:
+                        logger.debug("Uninstallable manager-only node match: %s", candidate)
+                        nodes_uninstallable.append(candidate)
+                        pkg_id = candidate.package_id or "unknown-package"
+                        node_guidance[node.type] = (
+                            f"Node {node.type} matched manager-only mapping "
+                            f"'{pkg_id}' with no installable versions."
+                        )
+                else:
+                    # Single match - cleanly resolved
+                    logger.debug(f"Resolved node: {candidate}")
+                    nodes_resolved.append(candidate)
             else:
-                # Multiple matches from registry (ambiguous)
-                nodes_ambiguous.append(resolved_packages)
+                installable_candidates = [
+                    pkg for pkg in resolved_packages
+                    if not pkg.is_manager_only_uninstallable
+                ]
+
+                if len(installable_candidates) == 1:
+                    nodes_resolved.append(installable_candidates[0])
+                elif len(installable_candidates) > 1:
+                    # Multiple installable matches from registry (ambiguous)
+                    nodes_ambiguous.append(installable_candidates)
+                else:
+                    # All candidates are manager-only and uninstallable
+                    selected = min(resolved_packages, key=lambda x: x.rank or 999)
+                    gate_info = node_classifier.get_version_gate_info(node.type)
+                    if gate_info:
+                        add_version_gated(node)
+                        node_guidance[node.type] = gate_info.message
+                    else:
+                        nodes_uninstallable.append(selected)
+                        pkg_id = selected.package_id or "unknown-package"
+                        node_guidance[node.type] = (
+                            f"Node {node.type} matched manager-only mapping "
+                            f"'{pkg_id}' with no installable versions."
+                        )
 
         # Build context with full ManifestWorkflowModel objects
         # This enables download intent detection and other advanced resolution logic
@@ -948,8 +1034,11 @@ class WorkflowManager:
         return ResolutionResult(
             workflow_name=workflow_name,
             nodes_resolved=nodes_resolved,
+            nodes_version_gated=nodes_version_gated,
+            nodes_uninstallable=nodes_uninstallable,
             nodes_unresolved=nodes_unresolved,
             nodes_ambiguous=nodes_ambiguous,
+            node_guidance=node_guidance,
             models_resolved=models_resolved,
             models_unresolved=models_unresolved,
             models_ambiguous=models_ambiguous,
@@ -981,6 +1070,9 @@ class WorkflowManager:
 
         # Start with what was already resolved
         nodes_to_add = list(resolution.nodes_resolved)
+        nodes_version_gated = list(resolution.nodes_version_gated)
+        nodes_uninstallable = list(resolution.nodes_uninstallable)
+        node_guidance = dict(resolution.node_guidance)
         models_to_add = list(resolution.models_resolved)
 
         remaining_nodes_ambiguous: list[list[ResolvedNodePackage]] = []
@@ -1181,8 +1273,11 @@ class WorkflowManager:
         result = ResolutionResult(
             workflow_name=workflow_name,
             nodes_resolved=nodes_to_add,
+            nodes_version_gated=nodes_version_gated,
+            nodes_uninstallable=nodes_uninstallable,
             nodes_unresolved=remaining_nodes_unresolved,
             nodes_ambiguous=remaining_nodes_ambiguous,
+            node_guidance=node_guidance,
             models_resolved=models_to_add,
             models_unresolved=remaining_models_unresolved,
             models_ambiguous=remaining_models_ambiguous,
@@ -1230,6 +1325,10 @@ class WorkflowManager:
 
         for node in resolution.nodes_unresolved:
             target_node_types.add(node.type)
+        for node in resolution.nodes_version_gated:
+            target_node_types.add(node.type)
+        for pkg in resolution.nodes_uninstallable:
+            target_node_types.add(pkg.node_type)
         for packages in resolution.nodes_ambiguous:
             if packages:
                 target_node_types.add(packages[0].node_type)

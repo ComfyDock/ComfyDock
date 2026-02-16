@@ -5,7 +5,7 @@ invalidation based on resolution context changes.
 """
 import json
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -545,20 +545,33 @@ class WorkflowCacheRepository:
 
         # Reconstruct nested dataclasses
         builtin_nodes = [WorkflowNode(**node) for node in deps_dict.get('builtin_nodes', [])]
+        version_gated_nodes = [WorkflowNode(**node) for node in deps_dict.get('version_gated_nodes', [])]
         non_builtin_nodes = [WorkflowNode(**node) for node in deps_dict.get('non_builtin_nodes', [])]
         found_models = [WorkflowNodeWidgetRef(**ref) for ref in deps_dict.get('found_models', [])]
 
-        # Auto-forward all other fields, override nested objects
+        # Auto-forward all other fields, override nested objects.
+        # Filter by runtime dataclass fields to tolerate mixed package versions
+        # (e.g., cache contains version_gated_nodes but older runtime class does not).
+        dependency_field_names = {f.name for f in fields(WorkflowDependencies)}
         simple_fields = {
             k: v for k, v in deps_dict.items()
-            if k not in ('builtin_nodes', 'non_builtin_nodes', 'found_models')
+            if (
+                k in dependency_field_names
+                and k not in ('builtin_nodes', 'version_gated_nodes', 'non_builtin_nodes', 'found_models')
+            )
         }
 
-        return WorkflowDependencies(
+        kwargs = {
             **simple_fields,
-            builtin_nodes=builtin_nodes,
-            non_builtin_nodes=non_builtin_nodes,
-            found_models=found_models
+            "builtin_nodes": builtin_nodes,
+            "non_builtin_nodes": non_builtin_nodes,
+            "found_models": found_models,
+        }
+        if "version_gated_nodes" in dependency_field_names:
+            kwargs["version_gated_nodes"] = version_gated_nodes
+
+        return WorkflowDependencies(
+            **kwargs
         )
 
     def _serialize_resolution(self, resolution: ResolutionResult) -> str:
@@ -661,6 +674,10 @@ class WorkflowCacheRepository:
 
         # Reconstruct nested dataclasses
         nodes_resolved = [reconstruct_node_package(node) for node in res_dict.get('nodes_resolved', [])]
+        nodes_version_gated = [WorkflowNode(**node) for node in res_dict.get('nodes_version_gated', [])]
+        nodes_uninstallable = [
+            reconstruct_node_package(node) for node in res_dict.get('nodes_uninstallable', [])
+        ]
         nodes_unresolved = [WorkflowNode(**node) for node in res_dict.get('nodes_unresolved', [])]
         nodes_ambiguous = [
             [reconstruct_node_package(pkg) for pkg in group]
@@ -680,7 +697,8 @@ class WorkflowCacheRepository:
         simple_fields = {
             k: v for k, v in res_dict.items()
             if k not in (
-                'nodes_resolved', 'nodes_unresolved', 'nodes_ambiguous',
+                'nodes_resolved', 'nodes_version_gated', 'nodes_uninstallable',
+                'nodes_unresolved', 'nodes_ambiguous',
                 'models_resolved', 'models_unresolved', 'models_ambiguous',
                 'download_results'
             )
@@ -689,6 +707,8 @@ class WorkflowCacheRepository:
         return ResolutionResult(
             **simple_fields,
             nodes_resolved=nodes_resolved,
+            nodes_version_gated=nodes_version_gated,
+            nodes_uninstallable=nodes_uninstallable,
             nodes_unresolved=nodes_unresolved,
             nodes_ambiguous=nodes_ambiguous,
             models_resolved=models_resolved,

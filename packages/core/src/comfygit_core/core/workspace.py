@@ -6,6 +6,9 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from comfygit_core.repositories.comfyui_builtin_versions_repository import (
+    ComfyUIBuiltinVersionsRepository,
+)
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.repositories.workspace_config_repository import WorkspaceConfigRepository
 
@@ -331,6 +334,10 @@ class Workspace:
     @cached_property
     def node_mapping_repository(self) -> NodeMappingsRepository:
         return NodeMappingsRepository(self.registry_data_manager)
+
+    @cached_property
+    def comfyui_builtin_versions_repository(self) -> ComfyUIBuiltinVersionsRepository:
+        return ComfyUIBuiltinVersionsRepository(self.registry_data_manager)
 
     @cached_property
     def model_scanner(self) -> ModelScanner:
