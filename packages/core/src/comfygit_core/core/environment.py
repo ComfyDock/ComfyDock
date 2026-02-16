@@ -703,6 +703,12 @@ class Environment:
                 if workflows_with_intents:
                     logger.info(f"Downloading models for {len(workflows_with_intents)} workflow(s)")
 
+                    # prepare_import_with_model_strategy() may update pyproject model entries.
+                    # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
+                    # download intents instead of stale session-cached resolutions.
+                    for workflow_name in workflows_with_intents:
+                        self.workflow_cache.invalidate(self.name, workflow_name)
+
                     # Resolve each workflow (triggers downloads)
                     from ..strategies.auto import AutoModelStrategy, AutoNodeStrategy
 
@@ -2362,6 +2368,12 @@ class Environment:
 
         # Only auto-resolve if not "skip" strategy
         workflows_to_resolve = [] if model_strategy == "skip" else workflows_with_intents
+
+        # prepare_import_with_model_strategy() may update pyproject model entries.
+        # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
+        # download intents instead of stale session-cached resolutions.
+        for workflow_name in workflows_to_resolve:
+            self.workflow_cache.invalidate(self.name, workflow_name)
 
         # Resolve workflows with download intents
         from ..models.workflow import BatchDownloadCallbacks
