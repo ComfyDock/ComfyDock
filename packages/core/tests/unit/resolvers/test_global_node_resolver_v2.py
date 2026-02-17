@@ -538,8 +538,8 @@ class TestWorkflowManagerDisambiguation:
         assert result.nodes_ambiguous[0][1].package_id == "fuzzy-match-2"
 
 
-class TestPropertiesCnrIdPriority:
-    """Test canonicalized cnr_id properties priority behavior."""
+class TestPropertiesCnrIdUpgrade:
+    """Test cnr_id upgrade behavior against mapping table."""
 
     def _create_resolver(self, mappings_data: dict) -> GlobalNodeResolver:
         """Create resolver from inline mappings fixture."""
@@ -557,8 +557,8 @@ class TestPropertiesCnrIdPriority:
         resolver._test_tmpdir = tmpdir  # Keep temp directory alive during test
         return resolver
 
-    def test_cnr_id_is_trusted_even_if_mapping_has_higher_rank(self):
-        """Known cnr_id should not be superseded by rank-based mapping candidates."""
+    def test_superseded_cnr_id_upgraded_to_rank1(self):
+        """Superseded cnr_id should be upgraded to rank-1 mapping package."""
         mappings_data = {
             "version": "2025.10.10",
             "mappings": {
@@ -586,8 +586,8 @@ class TestPropertiesCnrIdPriority:
 
         assert result is not None
         assert len(result) == 1
-        assert result[0].package_id == "pkg-rank2"
-        assert result[0].match_type == "properties"
+        assert result[0].package_id == "pkg-rank1"
+        assert result[0].match_type == "properties_upgraded"
 
     def test_cnr_id_matching_rank1_not_upgraded(self):
         """Rank-1 cnr_id should remain properties match without upgrade."""
@@ -658,12 +658,11 @@ class TestPropertiesCnrIdPriority:
             "package_aliases": {"legacy-pkg": "pkg-canonical"},
             "mappings": {
                 "TestNode::_": [
-                    {"package_id": "pkg-other", "versions": [], "rank": 1},
+                    {"package_id": "pkg-canonical", "versions": [], "rank": 1},
                 ]
             },
             "packages": {
                 "pkg-canonical": {"id": "pkg-canonical", "versions": {}},
-                "pkg-other": {"id": "pkg-other", "versions": {}},
             },
             "stats": {}
         }
@@ -710,7 +709,7 @@ class TestPropertiesCnrIdPriority:
         assert result is not None
         assert len(result) == 1
         assert result[0].package_id == "pkg-from-mapping"
-        assert result[0].match_type == "type_only"
+        assert result[0].match_type == "properties_upgraded"
 
     def test_builtin_cnr_id_never_superseded(self):
         """Builtin cnr_id should never be upgraded by mapping table."""
