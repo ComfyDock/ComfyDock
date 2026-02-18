@@ -22,7 +22,6 @@ from ..models.overlay import OverlayConfig
 
 if TYPE_CHECKING:
     from ..models.shared import NodeInfo
-    from .local_uv_config_manager import LocalUVConfigManager
     from .pytorch_backend_manager import PyTorchBackendManager
 
 from ..utils.dependency_parser import parse_dependency_string
@@ -471,9 +470,6 @@ class PyprojectManager:
     def uv_injection_context(
         self,
         overlays: list[OverlayConfig] | None = None,
-        pytorch_manager: PyTorchBackendManager | None = None,
-        local_uv_config_manager: LocalUVConfigManager | None = None,
-        backend_override: str | None = None,
     ):
         """Context manager that temporarily injects UV config during sync.
 
@@ -484,33 +480,6 @@ class PyprojectManager:
         @contextmanager
         def _injection_context():
             effective_overlays = list(overlays or [])
-
-            # Transitional adapter while callers are migrated to explicit overlays.
-            if not effective_overlays:
-                if local_uv_config_manager:
-                    candidate = local_uv_config_manager.get_uv_config()
-                    if candidate and any(candidate.get(k) for k in ("indexes", "sources", "constraints")):
-                        effective_overlays.append(
-                            OverlayConfig(
-                                name=".local",
-                                path=self.path.parent / ".local-uv-config",
-                                description="Legacy local UV config",
-                                is_local=True,
-                                dependencies=[],
-                                sources=dict(candidate.get("sources", {})),
-                                settings={},
-                                dependency_metadata=[],
-                                constraints=list(candidate.get("constraints", [])),
-                                indexes=list(candidate.get("indexes", [])),
-                            )
-                        )
-                if pytorch_manager:
-                    pytorch_overlay = self._pytorch_manager_to_overlay(
-                        pytorch_manager,
-                        backend_override=backend_override,
-                    )
-                    if pytorch_overlay:
-                        effective_overlays.append(pytorch_overlay)
 
             if not effective_overlays:
                 yield

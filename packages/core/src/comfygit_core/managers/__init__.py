@@ -8,7 +8,6 @@ _EXPORTS: dict[str, str] = {
     "EnvironmentModelManager": "environment_model_manager",
     "ExportImportManager": "export_import_manager",
     "GitManager": "git_manager",
-    "LocalUVConfigManager": "local_uv_config_manager",
     "ModelDownloadManager": "model_download_manager",
     "ModelSymlinkManager": "model_symlink_manager",
     "NodeManager": "node_manager",
