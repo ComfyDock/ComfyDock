@@ -12,6 +12,7 @@ _EXPORTS: dict[str, str] = {
     "ModelDownloadManager": "model_download_manager",
     "ModelSymlinkManager": "model_symlink_manager",
     "NodeManager": "node_manager",
+    "OverlayManager": "overlay_manager",
     "PyprojectManager": "pyproject_manager",
     "PyTorchBackendManager": "pytorch_backend_manager",
     "SystemNodeSymlinkManager": "system_node_symlink_manager",
@@ -35,4 +36,3 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
-
