@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
+from ..managers.overlay_manager import OverlayManager
 from ..models.exceptions import CDPyprojectError, UVCommandError
-from ..managers.local_uv_config_manager import LocalUVConfigManager
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -39,11 +39,11 @@ class UVProjectManager:
         self,
         uv_command: UVCommand,
         pyproject_manager: PyprojectManager,
-        local_uv_config_manager: LocalUVConfigManager | None = None,
+        overlay_manager: OverlayManager | None = None,
     ):
         self.uv = uv_command
         self.pyproject = pyproject_manager
-        self.local_uv_config_manager = local_uv_config_manager or LocalUVConfigManager(
+        self.overlay_manager = overlay_manager or OverlayManager(
             self.pyproject.path.parent
         )
 
@@ -205,7 +205,7 @@ class UVProjectManager:
         self,
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
-        local_uv_config_manager: LocalUVConfigManager | None = None,
+        overlay_names: list[str] | None = None,
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
@@ -219,7 +219,7 @@ class UVProjectManager:
                             If provided, PyTorch config is injected before sync and
                             restored after (regardless of success/failure).
                             Also forces reinstall of PyTorch packages to ensure correct backend.
-            local_uv_config_manager: Optional local UV config manager for temporary injection.
+            overlay_names: Optional one-time overlay names to include for this sync.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
             all_extras: Install all optional extras
@@ -228,6 +228,7 @@ class UVProjectManager:
         Returns:
             UV command stdout
         """
+        pytorch_config = None
         if pytorch_manager:
             from ..constants import PYTORCH_CORE_PACKAGES
 
@@ -244,14 +245,20 @@ class UVProjectManager:
                     lock_file.unlink()
                     logger.info(f"Deleted uv.lock for backend override to {backend_override}")
 
-        local_manager = local_uv_config_manager or self.local_uv_config_manager
-
-        if pytorch_manager or local_manager:
-            with self.pyproject.uv_injection_context(
-                pytorch_manager=pytorch_manager,
-                local_uv_config_manager=local_manager,
+            config = self.pyproject.load()
+            python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+            pytorch_config = pytorch_manager.get_pytorch_config(
                 backend_override=backend_override,
-            ):
+                python_version=python_version,
+            )
+
+        overlays = self.overlay_manager.collect_overlays(
+            extra_names=overlay_names,
+            pytorch_config=pytorch_config,
+        )
+
+        if overlays:
+            with self.pyproject.uv_injection_context(overlays=overlays):
                 result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
                 return result.stdout
 
@@ -562,6 +569,7 @@ class UVProjectManager:
         callbacks = None,
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
+        overlay_names: list[str] | None = None,
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
@@ -583,6 +591,7 @@ class UVProjectManager:
             callbacks: Optional callbacks for progress reporting
             verbose: If True, show uv output in real-time
             pytorch_manager: Optional PyTorch backend manager for temporary injection
+            overlay_names: Optional one-time overlay names for this sync
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
             all_extras: Install all optional extras
@@ -620,6 +629,7 @@ class UVProjectManager:
                         dry_run=dry_run,
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
+                        overlay_names=overlay_names,
                         backend_override=backend_override,
                         extras=extras,
                         all_extras=all_extras,
@@ -635,6 +645,7 @@ class UVProjectManager:
                         no_default_groups=True,
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
+                        overlay_names=overlay_names,
                         backend_override=backend_override,
                         extras=extras,
                         all_extras=all_extras,

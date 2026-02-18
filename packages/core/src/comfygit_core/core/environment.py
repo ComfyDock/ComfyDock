@@ -146,6 +146,11 @@ class Environment:
         return LocalUVConfigManager(self.cec_path)
 
     @cached_property
+    def overlay_manager(self):
+        """Overlay manager bound to this environment's UV manager."""
+        return self.uv_manager.overlay_manager
+
+    @cached_property
     def node_lookup(self) -> NodeLookupService:
         from ..services.node_lookup_service import NodeLookupService
         return NodeLookupService(
@@ -630,6 +635,7 @@ class Environment:
         verbose: bool = False,
         preserve_workflows: bool = False,
         backend_override: str | None = None,
+        overlay_names: list[str] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
     ) -> SyncResult:
@@ -646,6 +652,7 @@ class Environment:
                                Use True for runtime restarts (exit code 42) to keep user edits.
                                Use False (default) for git operations and repairs.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            overlay_names: One-time overlay names for this sync call.
             extras: Optional list of extras to install
             all_extras: Install all optional extras
 
@@ -681,6 +688,7 @@ class Environment:
                 callbacks=sync_callbacks,
                 verbose=verbose,
                 pytorch_manager=self.pytorch_manager,
+                overlay_names=overlay_names,
                 backend_override=backend_override,
                 extras=extras,
                 all_extras=all_extras,

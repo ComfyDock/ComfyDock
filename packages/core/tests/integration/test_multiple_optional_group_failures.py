@@ -40,9 +40,12 @@ def mock_uv_manager(tmp_path):
 
     # Create UV manager mock
     uv_command = MagicMock()
+    overlay_manager = MagicMock()
+    overlay_manager.collect_overlays.return_value = []
     uv_manager = UVProjectManager(
         uv_command=uv_command,
-        pyproject_manager=pyproject
+        pyproject_manager=pyproject,
+        overlay_manager=overlay_manager,
     )
 
     return uv_manager, removed_groups, cec_path
@@ -235,3 +238,25 @@ def test_lockfile_deleted_on_each_retry(mock_uv_manager):
 
     # Verify lockfile was deleted during retry
     assert lockfile_deleted[0] is True, "Lockfile should be deleted before retry"
+
+
+def test_overlay_names_are_forwarded_to_sync_project(mock_uv_manager):
+    """Ad-hoc overlay names should flow through progressive sync retries."""
+    uv_manager, _, _ = mock_uv_manager
+
+    uv_manager.pyproject.dependencies.get_groups.side_effect = lambda: {}
+    seen_overlay_names = []
+
+    def mock_sync(**kwargs):
+        seen_overlay_names.append(kwargs.get("overlay_names"))
+
+    uv_manager.sync_project = mock_sync
+
+    result = uv_manager.sync_dependencies_progressive(
+        dry_run=False,
+        callbacks=None,
+        overlay_names=["sageattention"],
+    )
+
+    assert result["packages_synced"] is True
+    assert seen_overlay_names == [["sageattention"]]

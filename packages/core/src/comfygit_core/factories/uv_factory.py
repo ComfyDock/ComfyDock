@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from ..integrations.uv_command import UVCommand
+from ..managers.overlay_manager import OverlayManager
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
 
@@ -44,9 +45,10 @@ def create_uv_for_environment(
     # Create PyprojectManager
     pyproject_path = cec_path / "pyproject.toml" if cec_path else Path.cwd() / "pyproject.toml"
     pyproject_manager = PyprojectManager(pyproject_path)
+    overlay_manager = OverlayManager(pyproject_manager.path.parent)
 
     # Create and return the project manager
-    return UVProjectManager(uv_command, pyproject_manager)
+    return UVProjectManager(uv_command, pyproject_manager, overlay_manager=overlay_manager)
 
 
 def get_uv_cache_paths(
