@@ -1281,6 +1281,7 @@ class Environment:
 
         return result
 
+    @_requires_env_lock
     def revert_commit(self, commit: str) -> None:
         """Revert a commit by creating new commit that undoes it.
 
