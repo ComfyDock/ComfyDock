@@ -527,6 +527,30 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_extras_remove_parser.add_argument("extras", nargs="+", help="Extra name(s) to remove")
     env_config_extras_remove_parser.set_defaults(func=env_cmds.env_config_extras_remove)
 
+    # overlay - Manage overlays for this environment
+    overlay_parser = subparsers.add_parser("overlay", help="Manage dependency overlays")
+    overlay_subparsers = overlay_parser.add_subparsers(dest="overlay_command", help="Overlay commands")
+    overlay_parser.set_defaults(func=_make_help_func(overlay_parser))
+
+    overlay_list_parser = overlay_subparsers.add_parser("list", help="List available overlays")
+    overlay_list_parser.set_defaults(func=env_cmds.overlay_list)
+
+    overlay_show_parser = overlay_subparsers.add_parser("show", help="Show overlay file contents")
+    overlay_show_parser.add_argument("name", help="Overlay name")
+    overlay_show_parser.set_defaults(func=env_cmds.overlay_show)
+
+    overlay_enable_parser = overlay_subparsers.add_parser("enable", help="Enable overlay for this machine")
+    overlay_enable_parser.add_argument("name", help="Overlay name")
+    overlay_enable_parser.set_defaults(func=env_cmds.overlay_enable)
+
+    overlay_disable_parser = overlay_subparsers.add_parser("disable", help="Disable overlay for this machine")
+    overlay_disable_parser.add_argument("name", help="Overlay name")
+    overlay_disable_parser.set_defaults(func=env_cmds.overlay_disable)
+
+    overlay_create_parser = overlay_subparsers.add_parser("create", help="Create overlay template")
+    overlay_create_parser.add_argument("name", help="Overlay name")
+    overlay_create_parser.set_defaults(func=env_cmds.overlay_create)
+
     # run - Run ComfyUI (special handling for ComfyUI args)
     run_parser = subparsers.add_parser("run", help="Run ComfyUI")
     run_parser.add_argument("--no-sync", action="store_true", help="Skip environment sync before running")

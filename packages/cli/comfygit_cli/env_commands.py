@@ -615,6 +615,144 @@ class EnvironmentCommands:
         if missing:
             print(f"ℹ️  Not configured: {', '.join(missing)}")
 
+    @with_env_logging("overlay list")
+    def overlay_list(self, args: argparse.Namespace, logger=None) -> None:
+        """List overlays available in the environment."""
+        env = self._get_env(args)
+        overlays = env.overlay_manager.list_overlays()
+
+        if not overlays:
+            print("No overlays found")
+            return
+
+        print("Available overlays:")
+        for overlay in overlays:
+            active_marker = "active" if overlay.is_active else "inactive"
+            scope = "local" if overlay.is_local else "shared"
+            details = f"{scope}, {active_marker}"
+            if overlay.requires:
+                details += f", requires: {', '.join(overlay.requires)}"
+            suffix = f" - {overlay.description}" if overlay.description else ""
+            print(f"  • {overlay.name} ({details}){suffix}")
+
+    @with_env_logging("overlay show")
+    def overlay_show(self, args: argparse.Namespace, logger=None) -> None:
+        """Show a single overlay TOML file."""
+        env = self._get_env(args)
+
+        try:
+            resolved_name = env.overlay_manager.resolve_overlay_name(args.name)
+            overlay = env.overlay_manager.load_overlay(resolved_name)
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        scope = "local" if overlay.is_local else "shared"
+        print(f"Overlay: {overlay.name} ({scope})")
+        print(f"Path: {overlay.path}")
+        print()
+        print(overlay.path.read_text(encoding="utf-8"))
+
+    @with_env_logging("overlay enable")
+    def overlay_enable(self, args: argparse.Namespace, logger=None) -> None:
+        """Enable an overlay in local activation config."""
+        env = self._get_env(args)
+        manager = env.overlay_manager
+
+        try:
+            resolved_name = manager.resolve_overlay_name(args.name)
+            active_names = manager.get_active_names()
+            active_keys = {name.lower() for name in active_names}
+            if resolved_name.lower() in active_keys:
+                print(f"Overlay already enabled: {resolved_name}")
+                return
+
+            manager.set_active_names(active_names + [resolved_name])
+            if not manager.is_overlay_compatible(resolved_name):
+                print(f"✓ Enabled overlay: {resolved_name} (platform requirements currently unmet)")
+                return
+            print(f"✓ Enabled overlay: {resolved_name}")
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+    @with_env_logging("overlay disable")
+    def overlay_disable(self, args: argparse.Namespace, logger=None) -> None:
+        """Disable an overlay in local activation config."""
+        env = self._get_env(args)
+        manager = env.overlay_manager
+
+        try:
+            resolved_name = manager.resolve_overlay_name(args.name)
+            active_names = manager.get_active_names()
+            filtered = [
+                name for name in active_names
+                if name.lower() != resolved_name.lower()
+            ]
+            if len(filtered) == len(active_names):
+                print(f"Overlay is not enabled: {resolved_name}")
+                return
+            manager.set_active_names(filtered)
+            print(f"✓ Disabled overlay: {resolved_name}")
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+    @with_env_logging("overlay create")
+    def overlay_create(self, args: argparse.Namespace, logger=None) -> None:
+        """Create an overlay template file."""
+        from comfygit_core.models.overlay import OverlayConfig
+
+        env = self._get_env(args)
+        try:
+            OverlayConfig.validate_name(args.name)
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        overlay_path = env.cec_path / "overlays" / f"{args.name}.toml"
+        if overlay_path.exists():
+            print(f"✗ Overlay already exists: {args.name}")
+            sys.exit(1)
+
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_text(
+            """[overlay]
+# description = "Describe this overlay"
+# kind = "pytorch"
+# requires = ["cuda"]
+
+[dependencies]
+packages = []
+
+[sources]
+# package-name = { git = "https://github.com/user/repo.git" }
+
+[settings]
+no-build-isolation-package = []
+override-dependencies = []
+environments = []
+
+[[dependency-metadata]]
+# name = "package-name"
+# version = "1.0.0"
+# requires-dist = ["torch"]
+
+[constraints]
+packages = []
+
+[[index]]
+# name = "custom-index"
+# url = "https://example.com/simple"
+# explicit = true
+""",
+            encoding="utf-8",
+        )
+
+        scope = "local" if args.name.startswith(".") else "shared"
+        print(f"✓ Created {scope} overlay: {args.name}")
+        print(f"  {overlay_path}")
+
     @with_env_logging("run")
     def run(self, args: argparse.Namespace) -> None:
         """Run ComfyUI in the specified environment."""

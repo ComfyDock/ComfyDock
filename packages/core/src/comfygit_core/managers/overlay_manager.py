@@ -274,6 +274,17 @@ class OverlayManager:
             raise ValueError(f"Unknown overlay: {requested_name}")
         return resolved
 
+    def resolve_overlay_name(self, requested_name: str) -> str:
+        """Resolve user-provided overlay name to canonical on-disk name."""
+        OverlayConfig.validate_name(requested_name)
+        return self._resolve_known_name(requested_name)
+
+    def is_overlay_compatible(self, name: str) -> bool:
+        """Check whether an overlay's platform requirements are met."""
+        resolved_name = self._resolve_known_name(name)
+        overlay = self.load_overlay(resolved_name)
+        return self._meets_platform_requirements(overlay)
+
     def _from_pytorch_config(self, pytorch_config: dict) -> OverlayConfig | None:
         if not pytorch_config:
             return None
