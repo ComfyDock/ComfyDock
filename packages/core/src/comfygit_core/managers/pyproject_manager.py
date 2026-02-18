@@ -13,15 +13,17 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
+from ..models.overlay import OverlayConfig
 
 if TYPE_CHECKING:
     from ..models.shared import NodeInfo
-    from .pytorch_backend_manager import PyTorchBackendManager
     from .local_uv_config_manager import LocalUVConfigManager
+    from .pytorch_backend_manager import PyTorchBackendManager
 
 from ..utils.dependency_parser import parse_dependency_string
 
@@ -458,58 +460,79 @@ class PyprojectManager:
         Yields:
             None - the context manager just handles inject/restore
         """
-        return self.uv_injection_context(
-            pytorch_manager=pytorch_manager,
+        pytorch_overlay = self._pytorch_manager_to_overlay(
+            pytorch_manager,
             backend_override=backend_override,
+        )
+        return self.uv_injection_context(
+            overlays=[pytorch_overlay] if pytorch_overlay else None,
         )
 
     def uv_injection_context(
         self,
+        overlays: list[OverlayConfig] | None = None,
         pytorch_manager: PyTorchBackendManager | None = None,
         local_uv_config_manager: LocalUVConfigManager | None = None,
         backend_override: str | None = None,
     ):
         """Context manager that temporarily injects UV config during sync.
 
-        Supports PyTorch backend config and machine-specific local UV overrides.
+        Uses a unified overlay pipeline for all temporary injection.
         """
         from contextlib import contextmanager
 
         @contextmanager
         def _injection_context():
-            local_uv_config = None
-            if local_uv_config_manager:
-                candidate = local_uv_config_manager.get_uv_config()
-                if candidate and any(candidate.get(k) for k in ("indexes", "sources", "constraints")):
-                    local_uv_config = candidate
+            effective_overlays = list(overlays or [])
 
-            if not pytorch_manager and not local_uv_config:
+            # Transitional adapter while callers are migrated to explicit overlays.
+            if not effective_overlays:
+                if local_uv_config_manager:
+                    candidate = local_uv_config_manager.get_uv_config()
+                    if candidate and any(candidate.get(k) for k in ("indexes", "sources", "constraints")):
+                        effective_overlays.append(
+                            OverlayConfig(
+                                name=".local",
+                                path=self.path.parent / ".local-uv-config",
+                                description="Legacy local UV config",
+                                is_local=True,
+                                dependencies=[],
+                                sources=dict(candidate.get("sources", {})),
+                                settings={},
+                                dependency_metadata=[],
+                                constraints=list(candidate.get("constraints", [])),
+                                indexes=list(candidate.get("indexes", [])),
+                            )
+                        )
+                if pytorch_manager:
+                    pytorch_overlay = self._pytorch_manager_to_overlay(
+                        pytorch_manager,
+                        backend_override=backend_override,
+                    )
+                    if pytorch_overlay:
+                        effective_overlays.append(pytorch_overlay)
+
+            if not effective_overlays:
                 yield
                 return
 
             # Capture original content before any modifications
             original_content = self.path.read_text()
-            effective_backend = backend_override or "unknown"
 
             try:
-                # Extract python_version from pyproject for probing
                 config = self.load()
-                python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
 
-                # Inject local UV config first (PyTorch should win on conflicts)
-                if local_uv_config:
-                    self._inject_local_uv_config(config, local_uv_config)
-                    logger.debug("Injected local UV config from .local-uv-config")
+                # Strip tracked local path sources before local overlays are applied.
+                if any(overlay.is_local for overlay in effective_overlays):
+                    self._strip_local_path_sources_from_config(config)
 
-                # Inject PyTorch config
-                if pytorch_manager:
-                    pytorch_config = pytorch_manager.get_pytorch_config(
-                        backend_override=backend_override,
-                        python_version=python_version,
-                    )
-                    self._inject_pytorch_config(config, pytorch_config)
-                    effective_backend = backend_override or pytorch_manager.get_backend()
-                    logger.debug(f"Injected PyTorch config for backend: {effective_backend}")
+                from ..constants import PYTORCH_CORE_PACKAGES
+                for overlay in effective_overlays:
+                    if overlay.kind == "pytorch":
+                        self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
+
+                    payload = overlay.to_injection_payload()
+                    self._inject_overlay_payload(config, payload)
 
                 self.save(config)
 
@@ -518,10 +541,10 @@ class PyprojectManager:
             except Exception:
                 # Log full injected config for debugging on failure
                 logger.error("=== UV Sync Failure ===")
-                if pytorch_manager:
-                    logger.error(f"PyTorch backend: {effective_backend}")
-                if local_uv_config:
-                    logger.error("Local UV config: .local-uv-config")
+                logger.error(
+                    "Overlays: %s",
+                    [overlay.name for overlay in effective_overlays],
+                )
                 try:
                     logger.error(f"Injected config:\n{self.path.read_text()}")
                 except Exception:
@@ -537,6 +560,34 @@ class PyprojectManager:
                 logger.debug("Restored original pyproject.toml after UV injection")
 
         return _injection_context()
+
+    def _pytorch_manager_to_overlay(
+        self,
+        pytorch_manager: PyTorchBackendManager,
+        backend_override: str | None = None,
+    ) -> OverlayConfig | None:
+        config = self.load()
+        python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+        pytorch_config = pytorch_manager.get_pytorch_config(
+            backend_override=backend_override,
+            python_version=python_version,
+        )
+        if not pytorch_config:
+            return None
+        return OverlayConfig(
+            name=".pytorch",
+            path=self.path.parent / ".pytorch-backend",
+            description="Auto-generated PyTorch backend overlay",
+            kind="pytorch",
+            requires=[],
+            is_local=True,
+            dependencies=[],
+            sources=dict(pytorch_config.get("sources", {})),
+            settings={},
+            dependency_metadata=[],
+            constraints=list(pytorch_config.get("constraints", [])),
+            indexes=list(pytorch_config.get("indexes", [])),
+        )
 
     def strip_local_path_sources(self, config: dict | None = None) -> list[str]:
         """Remove uv sources with local filesystem paths.
@@ -670,31 +721,6 @@ class PyprojectManager:
 
         return True
 
-    def _inject_pytorch_config(self, config: dict, pytorch_config: dict) -> None:
-        """Inject PyTorch-specific configuration into pyproject.toml config.
-
-        IMPORTANT: This method first strips any existing PyTorch config to handle
-        "polluted" pyproject.toml files that may have been committed with embedded
-        PyTorch configuration from other machines.
-
-        Args:
-            config: The pyproject.toml config dict to modify
-            pytorch_config: PyTorch config from PyTorchBackendManager.get_pytorch_config()
-        """
-        from ..constants import PYTORCH_CORE_PACKAGES
-
-        self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
-        self._inject_uv_config(config, pytorch_config)
-
-    def _inject_local_uv_config(self, config: dict, local_uv_config: dict) -> None:
-        """Inject local UV config from .local-uv-config."""
-        if not local_uv_config:
-            return
-
-        # Strip any local path sources from tracked config before injecting
-        self._strip_local_path_sources_from_config(config)
-        self._inject_uv_config(config, local_uv_config)
-
     def _strip_pytorch_config_from_config(self, config: dict, pytorch_packages: set[str]) -> None:
         """Strip PyTorch uv config from an in-memory config dict."""
         if 'tool' in config and 'uv' in config['tool']:
@@ -762,13 +788,77 @@ class PyprojectManager:
             safe_del(config.get('tool', {}), 'uv')
 
         return to_remove
+    def _extract_dependency_key(self, requirement: str) -> str:
+        try:
+            package_name, _ = parse_dependency_string(requirement)
+            return canonicalize_name(package_name)
+        except Exception:
+            match = re.match(r"^([A-Za-z0-9._-]+)", requirement.strip())
+            if not match:
+                return requirement.strip().lower()
+            return canonicalize_name(match.group(1))
 
-    def _inject_uv_config(self, config: dict, uv_config_payload: dict) -> None:
-        """Inject uv config (indexes, sources, constraints) into config."""
-        if not uv_config_payload:
+    def _to_aot(self, values: list[dict]) -> tomlkit.items.AoT:
+        aot = tomlkit.aot()
+        for value in values:
+            table = tomlkit.table()
+            for key, item in value.items():
+                table[key] = item
+            aot.append(table)
+        return aot
+
+    def _merge_by_name_last_wins(
+        self,
+        existing: list[dict],
+        new_items: list[dict],
+        key_name: str,
+    ) -> list[dict]:
+        merged: list[dict] = [dict(item) for item in existing if isinstance(item, dict)]
+        for item in new_items:
+            if not isinstance(item, dict):
+                continue
+            key = item.get(key_name)
+            if isinstance(key, str):
+                merged = [candidate for candidate in merged if candidate.get(key_name) != key]
+            merged.append(dict(item))
+        return merged
+
+    def _merge_specs_last_wins(self, existing: list[str], new_specs: list[str]) -> list[str]:
+        merged = list(existing)
+        for spec in new_specs:
+            spec_key = self._extract_dependency_key(spec)
+            merged = [value for value in merged if self._extract_dependency_key(value) != spec_key]
+            merged.append(spec)
+        return merged
+
+    def _inject_overlay_payload(self, config: dict, payload: dict) -> None:
+        if not payload:
             return
 
-        # Ensure tool.uv section exists
+        if 'project' not in config:
+            config['project'] = tomlkit.table()
+        if 'dependencies' not in config['project']:
+            config['project']['dependencies'] = []
+
+        existing_project_dependencies = config['project'].get('dependencies', [])
+        if not isinstance(existing_project_dependencies, list):
+            existing_project_dependencies = [existing_project_dependencies] if existing_project_dependencies else []
+
+        dependency_seen = {
+            self._extract_dependency_key(dep)
+            for dep in existing_project_dependencies
+            if isinstance(dep, str)
+        }
+        for dep in payload.get('dependencies', []):
+            if not isinstance(dep, str):
+                continue
+            dep_key = self._extract_dependency_key(dep)
+            if dep_key in dependency_seen:
+                continue
+            existing_project_dependencies.append(dep)
+            dependency_seen.add(dep_key)
+        config['project']['dependencies'] = existing_project_dependencies
+
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
         if 'uv' not in config['tool']:
@@ -776,81 +866,118 @@ class PyprojectManager:
 
         uv_config = config['tool']['uv']
 
-        # Inject indexes
         existing_indexes = uv_config.get('index', [])
         if not isinstance(existing_indexes, list):
             existing_indexes = [existing_indexes] if existing_indexes else []
+        merged_indexes = self._merge_by_name_last_wins(
+            existing_indexes,
+            payload.get('indexes', []),
+            key_name='name',
+        )
+        if merged_indexes:
+            uv_config['index'] = self._to_aot(merged_indexes)
 
-        new_indexes = uv_config_payload.get('indexes', [])
-        if new_indexes and not isinstance(new_indexes, list):
-            new_indexes = [new_indexes]
-
-        for new_index in new_indexes:
-            if not new_index:
-                continue
-
-            # Create tomlkit table for proper formatting
-            index_table = tomlkit.table()
-            for k, v in new_index.items():
-                index_table[k] = v
-
-            name = new_index.get('name')
-            updated = False
-            if name:
-                for i, existing in enumerate(existing_indexes):
-                    if existing.get('name') == name:
-                        existing_indexes[i] = index_table
-                        updated = True
-                        break
-            if not updated:
-                existing_indexes.append(index_table)
-
-        if existing_indexes:
-            aot = tomlkit.aot()
-            for idx in existing_indexes:
-                if hasattr(idx, 'items'):
-                    aot.append(idx)
-                else:
-                    tbl = tomlkit.table()
-                    for k, v in idx.items():
-                        tbl[k] = v
-                    aot.append(tbl)
-            uv_config['index'] = aot
-
-        # Inject sources
+        existing_sources = uv_config.get('sources', {})
+        if not isinstance(existing_sources, dict):
+            existing_sources = {}
         if 'sources' not in uv_config:
             uv_config['sources'] = tomlkit.table()
-
-        for package_name, source in uv_config_payload.get('sources', {}).items():
+        for package_name, source in payload.get('sources', {}).items():
+            source_key = canonicalize_name(package_name)
+            existing_key = next(
+                (
+                    key for key in list(uv_config['sources'].keys())
+                    if canonicalize_name(key) == source_key
+                ),
+                None,
+            )
+            if existing_key and existing_key != package_name:
+                del uv_config['sources'][existing_key]
             uv_config['sources'][package_name] = source
 
-        # Inject constraints (if any)
-        constraints = uv_config_payload.get('constraints', [])
+        constraints = [c for c in payload.get('constraints', []) if isinstance(c, str)]
         if constraints:
             existing_constraints = uv_config.get('constraint-dependencies', [])
             if not isinstance(existing_constraints, list):
-                existing_constraints = list(existing_constraints) if existing_constraints else []
+                existing_constraints = [existing_constraints] if existing_constraints else []
+            uv_config['constraint-dependencies'] = self._merge_specs_last_wins(
+                [c for c in existing_constraints if isinstance(c, str)],
+                constraints,
+            )
 
-            # Remove constraints for packages we're about to inject
-            new_constraint_pkgs = {
-                parse_dependency_string(constraint)[0].lower()
-                for constraint in constraints
-            }
-            filtered = []
-            for existing in existing_constraints:
-                try:
-                    pkg_name = parse_dependency_string(existing)[0].lower()
-                except Exception:
-                    pkg_name = ""
-                if pkg_name and pkg_name in new_constraint_pkgs:
+        metadata_entries = [
+            entry for entry in payload.get('dependency_metadata', [])
+            if isinstance(entry, dict)
+        ]
+        if metadata_entries:
+            existing_metadata = uv_config.get('dependency-metadata', [])
+            if not isinstance(existing_metadata, list):
+                existing_metadata = [existing_metadata] if existing_metadata else []
+
+            merged_metadata = [dict(entry) for entry in existing_metadata if isinstance(entry, dict)]
+            for metadata in metadata_entries:
+                package_name = metadata.get('name')
+                if not isinstance(package_name, str):
+                    merged_metadata.append(dict(metadata))
                     continue
-                filtered.append(existing)
+                package_key = canonicalize_name(package_name)
+                merged_metadata = [
+                    item
+                    for item in merged_metadata
+                    if canonicalize_name(str(item.get('name', ''))) != package_key
+                ]
+                merged_metadata.append(dict(metadata))
 
-            for constraint in constraints:
-                if constraint not in filtered:
-                    filtered.append(constraint)
+            uv_config['dependency-metadata'] = self._to_aot(merged_metadata)
 
-            uv_config['constraint-dependencies'] = filtered
+        no_build_isolation = [
+            item for item in payload.get('no_build_isolation_packages', [])
+            if isinstance(item, str)
+        ]
+        if no_build_isolation:
+            existing_no_build = uv_config.get('no-build-isolation-package', [])
+            if not isinstance(existing_no_build, list):
+                existing_no_build = [existing_no_build] if existing_no_build else []
+            merged_no_build = list(existing_no_build)
+            seen_no_build = {
+                canonicalize_name(item)
+                for item in existing_no_build
+                if isinstance(item, str)
+            }
+            for package_name in no_build_isolation:
+                package_key = canonicalize_name(package_name)
+                if package_key in seen_no_build:
+                    continue
+                merged_no_build.append(package_name)
+                seen_no_build.add(package_key)
+            uv_config['no-build-isolation-package'] = merged_no_build
+
+        override_dependencies = [
+            item for item in payload.get('override_dependencies', [])
+            if isinstance(item, str)
+        ]
+        if override_dependencies:
+            existing_override = uv_config.get('override-dependencies', [])
+            if not isinstance(existing_override, list):
+                existing_override = [existing_override] if existing_override else []
+            uv_config['override-dependencies'] = self._merge_specs_last_wins(
+                [item for item in existing_override if isinstance(item, str)],
+                override_dependencies,
+            )
+
+        environments = [
+            item for item in payload.get('environments', [])
+            if isinstance(item, str)
+        ]
+        if environments:
+            existing_environments = uv_config.get('environments', [])
+            if not isinstance(existing_environments, list):
+                existing_environments = [existing_environments] if existing_environments else []
+            merged_environments = list(existing_environments)
+            for environment in environments:
+                if environment not in merged_environments:
+                    merged_environments.append(environment)
+            uv_config['environments'] = merged_environments
 
 
 class BaseHandler:
