@@ -206,6 +206,11 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
             "Default: auto"
         ),
     )
+    import_parser.add_argument(
+        "--no-manager",
+        action="store_true",
+        help="Skip comfygit-manager installation (headless/API-only mode)",
+    )
     import_parser.add_argument("--use", action="store_true", help="Set imported environment as active")
     import_parser.add_argument(
         "--models",
@@ -404,6 +409,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
             "cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). "
             "Default: auto"
         ),
+    )
+    create_parser.add_argument(
+        "--no-manager",
+        action="store_true",
+        help="Skip comfygit-manager installation (headless/API-only mode)",
     )
     create_parser.add_argument("--use", action="store_true", help="Set active environment after creation")
     create_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts, use defaults for workspace initialization")

@@ -105,6 +105,31 @@ class TestManagerCommands:
         captured = capsys.readouterr()
         assert "Up to date" in captured.out
 
+    def test_manager_status_shows_headless_mode(self, capsys):
+        """manager status shows headless mode guidance when marker is set."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        env_cmds = EnvironmentCommands()
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+        mock_env.get_manager_status.return_value = ManagerStatus(
+            current_version=None,
+            latest_version=None,
+            update_available=False,
+            is_legacy=False,
+            is_tracked=False,
+            status="headless",
+        )
+
+        with patch.object(env_cmds, "_get_env", return_value=mock_env):
+            args = argparse.Namespace(target_env="test-env")
+            env_cmds.manager_status(args)
+
+        captured = capsys.readouterr()
+        assert "headless" in captured.out
+        assert "manager update" in captured.out
+
     def test_manager_update_calls_env_update_manager(self, capsys):
         """manager update calls environment update_manager method."""
         from comfygit_cli.env_commands import EnvironmentCommands

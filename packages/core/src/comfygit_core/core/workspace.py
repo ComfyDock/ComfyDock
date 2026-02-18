@@ -442,6 +442,7 @@ class Workspace:
         comfyui_version: str | None = None,
         template_path: Path | None = None,
         torch_backend: str = "auto",
+        no_manager: bool = False,
         progress: "EnvironmentCreateProgress | None" = None,
     ) -> Environment:
         """Create a new environment.
@@ -452,6 +453,7 @@ class Workspace:
             comfyui_version: ComfyUI version
             template_path: Optional template to copy from
             torch_backend: PyTorch backend (auto, cpu, cu118, cu121, etc.)
+            no_manager: Skip comfygit-manager install (headless mode)
             progress: Optional progress callback for tracking creation phases
 
         Returns:
@@ -480,6 +482,7 @@ class Workspace:
                 python_version=python_version,
                 comfyui_version=comfyui_version,
                 torch_backend=torch_backend,
+                no_manager=no_manager,
                 progress=progress,
             )
 
@@ -578,6 +581,7 @@ class Workspace:
         model_strategy: str = "all",
         callbacks: "ImportCallbacks | None" = None,
         torch_backend: str = "auto",
+        no_manager: bool = False,
     ) -> Environment:
         """Import environment from tarball bundle.
 
@@ -591,6 +595,7 @@ class Workspace:
             model_strategy: "all", "required", or "skip"
             callbacks: Optional callbacks for progress updates
             torch_backend: PyTorch backend (auto, cpu, cu118, cu121, etc.)
+            no_manager: Skip comfygit-manager install/registration (headless mode)
 
         Returns:
             Fully initialized Environment
@@ -620,7 +625,7 @@ class Workspace:
             )
 
             # Step 2: Let environment complete its setup
-            environment.finalize_import(model_strategy, callbacks)
+            environment.finalize_import(model_strategy, callbacks, no_manager=no_manager)
 
             return environment
 
@@ -651,6 +656,7 @@ class Workspace:
         branch: str | None = None,
         callbacks: "ImportCallbacks | None" = None,
         torch_backend: str = "auto",
+        no_manager: bool = False,
     ) -> Environment:
         """Import environment from git repository.
 
@@ -665,6 +671,7 @@ class Workspace:
             branch: Optional branch/tag/commit
             callbacks: Optional callbacks for progress updates
             torch_backend: PyTorch backend (auto, cpu, cu118, cu121, etc.)
+            no_manager: Skip comfygit-manager install/registration (headless mode)
 
         Returns:
             Fully initialized Environment
@@ -696,7 +703,7 @@ class Workspace:
             )
 
             # Step 2: Let environment complete its setup
-            environment.finalize_import(model_strategy, callbacks)
+            environment.finalize_import(model_strategy, callbacks, no_manager=no_manager)
 
             return environment
 

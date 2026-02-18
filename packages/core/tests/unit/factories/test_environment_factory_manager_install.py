@@ -63,3 +63,22 @@ class TestCreateInitialPyproject:
             "test-env", "3.11", "v0.3.50"
         )
         assert config["project"]["requires-python"] == "==3.11.*"
+
+
+def test_create_no_manager_skips_install_and_sets_headless(
+    test_workspace, mock_comfyui_clone, mock_github_api, mock_pytorch_probe, monkeypatch
+):
+    """no_manager=True should skip manager install and persist headless marker."""
+    from comfygit_core.managers.node_manager import NodeManager
+
+    def _fail_add_node(self, identifier, *args, **kwargs):  # pragma: no cover - assertion path
+        raise AssertionError(f"Unexpected manager install call: {identifier}")
+
+    monkeypatch.setattr(NodeManager, "add_node", _fail_add_node)
+
+    env = test_workspace.create_environment("headless-factory", no_manager=True)
+    config = env.pyproject.load()
+
+    assert config["tool"]["comfygit"]["headless"] is True
+    nodes = config["tool"]["comfygit"].get("nodes", {})
+    assert "comfygit-manager" not in nodes

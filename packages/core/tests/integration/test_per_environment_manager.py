@@ -82,6 +82,19 @@ class TestManagerStatus:
         assert status.is_tracked is False
         assert status.current_version == "0.2.0"
 
+    def test_get_manager_status_headless(self, test_env):
+        """headless marker should return explicit headless manager status."""
+        config = test_env.pyproject.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        test_env.pyproject.save(config)
+
+        status = test_env.get_manager_status()
+
+        assert status.status == "headless"
+        assert status.current_version is None
+        assert status.is_tracked is False
+        assert status.is_legacy is False
+
 
 class TestUpdateManager:
     """Tests for Environment.update_manager() migration logic."""
@@ -191,6 +204,31 @@ class TestUpdateManager:
         # ASSERT - system-nodes group should be removed
         config = test_env.pyproject.load()
         assert "system-nodes" not in config.get("dependency-groups", {})
+
+    def test_update_manager_clears_headless_marker(self, test_env, monkeypatch):
+        """Installing manager on a headless env should remove headless marker."""
+        from comfygit_core.models.shared import NodeInfo
+
+        config = test_env.pyproject.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        test_env.pyproject.save(config)
+
+        monkeypatch.setattr(test_env.pytorch_manager, "ensure_backend", lambda *_args, **_kwargs: "cu121")
+        monkeypatch.setattr(
+            test_env.node_manager,
+            "add_node",
+            lambda identifier: NodeInfo(
+                name="comfygit-manager",
+                version="0.3.0",
+                source="registry",
+                registry_id="comfygit-manager",
+            ),
+        )
+
+        test_env.update_manager()
+
+        updated = test_env.pyproject.load()
+        assert "headless" not in updated.get("tool", {}).get("comfygit", {})
 
 
 class TestEnvironmentCreation:

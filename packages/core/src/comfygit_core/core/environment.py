@@ -308,11 +308,23 @@ class Environment:
         - update_available: Whether latest > current
         - is_legacy: True if manager is symlinked (legacy workspace)
         - is_tracked: True if manager is tracked in pyproject.toml
+        - status: "headless", "legacy", "not_installed", "outdated", or "up_to_date"
         """
         from packaging.version import InvalidVersion, Version
 
         from ..constants import MANAGER_NODE_ID
         from ..utils.symlink_utils import is_link
+
+        # Explicit headless marker takes precedence over manager install checks.
+        if self._is_headless_mode():
+            return ManagerStatus(
+                current_version=None,
+                latest_version=None,
+                update_available=False,
+                is_legacy=False,
+                is_tracked=False,
+                status="headless",
+            )
 
         current_version: str | None = None
         is_legacy = False
@@ -358,12 +370,21 @@ class Environment:
                 # Version comparison failed - assume update available if versions differ
                 update_available = latest_version != current_version
 
+        status_name = "up_to_date"
+        if is_legacy:
+            status_name = "legacy"
+        elif not is_tracked:
+            status_name = "not_installed"
+        elif update_available:
+            status_name = "outdated"
+
         return ManagerStatus(
             current_version=current_version,
             latest_version=latest_version,
             update_available=update_available,
             is_legacy=is_legacy,
             is_tracked=is_tracked,
+            status=status_name,
         )
 
     @_requires_env_lock
@@ -423,6 +444,7 @@ class Environment:
 
             # Cleanup legacy dependency group if present
             self._cleanup_system_nodes_dependency_group()
+            self._clear_headless_marker()
 
             return ManagerUpdateResult(
                 changed=result.changed,
@@ -439,6 +461,7 @@ class Environment:
 
         # Cleanup legacy dependency group
         self._cleanup_system_nodes_dependency_group()
+        self._clear_headless_marker()
 
         # Bump workspace schema if this was a migration
         if was_migration and self.workspace.is_legacy_schema():
@@ -462,6 +485,25 @@ class Environment:
                 del config["dependency-groups"]
             self.pyproject.save(config)
             logger.info("Removed legacy dependency-groups.system-nodes")
+
+    def _is_headless_mode(self) -> bool:
+        """Return True when this environment was created/imported with --no-manager."""
+        config = self.pyproject.load()
+        return bool(config.get("tool", {}).get("comfygit", {}).get("headless", False))
+
+    def _set_headless_marker(self) -> None:
+        """Persist headless marker in pyproject.toml."""
+        config = self.pyproject.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        self.pyproject.save(config)
+
+    def _clear_headless_marker(self) -> None:
+        """Remove headless marker after manager installation."""
+        config = self.pyproject.load()
+        comfygit_cfg = config.get("tool", {}).get("comfygit", {})
+        if comfygit_cfg.get("headless"):
+            del comfygit_cfg["headless"]
+            self.pyproject.save(config)
 
     def _register_imported_manager(self) -> None:
         """Auto-register or install comfygit-manager for imported environment.
@@ -2126,7 +2168,8 @@ class Environment:
     def finalize_import(
         self,
         model_strategy: str = "all",
-        callbacks: ImportCallbacks | None = None
+        callbacks: ImportCallbacks | None = None,
+        no_manager: bool = False,
     ) -> None:
         """Complete import setup after .cec extraction.
 
@@ -2142,6 +2185,7 @@ class Environment:
         Args:
             model_strategy: "all", "required", or "skip"
             callbacks: Optional progress callbacks
+            no_manager: Skip comfygit-manager install/registration (headless mode)
 
         Raises:
             ValueError: If ComfyUI already exists or .cec not properly initialized
@@ -2279,7 +2323,11 @@ class Environment:
 
         # Auto-register comfygit-manager if present in imported environment
         # (replaces legacy symlink system - manager is now per-environment)
-        self._register_imported_manager()
+        if no_manager:
+            self._set_headless_marker()
+            logger.info("Manager registration skipped during import (--no-manager)")
+        else:
+            self._register_imported_manager()
 
         # Phase 1.5: Probe PyTorch and configure backend
         # Read Python version from .python-version file

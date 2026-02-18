@@ -90,6 +90,8 @@ class TestCreationCommandsKeepAutoDefault:
 
         assert hasattr(args, "torch_backend")
         assert args.torch_backend == "auto"
+        assert hasattr(args, "no_manager")
+        assert args.no_manager is False
 
     def test_import_command_torch_backend_default_auto(self):
         """Import command should still default to 'auto' for detection."""
@@ -98,6 +100,20 @@ class TestCreationCommandsKeepAutoDefault:
 
         assert hasattr(args, "torch_backend")
         assert args.torch_backend == "auto"
+        assert hasattr(args, "no_manager")
+        assert args.no_manager is False
+
+    def test_create_command_accepts_no_manager_flag(self):
+        """Create command should parse --no-manager for headless setup."""
+        parser = create_parser()
+        args = parser.parse_args(["create", "test-env", "--no-manager"])
+        assert args.no_manager is True
+
+    def test_import_command_accepts_no_manager_flag(self):
+        """Import command should parse --no-manager for headless setup."""
+        parser = create_parser()
+        args = parser.parse_args(["import", "test.tar.gz", "--no-manager"])
+        assert args.no_manager is True
 
 
 class TestEnvConfigTorchBackendSubcommand:

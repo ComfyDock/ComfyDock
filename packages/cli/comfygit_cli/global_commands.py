@@ -623,6 +623,7 @@ class GlobalCommands:
                     branch=getattr(args, 'branch', None),
                     callbacks=callbacks_instance,
                     torch_backend=args.torch_backend,
+                    no_manager=getattr(args, "no_manager", False),
                 )
             else:
                 env = workspace.import_environment(
@@ -631,6 +632,7 @@ class GlobalCommands:
                     model_strategy=strategy,
                     callbacks=callbacks_instance,
                     torch_backend=args.torch_backend,
+                    no_manager=getattr(args, "no_manager", False),
                 )
 
             print(f"\n✅ Import complete: {env.name}")

@@ -247,6 +247,7 @@ class EnvironmentCommands:
                 python_version=args.python,
                 template_path=args.template,
                 torch_backend=args.torch_backend,
+                no_manager=getattr(args, "no_manager", False),
             )
         except Exception as e:
             if logger:
@@ -3335,7 +3336,10 @@ class EnvironmentCommands:
         print(f"   Current: {status.current_version or 'not installed'}")
         print(f"   Latest:  {status.latest_version or 'unknown'}")
 
-        if status.is_legacy:
+        if status.status == "headless":
+            print("   Mode: headless (--no-manager)")
+            print(f"   Install manager: cg -e {env.name} manager update")
+        elif status.is_legacy:
             print("   Legacy installation (symlinked)")
             print(f"   Run 'cg -e {env.name} manager update' to migrate")
         elif not status.is_tracked:
