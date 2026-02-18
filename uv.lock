@@ -405,7 +405,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "blake3", specifier = ">=1.0.5" },
     { name = "huggingface-hub" },
-    { name = "packaging", specifier = ">=21.0" },
+    { name = "packaging" },
     { name = "psutil", specifier = ">=7.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = ">=2.32.4" },
