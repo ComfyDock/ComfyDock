@@ -47,6 +47,7 @@ class ModelResolver:
         """Try multiple resolution strategies"""
         workflow_name = model_context.workflow_name
         widget_value = ref.widget_value
+        normalized_widget_value = self._normalize_model_path(widget_value)
 
         # Strategy 0: Check existing pyproject model data first
         context_resolution_result = self._try_context_resolution(widget_ref=ref, context=model_context)
@@ -58,7 +59,7 @@ class ModelResolver:
 
         # Strategy 1: Exact path match
         all_models = self.model_repository.get_all_models()
-        candidates = self._try_exact_match(widget_value, all_models)
+        candidates = self._try_exact_match(normalized_widget_value, all_models)
         if len(candidates) == 1:
             logger.debug(f"Resolved {ref} to {candidates[0]} as exact match")
             return [
@@ -74,7 +75,7 @@ class ModelResolver:
         # Strategy 2: Reconstruct paths for native loaders
         if self.model_config.is_model_loader_node(ref.node_type):
             paths = self.model_config.reconstruct_model_path(
-                ref.node_type, widget_value
+                ref.node_type, normalized_widget_value
             )
             for path in paths:
                 candidates = self._try_exact_match(path, all_models)
@@ -93,7 +94,7 @@ class ModelResolver:
                     ]
 
         # Strategy 3: Case-insensitive match
-        candidates = self._try_case_insensitive_match(widget_value, all_models)
+        candidates = self._try_case_insensitive_match(normalized_widget_value, all_models)
         if len(candidates) == 1:
             logger.debug(f"Resolved {ref} to {candidates[0]} as case-insensitive match")
             return [
@@ -122,7 +123,7 @@ class ModelResolver:
             ]
 
         # Strategy 4: Filename-only match
-        filename = Path(widget_value).name
+        filename = self._extract_model_filename(widget_value)
         candidates = self.model_repository.find_by_filename(filename)
         if len(candidates) == 1:
             logger.debug(f"Resolved {ref} to {candidates[0]} as filename-only match")
@@ -154,7 +155,7 @@ class ModelResolver:
         # Strategy 5: Auto-create download intent from properties.models metadata
         if ref.property_url:
             target_directory = ref.property_directory or self._infer_directory_for_node(ref.node_type)
-            target_path = Path(target_directory) / Path(ref.widget_value).name
+            target_path = Path(target_directory) / self._extract_model_filename(ref.widget_value)
             logger.debug(
                 f"Creating property-based download intent for {ref.widget_value} "
                 f"from URL: {ref.property_url} -> {target_path}"
@@ -190,14 +191,26 @@ class ModelResolver:
         """Try exact path match"""
         if all_models is None:
             all_models = self.model_repository.get_all_models()
-        return [m for m in all_models if m.relative_path == path]
+        normalized_path = self._normalize_model_path(path)
+        return [m for m in all_models if self._normalize_model_path(m.relative_path) == normalized_path]
 
     def _try_case_insensitive_match(self, path: str, all_models: list[ModelWithLocation] | None =None) -> list[ModelWithLocation]:
         """Try case-insensitive path match"""
         if all_models is None:
             all_models = self.model_repository.get_all_models()
-        path_lower = path.lower()
-        return [m for m in all_models if m.relative_path.lower() == path_lower]
+        path_lower = self._normalize_model_path(path).lower()
+        return [m for m in all_models if self._normalize_model_path(m.relative_path).lower() == path_lower]
+
+    @staticmethod
+    def _normalize_model_path(path: str) -> str:
+        """Normalize path separators for cross-platform model matching."""
+        return path.replace("\\", "/")
+
+    @classmethod
+    def _extract_model_filename(cls, path: str) -> str:
+        """Extract filename from model reference path supporting both slash styles."""
+        normalized_path = cls._normalize_model_path(path)
+        return normalized_path.rsplit("/", 1)[-1]
 
     def _try_context_resolution(self, context: ModelResolutionContext, widget_ref: WorkflowNodeWidgetRef) -> ResolvedModel | None:
         """Check if this ref was previously resolved using context lookup.
