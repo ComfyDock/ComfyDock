@@ -455,47 +455,6 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_torch_detect_parser = env_config_torch_subparsers.add_parser("detect", help="Auto-detect and show recommended backend")
     env_config_torch_detect_parser.set_defaults(func=env_cmds.env_config_torch_detect)
 
-    # env-config local-sources - Manage local UV sources for this environment
-    env_config_local_sources_parser = env_config_subparsers.add_parser(
-        "local-sources",
-        help="Manage local UV source overrides"
-    )
-    env_config_local_sources_subparsers = env_config_local_sources_parser.add_subparsers(
-        dest="local_sources_command",
-        help="Local source commands"
-    )
-    env_config_local_sources_parser.set_defaults(func=_make_help_func(env_config_local_sources_parser))
-
-    # env-config local-sources show
-    env_config_local_sources_show_parser = env_config_local_sources_subparsers.add_parser(
-        "show", help="Show local UV sources"
-    )
-    env_config_local_sources_show_parser.set_defaults(func=env_cmds.env_config_local_sources_show)
-
-    # env-config local-sources add <package> --path PATH [--editable]
-    env_config_local_sources_add_parser = env_config_local_sources_subparsers.add_parser(
-        "add", help="Add or update a local UV source"
-    )
-    env_config_local_sources_add_parser.add_argument("package", help="Package name to override")
-    env_config_local_sources_add_parser.add_argument(
-        "--path",
-        required=True,
-        help="Local path to package (absolute or relative)"
-    )
-    env_config_local_sources_add_parser.add_argument(
-        "--editable",
-        action="store_true",
-        help="Install as editable"
-    )
-    env_config_local_sources_add_parser.set_defaults(func=env_cmds.env_config_local_sources_add)
-
-    # env-config local-sources remove <package>
-    env_config_local_sources_remove_parser = env_config_local_sources_subparsers.add_parser(
-        "remove", help="Remove a local UV source"
-    )
-    env_config_local_sources_remove_parser.add_argument("package", help="Package name to remove")
-    env_config_local_sources_remove_parser.set_defaults(func=env_cmds.env_config_local_sources_remove)
-
     # env-config extras - Manage default optional extras for sync
     env_config_extras_parser = env_config_subparsers.add_parser(
         "extras",
@@ -574,6 +533,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Install all optional dependency extras"
     )
+    run_parser.add_argument(
+        "--overlay",
+        action="append",
+        help="Apply overlay for this run sync (can be repeated)",
+    )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 
     # status - Show environment status
@@ -632,6 +596,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         "--all-extras",
         action="store_true",
         help="Install all optional dependency extras"
+    )
+    sync_parser.add_argument(
+        "--overlay",
+        action="append",
+        help="Apply overlay for this sync only (can be repeated)",
     )
     sync_parser.add_argument(
         "-v", "--verbose",

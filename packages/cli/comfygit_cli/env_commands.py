@@ -442,129 +442,6 @@ class EnvironmentCommands:
             print()
             print(f"💡 Set the backend: cg env-config torch-backend set {detected}")
 
-    @with_env_logging("env-config local-sources show")
-    def env_config_local_sources_show(self, args: argparse.Namespace, logger=None) -> None:
-        """Show current local UV source overrides for this environment."""
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            print("No local UV config set")
-            return
-
-        sources = config.get("sources", {})
-        indexes = config.get("index", [])
-        constraints = config.get("constraint-dependencies", [])
-
-        if indexes and not isinstance(indexes, list):
-            indexes = [indexes]
-
-        print(f"Local UV config: {manager.config_path}")
-
-        if sources:
-            print("Sources:")
-            for pkg, source in sources.items():
-                if isinstance(source, list):
-                    for entry in source:
-                        path = entry.get("path")
-                        editable = entry.get("editable")
-                        if path:
-                            suffix = " (editable)" if editable else ""
-                            print(f"  • {pkg}: {path}{suffix}")
-                        else:
-                            print(f"  • {pkg}: {entry}")
-                elif isinstance(source, dict):
-                    path = source.get("path")
-                    editable = source.get("editable")
-                    if path:
-                        suffix = " (editable)" if editable else ""
-                        print(f"  • {pkg}: {path}{suffix}")
-                    else:
-                        print(f"  • {pkg}: {source}")
-                else:
-                    print(f"  • {pkg}: {source}")
-
-        if indexes:
-            print("Indexes:")
-            for idx in indexes:
-                name = idx.get("name")
-                url = idx.get("url")
-                if name and url:
-                    print(f"  • {name}: {url}")
-                else:
-                    print(f"  • {idx}")
-
-        if constraints:
-            print("Constraints:")
-            for constraint in constraints:
-                print(f"  • {constraint}")
-
-    @with_env_logging("env-config local-sources add")
-    def env_config_local_sources_add(self, args: argparse.Namespace, logger=None) -> None:
-        """Add or update a local UV source override for this environment."""
-        import tomlkit
-
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            config = tomlkit.document()
-
-        if "sources" not in config:
-            config["sources"] = tomlkit.table()
-
-        source = tomlkit.inline_table()
-        source["path"] = args.path
-        if args.editable:
-            source["editable"] = True
-
-        config["sources"][args.package] = source
-
-        manager.ensure_gitignore_entry()
-        manager.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manager.config_path, "w", encoding="utf-8") as f:
-            tomlkit.dump(config, f)
-
-        editable_suffix = " (editable)" if args.editable else ""
-        print(f"✓ Local source set: {args.package} -> {args.path}{editable_suffix}")
-
-    @with_env_logging("env-config local-sources remove")
-    def env_config_local_sources_remove(self, args: argparse.Namespace, logger=None) -> None:
-        """Remove a local UV source override for this environment."""
-        import tomlkit
-
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            print(f"No local UV config set (nothing to remove for {args.package})")
-            return
-
-        sources = config.get("sources", {})
-        if args.package not in sources:
-            print(f"No local source configured for: {args.package}")
-            return
-
-        del sources[args.package]
-        if not sources:
-            del config["sources"]
-
-        # If config is empty after removal, delete the file
-        if not config:
-            manager.config_path.unlink(missing_ok=True)
-            print(f"✓ Removed local source: {args.package}")
-            print("✓ .local-uv-config removed (no entries remaining)")
-            return
-
-        manager.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manager.config_path, "w", encoding="utf-8") as f:
-            tomlkit.dump(config, f)
-
-        print(f"✓ Removed local source: {args.package}")
-
     @with_env_logging("env-config extras show")
     def env_config_extras_show(self, args: argparse.Namespace, logger=None) -> None:
         """Show default optional extras installed during sync."""
@@ -764,6 +641,11 @@ packages = []
         no_sync = getattr(args, 'no_sync', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        overlay_names = getattr(args, 'overlay', None) or []
+
+        if no_sync and overlay_names:
+            print("✗ Cannot use --overlay with --no-sync. Overlays require a sync to take effect.")
+            sys.exit(1)
 
         # Handle torch-backend: use override, read from file, or probe if missing
         torch_backend_override = getattr(args, 'torch_backend', None)
@@ -789,6 +671,7 @@ packages = []
                     preserve_workflows=True,
                     remove_extra_nodes=False,
                     backend_override=torch_backend_override if torch_backend_override else None,
+                    overlay_names=overlay_names,
                     verbose=True,
                     extras=extras,
                     all_extras=all_extras,
@@ -829,6 +712,7 @@ packages = []
         verbose = getattr(args, 'verbose', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        overlay_names = getattr(args, 'overlay', None) or []
 
         try:
             # Use explicit override if provided, otherwise None (backend is now in file)
@@ -837,6 +721,7 @@ packages = []
                 model_strategy="skip",  # Sync command focuses on packages
                 remove_extra_nodes=False,  # Don't remove nodes, just sync
                 verbose=verbose,
+                overlay_names=overlay_names,
                 extras=extras,
                 all_extras=all_extras,
                 backend_override=torch_backend_override if torch_backend_override else None,
