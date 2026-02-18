@@ -8,7 +8,7 @@ from typing import Any
 
 from packaging.utils import canonicalize_name
 
-ALLOWED_OVERLAY_KINDS = {"pytorch"}
+ALLOWED_OVERLAY_KINDS = {"pytorch", "shared", "local"}
 ALLOWED_OVERLAY_REQUIRES = {"cuda", "rocm"}
 
 

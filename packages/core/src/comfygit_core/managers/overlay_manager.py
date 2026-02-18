@@ -144,8 +144,28 @@ class OverlayManager:
             logger.info("Removed legacy .local-uv-config (already migrated)")
             return
 
-        legacy_data = self._load_legacy_local_uv()
-        overlay_doc = self._build_local_overlay_doc(legacy_data)
+        try:
+            legacy_data = self._load_legacy_local_uv()
+        except ValueError as exc:
+            logger.warning(
+                "Skipping .local-uv-config migration due to parse error: %s",
+                exc,
+            )
+            return
+
+        if not legacy_data:
+            self.legacy_local_uv_path.unlink(missing_ok=True)
+            logger.info("Removed empty legacy .local-uv-config")
+            return
+
+        try:
+            overlay_doc = self._build_local_overlay_doc(legacy_data)
+        except ValueError as exc:
+            logger.warning(
+                "Skipping .local-uv-config migration due to invalid structure: %s",
+                exc,
+            )
+            return
 
         self.overlays_dir.mkdir(parents=True, exist_ok=True)
         self.local_overlay_path.write_text(tomlkit.dumps(overlay_doc), encoding="utf-8")
@@ -214,7 +234,7 @@ class OverlayManager:
                     name=overlay.name,
                     description=overlay.description,
                     is_local=overlay.is_local,
-                    is_active=canonicalize_name(overlay.name) in active,
+                    is_active=overlay.is_local or canonicalize_name(overlay.name) in active,
                     requires=list(overlay.requires),
                 )
             )
@@ -324,7 +344,15 @@ class OverlayManager:
 
         active_names = sorted(self.get_active_names(), key=lambda n: canonicalize_name(n))
         for name in active_names:
-            resolved_name = self._resolve_known_name(name)
+            try:
+                resolved_name = self._resolve_known_name(name)
+            except ValueError:
+                logger.warning(
+                    "Skipping unknown overlay '%s' from activation config %s",
+                    name,
+                    self.activation_path,
+                )
+                continue
             key = canonicalize_name(resolved_name)
             if key in seen:
                 continue
