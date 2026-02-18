@@ -19,6 +19,7 @@ _EXPORTS: dict[str, str] = {
     "ManagerUpdateResult": "shared",
     "ModelSourceStatus": "shared",
     "ModelSourceResult": "shared",
+    "OverlayConfig": "overlay",
     "SyncResult": "sync",
     "APICredentials": "workspace_config",
     "ModelDirectory": "workspace_config",
