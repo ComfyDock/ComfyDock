@@ -2212,6 +2212,10 @@ class Environment:
         # Strip local filesystem path sources (editable dev installs from export machine)
         self._strip_local_path_sources()
 
+        # Ensure overlay migration runs before finalize-import sync.
+        # This guarantees .local-uv-config -> overlays/.local.toml happens prior to sync().
+        _ = self.overlay_manager
+
         # Phase 1: Clone or restore ComfyUI from cache
         comfyui_cache = ComfyUICacheManager(cache_base_path=self.workspace_paths.cache)
 
@@ -2395,6 +2399,20 @@ class Environment:
                 shutil.copy2(workflow_file, workflows_dst / workflow_file.name)
                 if callbacks:
                     callbacks.on_workflow_copied(workflow_file.name)
+
+        shared_overlays = [
+            info.name
+            for info in self.overlay_manager.list_overlays()
+            if not info.is_local
+        ]
+        if shared_overlays:
+            overlay_msg = (
+                f"Detected {len(shared_overlays)} shared overlay(s): "
+                f"{', '.join(shared_overlays)}"
+            )
+            logger.info(overlay_msg)
+            if callbacks:
+                callbacks.on_phase("detect_overlays", overlay_msg)
 
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration
