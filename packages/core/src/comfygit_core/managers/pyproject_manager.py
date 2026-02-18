@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,6 +35,9 @@ class PyprojectManager:
 
     # Class-level call counter for tracking total loads across all instances
     _total_load_calls = 0
+    # Serialize temporary UV injection per pyproject path across manager instances.
+    _injection_locks: dict[str, threading.RLock] = {}
+    _injection_locks_guard = threading.Lock()
 
     def __init__(self, pyproject_path: Path):
         """Initialize the PyprojectManager.
@@ -467,6 +471,15 @@ class PyprojectManager:
             overlays=[pytorch_overlay] if pytorch_overlay else None,
         )
 
+    def _get_injection_lock(self) -> threading.RLock:
+        path_key = str(self.path.resolve())
+        with self._injection_locks_guard:
+            lock = self._injection_locks.get(path_key)
+            if lock is None:
+                lock = threading.RLock()
+                self._injection_locks[path_key] = lock
+            return lock
+
     def uv_injection_context(
         self,
         overlays: list[OverlayConfig] | None = None,
@@ -485,48 +498,49 @@ class PyprojectManager:
                 yield
                 return
 
-            # Capture original content before any modifications
-            original_content = self.path.read_text()
+            with self._get_injection_lock():
+                # Capture original content before any modifications
+                original_content = self.path.read_text()
 
-            try:
-                config = self.load()
-
-                # Strip tracked local path sources before local overlays are applied.
-                if any(overlay.is_local for overlay in effective_overlays):
-                    self._strip_local_path_sources_from_config(config)
-
-                from ..constants import PYTORCH_CORE_PACKAGES
-                for overlay in effective_overlays:
-                    if overlay.kind == "pytorch":
-                        self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
-
-                    payload = overlay.to_injection_payload()
-                    self._inject_overlay_payload(config, payload)
-
-                self.save(config)
-
-                yield
-
-            except Exception:
-                # Log full injected config for debugging on failure
-                logger.error("=== UV Sync Failure ===")
-                logger.error(
-                    "Overlays: %s",
-                    [overlay.name for overlay in effective_overlays],
-                )
                 try:
-                    logger.error(f"Injected config:\n{self.path.read_text()}")
-                except Exception:
-                    pass
-                raise
+                    config = self.load()
 
-            finally:
-                # ALWAYS restore original content
-                self.path.write_text(original_content)
-                # Invalidate cache to ensure fresh reads
-                self._config_cache = None
-                self._cache_mtime = None
-                logger.debug("Restored original pyproject.toml after UV injection")
+                    # Strip tracked local path sources before local overlays are applied.
+                    if any(overlay.is_local for overlay in effective_overlays):
+                        self._strip_local_path_sources_from_config(config)
+
+                    from ..constants import PYTORCH_CORE_PACKAGES
+                    for overlay in effective_overlays:
+                        if overlay.kind == "pytorch":
+                            self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
+
+                        payload = overlay.to_injection_payload()
+                        self._inject_overlay_payload(config, payload)
+
+                    self.save(config)
+
+                    yield
+
+                except Exception:
+                    # Log full injected config for debugging on failure
+                    logger.error("=== UV Sync Failure ===")
+                    logger.error(
+                        "Overlays: %s",
+                        [overlay.name for overlay in effective_overlays],
+                    )
+                    try:
+                        logger.error(f"Injected config:\n{self.path.read_text()}")
+                    except Exception:
+                        pass
+                    raise
+
+                finally:
+                    # ALWAYS restore original content
+                    self.path.write_text(original_content)
+                    # Invalidate cache to ensure fresh reads
+                    self._config_cache = None
+                    self._cache_mtime = None
+                    logger.debug("Restored original pyproject.toml after UV injection")
 
         return _injection_context()
 
