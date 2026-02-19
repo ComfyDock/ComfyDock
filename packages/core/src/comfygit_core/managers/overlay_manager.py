@@ -328,6 +328,7 @@ class OverlayManager:
         self,
         extra_names: list[str] | None = None,
         pytorch_config: dict | None = None,
+        skip_optional: bool = False,
     ) -> list[OverlayConfig]:
         """Collect overlays in deterministic merge order.
 
@@ -336,46 +337,51 @@ class OverlayManager:
         overlays: list[OverlayConfig] = []
         seen: set[str] = set()
 
-        if self.local_overlay_path.exists():
-            local_overlay = OverlayConfig.from_toml(self.local_overlay_path)
-            if self._meets_platform_requirements(local_overlay):
-                overlays.append(local_overlay)
-                seen.add(canonicalize_name(local_overlay.name))
+        if not skip_optional:
+            if self.local_overlay_path.exists():
+                local_overlay = OverlayConfig.from_toml(self.local_overlay_path)
+                if self._meets_platform_requirements(local_overlay):
+                    overlays.append(local_overlay)
+                    seen.add(canonicalize_name(local_overlay.name))
 
-        active_names = sorted(self.get_active_names(), key=lambda n: canonicalize_name(n))
-        for name in active_names:
-            try:
+            active_names = sorted(self.get_active_names(), key=lambda n: canonicalize_name(n))
+            for name in active_names:
+                try:
+                    resolved_name = self._resolve_known_name(name)
+                except ValueError:
+                    logger.warning(
+                        "Skipping unknown overlay '%s' from activation config %s",
+                        name,
+                        self.activation_path,
+                    )
+                    continue
+                key = canonicalize_name(resolved_name)
+                if key in seen:
+                    continue
+                overlay = self.load_overlay(resolved_name)
+                if not self._meets_platform_requirements(overlay):
+                    continue
+                overlays.append(overlay)
+                seen.add(key)
+
+            for name in extra_names or []:
+                OverlayConfig.validate_name(name)
                 resolved_name = self._resolve_known_name(name)
-            except ValueError:
-                logger.warning(
-                    "Skipping unknown overlay '%s' from activation config %s",
-                    name,
-                    self.activation_path,
-                )
-                continue
-            key = canonicalize_name(resolved_name)
-            if key in seen:
-                continue
-            overlay = self.load_overlay(resolved_name)
-            if not self._meets_platform_requirements(overlay):
-                continue
-            overlays.append(overlay)
-            seen.add(key)
-
-        for name in extra_names or []:
-            OverlayConfig.validate_name(name)
-            resolved_name = self._resolve_known_name(name)
-            key = canonicalize_name(resolved_name)
-            if key in seen:
-                continue
-            overlay = self.load_overlay(resolved_name)
-            if not self._meets_platform_requirements(overlay):
-                continue
-            overlays.append(overlay)
-            seen.add(key)
+                key = canonicalize_name(resolved_name)
+                if key in seen:
+                    continue
+                overlay = self.load_overlay(resolved_name)
+                if not self._meets_platform_requirements(overlay):
+                    continue
+                overlays.append(overlay)
+                seen.add(key)
 
         pytorch_overlay = self._from_pytorch_config(pytorch_config or {})
-        if pytorch_overlay and self._meets_platform_requirements(pytorch_overlay):
+        if (
+            pytorch_overlay
+            and pytorch_overlay.kind == "pytorch"
+            and self._meets_platform_requirements(pytorch_overlay)
+        ):
             overlays.append(pytorch_overlay)
 
         return overlays

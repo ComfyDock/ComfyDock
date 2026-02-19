@@ -1344,6 +1344,7 @@ packages = []
         env = self._get_env(args)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        resolve_with_overlays = getattr(args, "resolve_with_overlays", False)
 
         # Batch mode: multiple nodes
         if len(args.node_names) > 1:
@@ -1371,6 +1372,7 @@ packages = []
                 callbacks=callbacks,
                 extras=extras,
                 all_extras=all_extras,
+                resolve_with_overlays=resolve_with_overlays,
             )
 
             if installed_count > 0:
@@ -1407,6 +1409,7 @@ packages = []
                 strict=getattr(args, "strict", False),
                 extras=extras,
                 all_extras=all_extras,
+                resolve_with_overlays=resolve_with_overlays,
             )
         except CDRegistryDataError as e:
             # Registry data unavailable

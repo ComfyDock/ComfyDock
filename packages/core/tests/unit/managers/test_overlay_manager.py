@@ -105,6 +105,7 @@ def test_collects_overlays_in_expected_order(tmp_path):
     collected = manager.collect_overlays(
         extra_names=["beta", "gamma"],
         pytorch_config={"sources": {"torch": {"index": "pytorch-cu128"}}},
+        skip_optional=False,
     )
     assert [overlay.name for overlay in collected] == [
         ".local",
@@ -113,6 +114,58 @@ def test_collects_overlays_in_expected_order(tmp_path):
         "gamma",
         ".pytorch",
     ]
+
+
+def test_collect_overlays_skip_optional_returns_only_pytorch_overlay(tmp_path):
+    cec = tmp_path / ".cec"
+    overlays = cec / "overlays"
+    overlays.mkdir(parents=True)
+    _write_pyproject(cec / "pyproject.toml", defaults=["sageattention"])
+
+    _write_overlay(
+        overlays / "sageattention.toml",
+        """
+        [overlay]
+        description = "sageattention"
+        kind = "shared"
+        [dependencies]
+        packages = ["sageattention>=2.2.0"]
+        """,
+    )
+
+    manager = OverlayManager(cec)
+    collected = manager.collect_overlays(
+        pytorch_config={"sources": {"torch": {"index": "pytorch-cu128"}}},
+        skip_optional=True,
+    )
+
+    assert [overlay.name for overlay in collected] == [".pytorch"]
+    assert all(overlay.kind == "pytorch" for overlay in collected)
+
+
+def test_collect_overlays_skip_optional_excludes_local_overlay_with_no_kind(tmp_path):
+    cec = tmp_path / ".cec"
+    overlays = cec / "overlays"
+    overlays.mkdir(parents=True)
+    _write_pyproject(cec / "pyproject.toml")
+
+    _write_overlay(
+        overlays / ".local.toml",
+        """
+        [overlay]
+        description = "local"
+        [dependencies]
+        packages = ["sageattention>=2.2.0"]
+        """,
+    )
+
+    manager = OverlayManager(cec)
+    collected = manager.collect_overlays(
+        pytorch_config={"sources": {"torch": {"index": "pytorch-cu128"}}},
+        skip_optional=True,
+    )
+
+    assert [overlay.name for overlay in collected] == [".pytorch"]
 
 
 def test_activation_config_overrides_defaults_and_list_marks_active(tmp_path):

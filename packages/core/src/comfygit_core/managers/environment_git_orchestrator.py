@@ -318,6 +318,7 @@ class EnvironmentGitOrchestrator:
         self.uv.sync_project(
             all_groups=True,
             pytorch_manager=self.pytorch_manager,
+            skip_optional_overlays=True,
             extras=extras,
             all_extras=all_extras,
         )

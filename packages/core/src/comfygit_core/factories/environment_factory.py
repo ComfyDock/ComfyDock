@@ -281,6 +281,7 @@ class EnvironmentFactory:
             verbose=True,
             pytorch_manager=env.pytorch_manager,
             all_groups=True,
+            skip_optional_overlays=True,
             extras=extras,
             all_extras=all_extras,
         )

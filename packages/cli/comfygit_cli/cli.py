@@ -797,6 +797,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     node_add_parser.add_argument("--verbose", "-v", action="store_true", help="Show full UV error output for dependency conflicts")
     node_add_parser.add_argument("--strict", action="store_true", help="Fail on dependency conflicts instead of auto-resolving")
     node_add_parser.add_argument(
+        "--resolve-with-overlays",
+        action="store_true",
+        help="Resolve node install with all active overlays (default is pytorch-only)",
+    )
+    node_add_parser.add_argument(
         "--extra",
         action="append",
         help="Install optional dependency extra during sync (can be repeated)"

@@ -206,6 +206,7 @@ class UVProjectManager:
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
         overlay_names: list[str] | None = None,
+        skip_optional_overlays: bool = False,
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
@@ -220,6 +221,8 @@ class UVProjectManager:
                             restored after (regardless of success/failure).
                             Also forces reinstall of PyTorch packages to ensure correct backend.
             overlay_names: Optional one-time overlay names to include for this sync.
+            skip_optional_overlays: If True, only inject pytorch overlays and
+                                    skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
             all_extras: Install all optional extras
@@ -255,6 +258,7 @@ class UVProjectManager:
         overlays = self.overlay_manager.collect_overlays(
             extra_names=overlay_names,
             pytorch_config=pytorch_config,
+            skip_optional=skip_optional_overlays,
         )
 
         if overlays:
@@ -570,6 +574,7 @@ class UVProjectManager:
         verbose: bool = False,
         pytorch_manager: PyTorchBackendManager | None = None,
         overlay_names: list[str] | None = None,
+        skip_optional_overlays: bool = False,
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
@@ -592,6 +597,8 @@ class UVProjectManager:
             verbose: If True, show uv output in real-time
             pytorch_manager: Optional PyTorch backend manager for temporary injection
             overlay_names: Optional one-time overlay names for this sync
+            skip_optional_overlays: If True, only inject pytorch overlays and
+                                    skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
             all_extras: Install all optional extras
@@ -630,6 +637,7 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         overlay_names=overlay_names,
+                        skip_optional_overlays=skip_optional_overlays,
                         backend_override=backend_override,
                         extras=extras,
                         all_extras=all_extras,
@@ -646,6 +654,7 @@ class UVProjectManager:
                         verbose=verbose,
                         pytorch_manager=pytorch_manager,
                         overlay_names=overlay_names,
+                        skip_optional_overlays=skip_optional_overlays,
                         backend_override=backend_override,
                         extras=extras,
                         all_extras=all_extras,

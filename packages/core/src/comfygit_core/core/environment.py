@@ -1360,6 +1360,7 @@ class Environment:
         strict: bool = False,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        resolve_with_overlays: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1372,12 +1373,18 @@ class Environment:
             strict: If True, fail on dependency conflicts instead of auto-resolving
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
+            resolve_with_overlays: If True, resolve with all active/extra overlays.
+                                   If False, node sync defaults to pytorch-only overlays.
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDNodeConflictError: If node has dependency conflicts
             CDEnvironmentError: If node with same name already exists
         """
+        add_kwargs = {}
+        if resolve_with_overlays:
+            add_kwargs["skip_optional_overlays"] = False
+
         return self.node_manager.add_node(
             identifier,
             is_development=is_development,
@@ -1387,6 +1394,7 @@ class Environment:
             strict=strict,
             extras=extras,
             all_extras=all_extras,
+            **add_kwargs,
         )
 
     @_requires_env_lock
@@ -1396,6 +1404,7 @@ class Environment:
         callbacks: NodeInstallCallbacks | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        resolve_with_overlays: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Install multiple nodes with callback support for progress tracking.
 
@@ -1404,6 +1413,7 @@ class Environment:
             callbacks: Optional callbacks for progress feedback
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
+            resolve_with_overlays: If True, resolve node installs with all overlays.
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1423,7 +1433,12 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.add_node(node_id, extras=extras, all_extras=all_extras)
+                self.add_node(
+                    node_id,
+                    extras=extras,
+                    all_extras=all_extras,
+                    resolve_with_overlays=resolve_with_overlays,
+                )
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)
