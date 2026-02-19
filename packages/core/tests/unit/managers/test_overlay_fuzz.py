@@ -156,7 +156,105 @@ def test_duplicate_dependencies_are_deduplicated_during_injection(tmp_path):
     with manager.uv_injection_context(overlays=[overlay]):
         injected = manager.load(force_reload=True)
         deps = [dep for dep in injected["project"]["dependencies"] if dep.lower() == "torch"]
-        assert deps == ["torch"]
+        assert len(deps) == 1
+        assert deps[0].lower() == "torch"
+
+
+def test_marker_qualified_overlay_replaces_base_dep(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproject_path, dependencies=["triton", "numpy>=1.0"])
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="marker",
+        path=tmp_path / "marker.toml",
+        dependencies=["triton>=3.0 ; sys_platform == 'linux'"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "triton>=3.0 ; sys_platform == 'linux'" in deps
+        assert "triton" not in deps
+        assert "numpy>=1.0" in deps
+
+
+def test_version_tightening_overlay_replaces_base_dep(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproject_path, dependencies=["torch>=2.0"])
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="tighten",
+        path=tmp_path / "tighten.toml",
+        dependencies=["torch==2.1.0"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "torch==2.1.0" in deps
+        assert "torch>=2.0" not in deps
+
+
+def test_extras_overlay_replaces_base_dep(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproject_path, dependencies=["torch"])
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="extras",
+        path=tmp_path / "extras.toml",
+        dependencies=["torch[cuda]>=2.1"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "torch[cuda]>=2.1" in deps
+        assert "torch" not in deps
+
+
+def test_multiple_overlays_last_wins(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproject_path, dependencies=["triton"])
+    manager = PyprojectManager(pyproject_path)
+
+    overlay_one = OverlayConfig(
+        name="one",
+        path=tmp_path / "one.toml",
+        dependencies=["triton>=2.0"],
+    )
+    overlay_two = OverlayConfig(
+        name="two",
+        path=tmp_path / "two.toml",
+        dependencies=["triton>=3.0 ; sys_platform == 'linux'"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay_one, overlay_two]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "triton>=3.0 ; sys_platform == 'linux'" in deps
+        assert "triton>=2.0" not in deps
+        assert "triton" not in deps
+
+
+def test_exact_duplicate_still_deduped(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="dup",
+        path=tmp_path / "dup.toml",
+        dependencies=["torch", "torch", "Torch"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = [dep for dep in injected["project"]["dependencies"] if dep.lower() == "torch"]
+        assert len(deps) == 1
+        assert deps[0].lower() == "torch"
 
 
 def test_merge_last_wins_for_sources_indexes_constraints_and_case(tmp_path):

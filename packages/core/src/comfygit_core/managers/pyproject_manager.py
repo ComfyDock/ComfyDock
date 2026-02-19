@@ -827,20 +827,12 @@ class PyprojectManager:
         if not isinstance(existing_project_dependencies, list):
             existing_project_dependencies = [existing_project_dependencies] if existing_project_dependencies else []
 
-        dependency_seen = {
-            self._extract_dependency_key(dep)
-            for dep in existing_project_dependencies
-            if isinstance(dep, str)
-        }
-        for dep in payload.get('dependencies', []):
-            if not isinstance(dep, str):
-                continue
-            dep_key = self._extract_dependency_key(dep)
-            if dep_key in dependency_seen:
-                continue
-            existing_project_dependencies.append(dep)
-            dependency_seen.add(dep_key)
-        config['project']['dependencies'] = existing_project_dependencies
+        overlay_deps = [dep for dep in payload.get('dependencies', []) if isinstance(dep, str)]
+        merged_deps = self._merge_specs_last_wins(
+            [dep for dep in existing_project_dependencies if isinstance(dep, str)],
+            overlay_deps,
+        )
+        config['project']['dependencies'] = merged_deps
 
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
