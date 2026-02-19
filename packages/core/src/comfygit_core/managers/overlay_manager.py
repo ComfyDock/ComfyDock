@@ -234,7 +234,7 @@ class OverlayManager:
                     name=overlay.name,
                     description=overlay.description,
                     is_local=overlay.is_local,
-                    is_active=overlay.is_local or canonicalize_name(overlay.name) in active,
+                    is_active=overlay.name == ".local" or canonicalize_name(overlay.name) in active,
                     requires=list(overlay.requires),
                 )
             )

@@ -153,3 +153,25 @@ def test_collect_skips_overlay_when_platform_requirements_not_met(tmp_path):
 
     collected = manager.collect_overlays(extra_names=["gpu-only"])
     assert collected == []
+
+
+def test_list_overlays_marks_only_dot_local_implicit_active(tmp_path):
+    cec = tmp_path / ".cec"
+    overlays = cec / "overlays"
+    overlays.mkdir(parents=True)
+    _write_pyproject(cec / "pyproject.toml")
+
+    _write_overlay(overlays / ".local.toml", "[overlay]\ndescription = 'local'\n")
+    _write_overlay(overlays / ".dev.toml", "[overlay]\ndescription = 'dev local'\n")
+
+    manager = OverlayManager(cec)
+
+    listed = {overlay.name: overlay for overlay in manager.list_overlays()}
+    assert listed[".local"].is_local is True
+    assert listed[".local"].is_active is True
+    assert listed[".dev"].is_local is True
+    assert listed[".dev"].is_active is False
+
+    manager.set_active_names([".dev"])
+    listed_after_activation = {overlay.name: overlay for overlay in manager.list_overlays()}
+    assert listed_after_activation[".dev"].is_active is True
