@@ -530,7 +530,7 @@ class PyprojectManager:
 
             with self._get_injection_lock():
                 # Capture original content before any modifications
-                original_content = self.path.read_text()
+                original_content = self.path.read_text(encoding="utf-8")
 
                 try:
                     config = self.load()
@@ -567,7 +567,7 @@ class PyprojectManager:
 
                 finally:
                     # ALWAYS restore original content
-                    self.path.write_text(original_content)
+                    self.path.write_text(original_content, encoding="utf-8")
                     # Invalidate cache to ensure fresh reads
                     self._config_cache = None
                     self._cache_mtime = None

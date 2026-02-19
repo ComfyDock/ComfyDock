@@ -186,6 +186,31 @@ def test_overlay_dependency_replaces_base_when_name_is_dotted(tmp_path):
         assert "requests>=2.31" in deps
 
 
+def test_injection_snapshot_restore_round_trips_non_ascii_content(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    config = manager.load()
+    config["tool"]["comfygit"]["note"] = "cafe - cafe - テスト"
+    manager.save(config)
+
+    original = pyproject_path.read_text(encoding="utf-8")
+    overlay = OverlayConfig(
+        name="transient",
+        path=tmp_path / "transient.toml",
+        dependencies=["requests>=2.31"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected_text = pyproject_path.read_text(encoding="utf-8")
+        assert "requests>=2.31" in injected_text
+
+    restored = pyproject_path.read_text(encoding="utf-8")
+    assert restored == original
+    assert "テスト" in restored
+
+
 def test_injection_failure_logs_redacted_summary_without_secret_leak(tmp_path, caplog):
     pyproject_path = tmp_path / "pyproject.toml"
     _create_pyproject(pyproject_path)
