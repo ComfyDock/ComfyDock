@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
@@ -802,13 +803,20 @@ class PyprojectManager:
 
         return to_remove
     def _extract_dependency_key(self, requirement: str) -> str:
+        normalized_requirement = requirement.strip()
         try:
-            package_name, _ = parse_dependency_string(requirement)
+            parsed = Requirement(normalized_requirement)
+            return canonicalize_name(parsed.name)
+        except Exception:
+            pass
+
+        try:
+            package_name, _ = parse_dependency_string(normalized_requirement)
             return canonicalize_name(package_name)
         except Exception:
-            match = re.match(r"^([A-Za-z0-9._-]+)", requirement.strip())
+            match = re.match(r"^([A-Za-z0-9._-]+)", normalized_requirement)
             if not match:
-                return requirement.strip().lower()
+                return normalized_requirement.lower()
             return canonicalize_name(match.group(1))
 
     def _to_aot(self, values: list[dict]) -> tomlkit.items.AoT:

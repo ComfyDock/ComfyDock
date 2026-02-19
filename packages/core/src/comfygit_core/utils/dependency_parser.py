@@ -21,7 +21,7 @@ def parse_dependency_string(dep_str: str) -> tuple[str, str | None]:
         Tuple of (package_name, version_spec) where version_spec may be None
     """
     # Handle various formats: numpy, numpy>=1.21.0, numpy[extra]>=1.21.0
-    match = re.match(r'^([a-zA-Z0-9_-]+)(?:\[.*?\])?(.*)$', dep_str.strip())
+    match = re.match(r'^([a-zA-Z0-9._-]+)(?:\[.*?\])?(.*)$', dep_str.strip())
     if match:
         name = match.group(1)
         version_spec = match.group(2).strip() if match.group(2) else None

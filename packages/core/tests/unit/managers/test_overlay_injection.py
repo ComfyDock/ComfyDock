@@ -153,6 +153,39 @@ def test_pytorch_overlay_strips_existing_pytorch_before_inject(tmp_path):
         assert any("cu128" in item for item in uv_cfg["constraint-dependencies"])
 
 
+def test_extract_dependency_key_handles_dotted_distribution_names(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    assert manager._extract_dependency_key("zope.interface>=5") == "zope-interface"
+    assert manager._extract_dependency_key("jaraco.functools") == "jaraco-functools"
+    assert manager._extract_dependency_key("requests>=2.31") == "requests"
+
+
+def test_overlay_dependency_replaces_base_when_name_is_dotted(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    config = manager.load()
+    config["project"]["dependencies"] = ["zope.interface>=4", "requests>=2.31"]
+    manager.save(config)
+
+    overlay = OverlayConfig(
+        name="dotted",
+        path=tmp_path / "dotted.toml",
+        dependencies=["zope.interface>=5"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "zope.interface>=5" in deps
+        assert "zope.interface>=4" not in deps
+        assert "requests>=2.31" in deps
+
+
 def test_injection_failure_logs_redacted_summary_without_secret_leak(tmp_path, caplog):
     pyproject_path = tmp_path / "pyproject.toml"
     _create_pyproject(pyproject_path)
