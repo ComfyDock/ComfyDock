@@ -116,6 +116,13 @@ def test_overlay_rejects_malformed_toml(tmp_path):
         OverlayConfig.from_toml(path)
 
 
+def test_overlay_missing_file_raises_value_error(tmp_path):
+    missing = tmp_path / "missing.toml"
+
+    with pytest.raises(ValueError, match=str(missing)):
+        OverlayConfig.from_toml(missing)
+
+
 def test_overlay_validates_name_kind_and_requires(tmp_path):
     bad_kind = _write_overlay(
         tmp_path,

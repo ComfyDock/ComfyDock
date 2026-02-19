@@ -83,7 +83,7 @@ class OverlayConfig:
             with open(path, "rb") as f:
                 data = tomllib.load(f)
         except FileNotFoundError:
-            raise
+            raise ValueError(f"Overlay file not found: {path}") from None
         except tomllib.TOMLDecodeError as exc:
             raise ValueError(f"Failed to parse overlay TOML {path}: {exc}") from exc
 
