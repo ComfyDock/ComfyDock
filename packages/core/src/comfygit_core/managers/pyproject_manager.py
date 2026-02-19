@@ -480,6 +480,35 @@ class PyprojectManager:
                 self._injection_locks[path_key] = lock
             return lock
 
+    def _summarize_modified_overlay_fields(self, overlays: list[OverlayConfig]) -> dict[str, int]:
+        summary = {
+            "dependencies": 0,
+            "sources": 0,
+            "constraints": 0,
+            "indexes": 0,
+            "dependency_metadata": 0,
+            "no_build_isolation_packages": 0,
+            "override_dependencies": 0,
+            "environments": 0,
+        }
+
+        for overlay in overlays:
+            payload = overlay.to_injection_payload()
+            for key in summary:
+                value = payload.get(key)
+                if isinstance(value, dict):
+                    summary[key] += len(value)
+                elif isinstance(value, list):
+                    summary[key] += len(value)
+                elif value:
+                    summary[key] += 1
+
+        return {
+            key: count
+            for key, count in summary.items()
+            if count > 0
+        }
+
     def uv_injection_context(
         self,
         overlays: list[OverlayConfig] | None = None,
@@ -521,17 +550,18 @@ class PyprojectManager:
 
                     yield
 
-                except Exception:
-                    # Log full injected config for debugging on failure
+                except Exception as exc:
                     logger.error("=== UV Sync Failure ===")
                     logger.error(
                         "Overlays: %s",
                         [overlay.name for overlay in effective_overlays],
                     )
                     try:
-                        logger.error(f"Injected config:\n{self.path.read_text()}")
+                        summary = self._summarize_modified_overlay_fields(effective_overlays)
                     except Exception:
-                        pass
+                        summary = {}
+                    logger.error("Overlay field summary: %s", summary)
+                    logger.error("Injection error: %s: %s", type(exc).__name__, exc)
                     raise
 
                 finally:

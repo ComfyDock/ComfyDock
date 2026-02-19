@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import tomlkit
 
 from comfygit_core.managers.pyproject_manager import PyprojectManager
@@ -150,3 +151,38 @@ def test_pytorch_overlay_strips_existing_pytorch_before_inject(tmp_path):
         assert uv_cfg["sources"]["torch"]["index"] == "pytorch-cu128"
         assert "numpy>=1.0" in uv_cfg["constraint-dependencies"]
         assert any("cu128" in item for item in uv_cfg["constraint-dependencies"])
+
+
+def test_injection_failure_logs_redacted_summary_without_secret_leak(tmp_path, caplog):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="private-overlay",
+        path=tmp_path / "private-overlay.toml",
+        dependencies=["privatepkg>=1.0"],
+        sources={"privatepkg": {"index": "private"}},
+        indexes=[
+            {
+                "name": "private",
+                "url": "https://token-user:secret-token@example.internal/simple",
+                "explicit": True,
+            }
+        ],
+    )
+
+    caplog.set_level("ERROR")
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        with manager.uv_injection_context(overlays=[overlay]):
+            raise RuntimeError("forced failure")
+
+    log_output = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Overlays:" in log_output
+    assert "private-overlay" in log_output
+    assert "Overlay field summary:" in log_output
+    assert "Injection error: RuntimeError: forced failure" in log_output
+    assert "secret-token" not in log_output
+    assert "Injected config:" not in log_output
+    assert "[project]" not in log_output
