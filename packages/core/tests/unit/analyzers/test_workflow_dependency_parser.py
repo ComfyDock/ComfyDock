@@ -208,6 +208,39 @@ class TestPropertiesModelsExtraction:
         assert t5_ref.property_url is None
 
 
+class TestCustomNodeSuppression:
+    """Tests that non-mapped custom nodes do not produce model refs."""
+
+    def _create_workflow_file(self, tmp_path: Path, nodes: list[dict]) -> Path:
+        workflow = {
+            "nodes": nodes,
+            "links": [],
+            "groups": [],
+            "version": 0.4
+        }
+        wf_path = tmp_path / "test_workflow.json"
+        wf_path.write_text(json.dumps(workflow))
+        return wf_path
+
+    def test_non_mapped_custom_node_does_not_extract_model_like_widgets(self, tmp_path):
+        """Unknown custom nodes with model-like widgets should not create refs."""
+        nodes = [{
+            "id": 1,
+            "type": "DownloadAndLoadDepthAnythingV2Model",
+            "widgets_values": ["depth_anything_v2_vits_fp16.safetensors"],
+            "properties": {
+                "cnr_id": "comfyui-depthanythingv2",
+                "ver": "d505cbca"
+            }
+        }]
+        wf_path = self._create_workflow_file(tmp_path, nodes)
+
+        parser = WorkflowDependencyParser(wf_path)
+        deps = parser.analyze_dependencies()
+
+        assert deps.found_models == []
+
+
 class TestWorkflowNodeWidgetRefEquality:
     """Tests for WorkflowNodeWidgetRef hash/eq behavior with optional metadata."""
 
