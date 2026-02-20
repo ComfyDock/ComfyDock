@@ -5,15 +5,12 @@ description = "ComfyGit Core - Git-based ComfyUI environment manager"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.9.0",
-    "blake3>=1.0.5",
-    "huggingface_hub",
-    "packaging",
-    "psutil>=7.0.0",
-    "pyyaml>=6.0",
-    "requests>=2.32.4",
-    "requirements-parser>=0.13.0",
-    "tomlkit>=0.13.3",
+    "blake3>=0.3.3",
+    "huggingface_hub>=0.11.0",
+    "packaging>=16.2",
+    "requests>=2.28.0",
+    "requirements-parser>=0.11.0",
+    "tomlkit>=0.11.0",
     "uv>=0.7",
     "xxhash>=2.0.0",
 ]
