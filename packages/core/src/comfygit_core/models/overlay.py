@@ -107,8 +107,14 @@ class OverlayConfig:
         sources = _as_dict(data.get("sources"), "sources")
         settings = _as_dict(data.get("settings"), "settings")
         constraints = _as_dict(data.get("constraints"), "constraints")
-        dependency_metadata = _as_list_of_dicts(data.get("dependency-metadata"), "dependency-metadata")
-        indexes = _as_list_of_dicts(data.get("index"), "index")
+        dependency_metadata = [
+            entry for entry in _as_list_of_dicts(data.get("dependency-metadata"), "dependency-metadata")
+            if entry.get("name")
+        ]
+        indexes = [
+            idx for idx in _as_list_of_dicts(data.get("index"), "index")
+            if idx.get("name") and idx.get("url")
+        ]
 
         description = overlay.get("description")
         if description is not None and not isinstance(description, str):

@@ -631,7 +631,7 @@ no-build-isolation-package = []
 override-dependencies = []
 environments = []
 
-[[dependency-metadata]]
+# [[dependency-metadata]]
 # name = "package-name"
 # version = "1.0.0"
 # requires-dist = ["torch"]
@@ -639,7 +639,7 @@ environments = []
 [constraints]
 packages = []
 
-[[index]]
+# [[index]]
 # name = "custom-index"
 # url = "https://example.com/simple"
 # explicit = true
