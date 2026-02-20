@@ -1,0 +1,9 @@
+[overlay]
+description = "xFormers - memory-efficient attention and transformers (CUDA)"
+kind = "shared"
+requires = ["cuda"]
+
+[dependencies]
+packages = [
+    "xformers",
+]

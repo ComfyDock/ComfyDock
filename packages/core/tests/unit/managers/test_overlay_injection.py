@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import tomlkit
 
+from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.overlay import OverlayConfig
 
@@ -184,6 +185,46 @@ def test_overlay_dependency_replaces_base_when_name_is_dotted(tmp_path):
         assert "zope.interface>=5" in deps
         assert "zope.interface>=4" not in deps
         assert "requests>=2.31" in deps
+
+
+def test_stock_triton_overlay_marker_survives_and_replaces_base_dep(tmp_path):
+    cec = tmp_path / ".cec"
+    cec.mkdir()
+    pyproject_path = cec / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    config = manager.load()
+    config["project"]["dependencies"] = ["triton", "numpy>=1.0"]
+    manager.save(config)
+
+    overlay_manager = OverlayManager(cec)
+    stock_overlay = overlay_manager.load_overlay("triton")
+
+    with manager.uv_injection_context(overlays=[stock_overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "triton>=3.0 ; sys_platform == 'linux'" in deps
+        assert "triton" not in deps
+        assert "numpy>=1.0" in deps
+
+
+def test_overlay_dependency_last_wins_for_same_canonical_name(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="canonical",
+        path=tmp_path / "canonical.toml",
+        dependencies=["Torch==2.1.0", "torch>=2.2.0"],
+    )
+
+    with manager.uv_injection_context(overlays=[overlay]):
+        injected = manager.load(force_reload=True)
+        deps = injected["project"]["dependencies"]
+        assert "torch>=2.2.0" in deps
+        assert "Torch==2.1.0" not in deps
 
 
 def test_injection_snapshot_restore_round_trips_non_ascii_content(tmp_path):

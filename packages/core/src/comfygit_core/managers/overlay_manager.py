@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import subprocess
 import tomllib
-from dataclasses import dataclass
 from pathlib import Path
 
 import tomlkit
@@ -11,22 +10,10 @@ from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
 from ..logging.logging_config import get_logger
-from ..models.overlay import OverlayConfig
+from ..models.overlay import OverlayConfig, OverlayInfo
 from .pytorch_backend_manager import PyTorchBackendManager
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class OverlayInfo:
-    """Display metadata for a discovered overlay."""
-
-    name: str
-    description: str | None
-    is_local: bool
-    is_active: bool
-    requires: list[str]
-
 
 class OverlayManager:
     """Manage overlay files and activation state for an environment."""
@@ -47,6 +34,11 @@ class OverlayManager:
 
         self.overlays_dir.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_local_uv_config()
+
+    @property
+    def _stock_overlays_dir(self) -> Path:
+        """Path to bundled stock overlay TOML files."""
+        return Path(__file__).resolve().parent.parent / "data" / "overlays" / "stock"
 
     def _overlay_path(self, name: str) -> Path:
         OverlayConfig.validate_name(name)
@@ -217,18 +209,25 @@ class OverlayManager:
 
     def load_overlay(self, name: str) -> OverlayConfig:
         """Load a single overlay by name."""
-        path = self._overlay_path(name)
-        if not path.exists():
-            raise ValueError(f"Overlay '{name}' does not exist at {path}")
-        return OverlayConfig.from_toml(path)
+        local_path = self._overlay_path(name)
+        if local_path.exists():
+            return OverlayConfig.from_toml(local_path)
+
+        stock_path = self._stock_overlays_dir / f"{name}.toml"
+        if stock_path.exists():
+            return OverlayConfig.from_toml(stock_path)
+
+        raise ValueError(f"Overlay '{name}' does not exist")
 
     def list_overlays(self) -> list[OverlayInfo]:
         """List overlays with metadata and activation state."""
         active = set(canonicalize_name(name) for name in self.get_active_names())
         overlays: list[OverlayInfo] = []
+        seen_names: set[str] = set()
 
         for path in sorted(self.overlays_dir.glob("*.toml"), key=lambda p: p.name):
             overlay = OverlayConfig.from_toml(path)
+            seen_names.add(canonicalize_name(overlay.name))
             overlays.append(
                 OverlayInfo(
                     name=overlay.name,
@@ -236,8 +235,25 @@ class OverlayManager:
                     is_local=overlay.is_local,
                     is_active=overlay.name == ".local" or canonicalize_name(overlay.name) in active,
                     requires=list(overlay.requires),
+                    is_stock=False,
                 )
             )
+
+        for path in sorted(self._stock_overlays_dir.glob("*.toml"), key=lambda p: p.name):
+            overlay = OverlayConfig.from_toml(path)
+            if canonicalize_name(overlay.name) in seen_names:
+                continue
+            overlays.append(
+                OverlayInfo(
+                    name=overlay.name,
+                    description=overlay.description,
+                    is_local=False,
+                    is_active=canonicalize_name(overlay.name) in active,
+                    requires=list(overlay.requires),
+                    is_stock=True,
+                )
+            )
+
         return overlays
 
     def get_tracked_defaults(self) -> list[str]:
@@ -274,9 +290,13 @@ class OverlayManager:
         """Persist active overlay names to local activation config."""
         normalized = self._normalize_name_sequence(names)
         discovered = {
-            canonicalize_name(path.stem): path
+            canonicalize_name(path.stem)
             for path in self.overlays_dir.glob("*.toml")
         }
+        discovered.update(
+            canonicalize_name(path.stem)
+            for path in self._stock_overlays_dir.glob("*.toml")
+        )
 
         unknown = [name for name in normalized if canonicalize_name(name) not in discovered]
         if unknown:
@@ -290,9 +310,18 @@ class OverlayManager:
             for path in self.overlays_dir.glob("*.toml")
         }
         resolved = discovered.get(canonicalize_name(requested_name))
-        if not resolved:
-            raise ValueError(f"Unknown overlay: {requested_name}")
-        return resolved
+        if resolved:
+            return resolved
+
+        stock_discovered = {
+            canonicalize_name(path.stem): path.stem
+            for path in self._stock_overlays_dir.glob("*.toml")
+        }
+        resolved = stock_discovered.get(canonicalize_name(requested_name))
+        if resolved:
+            return resolved
+
+        raise ValueError(f"Unknown overlay: {requested_name}")
 
     def resolve_overlay_name(self, requested_name: str) -> str:
         """Resolve user-provided overlay name to canonical on-disk name."""

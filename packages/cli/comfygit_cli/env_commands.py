@@ -505,7 +505,12 @@ class EnvironmentCommands:
         print("Available overlays:")
         for overlay in overlays:
             active_marker = "active" if overlay.is_active else "inactive"
-            scope = "local" if overlay.is_local else "shared"
+            if overlay.is_local:
+                scope = "local"
+            elif overlay.is_stock:
+                scope = "stock"
+            else:
+                scope = "shared"
             details = f"{scope}, {active_marker}"
             if overlay.requires:
                 details += f", requires: {', '.join(overlay.requires)}"

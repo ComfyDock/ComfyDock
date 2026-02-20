@@ -5,6 +5,7 @@ from pathlib import Path
 import tomlkit
 
 from comfygit_core.managers.overlay_manager import OverlayManager
+from comfygit_core.models.overlay import OverlayConfig
 
 
 def _write_pyproject(path: Path, defaults: list[str] | None = None) -> None:
@@ -228,3 +229,90 @@ def test_list_overlays_marks_only_dot_local_implicit_active(tmp_path):
     manager.set_active_names([".dev"])
     listed_after_activation = {overlay.name: overlay for overlay in manager.list_overlays()}
     assert listed_after_activation[".dev"].is_active is True
+
+
+def test_bundled_stock_overlays_parse_with_markers(tmp_path):
+    cec = tmp_path / ".cec"
+    cec.mkdir()
+    _write_pyproject(cec / "pyproject.toml")
+
+    manager = OverlayManager(cec)
+    stock_dir = manager._stock_overlays_dir
+
+    assert stock_dir.exists()
+
+    sageattention = OverlayConfig.from_toml(stock_dir / "sageattention.toml")
+    triton = OverlayConfig.from_toml(stock_dir / "triton.toml")
+    xformers = OverlayConfig.from_toml(stock_dir / "xformers.toml")
+
+    assert sageattention.name == "sageattention"
+    assert xformers.name == "xformers"
+    assert triton.name == "triton"
+    assert "triton>=3.0 ; sys_platform == 'linux'" in sageattention.dependencies
+    assert "triton-windows>=3.2 ; sys_platform == 'win32'" in triton.dependencies
+
+
+def test_list_overlays_includes_stock_with_stock_flag(tmp_path):
+    cec = tmp_path / ".cec"
+    cec.mkdir()
+    _write_pyproject(cec / "pyproject.toml")
+
+    manager = OverlayManager(cec)
+    listed = {overlay.name: overlay for overlay in manager.list_overlays()}
+
+    assert listed["sageattention"].is_stock is True
+    assert listed["sageattention"].is_local is False
+    assert listed["xformers"].is_stock is True
+    assert listed["triton"].is_stock is True
+
+
+def test_resolve_and_load_stock_overlay_when_not_present_locally(tmp_path):
+    cec = tmp_path / ".cec"
+    cec.mkdir()
+    _write_pyproject(cec / "pyproject.toml")
+    manager = OverlayManager(cec)
+
+    resolved = manager.resolve_overlay_name("SAGEATTENTION")
+    assert resolved == "sageattention"
+
+    overlay = manager.load_overlay("triton")
+    assert overlay.name == "triton"
+    assert "triton>=3.0 ; sys_platform == 'linux'" in overlay.dependencies
+
+
+def test_env_local_overlay_takes_precedence_over_stock_overlay(tmp_path):
+    cec = tmp_path / ".cec"
+    overlays = cec / "overlays"
+    overlays.mkdir(parents=True)
+    _write_pyproject(cec / "pyproject.toml")
+    _write_overlay(
+        overlays / "triton.toml",
+        """
+        [overlay]
+        description = "local override"
+        kind = "shared"
+
+        [dependencies]
+        packages = ["triton==9.9.9"]
+        """,
+    )
+
+    manager = OverlayManager(cec)
+    loaded = manager.load_overlay("triton")
+    listed = [overlay for overlay in manager.list_overlays() if overlay.name == "triton"]
+
+    assert loaded.description == "local override"
+    assert loaded.dependencies == ["triton==9.9.9"]
+    assert len(listed) == 1
+    assert listed[0].is_stock is False
+
+
+def test_set_active_names_accepts_stock_overlay(tmp_path):
+    cec = tmp_path / ".cec"
+    cec.mkdir()
+    _write_pyproject(cec / "pyproject.toml")
+
+    manager = OverlayManager(cec)
+    manager.set_active_names(["sageattention"])
+
+    assert manager.get_active_names() == ["sageattention"]

@@ -64,6 +64,29 @@ def test_overlay_list_shows_scope_and_activation(capsys):
     assert "sageattention (shared, inactive, requires: cuda)" in output
 
 
+def test_overlay_list_marks_stock_overlays(capsys):
+    from comfygit_cli.env_commands import EnvironmentCommands
+
+    env_cmds = EnvironmentCommands()
+    mock_env = MagicMock()
+    mock_env.overlay_manager.list_overlays.return_value = [
+        OverlayInfo(
+            name="triton",
+            description="Bundled triton",
+            is_local=False,
+            is_active=True,
+            requires=["cuda"],
+            is_stock=True,
+        ),
+    ]
+
+    with patch.object(env_cmds, "_get_env", return_value=mock_env):
+        env_cmds.overlay_list(argparse.Namespace(target_env="test"))
+
+    output = capsys.readouterr().out
+    assert "triton (stock, active, requires: cuda)" in output
+
+
 def test_overlay_enable_updates_active_names(capsys):
     from comfygit_cli.env_commands import EnvironmentCommands
 

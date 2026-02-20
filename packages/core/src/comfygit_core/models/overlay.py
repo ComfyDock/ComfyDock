@@ -44,6 +44,18 @@ def _as_list_of_dicts(value: Any, field_name: str) -> list[dict[str, Any]]:
 
 
 @dataclass
+class OverlayInfo:
+    """Display metadata for a discovered overlay."""
+
+    name: str
+    description: str | None
+    is_local: bool
+    is_active: bool
+    requires: list[str]
+    is_stock: bool = False
+
+
+@dataclass
 class OverlayConfig:
     """Parsed overlay file configuration."""
 
