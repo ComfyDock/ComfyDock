@@ -492,6 +492,7 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     overlay_parser.set_defaults(func=_make_help_func(overlay_parser))
 
     overlay_list_parser = overlay_subparsers.add_parser("list", help="List available overlays")
+    overlay_list_parser.add_argument("--active", action="store_true", help="Show only active overlays")
     overlay_list_parser.set_defaults(func=env_cmds.overlay_list)
 
     overlay_show_parser = overlay_subparsers.add_parser("show", help="Show overlay file contents")

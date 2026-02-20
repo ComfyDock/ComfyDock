@@ -498,11 +498,14 @@ class EnvironmentCommands:
         env = self._get_env(args)
         overlays = env.overlay_manager.list_overlays()
 
+        if getattr(args, "active", False):
+            overlays = [o for o in overlays if o.is_active]
+
         if not overlays:
-            print("No overlays found")
+            print("No active overlays found" if getattr(args, "active", False) else "No overlays found")
             return
 
-        print("Available overlays:")
+        print("Active overlays:" if getattr(args, "active", False) else "Available overlays:")
         for overlay in overlays:
             active_marker = "active" if overlay.is_active else "inactive"
             if overlay.is_local:
