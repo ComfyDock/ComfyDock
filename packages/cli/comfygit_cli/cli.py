@@ -508,7 +508,8 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     overlay_disable_parser.set_defaults(func=env_cmds.overlay_disable)
 
     overlay_create_parser = overlay_subparsers.add_parser("create", help="Create overlay template")
-    overlay_create_parser.add_argument("name", help="Overlay name")
+    overlay_create_parser.add_argument("name", nargs="?", default=None, help="Overlay name")
+    overlay_create_parser.add_argument("--local", action="store_true", help="Create a local (gitignored) overlay")
     overlay_create_parser.set_defaults(func=env_cmds.overlay_create)
 
     # run - Run ComfyUI (special handling for ComfyUI args)

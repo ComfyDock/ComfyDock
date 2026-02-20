@@ -589,16 +589,29 @@ class EnvironmentCommands:
         from comfygit_core.models.overlay import OverlayConfig
 
         env = self._get_env(args)
+        local = getattr(args, "local", False)
+        name = args.name
+
+        if name is None:
+            if not local:
+                print("✗ Overlay name is required (or use --local for .local.toml)")
+                sys.exit(1)
+            name = ".local"
+        elif local and not name.startswith("."):
+            name = f".{name}"
+
         try:
-            OverlayConfig.validate_name(args.name)
+            OverlayConfig.validate_name(name)
         except Exception as e:
             print(f"✗ {e}")
             sys.exit(1)
 
-        overlay_path = env.cec_path / "overlays" / f"{args.name}.toml"
+        overlay_path = env.cec_path / "overlays" / f"{name}.toml"
         if overlay_path.exists():
-            print(f"✗ Overlay already exists: {args.name}")
-            sys.exit(1)
+            scope = "local" if name.startswith(".") else "shared"
+            print(f"Overlay already exists: {name} ({scope})")
+            print(f"  {overlay_path}")
+            return
 
         overlay_path.parent.mkdir(parents=True, exist_ok=True)
         overlay_path.write_text(
@@ -634,8 +647,8 @@ packages = []
             encoding="utf-8",
         )
 
-        scope = "local" if args.name.startswith(".") else "shared"
-        print(f"✓ Created {scope} overlay: {args.name}")
+        scope = "local" if name.startswith(".") else "shared"
+        print(f"✓ Created {scope} overlay: {name}")
         print(f"  {overlay_path}")
 
     @with_env_logging("run")
