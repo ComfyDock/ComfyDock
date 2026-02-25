@@ -28,10 +28,6 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/comfygit_core"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/comfygit_core/py.typed" = "comfygit_core/py.typed"
-"src/comfygit_core/data/overlays/stock" = "comfygit_core/data/overlays/stock"
-
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
