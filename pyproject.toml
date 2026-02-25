@@ -49,11 +49,16 @@ ignore = [
 
 [tool.pytest.ini_options]
 # Shared pytest configuration
+# Note: E2E tests excluded from default run — they require fixture setup first
+# (run: ./tests/e2e/scripts/setup-fixtures.sh, then: uv run pytest tests/e2e/tests/)
 testpaths = [
     "packages/core/tests",
     "packages/cli/tests",
     "packages/deploy/tests",
-    "tests/e2e/tests",
+]
+# Ensure core conftest is importable from cli/integration tests
+pythonpath = [
+    "packages/core/tests",
 ]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
