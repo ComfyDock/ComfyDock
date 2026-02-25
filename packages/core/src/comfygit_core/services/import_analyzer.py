@@ -71,6 +71,10 @@ class ImportAnalysis:
     workflows: list[WorkflowAnalysis]
     total_workflows: int
 
+    # Shared overlays available in the import
+    overlays: list[str]
+    total_overlays: int
+
     # Summary flags
     needs_model_downloads: bool
     needs_node_installs: bool
@@ -123,6 +127,7 @@ class ImportAnalyzer:
 
         # Analyze workflows
         workflows = self._analyze_workflows(pyproject_data)
+        overlays = self._analyze_overlays(cec_path)
 
         # Build summary
         return ImportAnalysis(
@@ -142,6 +147,8 @@ class ImportAnalyzer:
             git_nodes=sum(1 for n in nodes if n.source == "git"),
             workflows=workflows,
             total_workflows=len(workflows),
+            overlays=overlays,
+            total_overlays=len(overlays),
             needs_model_downloads=any(m.needs_download for m in models),
             needs_node_installs=any(n.source in ("registry", "git") for n in nodes),
         )
@@ -216,3 +223,16 @@ class ImportAnalyzer:
             ))
 
         return workflows
+
+    def _analyze_overlays(self, cec_path: Path) -> list[str]:
+        """List shared overlays included in import bundle."""
+        overlays_path = cec_path / "overlays"
+        if not overlays_path.exists():
+            return []
+
+        overlays: list[str] = []
+        for overlay_path in sorted(overlays_path.glob("*.toml"), key=lambda p: p.name):
+            if overlay_path.name.startswith("."):
+                continue
+            overlays.append(overlay_path.stem)
+        return overlays

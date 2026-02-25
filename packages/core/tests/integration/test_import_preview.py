@@ -84,6 +84,7 @@ def test_analyze_import_returns_analysis(temp_workspace, sample_cec_dir):
     assert analysis.total_models == 2
     assert analysis.total_nodes == 1
     assert analysis.total_workflows == 1
+    assert analysis.total_overlays == 0
     assert analysis.comfyui_version == "v0.2.7"
     assert analysis.comfyui_version_type == "release"
 

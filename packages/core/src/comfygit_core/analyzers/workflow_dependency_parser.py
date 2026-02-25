@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from comfygit_core.repositories.workflow_repository import WorkflowRepository
 
@@ -110,9 +110,10 @@ class WorkflowDependencyParser:
     def _extract_model_node_refs(self, node_id: str, node_info: WorkflowNode) -> list[WorkflowNodeWidgetRef]:
         """Extract possible model references from a single node.
 
-        Uses a two-pronged approach:
+        Uses explicit extraction strategies:
         1. Extract from properties.models (preferred - has URLs for auto-download)
-        2. Fall back to widget extraction using MULTI_MODEL_WIDGET_CONFIGS
+        2. Extract from known multi-model node widget configs
+        3. Extract from known single-model loader widget config
 
         Args:
             node_id: Scoped node ID from workflow.nodes dict key (e.g., "uuid:12" for subgraph nodes)
@@ -133,11 +134,6 @@ class WorkflowDependencyParser:
         # Strategy 3: Standard single-model loaders
         elif self.model_config.is_model_loader_node(node_info.type):
             widget_refs = self._extract_single_model_widget(node_id, node_info)
-            refs = self._merge_model_refs(refs, widget_refs)
-
-        # Strategy 4: Pattern match all widgets for custom nodes
-        else:
-            widget_refs = self._extract_by_pattern(node_id, node_info)
             refs = self._merge_model_refs(refs, widget_refs)
 
         return refs
@@ -220,21 +216,6 @@ class WorkflowDependencyParser:
             ))
         return refs
 
-    def _extract_by_pattern(self, node_id: str, node_info: WorkflowNode) -> list[WorkflowNodeWidgetRef]:
-        """Extract models by pattern matching widget values (for custom nodes)."""
-        refs = []
-        widgets = node_info.widgets_values or []
-
-        for idx, value in enumerate(widgets):
-            if self._looks_like_model(value):
-                refs.append(WorkflowNodeWidgetRef(
-                    node_id=node_id,
-                    node_type=node_info.type,
-                    widget_index=idx,
-                    widget_value=value
-                ))
-        return refs
-
     def _merge_model_refs(
         self,
         property_refs: list[WorkflowNodeWidgetRef],
@@ -255,10 +236,3 @@ class WorkflowDependencyParser:
                 merged.append(ref)
 
         return merged
-
-    def _looks_like_model(self, value: Any) -> bool:
-        """Check if value looks like a model path"""
-        if not isinstance(value, str):
-            return False
-        extensions = self.model_config.default_extensions
-        return any(value.endswith(ext) for ext in extensions)

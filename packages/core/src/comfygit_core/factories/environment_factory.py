@@ -57,6 +57,7 @@ class EnvironmentFactory:
         python_version: str = "3.12",
         comfyui_version: str | None = None,
         torch_backend: str = "auto",
+        no_manager: bool = False,
         progress: EnvironmentCreateProgress | None = None,
     ) -> Environment:
         """Create a new environment.
@@ -68,6 +69,7 @@ class EnvironmentFactory:
             python_version: Python version (e.g., "3.12")
             comfyui_version: ComfyUI version (None for latest)
             torch_backend: PyTorch backend (auto, cpu, cu118, cu121, etc.)
+            no_manager: Skip comfygit-manager installation (headless mode)
             progress: Optional progress callback for tracking creation phases
 
         Returns:
@@ -279,6 +281,7 @@ class EnvironmentFactory:
             verbose=True,
             pytorch_manager=env.pytorch_manager,
             all_groups=True,
+            skip_optional_overlays=True,
             extras=extras,
             all_extras=all_extras,
         )
@@ -286,23 +289,32 @@ class EnvironmentFactory:
         _complete("install_dependencies")
 
         # Phase: Install comfygit-manager as tracked node (85%)
-        _progress("install_manager", "Installing comfygit-manager", 85)
-        try:
-            from ..constants import MANAGER_NODE_ID
-            logger.info(f"Installing {MANAGER_NODE_ID} as tracked node...")
-            identifier = _get_manager_install_identifier()
-            env.node_manager.add_node(identifier)
-            logger.info(f"{MANAGER_NODE_ID} installed successfully")
+        if not no_manager:
+            _progress("install_manager", "Installing comfygit-manager", 85)
+            try:
+                from ..constants import MANAGER_NODE_ID
+                logger.info(f"Installing {MANAGER_NODE_ID} as tracked node...")
+                identifier = _get_manager_install_identifier()
+                env.node_manager.add_node(identifier)
+                logger.info(f"{MANAGER_NODE_ID} installed successfully")
 
-            # Upgrade workspace schema if this is a legacy workspace
-            # (new envs with per-env manager = modern workspace)
-            if workspace.upgrade_schema_if_needed():
-                logger.info("Upgraded workspace to schema v2 (per-environment manager)")
-        except Exception as e:
-            # Manager installation failure is non-fatal - environment still works
-            logger.warning(f"Could not install {MANAGER_NODE_ID}: {e}")
-            logger.warning("Environment will work but manager panel will be unavailable")
+                # Upgrade workspace schema if this is a legacy workspace
+                # (new envs with per-env manager = modern workspace)
+                if workspace.upgrade_schema_if_needed():
+                    logger.info("Upgraded workspace to schema v2 (per-environment manager)")
+            except Exception as e:
+                # Manager installation failure is non-fatal - environment still works
+                logger.warning(f"Could not install {MANAGER_NODE_ID}: {e}")
+                logger.warning("Environment will work but manager panel will be unavailable")
+        else:
+            _progress("install_manager", "Skipping comfygit-manager (headless mode)", 85)
+            logger.info("Manager installation skipped (--no-manager)")
         _complete("install_manager")
+
+        if no_manager:
+            config = env.pyproject.load()
+            config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+            env.pyproject.save(config)
 
         # Phase: Finalize environment (90-100%)
         _progress("finalize", "Finalizing environment", 90)

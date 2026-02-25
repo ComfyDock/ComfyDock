@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 import tomlkit
+from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.pytorch_backend_manager import PyTorchBackendManager
 
@@ -434,6 +435,7 @@ class TestSyncProjectWithPyTorchManager:
         uv_manager = UVProjectManager(
             uv_command=mock_uv_command,
             pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
         )
 
         # Sync without pytorch_manager
@@ -472,6 +474,7 @@ class TestSyncProjectWithPyTorchManager:
         uv_manager = UVProjectManager(
             uv_command=mock_uv_command,
             pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
         )
 
         # Sync with pytorch_manager
@@ -504,6 +507,7 @@ class TestSyncProjectWithPyTorchManager:
         uv_manager = UVProjectManager(
             uv_command=mock_uv_command,
             pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
         )
 
         # Sync should raise error

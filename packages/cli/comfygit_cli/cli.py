@@ -206,6 +206,11 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
             "Default: auto"
         ),
     )
+    import_parser.add_argument(
+        "--no-manager",
+        action="store_true",
+        help="Skip comfygit-manager installation (headless/API-only mode)",
+    )
     import_parser.add_argument("--use", action="store_true", help="Set imported environment as active")
     import_parser.add_argument(
         "--models",
@@ -405,6 +410,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
             "Default: auto"
         ),
     )
+    create_parser.add_argument(
+        "--no-manager",
+        action="store_true",
+        help="Skip comfygit-manager installation (headless/API-only mode)",
+    )
     create_parser.add_argument("--use", action="store_true", help="Set active environment after creation")
     create_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts, use defaults for workspace initialization")
     create_parser.set_defaults(func=env_cmds.create)
@@ -445,47 +455,6 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_torch_detect_parser = env_config_torch_subparsers.add_parser("detect", help="Auto-detect and show recommended backend")
     env_config_torch_detect_parser.set_defaults(func=env_cmds.env_config_torch_detect)
 
-    # env-config local-sources - Manage local UV sources for this environment
-    env_config_local_sources_parser = env_config_subparsers.add_parser(
-        "local-sources",
-        help="Manage local UV source overrides"
-    )
-    env_config_local_sources_subparsers = env_config_local_sources_parser.add_subparsers(
-        dest="local_sources_command",
-        help="Local source commands"
-    )
-    env_config_local_sources_parser.set_defaults(func=_make_help_func(env_config_local_sources_parser))
-
-    # env-config local-sources show
-    env_config_local_sources_show_parser = env_config_local_sources_subparsers.add_parser(
-        "show", help="Show local UV sources"
-    )
-    env_config_local_sources_show_parser.set_defaults(func=env_cmds.env_config_local_sources_show)
-
-    # env-config local-sources add <package> --path PATH [--editable]
-    env_config_local_sources_add_parser = env_config_local_sources_subparsers.add_parser(
-        "add", help="Add or update a local UV source"
-    )
-    env_config_local_sources_add_parser.add_argument("package", help="Package name to override")
-    env_config_local_sources_add_parser.add_argument(
-        "--path",
-        required=True,
-        help="Local path to package (absolute or relative)"
-    )
-    env_config_local_sources_add_parser.add_argument(
-        "--editable",
-        action="store_true",
-        help="Install as editable"
-    )
-    env_config_local_sources_add_parser.set_defaults(func=env_cmds.env_config_local_sources_add)
-
-    # env-config local-sources remove <package>
-    env_config_local_sources_remove_parser = env_config_local_sources_subparsers.add_parser(
-        "remove", help="Remove a local UV source"
-    )
-    env_config_local_sources_remove_parser.add_argument("package", help="Package name to remove")
-    env_config_local_sources_remove_parser.set_defaults(func=env_cmds.env_config_local_sources_remove)
-
     # env-config extras - Manage default optional extras for sync
     env_config_extras_parser = env_config_subparsers.add_parser(
         "extras",
@@ -517,6 +486,32 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     env_config_extras_remove_parser.add_argument("extras", nargs="+", help="Extra name(s) to remove")
     env_config_extras_remove_parser.set_defaults(func=env_cmds.env_config_extras_remove)
 
+    # overlay - Manage overlays for this environment
+    overlay_parser = subparsers.add_parser("overlay", help="Manage dependency overlays")
+    overlay_subparsers = overlay_parser.add_subparsers(dest="overlay_command", help="Overlay commands")
+    overlay_parser.set_defaults(func=_make_help_func(overlay_parser))
+
+    overlay_list_parser = overlay_subparsers.add_parser("list", help="List available overlays")
+    overlay_list_parser.add_argument("--active", action="store_true", help="Show only active overlays")
+    overlay_list_parser.set_defaults(func=env_cmds.overlay_list)
+
+    overlay_show_parser = overlay_subparsers.add_parser("show", help="Show overlay file contents")
+    overlay_show_parser.add_argument("name", help="Overlay name")
+    overlay_show_parser.set_defaults(func=env_cmds.overlay_show)
+
+    overlay_enable_parser = overlay_subparsers.add_parser("enable", help="Enable overlay for this machine")
+    overlay_enable_parser.add_argument("name", help="Overlay name")
+    overlay_enable_parser.set_defaults(func=env_cmds.overlay_enable)
+
+    overlay_disable_parser = overlay_subparsers.add_parser("disable", help="Disable overlay for this machine")
+    overlay_disable_parser.add_argument("name", help="Overlay name")
+    overlay_disable_parser.set_defaults(func=env_cmds.overlay_disable)
+
+    overlay_create_parser = overlay_subparsers.add_parser("create", help="Create overlay template")
+    overlay_create_parser.add_argument("name", nargs="?", default=None, help="Overlay name")
+    overlay_create_parser.add_argument("--local", action="store_true", help="Create a local (gitignored) overlay")
+    overlay_create_parser.set_defaults(func=env_cmds.overlay_create)
+
     # run - Run ComfyUI (special handling for ComfyUI args)
     run_parser = subparsers.add_parser("run", help="Run ComfyUI")
     run_parser.add_argument("--no-sync", action="store_true", help="Skip environment sync before running")
@@ -539,6 +534,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         "--all-extras",
         action="store_true",
         help="Install all optional dependency extras"
+    )
+    run_parser.add_argument(
+        "--overlay",
+        action="append",
+        help="Apply overlay for this run sync (can be repeated)",
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 
@@ -598,6 +598,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         "--all-extras",
         action="store_true",
         help="Install all optional dependency extras"
+    )
+    sync_parser.add_argument(
+        "--overlay",
+        action="append",
+        help="Apply overlay for this sync only (can be repeated)",
     )
     sync_parser.add_argument(
         "-v", "--verbose",
@@ -793,6 +798,11 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     node_add_parser.add_argument("--force", action="store_true", help="Force overwrite existing directory")
     node_add_parser.add_argument("--verbose", "-v", action="store_true", help="Show full UV error output for dependency conflicts")
     node_add_parser.add_argument("--strict", action="store_true", help="Fail on dependency conflicts instead of auto-resolving")
+    node_add_parser.add_argument(
+        "--resolve-with-overlays",
+        action="store_true",
+        help="Resolve node install with all active overlays (default is pytorch-only)",
+    )
     node_add_parser.add_argument(
         "--extra",
         action="append",

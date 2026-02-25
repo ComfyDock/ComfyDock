@@ -871,14 +871,6 @@ class WorkflowManager:
         for node in analysis.version_gated_nodes:
             add_version_gated(node)
 
-        # Load workflow JSON for path comparison
-        try:
-            workflow_path = self.get_workflow_path(workflow_name)
-            workflow = WorkflowRepository.load(workflow_path)
-        except FileNotFoundError:
-            workflow = None
-            logger.warning(f"Could not load workflow '{workflow_name}' for path sync check")
-
         # Build node resolution context with per-workflow custom_node_map
         node_context = NodeResolutionContext(
             installed_packages=self.pyproject.nodes.get_existing(),
@@ -1007,10 +999,9 @@ class WorkflowManager:
                 resolved_model = result[0]
 
                 # Check if path needs syncing (only for builtin nodes with resolved models)
-                if workflow and resolved_model.resolved_model:
+                if resolved_model.resolved_model:
                     resolved_model.needs_path_sync = self._check_path_needs_sync(
-                        resolved_model,
-                        workflow
+                        resolved_model
                     )
 
                 # Check category mismatch (functional issue - model in wrong directory)
@@ -1597,14 +1588,12 @@ class WorkflowManager:
 
     def _check_path_needs_sync(
         self,
-        resolved: ResolvedModel,
-        workflow: Workflow
+        resolved: ResolvedModel
     ) -> bool:
         """Check if a resolved model's path differs from workflow JSON.
 
         Args:
             resolved: ResolvedModel with reference and resolved_model
-            workflow: Loaded workflow JSON
 
         Returns:
             True if workflow path differs from expected resolved path

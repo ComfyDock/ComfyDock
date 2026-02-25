@@ -1,0 +1,14 @@
+[overlay]
+description = "SageAttention V1 - attention optimization (CUDA, compute capability 8.0+)"
+kind = "shared"
+requires = ["cuda"]
+
+[dependencies]
+packages = [
+    "sageattention>=1.0.6",
+    "triton>=3.0 ; sys_platform == 'linux'",
+    "triton-windows>=3.2 ; sys_platform == 'win32'",
+]
+
+[settings]
+no-build-isolation-package = ["sageattention"]

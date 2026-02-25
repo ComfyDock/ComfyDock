@@ -51,7 +51,6 @@ if TYPE_CHECKING:
         SyncCallbacks,
     )
 
-    from ..managers.local_uv_config_manager import LocalUVConfigManager
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
@@ -140,10 +139,9 @@ class Environment:
         return PyTorchBackendManager(self.cec_path)
 
     @cached_property
-    def local_uv_config(self) -> "LocalUVConfigManager":
-        """Manager for machine-specific UV config overrides (.local-uv-config)."""
-        from ..managers.local_uv_config_manager import LocalUVConfigManager
-        return LocalUVConfigManager(self.cec_path)
+    def overlay_manager(self):
+        """Overlay manager bound to this environment's UV manager."""
+        return self.uv_manager.overlay_manager
 
     @cached_property
     def node_lookup(self) -> NodeLookupService:
@@ -308,11 +306,23 @@ class Environment:
         - update_available: Whether latest > current
         - is_legacy: True if manager is symlinked (legacy workspace)
         - is_tracked: True if manager is tracked in pyproject.toml
+        - status: "headless", "legacy", "not_installed", "outdated", or "up_to_date"
         """
         from packaging.version import InvalidVersion, Version
 
         from ..constants import MANAGER_NODE_ID
         from ..utils.symlink_utils import is_link
+
+        # Explicit headless marker takes precedence over manager install checks.
+        if self._is_headless_mode():
+            return ManagerStatus(
+                current_version=None,
+                latest_version=None,
+                update_available=False,
+                is_legacy=False,
+                is_tracked=False,
+                status="headless",
+            )
 
         current_version: str | None = None
         is_legacy = False
@@ -358,12 +368,21 @@ class Environment:
                 # Version comparison failed - assume update available if versions differ
                 update_available = latest_version != current_version
 
+        status_name = "up_to_date"
+        if is_legacy:
+            status_name = "legacy"
+        elif not is_tracked:
+            status_name = "not_installed"
+        elif update_available:
+            status_name = "outdated"
+
         return ManagerStatus(
             current_version=current_version,
             latest_version=latest_version,
             update_available=update_available,
             is_legacy=is_legacy,
             is_tracked=is_tracked,
+            status=status_name,
         )
 
     @_requires_env_lock
@@ -423,6 +442,7 @@ class Environment:
 
             # Cleanup legacy dependency group if present
             self._cleanup_system_nodes_dependency_group()
+            self._clear_headless_marker()
 
             return ManagerUpdateResult(
                 changed=result.changed,
@@ -439,6 +459,7 @@ class Environment:
 
         # Cleanup legacy dependency group
         self._cleanup_system_nodes_dependency_group()
+        self._clear_headless_marker()
 
         # Bump workspace schema if this was a migration
         if was_migration and self.workspace.is_legacy_schema():
@@ -462,6 +483,25 @@ class Environment:
                 del config["dependency-groups"]
             self.pyproject.save(config)
             logger.info("Removed legacy dependency-groups.system-nodes")
+
+    def _is_headless_mode(self) -> bool:
+        """Return True when this environment was created/imported with --no-manager."""
+        config = self.pyproject.load()
+        return bool(config.get("tool", {}).get("comfygit", {}).get("headless", False))
+
+    def _set_headless_marker(self) -> None:
+        """Persist headless marker in pyproject.toml."""
+        config = self.pyproject.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        self.pyproject.save(config)
+
+    def _clear_headless_marker(self) -> None:
+        """Remove headless marker after manager installation."""
+        config = self.pyproject.load()
+        comfygit_cfg = config.get("tool", {}).get("comfygit", {})
+        if comfygit_cfg.get("headless"):
+            del comfygit_cfg["headless"]
+            self.pyproject.save(config)
 
     def _register_imported_manager(self) -> None:
         """Auto-register or install comfygit-manager for imported environment.
@@ -588,6 +628,7 @@ class Environment:
         verbose: bool = False,
         preserve_workflows: bool = False,
         backend_override: str | None = None,
+        overlay_names: list[str] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
     ) -> SyncResult:
@@ -604,6 +645,7 @@ class Environment:
                                Use True for runtime restarts (exit code 42) to keep user edits.
                                Use False (default) for git operations and repairs.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            overlay_names: One-time overlay names for this sync call.
             extras: Optional list of extras to install
             all_extras: Install all optional extras
 
@@ -639,6 +681,7 @@ class Environment:
                 callbacks=sync_callbacks,
                 verbose=verbose,
                 pytorch_manager=self.pytorch_manager,
+                overlay_names=overlay_names,
                 backend_override=backend_override,
                 extras=extras,
                 all_extras=all_extras,
@@ -1239,6 +1282,7 @@ class Environment:
 
         return result
 
+    @_requires_env_lock
     def revert_commit(self, commit: str) -> None:
         """Revert a commit by creating new commit that undoes it.
 
@@ -1316,6 +1360,7 @@ class Environment:
         strict: bool = False,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        resolve_with_overlays: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -1328,12 +1373,18 @@ class Environment:
             strict: If True, fail on dependency conflicts instead of auto-resolving
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
+            resolve_with_overlays: If True, resolve with all active/extra overlays.
+                                   If False, node sync defaults to pytorch-only overlays.
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDNodeConflictError: If node has dependency conflicts
             CDEnvironmentError: If node with same name already exists
         """
+        add_kwargs = {}
+        if resolve_with_overlays:
+            add_kwargs["skip_optional_overlays"] = False
+
         return self.node_manager.add_node(
             identifier,
             is_development=is_development,
@@ -1343,6 +1394,7 @@ class Environment:
             strict=strict,
             extras=extras,
             all_extras=all_extras,
+            **add_kwargs,
         )
 
     @_requires_env_lock
@@ -1352,6 +1404,7 @@ class Environment:
         callbacks: NodeInstallCallbacks | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        resolve_with_overlays: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Install multiple nodes with callback support for progress tracking.
 
@@ -1360,6 +1413,7 @@ class Environment:
             callbacks: Optional callbacks for progress feedback
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
+            resolve_with_overlays: If True, resolve node installs with all overlays.
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1379,7 +1433,12 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.add_node(node_id, extras=extras, all_extras=all_extras)
+                self.add_node(
+                    node_id,
+                    extras=extras,
+                    all_extras=all_extras,
+                    resolve_with_overlays=resolve_with_overlays,
+                )
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)
@@ -2126,7 +2185,8 @@ class Environment:
     def finalize_import(
         self,
         model_strategy: str = "all",
-        callbacks: ImportCallbacks | None = None
+        callbacks: ImportCallbacks | None = None,
+        no_manager: bool = False,
     ) -> None:
         """Complete import setup after .cec extraction.
 
@@ -2142,6 +2202,7 @@ class Environment:
         Args:
             model_strategy: "all", "required", or "skip"
             callbacks: Optional progress callbacks
+            no_manager: Skip comfygit-manager install/registration (headless mode)
 
         Raises:
             ValueError: If ComfyUI already exists or .cec not properly initialized
@@ -2158,6 +2219,10 @@ class Environment:
 
         # Strip local filesystem path sources (editable dev installs from export machine)
         self._strip_local_path_sources()
+
+        # Ensure overlay migration runs before finalize-import sync.
+        # This guarantees .local-uv-config -> overlays/.local.toml happens prior to sync().
+        _ = self.overlay_manager
 
         # Phase 1: Clone or restore ComfyUI from cache
         comfyui_cache = ComfyUICacheManager(cache_base_path=self.workspace_paths.cache)
@@ -2279,7 +2344,11 @@ class Environment:
 
         # Auto-register comfygit-manager if present in imported environment
         # (replaces legacy symlink system - manager is now per-environment)
-        self._register_imported_manager()
+        if no_manager:
+            self._set_headless_marker()
+            logger.info("Manager registration skipped during import (--no-manager)")
+        else:
+            self._register_imported_manager()
 
         # Phase 1.5: Probe PyTorch and configure backend
         # Read Python version from .python-version file
@@ -2338,6 +2407,20 @@ class Environment:
                 shutil.copy2(workflow_file, workflows_dst / workflow_file.name)
                 if callbacks:
                     callbacks.on_workflow_copied(workflow_file.name)
+
+        shared_overlays = [
+            info.name
+            for info in self.overlay_manager.list_overlays()
+            if not info.is_local
+        ]
+        if shared_overlays:
+            overlay_msg = (
+                f"Detected {len(shared_overlays)} shared overlay(s): "
+                f"{', '.join(shared_overlays)}"
+            )
+            logger.info(overlay_msg)
+            if callbacks:
+                callbacks.on_phase("detect_overlays", overlay_msg)
 
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration

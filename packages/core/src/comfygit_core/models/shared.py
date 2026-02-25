@@ -379,6 +379,7 @@ class ManagerStatus:
     update_available: bool       # True if latest > current
     is_legacy: bool              # True if symlinked to workspace system_nodes
     is_tracked: bool             # True if tracked in pyproject.toml
+    status: str = "unknown"      # "headless", "legacy", "not_installed", "outdated", "up_to_date"
 
 
 @dataclass
@@ -398,5 +399,4 @@ class LegacyCleanupResult:
     removed_path: str | None = None   # Path that was removed (as string)
     legacy_environments: list[str] = field(default_factory=list)  # Envs still using legacy
     message: str = ""
-
 

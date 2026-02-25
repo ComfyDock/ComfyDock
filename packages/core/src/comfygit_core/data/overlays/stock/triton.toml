@@ -1,0 +1,10 @@
+[overlay]
+description = "Triton - GPU compiler for custom kernels"
+kind = "shared"
+requires = ["cuda"]
+
+[dependencies]
+packages = [
+    "triton>=3.0 ; sys_platform == 'linux'",
+    "triton-windows>=3.2 ; sys_platform == 'win32'",
+]

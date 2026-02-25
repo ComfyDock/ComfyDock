@@ -801,7 +801,8 @@ class WorkflowCacheRepository:
         step_start = time.perf_counter()
         model_index_subset = {}
         for model_ref in dependencies.found_models:
-            filename = Path(model_ref.widget_value).name
+            normalized_value = model_ref.widget_value.replace("\\", "/")
+            filename = normalized_value.rsplit("/", 1)[-1]
             models = self.model_repository.find_by_filename(filename)
             if models:
                 model_index_subset[filename] = [m.hash for m in models]

@@ -247,6 +247,7 @@ class EnvironmentCommands:
                 python_version=args.python,
                 template_path=args.template,
                 torch_backend=args.torch_backend,
+                no_manager=getattr(args, "no_manager", False),
             )
         except Exception as e:
             if logger:
@@ -441,129 +442,6 @@ class EnvironmentCommands:
             print()
             print(f"💡 Set the backend: cg env-config torch-backend set {detected}")
 
-    @with_env_logging("env-config local-sources show")
-    def env_config_local_sources_show(self, args: argparse.Namespace, logger=None) -> None:
-        """Show current local UV source overrides for this environment."""
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            print("No local UV config set")
-            return
-
-        sources = config.get("sources", {})
-        indexes = config.get("index", [])
-        constraints = config.get("constraint-dependencies", [])
-
-        if indexes and not isinstance(indexes, list):
-            indexes = [indexes]
-
-        print(f"Local UV config: {manager.config_path}")
-
-        if sources:
-            print("Sources:")
-            for pkg, source in sources.items():
-                if isinstance(source, list):
-                    for entry in source:
-                        path = entry.get("path")
-                        editable = entry.get("editable")
-                        if path:
-                            suffix = " (editable)" if editable else ""
-                            print(f"  • {pkg}: {path}{suffix}")
-                        else:
-                            print(f"  • {pkg}: {entry}")
-                elif isinstance(source, dict):
-                    path = source.get("path")
-                    editable = source.get("editable")
-                    if path:
-                        suffix = " (editable)" if editable else ""
-                        print(f"  • {pkg}: {path}{suffix}")
-                    else:
-                        print(f"  • {pkg}: {source}")
-                else:
-                    print(f"  • {pkg}: {source}")
-
-        if indexes:
-            print("Indexes:")
-            for idx in indexes:
-                name = idx.get("name")
-                url = idx.get("url")
-                if name and url:
-                    print(f"  • {name}: {url}")
-                else:
-                    print(f"  • {idx}")
-
-        if constraints:
-            print("Constraints:")
-            for constraint in constraints:
-                print(f"  • {constraint}")
-
-    @with_env_logging("env-config local-sources add")
-    def env_config_local_sources_add(self, args: argparse.Namespace, logger=None) -> None:
-        """Add or update a local UV source override for this environment."""
-        import tomlkit
-
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            config = tomlkit.document()
-
-        if "sources" not in config:
-            config["sources"] = tomlkit.table()
-
-        source = tomlkit.inline_table()
-        source["path"] = args.path
-        if args.editable:
-            source["editable"] = True
-
-        config["sources"][args.package] = source
-
-        manager.ensure_gitignore_entry()
-        manager.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manager.config_path, "w", encoding="utf-8") as f:
-            tomlkit.dump(config, f)
-
-        editable_suffix = " (editable)" if args.editable else ""
-        print(f"✓ Local source set: {args.package} -> {args.path}{editable_suffix}")
-
-    @with_env_logging("env-config local-sources remove")
-    def env_config_local_sources_remove(self, args: argparse.Namespace, logger=None) -> None:
-        """Remove a local UV source override for this environment."""
-        import tomlkit
-
-        env = self._get_env(args)
-        manager = env.local_uv_config
-
-        config = manager.load()
-        if not config:
-            print(f"No local UV config set (nothing to remove for {args.package})")
-            return
-
-        sources = config.get("sources", {})
-        if args.package not in sources:
-            print(f"No local source configured for: {args.package}")
-            return
-
-        del sources[args.package]
-        if not sources:
-            del config["sources"]
-
-        # If config is empty after removal, delete the file
-        if not config:
-            manager.config_path.unlink(missing_ok=True)
-            print(f"✓ Removed local source: {args.package}")
-            print("✓ .local-uv-config removed (no entries remaining)")
-            return
-
-        manager.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(manager.config_path, "w", encoding="utf-8") as f:
-            tomlkit.dump(config, f)
-
-        print(f"✓ Removed local source: {args.package}")
-
     @with_env_logging("env-config extras show")
     def env_config_extras_show(self, args: argparse.Namespace, logger=None) -> None:
         """Show default optional extras installed during sync."""
@@ -614,6 +492,165 @@ class EnvironmentCommands:
         if missing:
             print(f"ℹ️  Not configured: {', '.join(missing)}")
 
+    @with_env_logging("overlay list")
+    def overlay_list(self, args: argparse.Namespace, logger=None) -> None:
+        """List overlays available in the environment."""
+        env = self._get_env(args)
+        overlays = env.overlay_manager.list_overlays()
+
+        if getattr(args, "active", False):
+            overlays = [o for o in overlays if o.is_active]
+
+        if not overlays:
+            print("No active overlays found" if getattr(args, "active", False) else "No overlays found")
+            return
+
+        print("Active overlays:" if getattr(args, "active", False) else "Available overlays:")
+        for overlay in overlays:
+            active_marker = "active" if overlay.is_active else "inactive"
+            if overlay.is_local:
+                scope = "local"
+            elif overlay.is_stock:
+                scope = "stock"
+            else:
+                scope = "shared"
+            details = f"{scope}, {active_marker}"
+            if overlay.requires:
+                details += f", requires: {', '.join(overlay.requires)}"
+            suffix = f" - {overlay.description}" if overlay.description else ""
+            print(f"  • {overlay.name} ({details}){suffix}")
+
+    @with_env_logging("overlay show")
+    def overlay_show(self, args: argparse.Namespace, logger=None) -> None:
+        """Show a single overlay TOML file."""
+        env = self._get_env(args)
+
+        try:
+            resolved_name = env.overlay_manager.resolve_overlay_name(args.name)
+            overlay = env.overlay_manager.load_overlay(resolved_name)
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        scope = "local" if overlay.is_local else "shared"
+        print(f"Overlay: {overlay.name} ({scope})")
+        print(f"Path: {overlay.path}")
+        print()
+        print(overlay.path.read_text(encoding="utf-8"))
+
+    @with_env_logging("overlay enable")
+    def overlay_enable(self, args: argparse.Namespace, logger=None) -> None:
+        """Enable an overlay in local activation config."""
+        env = self._get_env(args)
+        manager = env.overlay_manager
+
+        try:
+            resolved_name = manager.resolve_overlay_name(args.name)
+            active_names = manager.get_active_names()
+            active_keys = {name.lower() for name in active_names}
+            if resolved_name.lower() in active_keys:
+                print(f"Overlay already enabled: {resolved_name}")
+                return
+
+            manager.set_active_names(active_names + [resolved_name])
+            if not manager.is_overlay_compatible(resolved_name):
+                print(f"✓ Enabled overlay: {resolved_name} (platform requirements currently unmet)")
+                return
+            print(f"✓ Enabled overlay: {resolved_name}")
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+    @with_env_logging("overlay disable")
+    def overlay_disable(self, args: argparse.Namespace, logger=None) -> None:
+        """Disable an overlay in local activation config."""
+        env = self._get_env(args)
+        manager = env.overlay_manager
+
+        try:
+            resolved_name = manager.resolve_overlay_name(args.name)
+            active_names = manager.get_active_names()
+            filtered = [
+                name for name in active_names
+                if name.lower() != resolved_name.lower()
+            ]
+            if len(filtered) == len(active_names):
+                print(f"Overlay is not enabled: {resolved_name}")
+                return
+            manager.set_active_names(filtered)
+            print(f"✓ Disabled overlay: {resolved_name}")
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+    @with_env_logging("overlay create")
+    def overlay_create(self, args: argparse.Namespace, logger=None) -> None:
+        """Create an overlay template file."""
+        from comfygit_core.models.overlay import OverlayConfig
+
+        env = self._get_env(args)
+        local = getattr(args, "local", False)
+        name = args.name
+
+        if name is None:
+            if not local:
+                print("✗ Overlay name is required (or use --local for .local.toml)")
+                sys.exit(1)
+            name = ".local"
+        elif local and not name.startswith("."):
+            name = f".{name}"
+
+        try:
+            OverlayConfig.validate_name(name)
+        except Exception as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        overlay_path = env.cec_path / "overlays" / f"{name}.toml"
+        if overlay_path.exists():
+            scope = "local" if name.startswith(".") else "shared"
+            print(f"Overlay already exists: {name} ({scope})")
+            print(f"  {overlay_path}")
+            return
+
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_text(
+            """[overlay]
+# description = "Describe this overlay"
+# kind = "pytorch"
+# requires = ["cuda"]
+
+[dependencies]
+packages = []
+
+[sources]
+# package-name = { git = "https://github.com/user/repo.git" }
+
+[settings]
+no-build-isolation-package = []
+override-dependencies = []
+environments = []
+
+# [[dependency-metadata]]
+# name = "package-name"
+# version = "1.0.0"
+# requires-dist = ["torch"]
+
+[constraints]
+packages = []
+
+# [[index]]
+# name = "custom-index"
+# url = "https://example.com/simple"
+# explicit = true
+""",
+            encoding="utf-8",
+        )
+
+        scope = "local" if name.startswith(".") else "shared"
+        print(f"✓ Created {scope} overlay: {name}")
+        print(f"  {overlay_path}")
+
     @with_env_logging("run")
     def run(self, args: argparse.Namespace) -> None:
         """Run ComfyUI in the specified environment."""
@@ -625,6 +662,11 @@ class EnvironmentCommands:
         no_sync = getattr(args, 'no_sync', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        overlay_names = getattr(args, 'overlay', None) or []
+
+        if no_sync and overlay_names:
+            print("✗ Cannot use --overlay with --no-sync. Overlays require a sync to take effect.")
+            sys.exit(1)
 
         # Handle torch-backend: use override, read from file, or probe if missing
         torch_backend_override = getattr(args, 'torch_backend', None)
@@ -650,6 +692,7 @@ class EnvironmentCommands:
                     preserve_workflows=True,
                     remove_extra_nodes=False,
                     backend_override=torch_backend_override if torch_backend_override else None,
+                    overlay_names=overlay_names,
                     verbose=True,
                     extras=extras,
                     all_extras=all_extras,
@@ -690,6 +733,7 @@ class EnvironmentCommands:
         verbose = getattr(args, 'verbose', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        overlay_names = getattr(args, 'overlay', None) or []
 
         try:
             # Use explicit override if provided, otherwise None (backend is now in file)
@@ -698,6 +742,7 @@ class EnvironmentCommands:
                 model_strategy="skip",  # Sync command focuses on packages
                 remove_extra_nodes=False,  # Don't remove nodes, just sync
                 verbose=verbose,
+                overlay_names=overlay_names,
                 extras=extras,
                 all_extras=all_extras,
                 backend_override=torch_backend_override if torch_backend_override else None,
@@ -1320,6 +1365,7 @@ class EnvironmentCommands:
         env = self._get_env(args)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
+        resolve_with_overlays = getattr(args, "resolve_with_overlays", False)
 
         # Batch mode: multiple nodes
         if len(args.node_names) > 1:
@@ -1347,6 +1393,7 @@ class EnvironmentCommands:
                 callbacks=callbacks,
                 extras=extras,
                 all_extras=all_extras,
+                resolve_with_overlays=resolve_with_overlays,
             )
 
             if installed_count > 0:
@@ -1383,6 +1430,7 @@ class EnvironmentCommands:
                 strict=getattr(args, "strict", False),
                 extras=extras,
                 all_extras=all_extras,
+                resolve_with_overlays=resolve_with_overlays,
             )
         except CDRegistryDataError as e:
             # Registry data unavailable
@@ -3335,7 +3383,10 @@ class EnvironmentCommands:
         print(f"   Current: {status.current_version or 'not installed'}")
         print(f"   Latest:  {status.latest_version or 'unknown'}")
 
-        if status.is_legacy:
+        if status.status == "headless":
+            print("   Mode: headless (--no-manager)")
+            print(f"   Install manager: cg -e {env.name} manager update")
+        elif status.is_legacy:
             print("   Legacy installation (symlinked)")
             print(f"   Run 'cg -e {env.name} manager update' to migrate")
         elif not status.is_tracked:

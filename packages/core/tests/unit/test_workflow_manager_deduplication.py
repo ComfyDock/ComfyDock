@@ -354,3 +354,70 @@ class TestResolveWorkflowDeduplication:
         assert unresolved_keys == expected_keys, (
             f"Expected unique model keys {expected_keys}, got {unresolved_keys}"
         )
+
+    @patch('comfygit_core.managers.workflow_manager.WorkflowRepository')
+    def test_resolve_workflow_checks_path_sync_for_unsaved_workflow(self, _mock_workflow_repo):
+        """Path sync should still be evaluated for unsaved workflows analyzed from JSON."""
+        ref = WorkflowNodeWidgetRef(
+            node_id="301",
+            node_type="CheckpointLoaderSimple",
+            widget_index=0,
+            widget_value="Z-Image\\qwen_3_4b.safetensors"
+        )
+
+        analysis = WorkflowDependencies(
+            workflow_name="unsaved",
+            found_models=[ref],
+            builtin_nodes=[],
+            non_builtin_nodes=[],
+        )
+
+        manager = Mock(spec=WorkflowManager)
+        manager.environment_name = "test_env"
+        manager.pyproject = Mock()
+        manager.pyproject.nodes = Mock()
+        manager.pyproject.nodes.get_existing.return_value = {}
+        manager.pyproject.workflows = Mock()
+        manager.pyproject.workflows.get_custom_node_map.return_value = {}
+        manager.pyproject.workflows.get_workflow_models.return_value = []
+        manager.pyproject_manager = Mock()
+        manager.pyproject_manager.models = Mock()
+        manager.pyproject_manager.models.get_all.return_value = {}
+
+        manager.global_node_resolver = Mock()
+        manager.model_resolver = Mock()
+        manager.workflow_cache = Mock()
+        manager.builtin_versions_repository = None
+        manager.get_workflow_path = Mock(side_effect=FileNotFoundError("unsaved workflow"))
+
+        resolved_model = ModelWithLocation(
+            hash="hash-123",
+            file_size=1234,
+            blake3_hash="blake3-hash-123",
+            sha256_hash=None,
+            relative_path="checkpoints/qwen_3_4b.safetensors",
+            filename="qwen_3_4b.safetensors",
+            mtime=123456,
+            last_seen=123456,
+            base_directory="/models",
+            metadata={}
+        )
+        manager.model_resolver.resolve_model.return_value = [
+            ResolvedModel(
+                workflow="unsaved",
+                reference=ref,
+                resolved_model=resolved_model,
+                match_type="exact",
+                match_confidence=1.0,
+            )
+        ]
+
+        manager.resolve_workflow = WorkflowManager.resolve_workflow.__get__(manager)
+        manager._check_path_needs_sync = Mock(return_value=True)
+        manager._check_category_mismatch = Mock(return_value=(False, [], None))
+
+        result = manager.resolve_workflow(analysis)
+
+        assert len(result.models_resolved) == 1
+        assert result.models_resolved[0].needs_path_sync is True
+        manager._check_path_needs_sync.assert_called_once_with(result.models_resolved[0])

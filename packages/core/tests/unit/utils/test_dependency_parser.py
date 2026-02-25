@@ -25,6 +25,11 @@ class TestParseDependencyString:
         assert name == "torch"
         assert spec == ">=2.0"
 
+    def test_package_with_dotted_name(self):
+        name, spec = parse_dependency_string("zope.interface>=5")
+        assert name == "zope.interface"
+        assert spec == ">=5"
+
     def test_exact_pin(self):
         name, spec = parse_dependency_string("requests==2.28.0")
         assert name == "requests"

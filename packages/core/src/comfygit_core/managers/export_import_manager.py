@@ -61,6 +61,14 @@ class ExportImportManager:
                 for workflow_file in workflows_path.glob("*.json"):
                     tar.add(workflow_file, arcname=f"workflows/{workflow_file.name}")
 
+            # Add shared overlays (tracked). Local overlays are dot-prefixed and excluded.
+            overlays_path = self.cec_path / "overlays"
+            if overlays_path.exists():
+                for overlay_file in overlays_path.glob("*.toml"):
+                    if overlay_file.name.startswith("."):
+                        continue
+                    tar.add(overlay_file, arcname=f"overlays/{overlay_file.name}")
+
             # NOTE: Dev nodes are NO LONGER bundled.
             # They use git references (repository/branch/pinned_commit) instead.
             # This enables team collaboration on custom nodes without large bundles.

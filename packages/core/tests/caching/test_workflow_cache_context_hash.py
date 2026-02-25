@@ -12,7 +12,11 @@ from unittest.mock import Mock
 import pytest
 from comfygit_core.caching.workflow_cache import WorkflowCacheRepository
 from comfygit_core.models.shared import NodeInfo
-from comfygit_core.models.workflow import WorkflowDependencies, WorkflowNode
+from comfygit_core.models.workflow import (
+    WorkflowDependencies,
+    WorkflowNode,
+    WorkflowNodeWidgetRef,
+)
 
 
 @pytest.fixture
@@ -306,3 +310,31 @@ class TestContextHashCustomMappings:
 
         # Hash should change
         assert hash2 != hash1
+
+
+class TestContextHashModelFilenameNormalization:
+    """Test that model filename extraction handles Windows-style separators."""
+
+    def test_context_hash_uses_basename_for_windows_style_model_refs(
+        self,
+        cache_with_mocks,
+        sample_dependencies
+    ):
+        sample_dependencies.found_models = [
+            WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value=r"Z-Image\qwen_3_4b.safetensors",
+            )
+        ]
+
+        hash_result = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        assert hash_result is not None
+        cache_with_mocks.model_repository.find_by_filename.assert_called_once_with(
+            "qwen_3_4b.safetensors"
+        )

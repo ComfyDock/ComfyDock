@@ -83,12 +83,17 @@ class NodeManager:
         if SYSTEM_DEPENDENCY_GROUP not in groups:
             self.pyproject.dependencies.add_to_group(SYSTEM_DEPENDENCY_GROUP, SYSTEM_DEPENDENCIES)
 
-    def _sync_uv(self, **kwargs) -> None:
+    def _sync_uv(self, skip_optional_overlays: bool = True, **kwargs) -> None:
         self._ensure_system_group()
         extras = kwargs.pop("extras", None)
         all_extras = kwargs.pop("all_extras", False)
         resolved_extras, resolved_all = self._resolve_sync_extras(extras, all_extras)
-        self.uv.sync_project(extras=resolved_extras, all_extras=resolved_all, **kwargs)
+        self.uv.sync_project(
+            extras=resolved_extras,
+            all_extras=resolved_all,
+            skip_optional_overlays=skip_optional_overlays,
+            **kwargs,
+        )
 
     def _find_node_by_name(self, name: str) -> tuple[str, NodeInfo] | None:
         """Find a node by name across all identifiers (case-insensitive).
@@ -263,6 +268,7 @@ class NodeManager:
         strict: bool = False,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        skip_optional_overlays: bool = True,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -275,6 +281,7 @@ class NodeManager:
             strict: If True, fail on dependency conflicts instead of auto-resolving
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
+            skip_optional_overlays: If True, only inject pytorch overlays during sync
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -518,6 +525,7 @@ class NodeManager:
                 pytorch_manager=self.pytorch_manager,
                 extras=extras,
                 all_extras=all_extras,
+                skip_optional_overlays=skip_optional_overlays,
             )
 
         except Exception as e:
@@ -555,6 +563,7 @@ class NodeManager:
                     pytorch_manager=self.pytorch_manager,
                     extras=extras,
                     all_extras=all_extras,
+                    skip_optional_overlays=skip_optional_overlays,
                 )
             except Exception as sync_err:
                 logger.error(f"Failed to re-sync environment after rollback: {sync_err}")

@@ -67,8 +67,9 @@ __pycache__/
 # PyTorch backend configuration (machine-specific)
 .pytorch-backend
 
-# Local UV config overrides (machine-specific)
-.local-uv-config
+# Local overlays and activation (machine-specific)
+overlays/.*
+.overlay-config.toml
 
 # Lock file (machine-specific due to PyTorch platform variants)
 uv.lock

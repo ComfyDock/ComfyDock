@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import tomlkit
 
+from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.uv_project_manager import UVProjectManager
 
@@ -35,7 +36,8 @@ def _make_manager():
     uv = MagicMock()
     uv.add.return_value = SimpleNamespace(stdout="ok")
 
-    return tmpdir, UVProjectManager(uv, pyproject), uv
+    overlay_manager = OverlayManager(pyproject_path.parent)
+    return tmpdir, UVProjectManager(uv, pyproject, overlay_manager=overlay_manager), uv
 
 
 def test_no_build_isolation_updates_pyproject():

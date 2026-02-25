@@ -69,6 +69,16 @@ class TestTorchBackendArgumentDefaults:
         assert args.command == "run"
         assert unknown == ["--", "--listen", "0.0.0.0"]
 
+    def test_run_and_sync_accept_overlay_flag(self):
+        """run/sync should accept repeatable --overlay flags."""
+        parser = create_parser()
+
+        run_args = parser.parse_args(["run", "--overlay", "alpha", "--overlay", "beta"])
+        assert run_args.overlay == ["alpha", "beta"]
+
+        sync_args = parser.parse_args(["sync", "--overlay", "alpha"])
+        assert sync_args.overlay == ["alpha"]
+
     def test_pull_command_accepts_explicit_override(self):
         """Pull command should accept explicit --torch-backend override."""
         parser = create_parser()
@@ -90,6 +100,8 @@ class TestCreationCommandsKeepAutoDefault:
 
         assert hasattr(args, "torch_backend")
         assert args.torch_backend == "auto"
+        assert hasattr(args, "no_manager")
+        assert args.no_manager is False
 
     def test_import_command_torch_backend_default_auto(self):
         """Import command should still default to 'auto' for detection."""
@@ -98,6 +110,20 @@ class TestCreationCommandsKeepAutoDefault:
 
         assert hasattr(args, "torch_backend")
         assert args.torch_backend == "auto"
+        assert hasattr(args, "no_manager")
+        assert args.no_manager is False
+
+    def test_create_command_accepts_no_manager_flag(self):
+        """Create command should parse --no-manager for headless setup."""
+        parser = create_parser()
+        args = parser.parse_args(["create", "test-env", "--no-manager"])
+        assert args.no_manager is True
+
+    def test_import_command_accepts_no_manager_flag(self):
+        """Import command should parse --no-manager for headless setup."""
+        parser = create_parser()
+        args = parser.parse_args(["import", "test.tar.gz", "--no-manager"])
+        assert args.no_manager is True
 
 
 class TestEnvConfigTorchBackendSubcommand:
@@ -298,3 +324,32 @@ class TestRunBehavior:
 
         # Should have called ensure_backend which reads from file or probes
         mock_env.pytorch_manager.ensure_backend.assert_called()
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_overlay_rejects_no_sync(self, mock_get_workspace):
+        """run --overlay with --no-sync should fail fast."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+
+        mock_workspace = MagicMock()
+        mock_workspace.get_active_environment.return_value = mock_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend=None,
+            no_sync=True,
+            args=[],
+            extra=[],
+            all_extras=False,
+            overlay=["alpha"],
+        )
+
+        with pytest.raises(SystemExit):
+            cmd.run(args)
