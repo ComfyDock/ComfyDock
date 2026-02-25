@@ -47,19 +47,28 @@ jobs:
           echo "version=$CORE_VERSION" >> $GITHUB_OUTPUT
           echo "✓ All versions match: $CORE_VERSION"
 
-      - name: Check if version exists on PyPI
+      - name: Check if version fully published on PyPI
         id: check_pypi
         run: |
           VERSION="${{ steps.extract.outputs.version }}"
 
-          # Check if comfygit-core version exists on PyPI
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/comfygit-core/$VERSION/json")
+          # Check if ALL three packages exist on PyPI (not just core)
+          ALL_PUBLISHED=true
+          for PKG in comfygit-core comfygit comfygit-deploy; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PKG/$VERSION/json")
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "$PKG $VERSION not found on PyPI"
+              ALL_PUBLISHED=false
+            else
+              echo "$PKG $VERSION exists on PyPI"
+            fi
+          done
 
-          if [ "$HTTP_STATUS" = "200" ]; then
-            echo "Version $VERSION already exists on PyPI, skipping publish"
+          if [ "$ALL_PUBLISHED" = "true" ]; then
+            echo "All packages already published, skipping"
             echo "should_publish=false" >> $GITHUB_OUTPUT
           else
-            echo "Version $VERSION not found on PyPI, will publish"
+            echo "One or more packages need publishing"
             echo "should_publish=true" >> $GITHUB_OUTPUT
           fi
 
@@ -80,7 +89,7 @@ jobs:
         run: uv build --package comfygit-core --no-sources
 
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing automatic
+        run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
 
   wait-for-pypi:
     name: Wait for PyPI Availability
@@ -126,7 +135,7 @@ jobs:
         run: uv build --package comfygit --no-sources
 
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing automatic
+        run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
 
   wait-for-cli:
     name: Wait for CLI Availability
@@ -172,7 +181,7 @@ jobs:
         run: uv build --package comfygit-deploy --no-sources
 
       - name: Publish to PyPI
-        run: uv publish --trusted-publishing automatic
+        run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
 
   create-release:
     name: Create GitHub Release
