@@ -1,0 +1,10 @@
+{
+  "input": {
+    "workflow_name": "z-image",
+    "prompt": "a majestic cat floating in deep space, nebula background, photorealistic, 8k",
+    "seed": 42,
+    "steps": 12,
+    "width": 1024,
+    "height": 1024
+  }
+}
