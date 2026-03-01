@@ -31,12 +31,12 @@ If any entity institutes patent litigation against You or any other entity (incl
 ### 2.3 Outbound License
 
 **ComfyGit is dual-licensed:**
-- GNU General Public License v3.0 (GPL-3.0) for open-source use
+- GNU Affero General Public License v3.0 (AGPL-3.0) for open-source use
 - Commercial proprietary licenses for businesses requiring non-copyleft terms
 
 Based on the grant of rights in Sections 2.1 and 2.2, if We include Your Contribution in a Material, We may license the Contribution under any license, including copyleft, permissive, commercial, or proprietary licenses.
 
-**However,** if We license Your Contribution under terms other than GPL-3.0, We agree to also make it available under the GPL-3.0 license.
+**However,** if We license Your Contribution under terms other than AGPL-3.0, We agree to also make it available under the AGPL-3.0 license.
 
 ### 2.4 Moral Rights
 
@@ -70,7 +70,7 @@ You understand that:
 
 - This Agreement is for Your protection as well as the protection of ComfyGit and its users
 - You retain full copyright ownership of Your Contributions
-- Your Contributions will be available under the GPL-3.0 license
+- Your Contributions will be available under the AGPL-3.0 license
 - Your Contributions may also be made available under commercial proprietary licenses
 - This dual-licensing model helps fund the continued development of ComfyGit
 - The decision to accept Your Contribution is at the discretion of ComfyGit maintainers
