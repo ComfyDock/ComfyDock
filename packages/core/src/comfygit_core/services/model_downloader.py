@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
-from uuid import uuid4
 
 import requests
 from blake3 import blake3
@@ -312,56 +312,61 @@ class ModelDownloader:
             return _CbTqdm
 
         try:
-            # Download to HF cache (Xet-enabled when available)
+            # Download directly into models directory (no blob cache duplication)
+            # Choose local_dir so local_dir/<path_in_repo> lands on target_path when possible.
+            local_dir = self.models_dir
+            target_relative = None
+            try:
+                target_relative = target_path.resolve().relative_to(self.models_dir.resolve())
+            except ValueError:
+                pass
+
+            path_parts = tuple(parsed.path_in_repo.split("/"))
+            if target_relative and len(target_relative.parts) >= len(path_parts):
+                suffix_parts = target_relative.parts[-len(path_parts):]
+                if suffix_parts == path_parts:
+                    prefix_parts = target_relative.parts[:-len(path_parts)]
+                    local_dir = self.models_dir / Path(*prefix_parts) if prefix_parts else self.models_dir
+
             download_kwargs = {
                 "repo_id": parsed.repo_id,
                 "filename": parsed.path_in_repo,
                 "revision": parsed.revision or "main",
                 "token": token if token else None,
+                "local_dir": str(local_dir),
             }
             if progress_callback:
                 download_kwargs["tqdm_class"] = _make_tqdm_class(progress_callback)
 
             try:
-                cache_path_str = hf_hub_download(**download_kwargs)
+                local_path_str = hf_hub_download(**download_kwargs)
             except TypeError:
                 # Older huggingface-hub may not support tqdm_class — download without progress
                 download_kwargs.pop("tqdm_class", None)
-                cache_path_str = hf_hub_download(**download_kwargs)
+                local_path_str = hf_hub_download(**download_kwargs)
 
-            cache_path = Path(cache_path_str).resolve()
+            downloaded_path = Path(local_path_str).resolve()
 
-            # Stage in same dir for atomic replace
-            temp_path = target_path.with_name(f".{target_path.name}.tmp-{uuid4().hex}")
-            try:
-                # Hardlink if possible (fast, no extra disk usage on same filesystem)
+            # If repo layout differs from requested model path, hardlink/copy into target.
+            if downloaded_path != target_path.resolve():
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                if target_path.exists():
+                    target_path.unlink()
+
                 try:
-                    os.link(str(cache_path), str(temp_path))
-                    # Hash from temp_path
-                    hasher = blake3()
-                    file_size = 0
-                    with open(temp_path, "rb") as f:
-                        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                            hasher.update(chunk)
-                            file_size += len(chunk)
+                    os.link(str(downloaded_path), str(target_path))
                 except OSError:
-                    # Fall back to copy+hash (different filesystem)
-                    hasher = blake3()
-                    file_size = 0
-                    with open(cache_path, "rb") as src, open(temp_path, "wb") as dst:
-                        for chunk in iter(lambda: src.read(1024 * 1024), b""):
-                            dst.write(chunk)
-                            hasher.update(chunk)
-                            file_size += len(chunk)
+                    shutil.copy2(downloaded_path, target_path)
+            else:
+                target_path = downloaded_path
 
-                temp_path.replace(target_path)
-                temp_path = None  # Clear since file moved
-            finally:
-                if temp_path and temp_path.exists():
-                    try:
-                        temp_path.unlink()
-                    except Exception:
-                        pass
+            # Hash target file for ComfyGit model index integrity verification
+            hasher = blake3()
+            file_size = 0
+            with open(target_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    hasher.update(chunk)
+                    file_size += len(chunk)
 
             # Register in repository
             short_hash = self.repository.calculate_short_hash(target_path)

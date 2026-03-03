@@ -560,6 +560,94 @@ class TestModelDownloaderHuggingFaceFallback:
 
     @patch('comfygit_core.services.model_downloader.hf_hub_download')
     @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
+    def test_hf_download_uses_local_dir_mode(self, mock_parse, mock_hf_download, tmp_path):
+        """HF downloads should use local_dir mode to avoid blob cache duplication."""
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+
+        mock_parse.return_value = ParsedHuggingFaceUrl(
+            kind="file",
+            repo_id="user/model",
+            path_in_repo="model.safetensors",
+            revision="main",
+        )
+
+        def side_effect(**kwargs):
+            local_file = Path(kwargs["local_dir"]) / kwargs["filename"]
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+            local_file.write_bytes(b"model_data")
+            return str(local_file)
+
+        mock_hf_download.side_effect = side_effect
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+        workspace_config.get_huggingface_token.return_value = None
+
+        downloader = ModelDownloader(repo, workspace_config)
+        target_path = tmp_path / "checkpoints" / "model.safetensors"
+
+        request = DownloadRequest(
+            url="https://huggingface.co/user/model/resolve/main/model.safetensors",
+            target_path=target_path
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is True
+        call_kwargs = mock_hf_download.call_args.kwargs
+        assert call_kwargs["local_dir"] == str(tmp_path / "checkpoints")
+        assert "cache_dir" not in call_kwargs
+        assert target_path.exists()
+
+    @patch('comfygit_core.services.model_downloader.hf_hub_download')
+    @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
+    def test_hf_download_handles_repo_path_target_path_mismatch(self, mock_parse, mock_hf_download, tmp_path):
+        """HF downloads should still materialize at target_path when repo path differs."""
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+
+        mock_parse.return_value = ParsedHuggingFaceUrl(
+            kind="file",
+            repo_id="user/model",
+            path_in_repo="subdir/model.safetensors",
+            revision="main",
+        )
+
+        def side_effect(**kwargs):
+            local_file = Path(kwargs["local_dir"]) / kwargs["filename"]
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+            local_file.write_bytes(b"model_data")
+            return str(local_file)
+
+        mock_hf_download.side_effect = side_effect
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+        workspace_config.get_huggingface_token.return_value = None
+
+        downloader = ModelDownloader(repo, workspace_config)
+        target_path = tmp_path / "clip" / "model.safetensors"
+
+        request = DownloadRequest(
+            url="https://huggingface.co/user/model/resolve/main/subdir/model.safetensors",
+            target_path=target_path
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is True
+        assert target_path.exists()
+        assert target_path.read_bytes() == b"model_data"
+
+    @patch('comfygit_core.services.model_downloader.hf_hub_download')
+    @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
     def test_hf_download_retries_without_tqdm_class_on_type_error(self, mock_parse, mock_hf_download, tmp_path):
         """Test that HF download falls back to no progress bar if tqdm_class causes TypeError."""
         from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
