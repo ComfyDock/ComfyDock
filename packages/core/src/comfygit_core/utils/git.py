@@ -442,7 +442,7 @@ def git_clone(
 
     # For commit hashes, we need to clone without --depth and then checkout
     # For branches/tags, we can use --branch with depth
-    is_commit_hash = ref and len(ref) == 40 and all(c in '0123456789abcdef' for c in ref.lower())
+    is_commit_hash = ref and 7 <= len(ref) <= 40 and all(c in '0123456789abcdef' for c in ref.lower())
 
     if depth > 0 and not is_commit_hash:
         cmd.extend(["--depth", str(depth)])
