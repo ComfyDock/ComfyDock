@@ -299,7 +299,8 @@ class ModelDownloader:
                     self._progress = 0  # Manual tracking since disabled tqdm doesn't update self.n
 
                 def update(self, n=1):
-                    self._progress += n
+                    increment = int(n) if n is not None else 0
+                    self._progress += increment
                     if cb and self.total:
                         cb(int(self._progress), int(self.total))
 
@@ -328,22 +329,33 @@ class ModelDownloader:
                     prefix_parts = target_relative.parts[:-len(path_parts)]
                     local_dir = self.models_dir / Path(*prefix_parts) if prefix_parts else self.models_dir
 
-            download_kwargs = {
-                "repo_id": parsed.repo_id,
-                "filename": parsed.path_in_repo,
-                "revision": parsed.revision or "main",
-                "token": token if token else None,
-                "local_dir": str(local_dir),
-            }
-            if progress_callback:
-                download_kwargs["tqdm_class"] = _make_tqdm_class(progress_callback)
-
             try:
-                local_path_str = hf_hub_download(**download_kwargs)
+                if progress_callback:
+                    local_path_str = hf_hub_download(
+                        repo_id=parsed.repo_id,
+                        filename=parsed.path_in_repo,
+                        revision=parsed.revision or "main",
+                        token=token if token else None,
+                        local_dir=str(local_dir),
+                        tqdm_class=_make_tqdm_class(progress_callback),
+                    )
+                else:
+                    local_path_str = hf_hub_download(
+                        repo_id=parsed.repo_id,
+                        filename=parsed.path_in_repo,
+                        revision=parsed.revision or "main",
+                        token=token if token else None,
+                        local_dir=str(local_dir),
+                    )
             except TypeError:
                 # Older huggingface-hub may not support tqdm_class — download without progress
-                download_kwargs.pop("tqdm_class", None)
-                local_path_str = hf_hub_download(**download_kwargs)
+                local_path_str = hf_hub_download(
+                    repo_id=parsed.repo_id,
+                    filename=parsed.path_in_repo,
+                    revision=parsed.revision or "main",
+                    token=token if token else None,
+                    local_dir=str(local_dir),
+                )
 
             downloaded_path = Path(local_path_str).resolve()
 
