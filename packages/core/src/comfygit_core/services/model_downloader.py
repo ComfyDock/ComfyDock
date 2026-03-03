@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
 import requests
@@ -331,13 +331,14 @@ class ModelDownloader:
 
             try:
                 if progress_callback:
+                    tqdm_class = cast(type[Any], _make_tqdm_class(progress_callback))
                     local_path_str = hf_hub_download(
                         repo_id=parsed.repo_id,
                         filename=parsed.path_in_repo,
                         revision=parsed.revision or "main",
                         token=token if token else None,
                         local_dir=str(local_dir),
-                        tqdm_class=_make_tqdm_class(progress_callback),
+                        tqdm_class=tqdm_class,
                     )
                 else:
                     local_path_str = hf_hub_download(
