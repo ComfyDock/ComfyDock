@@ -380,9 +380,15 @@ class DownloadErrorContext:
 class CDModelDownloadError(ComfyDockError):
     """Model download error with provider-specific context."""
 
-    def __init__(self, message: str, context: DownloadErrorContext | None = None):
+    def __init__(
+        self,
+        message: str,
+        context: DownloadErrorContext | None = None,
+        failures: list[tuple[str, str]] | None = None
+    ):
         super().__init__(message)
         self.context = context
+        self.failures = failures or []
 
     def get_user_message(self) -> str:
         """Get user-friendly error message."""

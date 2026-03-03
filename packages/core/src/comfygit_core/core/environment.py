@@ -2515,6 +2515,18 @@ class Environment:
             self.git_manager.commit_with_identity("Imported environment", add_all=True)
             logger.info("Committed import changes")
 
+        if download_failures and model_strategy != "skip":
+            from ..models.exceptions import CDModelDownloadError
+
+            formatted_failures = ", ".join(
+                f"{model_name} (from {workflow_name})"
+                for workflow_name, model_name in download_failures
+            )
+            raise CDModelDownloadError(
+                f"{len(download_failures)} model(s) failed to download: {formatted_failures}",
+                failures=download_failures
+            )
+
         logger.info("Import finalization completed successfully")
 
     def _strip_local_path_sources(self) -> None:
