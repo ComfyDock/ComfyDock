@@ -107,8 +107,6 @@ class ABManager:
 
         env = os.environ.copy()
         env["COMFYGIT_HOME"] = str(self.workspace_path)
-        # Point model downloads to shared volume location
-        env["COMFYGIT_MODELS_PATH"] = str(self.models_path)
 
         logger.info(f"Running: {' '.join(cmd)}")
         logger.info(f"  COMFYGIT_HOME={env['COMFYGIT_HOME']}")
@@ -160,11 +158,19 @@ class ABManager:
 
         self.ensure_directories()
 
-        # Initialize the ComfyGit workspace
-        result = self._run_cg(["init"], timeout=30)
+        # Initialize the ComfyGit workspace with models on the network volume.
+        # --models-dir ensures model downloads go to persistent storage,
+        # not the container's ephemeral disk (typically only 10-20GB).
+        result = self._run_cg(
+            ["init", "--yes", "--models-dir", str(self.models_path)], timeout=30
+        )
         if result.returncode != 0:
-            # init may fail if already initialized — that's OK
+            # init may fail if already initialized — that's OK, but ensure
+            # models dir is still pointed at the network volume
             logger.warning(f"cg init returned {result.returncode} (may already exist)")
+            self._run_cg(
+                ["model", "index", "dir", str(self.models_path)], timeout=30
+            )
 
         # Import the environment from the repo
         import_args = [
@@ -172,10 +178,11 @@ class ABManager:
             self.repo,
             "--name", self.active_env,
             "--yes",
+            "--no-manager",
             "--models", "all",
         ]
         if self.repo_ref and self.repo_ref != "main":
-            import_args.extend(["--ref", self.repo_ref])
+            import_args.extend(["--branch", self.repo_ref])
 
         result = self._run_cg(import_args, timeout=1800)  # 30 min for model downloads
         if result.returncode != 0:
@@ -187,6 +194,17 @@ class ABManager:
         if not comfyui_main.exists():
             logger.error(f"ComfyUI main.py not found at {comfyui_main}")
             return False
+
+        # Clean up HuggingFace download cache to reclaim volume space.
+        # Models are already in the final location; the HF cache holds
+        # redundant copies that can double storage usage.
+        hf_cache = self.volume_path / ".cache" / "huggingface"
+        if hf_cache.exists():
+            import shutil
+            cache_size = sum(f.stat().st_size for f in hf_cache.rglob("*") if f.is_file())
+            shutil.rmtree(hf_cache, ignore_errors=True)
+            hf_cache.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Cleaned HF cache: freed {cache_size / 1e9:.1f} GB")
 
         # Update state
         self._state["initialized"] = True
@@ -253,11 +271,12 @@ class ABManager:
                 self._state.get("repo", self.repo),
                 "--name", standby,
                 "--yes",
+                "--no-manager",
                 "--models", "all",
             ]
             ref = self._state.get("repo_ref", self.repo_ref)
             if ref and ref != "main":
-                import_args.extend(["--ref", ref])
+                import_args.extend(["--branch", ref])
             result = self._run_cg(import_args, timeout=1800)
 
         if result.returncode != 0:

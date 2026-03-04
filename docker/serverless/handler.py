@@ -8,15 +8,20 @@ workflow execution requests via the RunPod serverless SDK.
 import json
 import logging
 import os
-import random
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
 
 import requests
 import websocket
+from schema import (
+    _is_ui_format,
+    convert_ui_to_api_format,
+    inject_inputs_with_schema,
+    parse_workflow_schema,
+    strip_orphan_nodes,
+)
 
 # ── Logging ───────────────────────────────────────────────────────────
 
@@ -41,88 +46,11 @@ LOWVRAM = os.environ.get("COMFYGIT_LOWVRAM", "true").lower() == "true"
 COMFY_STARTUP_TIMEOUT = 300  # 5 minutes
 COMFY_POLL_INTERVAL = 0.5  # seconds
 
-# ── Built-in Workflow Builders ────────────────────────────────────────
-
-def build_zimage_prompt(
-    prompt: str = "a beautiful landscape",
-    width: int = 1024,
-    height: int = 1024,
-    steps: int = 12,
-    seed: int | None = None,
-    cfg: float = 1.0,
-    sampler: str = "euler",
-    scheduler: str = "simple",
-    denoise: float = 1.0,
-) -> dict:
-    """Build the ComfyUI API-format prompt for the Z-Image workflow."""
-    if seed is None:
-        seed = random.randint(0, 2**32 - 1)
-
-    return {
-        "1": {
-            "class_type": "UNETLoader",
-            "inputs": {
-                "unet_name": "z_image_turbo_bf16.safetensors",
-                "weight_dtype": "default",
-            },
-        },
-        "2": {
-            "class_type": "VAELoader",
-            "inputs": {"vae_name": "ae.safetensors"},
-        },
-        "4": {
-            "class_type": "VAEDecode",
-            "inputs": {"samples": ["16", 0], "vae": ["2", 0]},
-        },
-        "6": {
-            "class_type": "CLIPTextEncode",
-            "inputs": {"text": prompt, "clip": ["14", 0]},
-        },
-        "8": {
-            "class_type": "SaveImage",
-            "inputs": {"filename_prefix": "ComfyUI", "images": ["4", 0]},
-        },
-        "14": {
-            "class_type": "CLIPLoader",
-            "inputs": {
-                "clip_name": "qwen_3_4b.safetensors",
-                "type": "lumina2",
-                "device": "default",
-            },
-        },
-        "15": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"width": width, "height": height, "batch_size": 1},
-        },
-        "16": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["1", 0],
-                "positive": ["6", 0],
-                "negative": ["6", 0],
-                "latent_image": ["15", 0],
-                "seed": seed,
-                "control_after_generate": "fixed",
-                "steps": steps,
-                "cfg": cfg,
-                "sampler_name": sampler,
-                "scheduler": scheduler,
-                "denoise": denoise,
-            },
-        },
-    }
-
-
-# Registry of built-in workflow builders
-WORKFLOW_BUILDERS = {
-    "z-image": build_zimage_prompt,
-}
-
-
 # ── Global State ──────────────────────────────────────────────────────
 
 comfy_process: subprocess.Popen | None = None
 ab_manager = None  # Initialized in setup()
+_object_info_cache: dict | None = None
 
 
 # ── ComfyUI Process Management ───────────────────────────────────────
@@ -225,14 +153,29 @@ def stop_comfyui():
 
 # ── Workflow Execution ────────────────────────────────────────────────
 
+RESERVED_INPUT_KEYS = {
+    "command",
+    "shell",
+    "workflow_name",
+    "workflow",
+    "overrides",
+    "return_base64",
+}
+
+
+def get_workflows_dir() -> Path:
+    """Return the active environment workflow directory."""
+    return ab_manager.active_comfyui_path() / "user" / "default" / "workflows"
+
+
 def load_workflow(workflow_name: str) -> dict | None:
     """Load a workflow JSON from the active environment."""
-    workflows_dir = ab_manager.active_comfyui_path() / "user" / "default" / "workflows"
+    workflows_dir = get_workflows_dir()
     workflow_file = workflows_dir / f"{workflow_name}.json"
 
     if not workflow_file.exists():
         # Try without extension
-        for f in workflows_dir.glob(f"{workflow_name}*"):
+        for f in sorted(workflows_dir.glob(f"{workflow_name}*")):
             if f.suffix == ".json":
                 workflow_file = f
                 break
@@ -243,8 +186,92 @@ def load_workflow(workflow_name: str) -> dict | None:
         logger.info(f"Available workflows: {available}")
         return None
 
-    with open(workflow_file) as f:
-        return json.load(f)
+    try:
+        with open(workflow_file) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid workflow JSON in {workflow_file}: {e}")
+        return None
+
+
+def list_workflows() -> list[dict]:
+    """
+    List all workflow files in the active environment with API schema info.
+
+    Returns one entry per JSON file with at least:
+    - workflow_name (filename stem)
+    - api_enabled (bool)
+    """
+    workflows = []
+    workflows_dir = get_workflows_dir()
+
+    if not workflows_dir.exists():
+        return workflows
+
+    for workflow_file in sorted(workflows_dir.glob("*.json")):
+        workflow_entry = {
+            "workflow_name": workflow_file.stem,
+            "filename": workflow_file.name,
+            "api_enabled": False,
+        }
+
+        try:
+            with open(workflow_file) as f:
+                workflow_json = json.load(f)
+            schema = parse_workflow_schema(workflow_json)
+            if schema:
+                workflow_entry.update({
+                    "api_enabled": True,
+                    "schema_name": schema.get("name", workflow_file.stem),
+                    "description": schema.get("description", ""),
+                    "version": schema.get("version", "1.0.0"),
+                    "inputs": len(schema.get("inputs", [])),
+                    "outputs": len(schema.get("outputs", [])),
+                })
+        except Exception as e:
+            logger.warning(f"Failed to parse workflow {workflow_file.name}: {e}")
+            workflow_entry["parse_error"] = str(e)
+
+        workflows.append(workflow_entry)
+
+    return workflows
+
+
+def fetch_object_info() -> dict:
+    """Fetch and cache ComfyUI node definitions for UI->API conversion."""
+    global _object_info_cache
+    if _object_info_cache is None:
+        resp = requests.get(f"{COMFY_URL}/object_info", timeout=30)
+        resp.raise_for_status()
+        _object_info_cache = resp.json()
+    return _object_info_cache
+
+
+def collect_named_inputs(job_input: dict, schema: dict) -> dict:
+    """Collect named user inputs that match schema input names."""
+    schema_input_names = {
+        input_def.get("name")
+        for input_def in schema.get("inputs", [])
+        if input_def.get("name")
+    }
+    named_inputs = {}
+    ignored_inputs = []
+
+    for key, value in job_input.items():
+        if key in RESERVED_INPUT_KEYS:
+            continue
+        if key in schema_input_names:
+            named_inputs[key] = value
+        else:
+            ignored_inputs.append(key)
+
+    if ignored_inputs:
+        logger.warning(
+            "Ignoring inputs not in workflow schema: %s",
+            ", ".join(sorted(ignored_inputs)),
+        )
+
+    return named_inputs
 
 
 def apply_overrides(workflow: dict, overrides: dict) -> dict:
@@ -257,14 +284,6 @@ def apply_overrides(workflow: dict, overrides: dict) -> dict:
             "widget_name": "value",
             ...
         }
-    }
-
-    Common overrides for Z-Image:
-    {
-        "3": {"text": "a cat in space"},      # positive prompt
-        "6": {"seed": 42},                      # sampler seed
-        "6": {"steps": 12},                     # sampler steps
-        "8": {"width": 1024, "height": 1024},  # image dimensions
     }
     """
     for node_id, widgets in overrides.items():
@@ -413,16 +432,16 @@ def handler(job: dict) -> dict:
 
     Input format:
     {
-        "workflow_name": "z-image",        # Name of workflow file (without .json)
-        "prompt": "a cat in space",        # Shortcut: sets positive prompt text
-        "seed": 42,                        # Shortcut: sets sampler seed
-        "width": 1024,                     # Shortcut: image width
-        "height": 1024,                    # Shortcut: image height
-        "steps": 12,                       # Shortcut: sampling steps
+        "workflow_name": "z-image",        # Workflow filename stem (default: z-image)
+        "prompt": "a cat in space",        # Named workflow input (if schema has "prompt")
+        "seed": 42,                        # Named workflow input (if schema has "seed")
+        "width": 1024,                     # Named workflow input
+        "height": 1024,                    # Named workflow input
+        "steps": 12,                       # Named workflow input
         "overrides": {                     # Advanced: raw node overrides
             "3": {"text": "custom prompt"},
         },
-        "workflow": { ... },               # Advanced: full workflow JSON (overrides workflow_name)
+        "workflow": { ... },               # Advanced: full workflow JSON (overrides workflow_name file)
         "return_base64": true,             # Return output as base64 (default: true)
     }
 
@@ -430,6 +449,8 @@ def handler(job: dict) -> dict:
     {
         "command": "status"                # Return environment status
         "command": "update"                # Trigger A/B update
+        "command": "schema"                # Return workflow schema
+        "command": "workflows"             # List available workflows
     }
     """
     job_input = job.get("input", {})
@@ -437,35 +458,100 @@ def handler(job: dict) -> dict:
     # Handle special commands
     command = job_input.get("command")
     if command == "status":
-        return ab_manager.status()
+        status = ab_manager.status()
+        # Add runtime diagnostics
+        status["env_vars"] = {
+            "COMFYGIT_REPO": os.environ.get("COMFYGIT_REPO", "<not set>"),
+            "COMFYGIT_REPO_REF": os.environ.get("COMFYGIT_REPO_REF", "<not set>"),
+            "COMFYGIT_VOLUME_PATH": os.environ.get("COMFYGIT_VOLUME_PATH", "<not set>"),
+            "COMFYGIT_LOWVRAM": os.environ.get("COMFYGIT_LOWVRAM", "<not set>"),
+        }
+        status["handler_repo"] = REPO
+        status["handler_repo_ref"] = REPO_REF
+        return status
     elif command == "update":
         return ab_manager.update()
+    elif command == "debug":
+        # Run a shell command for diagnostics (test only!)
+        shell_cmd = job_input.get("shell", "echo 'no command'")
+        try:
+            result = subprocess.run(
+                shell_cmd, shell=True, capture_output=True, text=True, timeout=30
+            )
+            return {
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:],
+                "returncode": result.returncode,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+    elif command == "workflows":
+        return {"workflows": list_workflows()}
+    elif command == "schema":
+        workflow_name = job_input.get("workflow_name")
+        workflow = job_input.get("workflow")
 
-    # Get or build the workflow
-    workflow = job_input.get("workflow")  # Raw API-format workflow JSON
-
-    if not workflow:
-        workflow_name = job_input.get("workflow_name", "z-image")
-
-        # Check if we have a built-in builder for this workflow
-        builder = WORKFLOW_BUILDERS.get(workflow_name)
-        if builder:
-            # Use the builder with user-friendly parameters
-            build_kwargs = {}
-            for key in ("prompt", "seed", "width", "height", "steps",
-                        "cfg", "sampler", "scheduler", "denoise"):
-                if key in job_input:
-                    build_kwargs[key] = job_input[key]
-            workflow = builder(**build_kwargs)
-        else:
-            # Try loading from file (must be API format)
+        if workflow is None:
+            if not workflow_name:
+                return {"error": "schema command requires workflow_name or workflow JSON"}
             workflow = load_workflow(workflow_name)
-            if not workflow:
-                return {"error": f"Workflow '{workflow_name}' not found and no built-in builder"}
+            if workflow is None:
+                return {"error": f"Workflow '{workflow_name}' not found"}
+        elif not isinstance(workflow, dict):
+            return {"error": "workflow must be a JSON object"}
 
-    # Apply advanced node-level overrides (for power users)
+        schema = parse_workflow_schema(workflow)
+        if schema is None:
+            return {
+                "workflow_name": workflow_name or "<inline-workflow>",
+                "api_enabled": False,
+                "schema": None,
+            }
+        return schema
+
+    # Load workflow from job or active environment.
+    workflow_name = job_input.get("workflow_name")
+    workflow = job_input.get("workflow")
+
+    if workflow is None:
+        workflow_name = workflow_name or "z-image"
+        workflow = load_workflow(workflow_name)
+        if workflow is None:
+            return {"error": f"Workflow '{workflow_name}' not found"}
+    elif not isinstance(workflow, dict):
+        return {"error": "workflow must be a JSON object"}
+    else:
+        workflow_name = workflow_name or "<inline-workflow>"
+
+    # Parse schema and inject user values by input name for API-enabled workflows.
+    workflow_schema = parse_workflow_schema(workflow)
+    if workflow_schema:
+        named_inputs = collect_named_inputs(job_input, workflow_schema)
+        if named_inputs:
+            workflow = inject_inputs_with_schema(workflow, workflow_schema, named_inputs)
+    else:
+        raw_named_inputs = [
+            key for key in job_input.keys()
+            if key not in RESERVED_INPUT_KEYS
+        ]
+        if raw_named_inputs:
+            logger.warning(
+                "Workflow '%s' is not API-enabled; ignoring named inputs: %s. "
+                "Use 'overrides' for raw node-level control.",
+                workflow_name,
+                ", ".join(sorted(raw_named_inputs)),
+            )
+
+    # Convert UI-format workflows to API format before queueing.
+    if _is_ui_format(workflow):
+        workflow = convert_ui_to_api_format(workflow, fetch_object_info())
+        workflow = strip_orphan_nodes(workflow)
+
+    # Apply raw node-level overrides as an escape hatch for all workflows.
     overrides = job_input.get("overrides", {})
     if overrides:
+        if not isinstance(overrides, dict):
+            return {"error": "overrides must be a JSON object"}
         workflow = apply_overrides(workflow, overrides)
 
     # Execute
