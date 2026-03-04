@@ -179,6 +179,42 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     list_parser = subparsers.add_parser("list", help="List all environments")
     list_parser.set_defaults(func=global_cmds.list_envs)
 
+    # analyze - Analyze a workflow file without requiring workspace/env
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help="Analyze a workflow file for dependencies",
+    )
+    analyze_parser.add_argument("workflow", type=Path, help="Path to workflow JSON file")
+    analyze_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output as JSON",
+    )
+    analyze_parser.add_argument(
+        "--draft-spec",
+        action="store_true",
+        help="Output draft pyproject.toml",
+    )
+    analyze_parser.add_argument(
+        "--online",
+        action="store_true",
+        help="Enrich model sources using online provider lookups",
+    )
+    analyze_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed provenance",
+    )
+    analyze_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Only show unresolved items",
+    )
+    analyze_parser.set_defaults(func=global_cmds.analyze)
+
     # update - Update ComfyGit CLI (self-update)
     update_parser = subparsers.add_parser("update", help="Update ComfyGit CLI")
     update_parser.add_argument("--check", action="store_true", help="Check for updates without upgrading")

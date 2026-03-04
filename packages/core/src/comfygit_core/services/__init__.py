@@ -16,6 +16,14 @@ _EXPORTS: dict[str, str] = {
     "ModelDownloader": "model_downloader",
     "NodeLookupService": "node_lookup_service",
     "RegistryDataManager": "registry_data_manager",
+    "detect_workflow_input_format": "workflow_input",
+    "normalize_workflow_input": "workflow_input",
+    "ResolutionContext": "workflow_resolution_service",
+    "WorkflowResolutionService": "workflow_resolution_service",
+    "AnalysisReport": "workflow_analysis_service",
+    "WorkflowAnalysisService": "workflow_analysis_service",
+    "ModelSourceCandidate": "model_source_lookup",
+    "ModelSourceLookupService": "model_source_lookup",
 }
 
 __all__ = sorted(_EXPORTS)
@@ -33,4 +41,3 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
-

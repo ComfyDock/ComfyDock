@@ -665,7 +665,7 @@ class WorkflowDependencies:
     @property
     def total_models(self) -> int:
         """Total number of model references found."""
-        return len(self.found_models) + len(self.found_models)
+        return len(self.found_models)
 
 @dataclass
 class ResolvedNodePackage:

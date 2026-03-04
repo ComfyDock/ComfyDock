@@ -9,7 +9,7 @@ from comfygit_core.core.workspace import Workspace
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
 from comfygit_core.models.protocols import ExportCallbacks, ImportCallbacks
 
-from .cli_utils import get_workspace_or_exit
+from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
 from .logging.logging_config import get_logger
 from .utils import create_progress_callback, paginate, show_civitai_auth_help, show_download_stats
@@ -327,6 +327,107 @@ class GlobalCommands:
             logger.error(f"Failed to list environments: {e}")
             print(f"✗ Failed to list environments: {e}", file=sys.stderr)
             sys.exit(1)
+
+    def analyze(self, args: argparse.Namespace) -> None:
+        """Analyze a workflow file without requiring a workspace."""
+        import json
+
+        import tomlkit
+
+        from comfygit_core.services.workflow_analysis_service import WorkflowAnalysisService
+
+        workspace = get_workspace_optional()
+        if workspace:
+            service = WorkflowAnalysisService.create_from_workspace(workspace)
+        else:
+            service = WorkflowAnalysisService.create_standalone()
+
+        try:
+            report = service.analyze(args.workflow, online=getattr(args, "online", False))
+        except Exception as e:
+            print(f"✗ Failed to analyze workflow: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json_output:
+            print(json.dumps(report.to_dict(), indent=2, default=str))
+            return
+
+        if args.draft_spec:
+            print(tomlkit.dumps(report.draft_spec))
+            return
+
+        if args.quiet:
+            if not report.unresolved_items:
+                print("No unresolved items.")
+                return
+            for item in report.unresolved_items:
+                print(
+                    f"{item['type']}: {item['name']} - "
+                    f"{item['suggestion']} ({item['next_action']})"
+                )
+            return
+
+        format_name = {
+            "ui_list": "ComfyUI UI (list-based)",
+            "ui_dict": "ComfyUI UI (dict-based)",
+            "api": "ComfyUI API prompt",
+            "api_wrapped": "ComfyUI API prompt (wrapped)",
+        }.get(report.input_format, report.input_format)
+
+        total_node_types = report.total_unique_node_types
+        resolved_node_types = len(report.builtin_nodes) + len(report.resolution.nodes_resolved)
+
+        print(f"Workflow Analysis: {args.workflow.name}")
+        print()
+        print(f"Format: {format_name}")
+        print(f"Nodes:  {report.total_nodes} total, {total_node_types} unique types")
+        print(f"Models: {report.total_model_refs} references")
+        print()
+        print("Node Resolution")
+        print(f"  ✓ {len(report.builtin_nodes)} builtin node types")
+        print(f"  ✓ {len(report.resolution.nodes_resolved)} custom node types resolved")
+        if report.resolution.nodes_version_gated:
+            print(f"  ⚠ {len(report.resolution.nodes_version_gated)} version-gated node types")
+        unresolved_node_count = (
+            len(report.resolution.nodes_uninstallable)
+            + len(report.resolution.nodes_unresolved)
+            + len(report.resolution.nodes_ambiguous)
+        )
+        if unresolved_node_count:
+            print(f"  ✗ {unresolved_node_count} unresolved/ambiguous node types")
+        print()
+        print("Model Resolution")
+        print(f"  ✓ {len(report.resolution.models_resolved)} models resolved")
+        if report.models_with_embedded_urls:
+            print(f"  ✓ {report.models_with_embedded_urls} models with embedded URLs")
+        if report.models_without_sources:
+            print(f"  ⚠ {report.models_without_sources} models without source URLs")
+        unresolved_model_count = (
+            len(report.resolution.models_unresolved)
+            + len(report.resolution.models_ambiguous)
+        )
+        if unresolved_model_count:
+            print(f"  ✗ {unresolved_model_count} unresolved/ambiguous models")
+        print()
+        print("Summary")
+        print(
+            f"  Node resolution:  {report.node_resolution_rate:.0f}% "
+            f"({resolved_node_types}/{total_node_types})"
+        )
+        print(
+            f"  Model resolution: {report.model_resolution_rate:.0f}% "
+            f"({len(report.resolution.models_resolved)}/{report.total_model_refs})"
+        )
+        print(f"  Confidence: {report.overall_confidence}")
+
+        if args.verbose and report.unresolved_items:
+            print()
+            print("Unresolved Items")
+            for item in report.unresolved_items:
+                print(
+                    f"  • {item['type']}: {item['name']} - "
+                    f"{item['suggestion']} ({item['next_action']})"
+                )
 
     def debug(self, args: argparse.Namespace) -> None:
         """Show application debug logs with smart environment detection."""
