@@ -2422,6 +2422,20 @@ class Environment:
             if callbacks:
                 callbacks.on_phase("detect_overlays", overlay_msg)
 
+        # Phase 3.5: Ensure ComfyUI base requirements are present
+        # Web-exported environments may have dependencies=[] since the exact
+        # requirements.txt isn't known at export time. Add them now from the
+        # freshly cloned ComfyUI so uv sync installs everything.
+        comfyui_reqs = self.comfyui_path / "requirements.txt"
+        if comfyui_reqs.exists():
+            pyproject_data = self.pyproject.load()
+            current_deps = pyproject_data.get("project", {}).get("dependencies", [])
+            if not current_deps:
+                logger.info("Adding ComfyUI requirements (empty dependencies detected)...")
+                if callbacks:
+                    callbacks.on_phase("add_requirements", "Adding ComfyUI base requirements...")
+                self.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration
         if callbacks:
