@@ -34,11 +34,13 @@ class WorkflowDependencyParser:
         workflow_name: str | None = None,
         model_config: ModelConfig | None = None,
         cec_path: Path | None = None,
-        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None
+        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None,
+        version_agnostic: bool = False,
     ):
         self.model_config = model_config or ModelConfig.load()
         self.cec_path = cec_path
         self.builtin_versions_repository = builtin_versions_repository
+        self.version_agnostic = version_agnostic
 
         # Accept either Workflow object or Path
         if isinstance(workflow, Path):
@@ -67,7 +69,8 @@ class WorkflowDependencyParser:
             # Create classifier with environment-specific builtins
             classifier = NodeClassifier(
                 self.cec_path,
-                builtin_versions_repository=self.builtin_versions_repository
+                builtin_versions_repository=self.builtin_versions_repository,
+                version_agnostic=self.version_agnostic,
             )
 
             # Analyze and resolve models and nodes

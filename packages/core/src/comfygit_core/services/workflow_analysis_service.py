@@ -55,6 +55,7 @@ class AnalysisReport:
     model_resolution_rate: float
     overall_confidence: str  # 'high', 'medium', 'low', 'incomplete'
     unresolved_items: list[dict[str, str]]
+    min_comfyui_version: str | None = None  # Minimum ComfyUI version required by builtin nodes
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -105,6 +106,7 @@ class WorkflowAnalysisService:
         model_source_lookup: ModelSourceLookupService | None = None,
         registry_available: bool = True,
         registry_error: str | None = None,
+        version_agnostic: bool = False,
     ) -> None:
         """All dependencies optional — degrades gracefully."""
         self.node_mappings_repository = node_mappings_repository
@@ -113,6 +115,7 @@ class WorkflowAnalysisService:
         self.model_source_lookup = model_source_lookup
         self.registry_available = registry_available
         self.registry_error = registry_error
+        self.version_agnostic = version_agnostic
 
         if node_mappings_repository is not None:
             node_resolver = GlobalNodeResolver(node_mappings_repository)
@@ -129,8 +132,19 @@ class WorkflowAnalysisService:
         )
 
     @classmethod
-    def create_standalone(cls, cache_dir: Path | None = None) -> "WorkflowAnalysisService":
-        """Factory for standalone use (no workspace)."""
+    def create_standalone(
+        cls,
+        cache_dir: Path | None = None,
+        version_agnostic: bool = False,
+    ) -> "WorkflowAnalysisService":
+        """Factory for standalone use (no workspace).
+
+        Args:
+            cache_dir: Where to cache registry data.
+            version_agnostic: If True, treat all known builtins as resolved
+                regardless of ComfyUI version. Useful for web tools that
+                aren't tied to a specific installation.
+        """
         cache_root = cache_dir or Path(tempfile.mkdtemp(prefix="comfygit-analyze-"))
 
         node_repo = None
@@ -154,6 +168,7 @@ class WorkflowAnalysisService:
             model_source_lookup=ModelSourceLookupService(cache_dir=cache_root),
             registry_available=registry_available,
             registry_error=registry_error,
+            version_agnostic=version_agnostic,
         )
 
     @classmethod
@@ -186,6 +201,7 @@ class WorkflowAnalysisService:
             workflow_name=name,
             cec_path=None,
             builtin_versions_repository=self.builtin_versions_repository,
+            version_agnostic=self.version_agnostic,
         )
         analysis = parser.analyze_dependencies()
 
@@ -193,6 +209,9 @@ class WorkflowAnalysisService:
         resolution = self.resolution_service.resolve(analysis, resolution_context)
         if online and self.model_source_lookup is not None:
             self._enrich_with_online_sources(resolution)
+
+        # Compute minimum ComfyUI version from all builtin nodes used
+        min_comfyui_version = self._compute_min_comfyui_version(analysis)
 
         unique_node_types = workflow.node_types
         unique_builtin_types = sorted({node.type for node in analysis.builtin_nodes})
@@ -246,11 +265,12 @@ class WorkflowAnalysisService:
             total_model_refs=len(unique_model_refs),
             models_with_embedded_urls=models_with_embedded_urls,
             models_without_sources=models_without_sources,
-            draft_spec=self._build_draft_spec(name, resolution),
+            draft_spec=self._build_draft_spec(name, resolution, min_comfyui_version),
             node_resolution_rate=node_resolution_rate,
             model_resolution_rate=model_resolution_rate,
             overall_confidence=overall_confidence,
             unresolved_items=unresolved_items,
+            min_comfyui_version=min_comfyui_version,
         )
 
     def _enrich_with_online_sources(self, resolution: ResolutionResult) -> None:
@@ -347,7 +367,43 @@ class WorkflowAnalysisService:
                 keys.add(self._model_ref_key(model.reference))
         return keys
 
-    def _build_draft_spec(self, workflow_name: str, resolution: ResolutionResult) -> dict[str, Any]:
+    def _compute_min_comfyui_version(self, analysis: WorkflowDependencies) -> str | None:
+        """Compute the minimum ComfyUI version required by all builtin nodes.
+
+        Looks up each builtin node type in the version-indexed database and
+        returns the highest `introduced_in` version found — that's the minimum
+        ComfyUI version needed to run this workflow.
+        """
+        if not self.builtin_versions_repository:
+            return None
+        db = self.builtin_versions_repository.database
+        if not db:
+            return None
+
+        from ..models.comfyui_builtin_versions import normalize_version_tag, parse_semver_tag
+
+        max_version: tuple[int, int, int] | None = None
+        max_version_tag: str | None = None
+
+        # Collect all builtin node types (including version-gated ones)
+        all_builtin_types = {node.type for node in analysis.builtin_nodes}
+        all_builtin_types |= {node.type for node in analysis.version_gated_nodes}
+
+        for node_type in all_builtin_types:
+            entry = db.builtins.get(node_type)
+            if not entry:
+                continue
+            intro_tag = normalize_version_tag(entry.introduced_in)
+            if not intro_tag:
+                continue
+            intro_tuple = parse_semver_tag(intro_tag)
+            if intro_tuple and (max_version is None or intro_tuple > max_version):
+                max_version = intro_tuple
+                max_version_tag = intro_tag
+
+        return max_version_tag
+
+    def _build_draft_spec(self, workflow_name: str, resolution: ResolutionResult, min_comfyui_version: str | None = None) -> dict[str, Any]:
         nodes_section: dict[str, dict[str, Any]] = {}
         for resolved_node in resolution.nodes_resolved:
             package_id = resolved_node.package_id or resolved_node.node_type
@@ -384,19 +440,21 @@ class WorkflowAnalysisService:
                 }
             )
 
-        return {
-            "tool": {
-                "comfygit": {
-                    "nodes": nodes_section,
-                    "workflows": {
-                        workflow_name: {
-                            "path": f"workflows/{workflow_name}.json",
-                            "models": models_section,
-                        }
-                    },
+        comfygit_section: dict[str, Any] = {
+            "schema_version": 2,
+            "nodes": nodes_section,
+            "workflows": {
+                workflow_name: {
+                    "path": f"workflows/{workflow_name}.json",
+                    "models": models_section,
                 }
-            }
+            },
         }
+
+        if min_comfyui_version:
+            comfygit_section["comfyui_version"] = min_comfyui_version
+
+        return {"tool": {"comfygit": comfygit_section}}
 
     @staticmethod
     def _model_to_draft_entry(model: ResolvedModel) -> dict[str, Any]:
