@@ -688,11 +688,28 @@ class ResolvedNodePackage:
 
     @property
     def is_manager_only_uninstallable(self) -> bool:
-        """True when this mapping points to manager-only source with no installable versions."""
+        """True when this mapping points to manager-only source with no installable versions.
+
+        A node is only truly uninstallable if:
+        1. The mapping source is "manager" (from ComfyUI Manager, not the registry)
+        2. The mapping doesn't pin specific versions (self.versions is empty)
+        3. The actual package in the registry also has no installable versions
+
+        Previously this didn't check condition 3, causing packages like
+        comfyui-videohelpersuite (56 versions) to be flagged as uninstallable
+        just because the manager mapping didn't list version constraints.
+        """
         source = (self.source or "").lower()
         if not source and self.package_data and self.package_data.source:
             source = self.package_data.source.lower()
-        return source == "manager" and not self.versions
+        if source != "manager":
+            return False
+        if self.versions:
+            return False
+        # Check if the actual package has installable versions
+        if self.package_data and self.package_data.versions:
+            return False
+        return True
 
 @dataclass
 class ResolvedModel:
