@@ -724,6 +724,33 @@ class Environment:
             result.errors.append(f"Node sync failed: {e}")
             result.success = False
 
+        staged_node_groups: list[str] = []
+        if not dry_run:
+            try:
+                staged_node_groups = self.node_manager.provision_missing_node_dependencies()
+                if staged_node_groups:
+                    logger.info(
+                        "Syncing %d staged node dependency group(s)",
+                        len(staged_node_groups),
+                    )
+                    self.uv_manager.sync_project(
+                        verbose=verbose,
+                        pytorch_manager=self.pytorch_manager,
+                        overlay_names=overlay_names,
+                        backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
+                        all_groups=True,
+                    )
+                    result.dependency_groups_installed.extend(staged_node_groups)
+            except Exception as e:
+                logger.error(f"Node dependency provisioning failed: {e}")
+                result.errors.append(f"Node dependency provisioning failed: {e}")
+                result.dependency_groups_failed.extend(
+                    (group_name, str(e)) for group_name in staged_node_groups
+                )
+                result.success = False
+
         # Restore workflows from .cec/ to ComfyUI (for git pull workflow)
         if not dry_run and not preserve_workflows:
             logger.debug("Restoring workflows from .cec/")

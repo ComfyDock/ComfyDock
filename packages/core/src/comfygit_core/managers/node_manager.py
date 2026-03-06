@@ -830,6 +830,83 @@ class NodeManager:
 
         logger.info("Finished syncing custom nodes")
 
+    def provision_missing_node_dependencies(self) -> list[str]:
+        """Stage dependency groups for tracked non-dev nodes missing them.
+
+        Thin imports can restore node files to disk before their Python
+        dependency groups exist in pyproject.toml. This method scans installed
+        nodes, stages any missing dependency groups, and defers the actual UV
+        sync so callers can batch everything into one final environment sync.
+        """
+        logger.info("Checking tracked nodes for missing dependency groups...")
+
+        expected_nodes = self.pyproject.nodes.get_existing()
+        existing_groups = self.pyproject.dependencies.get_groups()
+        staged_groups: list[str] = []
+
+        for identifier, node_info in expected_nodes.items():
+            if node_info.source == "development":
+                continue
+
+            group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
+            if group_name in existing_groups:
+                continue
+
+            node_path = self.custom_nodes_path / node_info.name
+            if not node_path.exists():
+                logger.info(
+                    "Skipping dependency provisioning for '%s' because the node directory is missing",
+                    node_info.name,
+                )
+                continue
+
+            logger.info(
+                "Staging dependency group '%s' for node '%s'",
+                group_name,
+                node_info.name,
+            )
+
+            existing_sources = self.pyproject.uv_config.get_source_names()
+            requirements = self.node_lookup.scan_requirements(
+                node_path,
+                package_config=self.package_config,
+            )
+
+            if requirements:
+                self.uv.add_requirements_with_sources(
+                    requirements,
+                    group=group_name,
+                    no_sync=True,
+                    raw=True,
+                )
+            else:
+                self.pyproject.dependencies.add_to_group(group_name, [])
+                logger.info(
+                    "Recorded empty dependency group '%s' for node '%s'",
+                    group_name,
+                    node_info.name,
+                )
+
+            new_sources = self.pyproject.uv_config.get_source_names() - existing_sources
+            if new_sources:
+                node_info.dependency_sources = sorted(
+                    set(node_info.dependency_sources or []) | new_sources
+                )
+                self.pyproject.nodes.add(node_info, identifier)
+
+            existing_groups[group_name] = requirements
+            staged_groups.append(group_name)
+
+        if staged_groups:
+            logger.info(
+                "Staged missing dependency groups for %d node(s)",
+                len(staged_groups),
+            )
+        else:
+            logger.info("All tracked node dependency groups are already provisioned")
+
+        return staged_groups
+
     def _sync_dev_nodes_from_git(self, expected_nodes: dict, existing_nodes: dict, callbacks=None):
         """Clone missing dev nodes that have repository URLs.
 
