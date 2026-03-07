@@ -5,6 +5,7 @@ Provides REST API for creating, starting, stopping, and terminating instances.
 
 import asyncio
 import secrets
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -179,16 +180,109 @@ async def handle_create_instance(request: web.Request) -> web.Response:
     mode = data.get("mode", worker.default_mode)
     branch = data.get("branch")
 
-    # Generate IDs and allocate port
-    instance_id = generate_instance_id()
-    instance_name = generate_instance_name(name)
-
     try:
-        port = worker.port_allocator.allocate(instance_id)
+        instance = _create_instance_record(
+            worker,
+            name=name,
+            mode=mode,
+            import_source=import_source,
+            branch=branch,
+        )
     except RuntimeError as e:
         return web.json_response({"error": str(e)}, status=503)
 
-    # Create instance state
+    # Start deployment in background task
+    asyncio.create_task(_deploy_instance(worker, instance))
+
+    return web.json_response(_instance_response(instance), status=201)
+
+
+async def handle_create_bundle_instance(request: web.Request) -> web.Response:
+    """POST /api/v1/instances/bundle - Create an instance from an uploaded tarball."""
+    worker: WorkerServer = request.app["worker"]
+
+    try:
+        reader = await request.multipart()
+    except Exception:
+        return web.json_response({"error": "Expected multipart form upload"}, status=400)
+
+    fields: dict[str, str] = {}
+    bundle_path: Path | None = None
+    bundle_label = "environment.tar.gz"
+
+    try:
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+
+            if part.name == "bundle":
+                bundle_label = part.filename or bundle_label
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+                    while True:
+                        chunk = await part.read_chunk()
+                        if not chunk:
+                            break
+                        tmp.write(chunk)
+                    bundle_path = Path(tmp.name)
+                continue
+
+            fields[part.name] = await part.text()
+    except Exception:
+        if bundle_path:
+            try:
+                bundle_path.unlink()
+            except OSError:
+                pass
+        return web.json_response({"error": "Failed to read uploaded bundle"}, status=400)
+
+    if not bundle_path:
+        return web.json_response({"error": "bundle file is required"}, status=400)
+
+    name = fields.get("name")
+    mode = fields.get("mode", worker.default_mode)
+
+    try:
+        instance = _create_instance_record(
+            worker,
+            name=name,
+            mode=mode,
+            import_source=f"bundle:{bundle_label}",
+            branch=None,
+        )
+    except RuntimeError as e:
+        try:
+            bundle_path.unlink()
+        except OSError:
+            pass
+        return web.json_response({"error": str(e)}, status=503)
+
+    asyncio.create_task(
+        _deploy_instance(
+            worker,
+            instance,
+            deploy_source=str(bundle_path),
+            cleanup_path=bundle_path,
+        )
+    )
+
+    return web.json_response(_instance_response(instance), status=201)
+
+
+def _create_instance_record(
+    worker: WorkerServer,
+    *,
+    name: str | None,
+    mode: str,
+    import_source: str,
+    branch: str | None,
+) -> InstanceState:
+    """Allocate an instance ID/port and persist the initial state."""
+    instance_id = generate_instance_id()
+    instance_name = generate_instance_name(name)
+
+    port = worker.port_allocator.allocate(instance_id)
+
     instance = InstanceState(
         id=instance_id,
         name=instance_name,
@@ -202,33 +296,37 @@ async def handle_create_instance(request: web.Request) -> web.Response:
 
     worker.state.add_instance(instance)
     worker.state.save()
-
-    # Start deployment in background task
-    asyncio.create_task(_deploy_instance(worker, instance))
-
-    return web.json_response(
-        {
-            "id": instance.id,
-            "name": instance.name,
-            "environment_name": instance.environment_name,
-            "status": instance.status,
-            "mode": instance.mode,
-            "assigned_port": instance.assigned_port,
-            "created_at": instance.created_at,
-        },
-        status=201,
-    )
+    return instance
 
 
-async def _deploy_instance(worker: WorkerServer, instance: InstanceState) -> None:
+def _instance_response(instance: InstanceState) -> dict[str, Any]:
+    return {
+        "id": instance.id,
+        "name": instance.name,
+        "environment_name": instance.environment_name,
+        "status": instance.status,
+        "mode": instance.mode,
+        "assigned_port": instance.assigned_port,
+        "created_at": instance.created_at,
+    }
+
+
+async def _deploy_instance(
+    worker: WorkerServer,
+    instance: InstanceState,
+    *,
+    deploy_source: str | None = None,
+    cleanup_path: Path | None = None,
+) -> None:
     """Background task to deploy and start an instance."""
     try:
+        import_source = deploy_source or instance.import_source
         if instance.mode == "native":
             # Deploy environment (may skip if already exists)
             result = await worker.native_manager.deploy(
                 instance_id=instance.id,
                 environment_name=instance.environment_name,
-                import_source=instance.import_source,
+                import_source=import_source,
                 branch=instance.branch,
             )
 
@@ -274,6 +372,12 @@ async def _deploy_instance(worker: WorkerServer, instance: InstanceState) -> Non
         print(f"Deployment failed for {instance.id}: {e}")
         worker.state.update_status(instance.id, "error")
         worker.state.save()
+    finally:
+        if cleanup_path:
+            try:
+                cleanup_path.unlink()
+            except OSError:
+                pass
 
 
 async def handle_get_instance(request: web.Request) -> web.Response:
@@ -501,6 +605,7 @@ def create_worker_app(
     app.router.add_get("/api/v1/system/info", handle_system_info)
     app.router.add_get("/api/v1/instances", handle_list_instances)
     app.router.add_post("/api/v1/instances", handle_create_instance)
+    app.router.add_post("/api/v1/instances/bundle", handle_create_bundle_instance)
     app.router.add_get("/api/v1/instances/{id}", handle_get_instance)
     app.router.add_post("/api/v1/instances/{id}/stop", handle_stop_instance)
     app.router.add_post("/api/v1/instances/{id}/start", handle_start_instance)
