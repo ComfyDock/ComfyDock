@@ -4,9 +4,13 @@ Commands for setting up and managing the worker server on GPU machines.
 """
 
 import argparse
+import asyncio
+import contextlib
 import json
 import secrets
 from pathlib import Path
+
+from ..config import DeployConfig
 
 WORKER_CONFIG_PATH = Path.home() / ".config" / "comfygit" / "deploy" / "worker.json"
 
@@ -57,6 +61,25 @@ def save_worker_config(config: dict) -> None:
     """Save worker config to disk."""
     WORKER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     WORKER_CONFIG_PATH.write_text(json.dumps(config, indent=2))
+
+
+def _resolve_cloud_settings(args: argparse.Namespace) -> tuple[str | None, str | None]:
+    config = DeployConfig()
+
+    cloud_url = args.cloud or config.cloud_url
+    cloud_token = args.token or config.cloud_token
+
+    updated = False
+    if args.cloud:
+        config.cloud_url = args.cloud
+        updated = True
+    if args.token:
+        config.cloud_token = args.token
+        updated = True
+    if updated:
+        config.save()
+
+    return cloud_url, cloud_token
 
 
 def is_worker_running() -> bool:
@@ -156,15 +179,23 @@ def handle_up(args: argparse.Namespace) -> int:
         manager_link.symlink_to(dev_manager)
         print(f"Dev mode: manager -> {dev_manager}")
 
+    cloud_url, cloud_token = _resolve_cloud_settings(args)
+    if bool(cloud_url) != bool(cloud_token):
+        print("Cloud tunnel requires both --cloud and --token, or both values saved in config.")
+        return 1
+
     print(f"Starting worker server on {args.host}:{args.port}...")
     print(f"  Mode: {args.mode}")
     print(f"  Instance ports: {port_start}-{port_end}")
     print(f"  Broadcast: {args.broadcast}")
+    if cloud_url:
+        print(f"  Cloud tunnel: {cloud_url}")
     print()
     print("Press Ctrl+C to stop.")
 
     from aiohttp import web
 
+    from ..tunnel.client import TunnelClient
     from ..worker.server import create_worker_app
 
     app = create_worker_app(
@@ -174,6 +205,33 @@ def handle_up(args: argparse.Namespace) -> int:
         port_range_start=port_start,
         port_range_end=port_end,
     )
+
+    if cloud_url and cloud_token:
+        try:
+            tunnel_client = TunnelClient(
+                cloud_url=cloud_url,
+                token=cloud_token,
+                worker_server=app["worker"],
+            )
+        except ValueError as exc:
+            print(f"Invalid cloud URL: {exc}")
+            return 1
+
+        app["tunnel_client"] = tunnel_client
+
+        async def _start_tunnel(app: web.Application) -> None:
+            app["tunnel_task"] = asyncio.create_task(tunnel_client.run())
+
+        async def _stop_tunnel(app: web.Application) -> None:
+            await tunnel_client.close()
+            tunnel_task = app.get("tunnel_task")
+            if tunnel_task:
+                tunnel_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tunnel_task
+
+        app.on_startup.append(_start_tunnel)
+        app.on_cleanup.append(_stop_tunnel)
 
     # Save PID file
     pid_file = WORKER_CONFIG_PATH.parent / "worker.pid"
