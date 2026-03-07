@@ -310,9 +310,10 @@ async def _run_instance_git_pull(
 ) -> None:
     """Run cg pull in the background and stream output into the instance log buffer."""
     cec_path = _instance_cec_path(worker, instance)
-    cmd = ["cg", "pull", "--yes"]
+    cmd = ["cg", "-e", instance.environment_name, "pull"]
     if force:
         cmd.append("--force")
+    cmd.extend(["--models", "required"])
 
     env = os.environ.copy()
     env["COMFYGIT_HOME"] = str(worker.workspace_path)
