@@ -93,6 +93,7 @@ class WorkerServer:
         # self.docker_manager = DockerManager(workspace_path)  # Future
         self.models_path_cache: Path | None = None
         self.model_download_tasks: set[asyncio.Task[Any]] = set()
+        self.git_pull_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
 def _resolve_models_path(worker: WorkerServer, *, create: bool = False) -> Path:
@@ -156,6 +157,220 @@ def _resolve_models_path(worker: WorkerServer, *, create: bool = False) -> Path:
 
     worker.models_path_cache = workspace_models
     return worker.models_path_cache
+
+
+def _instance_cec_path(worker: WorkerServer, instance: InstanceState) -> Path:
+    """Return the tracked ComfyGit repo path for an instance."""
+    return worker.workspace_path / "environments" / instance.environment_name / ".cec"
+
+
+def _instance_has_git_repo(worker: WorkerServer, instance: InstanceState) -> bool:
+    """Check whether the instance environment has an initialized git repo."""
+    cec_path = _instance_cec_path(worker, instance)
+    return cec_path.is_dir() and (cec_path / ".git").exists()
+
+
+def _append_instance_log(worker: WorkerServer, instance_id: str, line: str) -> None:
+    """Append a line to the instance log buffer."""
+    worker.native_manager._append_log_line(instance_id, line)
+
+
+async def _run_git_command(
+    repo_path: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> tuple[str, str, int]:
+    """Run a git command inside the instance .cec repo."""
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        cwd=str(repo_path),
+        env=env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    return (
+        stdout.decode("utf-8", errors="replace").strip(),
+        stderr.decode("utf-8", errors="replace").strip(),
+        proc.returncode,
+    )
+
+
+async def _get_git_status_payload(
+    worker: WorkerServer,
+    instance: InstanceState,
+) -> dict[str, Any]:
+    """Collect git state for an instance environment."""
+    cec_path = _instance_cec_path(worker, instance)
+
+    branch_out, _, _ = await _run_git_command(cec_path, "branch", "--show-current")
+    commit_out, _, _ = await _run_git_command(
+        cec_path,
+        "log",
+        "-1",
+        "--format=%H%n%s%n%aI%n%an",
+    )
+    status_out, _, _ = await _run_git_command(cec_path, "status", "--porcelain")
+    remote_out, _, _ = await _run_git_command(cec_path, "remote", "-v")
+
+    commit_lines = commit_out.splitlines() if commit_out else []
+    remotes: dict[str, str] = {}
+    for line in remote_out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] not in remotes:
+            remotes[parts[0]] = parts[1]
+
+    ahead = 0
+    behind = 0
+    upstream_out = ""
+    if remotes:
+        upstream_out, _, upstream_rc = await _run_git_command(
+            cec_path,
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        )
+        if upstream_rc == 0 and upstream_out:
+            await _run_git_command(cec_path, "fetch", "--quiet")
+            ab_out, _, ab_rc = await _run_git_command(
+                cec_path,
+                "rev-list",
+                "--left-right",
+                "--count",
+                f"HEAD...{upstream_out}",
+            )
+            if ab_rc == 0 and ab_out:
+                counts = ab_out.split()
+                if len(counts) == 2:
+                    ahead = int(counts[0])
+                    behind = int(counts[1])
+
+    pull_task = worker.git_pull_tasks.get(instance.id)
+    return {
+        "branch": branch_out or "main",
+        "commit": {
+            "hash": commit_lines[0] if len(commit_lines) > 0 else None,
+            "short_hash": commit_lines[0][:7] if len(commit_lines) > 0 else None,
+            "message": commit_lines[1] if len(commit_lines) > 1 else None,
+            "date": commit_lines[2] if len(commit_lines) > 2 else None,
+            "author": commit_lines[3] if len(commit_lines) > 3 else None,
+        },
+        "dirty": bool(status_out),
+        "changed_files": [line.strip() for line in status_out.splitlines() if line.strip()],
+        "remote": {
+            "name": next(iter(remotes), None),
+            "url": next(iter(remotes.values()), None),
+        },
+        "ahead": ahead,
+        "behind": behind,
+        "has_remote": bool(remotes),
+        "has_upstream": bool(upstream_out),
+        "pulling": bool(pull_task and not pull_task.done()),
+    }
+
+
+async def _get_git_log_payload(
+    worker: WorkerServer,
+    instance: InstanceState,
+    *,
+    limit: int,
+) -> dict[str, Any]:
+    """Collect recent commit history for an instance environment."""
+    cec_path = _instance_cec_path(worker, instance)
+    log_out, _, _ = await _run_git_command(
+        cec_path,
+        "log",
+        f"-{limit}",
+        "--format=%H%n%s%n%aI%n%an%n---",
+    )
+
+    commits: list[dict[str, Any]] = []
+    if log_out:
+        for entry in log_out.split("---\n"):
+            lines = entry.strip().splitlines()
+            if len(lines) >= 4:
+                commits.append({
+                    "hash": lines[0],
+                    "short_hash": lines[0][:7],
+                    "message": lines[1],
+                    "date": lines[2],
+                    "author": lines[3],
+                })
+
+    return {"commits": commits}
+
+
+async def _run_instance_git_pull(
+    worker: WorkerServer,
+    instance: InstanceState,
+    *,
+    force: bool,
+) -> None:
+    """Run cg pull in the background and stream output into the instance log buffer."""
+    cec_path = _instance_cec_path(worker, instance)
+    cmd = ["cg", "pull", "--yes"]
+    if force:
+        cmd.append("--force")
+
+    env = os.environ.copy()
+    env["COMFYGIT_HOME"] = str(worker.workspace_path)
+
+    worker.native_manager._ensure_log_buffer(instance.id)
+    _append_instance_log(worker, instance.id, f"[cg pull] Starting {' '.join(cmd)}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(cec_path),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        stdout_stream = proc.stdout
+        if stdout_stream is not None:
+            while True:
+                line = await stdout_stream.readline()
+                if not line:
+                    break
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                _append_instance_log(worker, instance.id, f"[cg pull] {decoded}")
+
+        await proc.wait()
+        if proc.returncode == 0:
+            _append_instance_log(worker, instance.id, "[cg pull] Pull completed successfully.")
+        else:
+            _append_instance_log(
+                worker,
+                instance.id,
+                f"[cg pull] Pull failed with exit code {proc.returncode}.",
+            )
+    except Exception as exc:
+        _append_instance_log(worker, instance.id, f"[cg pull] Pull crashed: {exc}")
+    finally:
+        worker.git_pull_tasks.pop(instance.id, None)
+
+
+def _start_git_pull(
+    worker: WorkerServer,
+    instance: InstanceState,
+    *,
+    force: bool,
+) -> dict[str, Any]:
+    """Schedule cg pull for an instance if one is not already running."""
+    existing_task = worker.git_pull_tasks.get(instance.id)
+    if existing_task and not existing_task.done():
+        raise RuntimeError("A pull is already in progress for this instance.")
+
+    task = asyncio.create_task(_run_instance_git_pull(worker, instance, force=force))
+    worker.git_pull_tasks[instance.id] = task
+    return {
+        "status": "pulling",
+        "force": force,
+        "message": "Pull started. Check git-status for completion.",
+    }
 
 
 def _resolve_model_relative_path(path_value: str) -> Path:
@@ -676,6 +891,80 @@ async def handle_get_instance(request: web.Request) -> web.Response:
     })
 
 
+async def handle_git_status(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/git-status - Return instance git state."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    instance = worker.state.instances.get(instance_id)
+    if not instance:
+        return web.json_response({"error": "Instance not found"}, status=404)
+
+    if not _instance_has_git_repo(worker, instance):
+        return web.json_response({"error": "No git repository found"}, status=404)
+
+    payload = await _get_git_status_payload(worker, instance)
+    return web.json_response(payload)
+
+
+async def handle_git_log(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/git-log - Return recent commit history."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    instance = worker.state.instances.get(instance_id)
+    if not instance:
+        return web.json_response({"error": "Instance not found"}, status=404)
+
+    if not _instance_has_git_repo(worker, instance):
+        return web.json_response({"error": "No git repository found"}, status=404)
+
+    try:
+        limit = int(request.query.get("limit", "20"))
+    except ValueError:
+        return web.json_response({"error": "limit must be an integer"}, status=400)
+
+    limit = min(max(limit, 1), 100)
+    payload = await _get_git_log_payload(worker, instance, limit=limit)
+    return web.json_response(payload)
+
+
+async def handle_git_pull(request: web.Request) -> web.Response:
+    """POST /api/v1/instances/{id}/git-pull - Run cg pull in the instance repo."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    instance = worker.state.instances.get(instance_id)
+    if not instance:
+        return web.json_response({"error": "Instance not found"}, status=404)
+
+    if not _instance_has_git_repo(worker, instance):
+        return web.json_response({"error": "No git repository found"}, status=404)
+
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+    else:
+        body = {}
+
+    raw_force = body.get("force", False) if isinstance(body, dict) else False
+    if isinstance(raw_force, bool):
+        force = raw_force
+    elif isinstance(raw_force, str):
+        force = raw_force.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        force = bool(raw_force)
+
+    try:
+        payload = _start_git_pull(worker, instance, force=force)
+    except RuntimeError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+
+    return web.json_response(payload)
+
+
 async def handle_stop_instance(request: web.Request) -> web.Response:
     """POST /api/v1/instances/{id}/stop - Stop instance."""
     worker: WorkerServer = request.app["worker"]
@@ -1128,6 +1417,9 @@ def create_worker_app(
     app.router.add_post("/api/v1/instances", handle_create_instance)
     app.router.add_post("/api/v1/instances/bundle", handle_create_bundle_instance)
     app.router.add_get("/api/v1/instances/{id}", handle_get_instance)
+    app.router.add_get("/api/v1/instances/{id}/git-status", handle_git_status)
+    app.router.add_get("/api/v1/instances/{id}/git-log", handle_git_log)
+    app.router.add_post("/api/v1/instances/{id}/git-pull", handle_git_pull)
     app.router.add_post("/api/v1/instances/{id}/stop", handle_stop_instance)
     app.router.add_post("/api/v1/instances/{id}/start", handle_start_instance)
     app.router.add_delete("/api/v1/instances/{id}", handle_terminate_instance)

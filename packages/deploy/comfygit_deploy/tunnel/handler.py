@@ -14,9 +14,13 @@ from ..worker.server import (
     _comfyui_error_detail,
     _create_instance_record,
     _deploy_instance,
+    _get_git_log_payload,
+    _get_git_status_payload,
     _instance_response,
+    _instance_has_git_repo,
     _proxy_comfyui_json_payload,
     _proxy_comfyui_view_payload,
+    _start_git_pull,
 )
 
 
@@ -42,6 +46,23 @@ class TunnelHandler:
         if message_type == "get_instance":
             instance_id = str(message.get("instance_id") or "")
             return {"type": "instance", "request_id": request_id, "payload": self._instance_detail_payload(instance_id)}
+
+        if message_type == "git_status":
+            instance_id = str(message.get("instance_id") or "")
+            payload = await self._git_status(instance_id)
+            return {"type": "instance", "request_id": request_id, "payload": payload}
+
+        if message_type == "git_log":
+            instance_id = str(message.get("instance_id") or "")
+            limit = int(message.get("limit") or 20)
+            payload = await self._git_log(instance_id, limit=limit)
+            return {"type": "instance", "request_id": request_id, "payload": payload}
+
+        if message_type == "git_pull":
+            instance_id = str(message.get("instance_id") or "")
+            force = bool(message.get("force", False))
+            payload = self._git_pull(instance_id, force=force)
+            return {"type": "instance", "request_id": request_id, "payload": payload}
 
         if message_type == "create_instance":
             payload = message.get("payload")
@@ -180,6 +201,30 @@ class TunnelHandler:
             if instance.status == "running"
             else None,
         }
+
+    def _instance_for_git(self, instance_id: str):
+        instance = self.worker.state.instances.get(instance_id)
+        if not instance:
+            raise RuntimeError("Instance not found")
+        if not _instance_has_git_repo(self.worker, instance):
+            raise RuntimeError("No git repository found")
+        return instance
+
+    async def _git_status(self, instance_id: str) -> dict[str, Any]:
+        instance = self._instance_for_git(instance_id)
+        return await _get_git_status_payload(self.worker, instance)
+
+    async def _git_log(self, instance_id: str, *, limit: int) -> dict[str, Any]:
+        instance = self._instance_for_git(instance_id)
+        return await _get_git_log_payload(
+            self.worker,
+            instance,
+            limit=min(max(int(limit), 1), 100),
+        )
+
+    def _git_pull(self, instance_id: str, *, force: bool) -> dict[str, Any]:
+        instance = self._instance_for_git(instance_id)
+        return _start_git_pull(self.worker, instance, force=force)
 
     async def _create_instance(self, payload: dict[str, Any]) -> dict[str, Any]:
         import_source = payload.get("import_source")
