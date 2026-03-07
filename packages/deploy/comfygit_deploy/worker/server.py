@@ -21,6 +21,16 @@ from .. import __version__
 from .native_manager import NativeManager
 from .state import InstanceState, PortAllocator, WorkerState
 
+MODEL_EXTENSIONS = {
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".gguf",
+}
+SKIPPED_MODEL_DIRS = {".venv", "__pycache__", ".git", ".cache"}
+
 
 def generate_instance_id() -> str:
     """Generate unique instance ID."""
@@ -81,6 +91,140 @@ class WorkerServer:
         # Instance managers by mode
         self.native_manager = NativeManager(workspace_path)
         # self.docker_manager = DockerManager(workspace_path)  # Future
+        self.models_path_cache: Path | None = None
+        self.model_download_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _resolve_models_path(worker: WorkerServer, *, create: bool = False) -> Path:
+    """Resolve the shared models directory and cache the result."""
+    if worker.models_path_cache is not None:
+        if create and not worker.models_path_cache.exists():
+            worker.models_path_cache.mkdir(parents=True, exist_ok=True)
+        return worker.models_path_cache
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+
+    for instance in worker.state.instances.values():
+        candidate = worker.workspace_path / instance.environment_name / "ComfyUI" / "models"
+        if candidate not in seen:
+            candidates.append(candidate)
+            seen.add(candidate)
+
+    if worker.workspace_path.exists():
+        for child in worker.workspace_path.iterdir():
+            candidate = child / "ComfyUI" / "models"
+            if candidate not in seen:
+                candidates.append(candidate)
+                seen.add(candidate)
+
+    for candidate in candidates:
+        if candidate.is_symlink():
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            worker.models_path_cache = resolved
+            return resolved
+
+    workspace_models = worker.workspace_path / "models"
+    if workspace_models.exists():
+        worker.models_path_cache = workspace_models.resolve()
+        return worker.models_path_cache
+
+    shared_models = Path("/data/models")
+    if shared_models.exists():
+        worker.models_path_cache = shared_models.resolve()
+        return worker.models_path_cache
+
+    if create:
+        workspace_models.mkdir(parents=True, exist_ok=True)
+        worker.models_path_cache = workspace_models.resolve()
+        return worker.models_path_cache
+
+    worker.models_path_cache = workspace_models
+    return worker.models_path_cache
+
+
+def _resolve_model_relative_path(path_value: str) -> Path:
+    """Validate a user-provided model path relative to the models directory."""
+    normalized = str(path_value or "").strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError("path is required")
+
+    path = Path(normalized)
+    if path.is_absolute() or any(part == ".." for part in path.parts):
+        raise ValueError("Invalid model path")
+
+    safe_parts = [part for part in path.parts if part not in {"", "."}]
+    if not safe_parts:
+        raise ValueError("Invalid model path")
+
+    return Path(*safe_parts)
+
+
+def _resolve_model_file_path(
+    models_path: Path,
+    relative_path: str,
+    *,
+    require_exists: bool = False,
+) -> Path:
+    """Resolve a relative model path and ensure it stays within models_path."""
+    safe_relative = _resolve_model_relative_path(relative_path)
+    base_path = models_path.resolve()
+    target = (base_path / safe_relative).resolve(strict=require_exists)
+    if not target.is_relative_to(base_path):
+        raise ValueError("Invalid model path")
+    return target
+
+
+async def _download_model_to_path(url: str, destination: Path) -> None:
+    """Download a model to disk using a temporary file and atomic rename."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_name(f"{destination.name}.part")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status >= 400:
+                    raise RuntimeError(f"Download failed with HTTP {response.status}")
+
+                with temp_path.open("wb") as handle:
+                    async for chunk in response.content.iter_chunked(1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+
+        temp_path.replace(destination)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _track_background_task(worker: WorkerServer, task: asyncio.Task[Any]) -> None:
+    worker.model_download_tasks.add(task)
+    task.add_done_callback(worker.model_download_tasks.discard)
+
+
+def _launch_model_download(
+    worker: WorkerServer,
+    *,
+    url: str,
+    destination: Path,
+) -> None:
+    async def _runner() -> None:
+        try:
+            await _download_model_to_path(url, destination)
+        except Exception as exc:
+            print(f"Model download failed for {destination}: {exc}")
+
+    task = asyncio.create_task(_runner())
+    _track_background_task(worker, task)
 
 
 @web.middleware
@@ -133,6 +277,114 @@ async def handle_system_info(request: web.Request) -> web.Response:
             "available": (worker.port_range_end - worker.port_range_start)
             - len(worker.port_allocator.allocated),
         },
+    })
+
+
+async def handle_list_models(request: web.Request) -> web.Response:
+    """GET /api/v1/models - List models from the shared models directory."""
+    worker: WorkerServer = request.app["worker"]
+    models_path = _resolve_models_path(worker)
+
+    models: list[dict[str, Any]] = []
+    total_size_bytes = 0
+
+    if models_path.exists():
+        for root, dirs, files in os.walk(models_path):
+            dirs[:] = [name for name in dirs if name not in SKIPPED_MODEL_DIRS]
+            root_path = Path(root)
+
+            for filename in files:
+                file_path = root_path / filename
+                if file_path.suffix.lower() not in MODEL_EXTENSIONS:
+                    continue
+
+                try:
+                    stat = file_path.stat()
+                except OSError:
+                    continue
+
+                relative_path = file_path.relative_to(models_path).as_posix()
+                folder = Path(relative_path).parent.as_posix()
+                if folder == ".":
+                    folder = ""
+
+                models.append({
+                    "name": file_path.name,
+                    "path": relative_path,
+                    "folder": folder,
+                    "size_bytes": stat.st_size,
+                    "modified": datetime.fromtimestamp(
+                        stat.st_mtime,
+                        timezone.utc,
+                    ).isoformat(),
+                })
+                total_size_bytes += stat.st_size
+
+    models.sort(key=lambda item: str(item["path"]).lower())
+    return web.json_response({
+        "models_path": str(models_path),
+        "total_size_bytes": total_size_bytes,
+        "models": models,
+    })
+
+
+async def handle_download_model(request: web.Request) -> web.Response:
+    """POST /api/v1/models/download - Start a background model download."""
+    worker: WorkerServer = request.app["worker"]
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    url = str(data.get("url") or "").strip()
+    relative_path = str(data.get("path") or "").strip()
+    if not url:
+        return web.json_response({"error": "url is required"}, status=400)
+    if not relative_path:
+        return web.json_response({"error": "path is required"}, status=400)
+
+    try:
+        models_path = _resolve_models_path(worker, create=True)
+        destination = _resolve_model_file_path(models_path, relative_path)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    _launch_model_download(worker, url=url, destination=destination)
+    return web.json_response({
+        "status": "downloading",
+        "path": relative_path.replace("\\", "/"),
+    })
+
+
+async def handle_delete_model(request: web.Request) -> web.Response:
+    """DELETE /api/v1/models/{path:.*} - Delete a model file."""
+    worker: WorkerServer = request.app["worker"]
+    relative_path = request.match_info.get("path", "")
+
+    try:
+        models_path = _resolve_models_path(worker)
+        file_path = _resolve_model_file_path(
+            models_path,
+            relative_path,
+            require_exists=True,
+        )
+    except FileNotFoundError:
+        return web.json_response({"error": "Model not found"}, status=404)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    if not file_path.is_file():
+        return web.json_response({"error": "Model not found"}, status=404)
+
+    try:
+        file_path.unlink()
+    except OSError as exc:
+        return web.json_response({"error": f"Failed to delete model: {exc}"}, status=500)
+
+    return web.json_response({
+        "deleted": True,
+        "path": relative_path.replace("\\", "/"),
     })
 
 
@@ -885,5 +1137,8 @@ def create_worker_app(
         "/api/v1/instances/{id}/comfyui/view",
         handle_comfyui_view,
     )
+    app.router.add_get("/api/v1/models", handle_list_models)
+    app.router.add_post("/api/v1/models/download", handle_download_model)
+    app.router.add_delete("/api/v1/models/{path:.*}", handle_delete_model)
 
     return app
