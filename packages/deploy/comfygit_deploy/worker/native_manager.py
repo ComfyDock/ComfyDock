@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,7 @@ class NativeManager:
         self._processes: dict[str, subprocess.Popen] = {}
         self._log_buffers: dict[str, list[str]] = {}  # Ring buffers for log capture
         self._max_log_lines: int = 1000  # Keep last N lines per instance
+        self._log_threads: dict[str, threading.Thread] = {}
 
     def _ensure_log_buffer(self, instance_id: str) -> list[str]:
         """Create the ring buffer for an instance if needed."""
@@ -67,6 +69,45 @@ class NativeManager:
         buf.append(line)
         if len(buf) > self._max_log_lines:
             del buf[0 : len(buf) - self._max_log_lines]
+
+    def recover_instance_logs(self, instance_id: str, pid: int) -> None:
+        """Try to re-attach log reading for a recovered instance.
+
+        When the worker restarts, running instances have no log reader thread.
+        This attempts to read from /proc/{pid}/fd/1 (stdout) to capture ongoing
+        output, and seeds the buffer with a recovery notice.
+        """
+        if instance_id in self._log_threads and self._log_threads[instance_id].is_alive():
+            return  # Already have a reader
+
+        buf = self._ensure_log_buffer(instance_id)
+        buf.append(f"[worker] Recovered instance (PID {pid}) — log capture re-attached")
+
+        # Try to tail the process's stdout via /proc
+        fd_path = Path(f"/proc/{pid}/fd/1")
+        if not fd_path.exists():
+            buf.append(f"[worker] Cannot read /proc/{pid}/fd/1 — process stdout not accessible")
+            return
+
+        try:
+            # Open the fd in non-blocking read mode
+            fd = os.open(str(fd_path), os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, PermissionError) as exc:
+            buf.append(f"[worker] Cannot open /proc/{pid}/fd/1: {exc}")
+            return
+
+        def _tail_proc_fd():
+            """Background thread to read from the process fd."""
+            try:
+                f = os.fdopen(fd, "r", errors="replace")
+                for line in f:
+                    self._append_log_line(instance_id, line.rstrip())
+            except Exception:
+                pass
+
+        thread = threading.Thread(target=_tail_proc_fd, daemon=True, name=f"log-recover-{instance_id}")
+        thread.start()
+        self._log_threads[instance_id] = thread
 
     def environment_exists(self, environment_name: str) -> bool:
         """Check if an environment is fully set up.

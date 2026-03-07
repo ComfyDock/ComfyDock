@@ -566,6 +566,37 @@ async def _handle_logs_websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _find_pid_on_port(port: int) -> int | None:
+    """Find the PID of a process listening on the given port via /proc/net/tcp."""
+    import struct
+    try:
+        hex_port = f"{port:04X}"
+        with open("/proc/net/tcp", "r") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 10:
+                    continue
+                local_addr = parts[1]
+                if local_addr.endswith(f":{hex_port}"):
+                    # Found a listener — get the inode
+                    inode = parts[9]
+                    if inode == "0":
+                        continue
+                    # Search /proc/*/fd/* for this inode
+                    import glob
+                    for fd_link in glob.glob("/proc/[0-9]*/fd/*"):
+                        try:
+                            target = os.readlink(fd_link)
+                            if f"socket:[{inode}]" in target:
+                                pid = int(fd_link.split("/")[2])
+                                return pid
+                        except (OSError, ValueError):
+                            continue
+    except (OSError, PermissionError):
+        pass
+    return None
+
+
 def create_worker_app(
     api_key: str,
     workspace_path: Path,
@@ -599,6 +630,53 @@ def create_worker_app(
         state_dir=state_dir,
     )
     app["worker"] = worker
+
+    # Recover log readers for instances that survived a worker restart
+    for inst_id, inst in worker.state.instances.items():
+        if inst.status == "running" and inst.assigned_port:
+            import os
+            pid_alive = False
+            if inst.pid:
+                try:
+                    os.kill(inst.pid, 0)
+                    pid_alive = True
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+            if pid_alive:
+                worker.native_manager.recover_instance_logs(inst_id, inst.pid)
+            else:
+                # PID is gone — check if something is still listening on the port
+                # (user may have restarted ComfyUI manually)
+                import socket
+                port_in_use = False
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(1)
+                        s.connect(("127.0.0.1", inst.assigned_port))
+                        port_in_use = True
+                except (ConnectionRefusedError, OSError, TimeoutError):
+                    pass
+
+                if port_in_use:
+                    # ComfyUI is running on the port but with a new PID — find it
+                    new_pid = _find_pid_on_port(inst.assigned_port)
+                    if new_pid:
+                        worker.state.update_status(inst_id, "running", pid=new_pid)
+                        worker.state.save()
+                        worker.native_manager.recover_instance_logs(inst_id, new_pid)
+                        print(f"  Recovered {inst_id}: new PID {new_pid} on port {inst.assigned_port}")
+                    else:
+                        worker.native_manager._ensure_log_buffer(inst_id)
+                        worker.native_manager._append_log_line(
+                            inst_id,
+                            f"[worker] Instance running on port {inst.assigned_port} but PID unknown"
+                        )
+                        print(f"  Recovered {inst_id}: port {inst.assigned_port} active, PID unknown")
+                else:
+                    worker.state.update_status(inst_id, "stopped")
+                    worker.state.save()
+                    print(f"  Instance {inst_id}: process dead, port closed — marked stopped")
 
     # Register routes
     app.router.add_get("/api/v1/health", handle_health)
