@@ -105,12 +105,24 @@ def _resolve_models_path(worker: WorkerServer, *, create: bool = False) -> Path:
     candidates: list[Path] = []
     seen: set[Path] = set()
 
+    # Check running instances first
     for instance in worker.state.instances.values():
         candidate = worker.workspace_path / instance.environment_name / "ComfyUI" / "models"
         if candidate not in seen:
             candidates.append(candidate)
             seen.add(candidate)
 
+    # Check environments/ subdirectory (standard comfygit layout)
+    envs_dir = worker.workspace_path / "environments"
+    if envs_dir.is_dir():
+        for child in envs_dir.iterdir():
+            if child.is_dir():
+                candidate = child / "ComfyUI" / "models"
+                if candidate not in seen:
+                    candidates.append(candidate)
+                    seen.add(candidate)
+
+    # Check direct workspace children as fallback
     if worker.workspace_path.exists():
         for child in worker.workspace_path.iterdir():
             candidate = child / "ComfyUI" / "models"
