@@ -57,6 +57,17 @@ class NativeManager:
         self._log_buffers: dict[str, list[str]] = {}  # Ring buffers for log capture
         self._max_log_lines: int = 1000  # Keep last N lines per instance
 
+    def _ensure_log_buffer(self, instance_id: str) -> list[str]:
+        """Create the ring buffer for an instance if needed."""
+        return self._log_buffers.setdefault(instance_id, [])
+
+    def _append_log_line(self, instance_id: str, line: str) -> None:
+        """Append a line to the in-memory log buffer."""
+        buf = self._ensure_log_buffer(instance_id)
+        buf.append(line)
+        if len(buf) > self._max_log_lines:
+            del buf[0 : len(buf) - self._max_log_lines]
+
     def environment_exists(self, environment_name: str) -> bool:
         """Check if an environment is fully set up.
 
@@ -115,6 +126,7 @@ class NativeManager:
         # Check if environment already exists (e.g., worker restart)
         if self.environment_exists(environment_name):
             # Still apply dev nodes in case config changed
+            self._append_log_line(instance_id, "Environment already exists. Skipping import.")
             self._apply_dev_nodes(environment_name)
             return DeployResult(success=True, skipped=True)
 
@@ -143,11 +155,21 @@ class NativeManager:
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        # Wait for completion
-        stdout, _ = await proc.communicate()
+        output_lines: list[str] = []
+        stdout_stream = proc.stdout
+        if stdout_stream is not None:
+            while True:
+                line = await stdout_stream.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                output_lines.append(text)
+                self._append_log_line(instance_id, text)
+
+        await proc.wait()
 
         if proc.returncode != 0:
-            output = stdout.decode() if stdout else ""
+            output = "\n".join(output_lines)
             return DeployResult(
                 success=False,
                 error=f"Import failed for {instance_id}: {output}",
@@ -248,17 +270,14 @@ class NativeManager:
                 bufsize=1,  # Line buffered
             )
             self._processes[instance_id] = proc
-            self._log_buffers[instance_id] = []
+            self._ensure_log_buffer(instance_id)
 
             # Start background thread to read output
             import threading
             def read_output():
                 try:
                     for line in proc.stdout:
-                        buf = self._log_buffers.get(instance_id, [])
-                        buf.append(line.rstrip())
-                        if len(buf) > self._max_log_lines:
-                            buf.pop(0)
+                        self._append_log_line(instance_id, line.rstrip())
                 except Exception:
                     pass
 
