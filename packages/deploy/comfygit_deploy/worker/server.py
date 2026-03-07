@@ -4,7 +4,10 @@ Provides REST API for creating, starting, stopping, and terminating instances.
 """
 
 import asyncio
+import glob
+import os
 import secrets
+import socket
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -568,7 +571,6 @@ async def _handle_logs_websocket(request: web.Request) -> web.WebSocketResponse:
 
 def _find_pid_on_port(port: int) -> int | None:
     """Find the PID of a process listening on the given port via /proc/net/tcp."""
-    import struct
     try:
         hex_port = f"{port:04X}"
         with open("/proc/net/tcp", "r") as f:
@@ -583,7 +585,6 @@ def _find_pid_on_port(port: int) -> int | None:
                     if inode == "0":
                         continue
                     # Search /proc/*/fd/* for this inode
-                    import glob
                     for fd_link in glob.glob("/proc/[0-9]*/fd/*"):
                         try:
                             target = os.readlink(fd_link)
@@ -634,7 +635,6 @@ def create_worker_app(
     # Recover log readers for instances that survived a worker restart
     for inst_id, inst in worker.state.instances.items():
         if inst.status == "running" and inst.assigned_port:
-            import os
             pid_alive = False
             if inst.pid:
                 try:
@@ -648,7 +648,6 @@ def create_worker_app(
             else:
                 # PID is gone — check if something is still listening on the port
                 # (user may have restarted ComfyUI manually)
-                import socket
                 port_in_use = False
                 try:
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
