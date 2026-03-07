@@ -4,6 +4,7 @@ Provides REST API for creating, starting, stopping, and terminating instances.
 """
 
 import asyncio
+import base64
 import glob
 import os
 import secrets
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 
 from .. import __version__
@@ -569,6 +571,184 @@ async def _handle_logs_websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _get_running_instance(worker: WorkerServer, instance_id: str) -> InstanceState:
+    instance = worker.state.instances.get(instance_id)
+    if not instance:
+        raise LookupError("Instance not found")
+    if instance.status != "running":
+        raise RuntimeError("Instance is not running")
+    return instance
+
+
+def _comfyui_error_detail(status: int, payload: dict[str, Any] | None = None) -> str:
+    if isinstance(payload, dict):
+        detail = payload.get("error") or payload.get("detail")
+        if detail:
+            return str(detail)
+    return f"ComfyUI returned HTTP {status}."
+
+
+async def _proxy_comfyui_json_payload(
+    worker: WorkerServer,
+    instance_id: str,
+    method: str,
+    path: str,
+    *,
+    json_body: Any | None = None,
+    params: dict[str, str] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    instance = _get_running_instance(worker, instance_id)
+    comfyui_url = f"http://localhost:{instance.assigned_port}"
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.request(
+            method,
+            f"{comfyui_url}{path}",
+            json=json_body,
+            params=params,
+        ) as resp:
+            payload = await resp.json(content_type=None)
+            if not isinstance(payload, dict):
+                raise RuntimeError("ComfyUI returned an unexpected JSON payload.")
+            return resp.status, payload
+
+
+async def _proxy_comfyui_view_payload(
+    worker: WorkerServer,
+    instance_id: str,
+    *,
+    params: dict[str, str],
+) -> tuple[int, dict[str, Any]]:
+    instance = _get_running_instance(worker, instance_id)
+    comfyui_url = f"http://localhost:{instance.assigned_port}"
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.get(f"{comfyui_url}/view", params=params) as resp:
+            body = await resp.read()
+            if resp.status >= 400:
+                detail = body.decode("utf-8", errors="replace").strip()
+                return resp.status, {
+                    "error": detail or f"ComfyUI returned HTTP {resp.status}."
+                }
+            return resp.status, {
+                "data": base64.b64encode(body).decode(),
+                "content_type": resp.content_type,
+            }
+
+
+async def handle_comfyui_object_info(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/comfyui/object_info - Proxy object_info."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    try:
+        status, payload = await _proxy_comfyui_json_payload(
+            worker,
+            instance_id,
+            "GET",
+            "/object_info",
+        )
+        return web.json_response(payload, status=status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
+async def handle_comfyui_prompt(request: web.Request) -> web.Response:
+    """POST /api/v1/instances/{id}/comfyui/prompt - Proxy prompt submission."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    try:
+        status, payload = await _proxy_comfyui_json_payload(
+            worker,
+            instance_id,
+            "POST",
+            "/prompt",
+            json_body=data,
+        )
+        return web.json_response(payload, status=status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
+async def handle_comfyui_history(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/comfyui/history/{prompt_id} - Proxy prompt history."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+    prompt_id = request.match_info["prompt_id"]
+
+    try:
+        status, payload = await _proxy_comfyui_json_payload(
+            worker,
+            instance_id,
+            "GET",
+            f"/history/{prompt_id}",
+        )
+        return web.json_response(payload, status=status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
+async def handle_comfyui_view(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/comfyui/view - Proxy output retrieval."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+    params = {
+        "filename": request.query.get("filename", ""),
+        "subfolder": request.query.get("subfolder", ""),
+        "type": request.query.get("type", ""),
+    }
+
+    try:
+        status, payload = await _proxy_comfyui_view_payload(
+            worker,
+            instance_id,
+            params=params,
+        )
+        return web.json_response(payload, status=status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
 def _find_pid_on_port(port: int) -> int | None:
     """Find the PID of a process listening on the given port via /proc/net/tcp."""
     try:
@@ -689,5 +869,21 @@ def create_worker_app(
     app.router.add_delete("/api/v1/instances/{id}", handle_terminate_instance)
     # Combined handler for both HTTP GET and WebSocket upgrade
     app.router.add_get("/api/v1/instances/{id}/logs", handle_logs)
+    app.router.add_get(
+        "/api/v1/instances/{id}/comfyui/object_info",
+        handle_comfyui_object_info,
+    )
+    app.router.add_post(
+        "/api/v1/instances/{id}/comfyui/prompt",
+        handle_comfyui_prompt,
+    )
+    app.router.add_get(
+        "/api/v1/instances/{id}/comfyui/history/{prompt_id}",
+        handle_comfyui_history,
+    )
+    app.router.add_get(
+        "/api/v1/instances/{id}/comfyui/view",
+        handle_comfyui_view,
+    )
 
     return app

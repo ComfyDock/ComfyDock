@@ -11,9 +11,12 @@ from typing import Any
 from .. import __version__
 from ..worker.server import (
     WorkerServer,
+    _comfyui_error_detail,
     _create_instance_record,
     _deploy_instance,
     _instance_response,
+    _proxy_comfyui_json_payload,
+    _proxy_comfyui_view_payload,
 )
 
 
@@ -75,6 +78,33 @@ class TunnelHandler:
             instance_id = str(message.get("instance_id") or "")
             lines = int(message.get("lines") or 100)
             return {"type": "logs", "request_id": request_id, "payload": self._logs_payload(instance_id, lines=lines)}
+
+        if message_type == "comfyui_object_info":
+            instance_id = str(message.get("instance_id") or "")
+            payload = await self._comfyui_object_info(instance_id)
+            return {"type": "comfyui", "request_id": request_id, "payload": payload}
+
+        if message_type == "comfyui_prompt":
+            instance_id = str(message.get("instance_id") or "")
+            payload = message.get("payload")
+            if not isinstance(payload, dict):
+                raise RuntimeError("Tunnel ComfyUI prompt payload must be an object.")
+            response = await self._comfyui_prompt(instance_id, payload)
+            return {"type": "comfyui", "request_id": request_id, "payload": response}
+
+        if message_type == "comfyui_history":
+            instance_id = str(message.get("instance_id") or "")
+            prompt_id = str(message.get("prompt_id") or "")
+            response = await self._comfyui_history(instance_id, prompt_id)
+            return {"type": "comfyui", "request_id": request_id, "payload": response}
+
+        if message_type == "comfyui_view":
+            instance_id = str(message.get("instance_id") or "")
+            payload = message.get("payload")
+            if not isinstance(payload, dict):
+                raise RuntimeError("Tunnel ComfyUI view payload must be an object.")
+            response = await self._comfyui_view(instance_id, payload)
+            return {"type": "comfyui", "request_id": request_id, "payload": response}
 
         raise RuntimeError(f"Unsupported tunnel command '{message_type}'.")
 
@@ -302,3 +332,60 @@ class TunnelHandler:
             logs = []
 
         return {"logs": logs}
+
+    async def _comfyui_object_info(self, instance_id: str) -> dict[str, Any]:
+        status, payload = await _proxy_comfyui_json_payload(
+            self.worker,
+            instance_id,
+            "GET",
+            "/object_info",
+        )
+        if status >= 400:
+            raise RuntimeError(_comfyui_error_detail(status, payload))
+        return payload
+
+    async def _comfyui_prompt(
+        self,
+        instance_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        status, response = await _proxy_comfyui_json_payload(
+            self.worker,
+            instance_id,
+            "POST",
+            "/prompt",
+            json_body=payload,
+        )
+        if status >= 400:
+            raise RuntimeError(_comfyui_error_detail(status, response))
+        return response
+
+    async def _comfyui_history(self, instance_id: str, prompt_id: str) -> dict[str, Any]:
+        status, payload = await _proxy_comfyui_json_payload(
+            self.worker,
+            instance_id,
+            "GET",
+            f"/history/{prompt_id}",
+        )
+        if status >= 400:
+            raise RuntimeError(_comfyui_error_detail(status, payload))
+        return payload
+
+    async def _comfyui_view(
+        self,
+        instance_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        params = {
+            "filename": str(payload.get("filename") or ""),
+            "subfolder": str(payload.get("subfolder") or ""),
+            "type": str(payload.get("type") or ""),
+        }
+        status, response = await _proxy_comfyui_view_payload(
+            self.worker,
+            instance_id,
+            params=params,
+        )
+        if status >= 400:
+            raise RuntimeError(_comfyui_error_detail(status, response))
+        return response
