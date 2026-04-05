@@ -133,7 +133,16 @@ class WorkflowResolutionService:
                 nodes_unresolved.append(node)
             elif len(resolved_packages) == 1:
                 candidate = resolved_packages[0]
-                if candidate.is_manager_only_uninstallable:
+                is_installed_candidate = bool(
+                    candidate.package_id and candidate.package_id in context.installed_packages
+                )
+                if is_installed_candidate:
+                    logger.debug(
+                        "Resolved node via installed package despite manager-only mapping metadata: %s",
+                        candidate,
+                    )
+                    nodes_resolved.append(candidate)
+                elif candidate.is_manager_only_uninstallable:
                     gate_info = node_classifier.get_version_gate_info(node.type)
                     if gate_info:
                         add_version_gated(node)
