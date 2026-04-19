@@ -466,6 +466,7 @@ class NativeManager:
         port: int,
         timeout_seconds: float = 120.0,
         poll_interval: float = 2.0,
+        instance_id: str | None = None,
     ) -> bool:
         """Wait for ComfyUI to become ready by polling HTTP endpoint.
 
@@ -476,6 +477,7 @@ class NativeManager:
             port: Port ComfyUI is listening on
             timeout_seconds: Maximum time to wait (default 2 minutes)
             poll_interval: Time between polling attempts
+            instance_id: Optional instance identifier for fail-fast exit checks
 
         Returns:
             True if ComfyUI is ready, False if timeout expired
@@ -485,6 +487,8 @@ class NativeManager:
 
         async with aiohttp.ClientSession() as session:
             while time.monotonic() < deadline:
+                if instance_id and not self.is_running(instance_id):
+                    return False
                 try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:

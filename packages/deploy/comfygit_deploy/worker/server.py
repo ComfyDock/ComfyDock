@@ -840,6 +840,7 @@ async def _deploy_instance(
                 port=instance.assigned_port,
                 timeout_seconds=120.0,
                 poll_interval=2.0,
+                instance_id=instance.id,
             )
 
             if is_ready:
