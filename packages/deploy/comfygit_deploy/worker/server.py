@@ -1275,6 +1275,62 @@ async def handle_comfyui_history(request: web.Request) -> web.Response:
         return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
 
 
+async def handle_comfyui_queue(request: web.Request) -> web.Response:
+    """GET /api/v1/instances/{id}/comfyui/queue - Proxy queue state."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    try:
+        status, payload = await _proxy_comfyui_json_payload(
+            worker,
+            instance_id,
+            "GET",
+            "/queue",
+        )
+        return web.json_response(payload, status=status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
+async def handle_comfyui_interrupt(request: web.Request) -> web.Response:
+    """POST /api/v1/instances/{id}/comfyui/interrupt - Request interrupt."""
+    worker: WorkerServer = request.app["worker"]
+    instance_id = request.match_info["id"]
+
+    try:
+        instance = _get_running_instance(worker, instance_id)
+        comfyui_url = f"http://localhost:{instance.assigned_port}"
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(f"{comfyui_url}/interrupt") as resp:
+                body = await resp.read()
+                if resp.status >= 400:
+                    detail = body.decode("utf-8", errors="replace").strip()
+                    return web.json_response(
+                        {"error": detail or f"ComfyUI returned HTTP {resp.status}."},
+                        status=resp.status,
+                    )
+                return web.json_response({"ok": True}, status=resp.status)
+    except LookupError:
+        return web.json_response({"error": "Instance not found"}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "Instance is not running":
+            return web.json_response({"error": "Instance is not running"}, status=409)
+        return web.json_response({"error": str(exc)}, status=502)
+    except asyncio.TimeoutError:
+        return web.json_response({"error": "ComfyUI request timed out"}, status=504)
+    except Exception as exc:
+        return web.json_response({"error": f"ComfyUI proxy error: {exc}"}, status=502)
+
+
 async def handle_comfyui_view(request: web.Request) -> web.Response:
     """GET /api/v1/instances/{id}/comfyui/view - Proxy output retrieval."""
     worker: WorkerServer = request.app["worker"]
@@ -1438,6 +1494,14 @@ def create_worker_app(
     app.router.add_get(
         "/api/v1/instances/{id}/comfyui/history/{prompt_id}",
         handle_comfyui_history,
+    )
+    app.router.add_get(
+        "/api/v1/instances/{id}/comfyui/queue",
+        handle_comfyui_queue,
+    )
+    app.router.add_post(
+        "/api/v1/instances/{id}/comfyui/interrupt",
+        handle_comfyui_interrupt,
     )
     app.router.add_get(
         "/api/v1/instances/{id}/comfyui/view",

@@ -119,6 +119,16 @@ class TunnelHandler:
             response = await self._comfyui_history(instance_id, prompt_id)
             return {"type": "comfyui", "request_id": request_id, "payload": response}
 
+        if message_type == "comfyui_queue":
+            instance_id = str(message.get("instance_id") or "")
+            response = await self._comfyui_queue(instance_id)
+            return {"type": "comfyui", "request_id": request_id, "payload": response}
+
+        if message_type == "comfyui_interrupt":
+            instance_id = str(message.get("instance_id") or "")
+            response = await self._comfyui_interrupt(instance_id)
+            return {"type": "comfyui", "request_id": request_id, "payload": response}
+
         if message_type == "comfyui_view":
             instance_id = str(message.get("instance_id") or "")
             payload = message.get("payload")
@@ -415,6 +425,29 @@ class TunnelHandler:
         if status >= 400:
             raise RuntimeError(_comfyui_error_detail(status, payload))
         return payload
+
+    async def _comfyui_queue(self, instance_id: str) -> dict[str, Any]:
+        status, payload = await _proxy_comfyui_json_payload(
+            self.worker,
+            instance_id,
+            "GET",
+            "/queue",
+        )
+        if status >= 400:
+            raise RuntimeError(_comfyui_error_detail(status, payload))
+        return payload
+
+    async def _comfyui_interrupt(self, instance_id: str) -> dict[str, Any]:
+        instance = _get_running_instance(self.worker, instance_id)
+        comfyui_url = f"http://localhost:{instance.assigned_port}"
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(f"{comfyui_url}/interrupt") as resp:
+                body = await resp.read()
+                if resp.status >= 400:
+                    detail = body.decode("utf-8", errors="replace").strip()
+                    raise RuntimeError(detail or f"ComfyUI returned HTTP {resp.status}.")
+                return {"ok": True}
 
     async def _comfyui_view(
         self,
