@@ -362,6 +362,24 @@ class TestWorkflowHandlerBatching:
                             required=True,
                             default="",
                         ),
+                        WorkflowContractInput(
+                            name="steps",
+                            type="integer",
+                            node_id=12,
+                            widget_idx=2,
+                            required=False,
+                            default=30,
+                            min=1,
+                            max=150,
+                        ),
+                        WorkflowContractInput(
+                            name="scheduler",
+                            type="enum",
+                            node_id=19,
+                            widget_idx=0,
+                            required=True,
+                            enum_values=["normal", "karras", "exponential"],
+                        ),
                     ],
                     outputs=[
                         WorkflowContractOutput(

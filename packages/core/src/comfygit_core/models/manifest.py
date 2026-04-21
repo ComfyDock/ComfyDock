@@ -87,6 +87,9 @@ class WorkflowContractInput:
     widget_idx: int | None = None
     field_key: str | None = None
     default: Any = None
+    min: int | float | None = None
+    max: int | float | None = None
+    enum_values: list[str] = field(default_factory=list)
     description: str | None = None
 
     def to_toml_dict(self) -> dict[str, Any]:
@@ -105,6 +108,12 @@ class WorkflowContractInput:
             result["field_key"] = self.field_key
         if self.default is not None:
             result["default"] = self.default
+        if self.min is not None:
+            result["min"] = self.min
+        if self.max is not None:
+            result["max"] = self.max
+        if self.enum_values:
+            result["enum_values"] = self.enum_values
         if self.description is not None:
             result["description"] = self.description
         return result
@@ -121,6 +130,9 @@ class WorkflowContractInput:
             widget_idx=data.get("widget_idx"),
             field_key=data.get("field_key"),
             default=data.get("default"),
+            min=data.get("min"),
+            max=data.get("max"),
+            enum_values=list(data.get("enum_values", [])),
             description=data.get("description"),
         )
 
