@@ -22,6 +22,8 @@ from pathlib import Path
 
 # Add parent dir to path for conftest import
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from comfygit_core.models.manifest import NamedWorkflowContract, WorkflowExecutionContract
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
 from helpers.pyproject_assertions import PyprojectAssertions
@@ -267,6 +269,64 @@ class TestWorkflowDeletionCleanup:
         models_section = config.get("tool", {}).get("comfygit", {}).get("models", {})
         assert model_hash in models_section, \
             "Model should remain (referenced by renamed workflow)"
+
+    def test_delete_workflow_removes_execution_contract(self, test_env, test_workspace):
+        """Deleting a workflow should remove its nested execution contract."""
+        builder = ModelIndexBuilder(test_workspace)
+        builder.add_model("model.safetensors", "checkpoints")
+        builder.index_all()
+
+        wf = WorkflowBuilder().add_checkpoint_loader("model.safetensors").build()
+        simulate_comfyui_save_workflow(test_env, "default", wf)
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Add default workflow")
+
+        contract = WorkflowExecutionContract(
+            contracts={"default": NamedWorkflowContract()},
+        )
+        test_env.pyproject.workflows.set_execution_contract("default", contract)
+
+        (test_env.comfyui_path / "user" / "default" / "workflows" / "default.json").unlink()
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Delete default workflow")
+
+        config = test_env.pyproject.load()
+        workflows = config.get("tool", {}).get("comfygit", {}).get("workflows", {})
+        assert "default" not in workflows, \
+            "Deleted workflow section should be removed with nested execution contract"
+
+    def test_rename_workflow_drops_old_execution_contract(self, test_env, test_workspace):
+        """Rename should follow delete-plus-create semantics for contracts."""
+        builder = ModelIndexBuilder(test_workspace)
+        builder.add_model("model.safetensors", "checkpoints")
+        builder.index_all()
+
+        wf = WorkflowBuilder().add_checkpoint_loader("model.safetensors").build()
+        simulate_comfyui_save_workflow(test_env, "default", wf)
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Add default workflow")
+
+        contract = WorkflowExecutionContract(
+            contracts={"default": NamedWorkflowContract(display_name="Default")},
+        )
+        test_env.pyproject.workflows.set_execution_contract("default", contract)
+
+        (test_env.comfyui_path / "user" / "default" / "workflows" / "default.json").unlink()
+        simulate_comfyui_save_workflow(test_env, "depthflow_showcase_v2", wf)
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Rename to depthflow_showcase_v2")
+
+        config = test_env.pyproject.load()
+        workflows = config.get("tool", {}).get("comfygit", {}).get("workflows", {})
+
+        assert "default" not in workflows, "Old workflow entry should be removed"
+        assert "depthflow_showcase_v2" in workflows, "Renamed workflow should exist"
+        assert "execution_contract" not in workflows["depthflow_showcase_v2"], \
+            "Rename should not preserve workflow-scoped execution contract in first slice"
 
     def test_export_after_workflow_deletion_no_false_warnings(self, test_env, test_workspace):
         """Test that export doesn't warn about models from deleted workflows.

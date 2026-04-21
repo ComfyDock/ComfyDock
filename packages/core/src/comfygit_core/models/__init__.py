@@ -25,6 +25,10 @@ _EXPORTS: dict[str, str] = {
     "APICredentials": "workspace_config",
     "ModelDirectory": "workspace_config",
     "WorkspaceConfig": "workspace_config",
+    "WorkflowContractInput": "manifest",
+    "WorkflowContractOutput": "manifest",
+    "NamedWorkflowContract": "manifest",
+    "WorkflowExecutionContract": "manifest",
 }
 
 __all__ = sorted(_EXPORTS)

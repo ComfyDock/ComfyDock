@@ -13,10 +13,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tomlkit
-from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
+
+from comfygit_core.models.manifest import (
+    ManifestModel,
+    ManifestWorkflowModel,
+    WorkflowExecutionContract,
+)
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
@@ -1578,6 +1583,21 @@ class NodeHandler(BaseHandler):
 class WorkflowHandler(BaseHandler):
     """Handles workflow model resolutions and tracking."""
 
+    @staticmethod
+    def _ensure_workflow_entry(config: dict, workflow_name: str) -> dict:
+        """Ensure workflow table and path exist, then return the workflow table."""
+        workflows = config.setdefault('tool', {}).setdefault('comfygit', {}).setdefault('workflows', {})
+        workflow = workflows.get(workflow_name)
+
+        if workflow is None:
+            workflow = tomlkit.table()
+            workflows[workflow_name] = workflow
+
+        if 'path' not in workflow:
+            workflow['path'] = f"workflows/{workflow_name}.json"
+
+        return workflow
+
     def get_workflow(self, name: str) -> dict | None:
         """Get a workflow from pyproject.toml."""
         try:
@@ -1590,11 +1610,68 @@ class WorkflowHandler(BaseHandler):
     def add_workflow(self, name: str) -> None:
         """Add a new workflow to the pyproject.toml."""
         config = self.load()
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows')
-        config['tool']['comfygit']['workflows'][name] = tomlkit.table()
-        config['tool']['comfygit']['workflows'][name]['path'] = f"workflows/{name}.json"
+        self._ensure_workflow_entry(config, name)
         logger.info(f"Added new workflow: {name}")
         self.save(config)
+
+    def get_execution_contract(
+        self,
+        workflow_name: str,
+        config: dict | None = None
+    ) -> WorkflowExecutionContract | None:
+        """Get the saved execution contract for a workflow."""
+        try:
+            if config is None:
+                config = self.load()
+            workflow_data = config.get('tool', {}).get('comfygit', {}).get('workflows', {}).get(workflow_name, {})
+            contract_data = workflow_data.get('execution_contract')
+            if not contract_data:
+                return None
+            return WorkflowExecutionContract.from_toml_dict(contract_data)
+        except Exception as e:
+            logger.debug(f"Error loading execution contract for '{workflow_name}': {e}")
+            return None
+
+    def set_execution_contract(
+        self,
+        workflow_name: str,
+        contract: WorkflowExecutionContract,
+        config: dict | None = None
+    ) -> None:
+        """Create or replace the saved execution contract for a workflow."""
+        is_batch = config is not None
+        if not is_batch:
+            config = self.load()
+
+        workflow = self._ensure_workflow_entry(config, workflow_name)
+        workflow['execution_contract'] = contract.to_toml_dict()
+
+        if not is_batch:
+            self.save(config)
+
+        logger.debug(f"Set execution contract for workflow '{workflow_name}'")
+
+    def remove_execution_contract(
+        self,
+        workflow_name: str,
+        config: dict | None = None
+    ) -> bool:
+        """Remove the saved execution contract for a workflow."""
+        is_batch = config is not None
+        if not is_batch:
+            config = self.load()
+
+        workflow = config.get('tool', {}).get('comfygit', {}).get('workflows', {}).get(workflow_name, {})
+        if 'execution_contract' not in workflow:
+            return False
+
+        del workflow['execution_contract']
+
+        if not is_batch:
+            self.save(config)
+
+        logger.debug(f"Removed execution contract for workflow '{workflow_name}'")
+        return True
 
     def get_workflow_models(
         self,
@@ -1638,16 +1715,7 @@ class WorkflowHandler(BaseHandler):
         if not is_batch:
             config = self.load()
 
-        # Ensure sections exist
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows')
-
-        # Ensure specific workflow exists
-        if workflow_name not in config['tool']['comfygit']['workflows']:
-            config['tool']['comfygit']['workflows'][workflow_name] = tomlkit.table()
-
-        # Set workflow path
-        if 'path' not in config['tool']['comfygit']['workflows'][workflow_name]:
-            config['tool']['comfygit']['workflows'][workflow_name]['path'] = f"workflows/{workflow_name}.json"
+        workflow = self._ensure_workflow_entry(config, workflow_name)
 
         # Serialize to array of tables
         models_array = []
@@ -1656,7 +1724,7 @@ class WorkflowHandler(BaseHandler):
             # Convert to inline table for compact representation
             models_array.append(model_dict)
 
-        config['tool']['comfygit']['workflows'][workflow_name]['models'] = models_array
+        workflow['models'] = models_array
 
         if not is_batch:
             self.save(config)
@@ -1746,14 +1814,14 @@ class WorkflowHandler(BaseHandler):
         if not is_batch:
             config = self.load()
 
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows', name)
+        workflow = self._ensure_workflow_entry(config, name)
         if not node_pack_ids:
-            if 'nodes' in config['tool']['comfygit']['workflows'][name]:
+            if 'nodes' in workflow:
                 logger.info(f"Clearing node packs for workflow: {name}")
-                del config['tool']['comfygit']['workflows'][name]['nodes']
+                del workflow['nodes']
         else:
             logger.info(f"Set {len(node_pack_ids)} node pack(s) for workflow: {name}")
-            config['tool']['comfygit']['workflows'][name]['nodes'] = sorted(node_pack_ids)
+            workflow['nodes'] = sorted(node_pack_ids)
 
         if not is_batch:
             self.save(config)
@@ -1802,17 +1870,17 @@ class WorkflowHandler(BaseHandler):
             package_id: Package ID (or None for optional = false)
         """
         config = self.load()
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows', workflow_name)
+        workflow = self._ensure_workflow_entry(config, workflow_name)
 
         # Ensure custom_node_map exists
-        if 'custom_node_map' not in config['tool']['comfygit']['workflows'][workflow_name]:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'] = {}
+        if 'custom_node_map' not in workflow:
+            workflow['custom_node_map'] = {}
 
         # Set mapping (false for optional, package_id string for resolved)
         if package_id is None:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'][node_type] = False
+            workflow['custom_node_map'][node_type] = False
         else:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'][node_type] = package_id
+            workflow['custom_node_map'][node_type] = package_id
 
         self.save(config)
         logger.debug(f"Set custom_node_map for workflow '{workflow_name}': {node_type} -> {package_id}")

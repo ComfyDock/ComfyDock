@@ -42,6 +42,7 @@ from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
+    from comfygit_core.models.manifest import WorkflowExecutionContract
     from comfygit_core.models.protocols import (
         ExportCallbacks,
         ImportCallbacks,
@@ -1846,6 +1847,25 @@ class Environment:
         logger.debug(f"Copied {copied_count} workflow(s)")
 
         self.commit(message)
+
+    # =====================================================
+    # Workflow Contract Management
+    # =====================================================
+
+    @_requires_env_lock
+    def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
+        """Get the saved execution contract for a workflow."""
+        return self.pyproject.workflows.get_execution_contract(workflow_name)
+
+    @_requires_env_lock
+    def set_workflow_execution_contract(self, workflow_name: str, contract: WorkflowExecutionContract) -> None:
+        """Create or replace the saved execution contract for a workflow."""
+        self.pyproject.workflows.set_execution_contract(workflow_name, contract)
+
+    @_requires_env_lock
+    def remove_workflow_execution_contract(self, workflow_name: str) -> bool:
+        """Remove the saved execution contract for a workflow."""
+        return self.pyproject.workflows.remove_execution_contract(workflow_name)
 
     # =====================================================
     # Model Source Management

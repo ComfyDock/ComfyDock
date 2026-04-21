@@ -335,3 +335,106 @@ class TestWorkflowHandlerBatching:
         assert save_count == 0, "set_workflow_models with config should not save"
         assert "test_workflow" in config["tool"]["comfygit"]["workflows"]
         assert len(config["tool"]["comfygit"]["workflows"]["test_workflow"]["models"]) == 1
+
+    def test_set_execution_contract_with_config_no_save(self, test_env):
+        """Test that set_execution_contract with config doesn't save."""
+        import unittest.mock as mock
+
+        from comfygit_core.models.manifest import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowContractOutput,
+            WorkflowExecutionContract,
+        )
+
+        config = test_env.pyproject.load()
+        contract = WorkflowExecutionContract(
+            version=1,
+            default_contract="default",
+            contracts={
+                "default": NamedWorkflowContract(
+                    inputs=[
+                        WorkflowContractInput(
+                            name="prompt",
+                            type="string",
+                            node_id=6,
+                            widget_idx=0,
+                            required=True,
+                            default="",
+                        ),
+                    ],
+                    outputs=[
+                        WorkflowContractOutput(
+                            name="image",
+                            type="image",
+                            node_id=27,
+                            selector="primary",
+                        ),
+                    ],
+                ),
+            },
+        )
+
+        save_count = 0
+        original_save = test_env.pyproject.save
+
+        def counting_save(cfg):
+            nonlocal save_count
+            save_count += 1
+            return original_save(cfg)
+
+        with mock.patch.object(test_env.pyproject, 'save', side_effect=counting_save):
+            test_env.pyproject.workflows.set_execution_contract(
+                "test_workflow",
+                contract,
+                config=config,
+            )
+
+        assert save_count == 0, "set_execution_contract with config should not save"
+        workflow = config["tool"]["comfygit"]["workflows"]["test_workflow"]
+        assert workflow["path"] == "workflows/test_workflow.json"
+        assert "execution_contract" in workflow
+        assert "status" not in workflow["execution_contract"]
+
+    def test_execution_contract_round_trip(self, test_env):
+        """Execution contracts should round-trip through pyproject handlers."""
+        from comfygit_core.models.manifest import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowContractOutput,
+            WorkflowExecutionContract,
+        )
+
+        contract = WorkflowExecutionContract(
+            version=1,
+            default_contract="default",
+            contracts={
+                "default": NamedWorkflowContract(
+                    display_name="Default",
+                    description="Primary contract",
+                    inputs=[
+                        WorkflowContractInput(
+                            name="prompt",
+                            type="string",
+                            node_id=6,
+                            widget_idx=0,
+                            required=True,
+                            default="",
+                        ),
+                    ],
+                    outputs=[
+                        WorkflowContractOutput(
+                            name="image",
+                            type="image",
+                            node_id=27,
+                            selector="primary",
+                        ),
+                    ],
+                ),
+            },
+        )
+
+        test_env.pyproject.workflows.set_execution_contract("demo", contract)
+
+        loaded = test_env.pyproject.workflows.get_execution_contract("demo")
+        assert loaded == contract
