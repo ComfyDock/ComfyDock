@@ -252,54 +252,10 @@ from comfygit_core.utils.git import parse_git_url
 - **Discussions**: [GitHub Discussions](https://github.com/ComfyGit/ComfyGit/discussions)
 - **Documentation**: Check the codebase maps and package READMEs
 
-## Contributor License Agreement (CLA)
+## License
 
-### Why We Need a CLA
+By contributing, you agree that your contribution will be licensed under the
+repository's [GPL-3.0](LICENSE.txt) license.
 
-ComfyGit is dual-licensed:
-- **GPL-3.0** for open-source use (free forever)
-- **Commercial licenses** for businesses requiring proprietary use
-
-To make this work legally, we need contributors to sign a Contributor License Agreement (CLA). This grants us permission to distribute your contributions under both licensing models.
-
-### What the CLA Means for You
-
-- ✅ **You retain copyright** - You still own your code
-- ✅ **Your code stays open-source** - Always available under GPL-3.0
-- ✅ **Enables sustainable funding** - Commercial licenses fund development
-- ✅ **One-time signature** - Sign once, contribute forever
-- ✅ **Automatic process** - Handled via CLA Assistant on your first PR
-
-### How to Sign
-
-When you submit your first pull request, [CLA Assistant](https://cla-assistant.io/) will automatically prompt you to sign our CLA. Simply:
-
-1. Review the [CLA text](CLA.md)
-2. Click the link in the PR comment
-3. Sign with your GitHub account
-4. That's it! You can now contribute
-
-### View the CLA
-
-Read the full agreement: [CLA.md](CLA.md)
-
-### Questions About the CLA?
-
-**Q: Do I lose rights to my code?**
-A: No. You retain full copyright ownership. You're just granting us a license to use it.
-
-**Q: Can I still use my contributions elsewhere?**
-A: Yes! You can use your code in any project you want.
-
-**Q: Why do you need this for dual-licensing?**
-A: Without a CLA, we can only distribute contributions under GPL-3.0. The CLA grants us the legal right to also offer commercial licenses, which funds continued development.
-
-**Q: What if I don't want to sign?**
-A: We understand! We can't accept contributions without a CLA due to our dual-licensing model. However, you can still:
-- Open issues with suggestions
-- Discuss ideas in GitHub Discussions
-- Fork the project for your own use under GPL-3.0
-
-### Corporate Contributors
-
-If you're contributing on behalf of your employer, they may need to sign a Corporate CLA. Please contact us to discuss.
+ComfyGit Cloud is a separate hosted service and is not part of this
+open-source repository.
