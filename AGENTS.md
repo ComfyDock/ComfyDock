@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ComfyGit is a monorepo workspace using uv for Python package management. It provides unified environment management for ComfyUI through multiple coordinated packages. Licensed under AGPL-3.0.
+ComfyGit is a monorepo workspace using uv for Python package management. It provides unified environment management for ComfyUI through multiple coordinated packages. Licensed under GPL-3.0.
 
 ### Packages
 

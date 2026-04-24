@@ -257,7 +257,7 @@ from comfygit_core.utils.git import parse_git_url
 ### Why We Need a CLA
 
 ComfyGit is dual-licensed:
-- **AGPL-3.0** for open-source use (free forever)
+- **GPL-3.0** for open-source use (free forever)
 - **Commercial licenses** for businesses requiring proprietary use
 
 To make this work legally, we need contributors to sign a Contributor License Agreement (CLA). This grants us permission to distribute your contributions under both licensing models.
@@ -265,7 +265,7 @@ To make this work legally, we need contributors to sign a Contributor License Ag
 ### What the CLA Means for You
 
 - ✅ **You retain copyright** - You still own your code
-- ✅ **Your code stays open-source** - Always available under AGPL-3.0
+- ✅ **Your code stays open-source** - Always available under GPL-3.0
 - ✅ **Enables sustainable funding** - Commercial licenses fund development
 - ✅ **One-time signature** - Sign once, contribute forever
 - ✅ **Automatic process** - Handled via CLA Assistant on your first PR
@@ -292,13 +292,13 @@ A: No. You retain full copyright ownership. You're just granting us a license to
 A: Yes! You can use your code in any project you want.
 
 **Q: Why do you need this for dual-licensing?**
-A: Without a CLA, we can only distribute contributions under AGPL-3.0. The CLA grants us the legal right to also offer commercial licenses, which funds continued development.
+A: Without a CLA, we can only distribute contributions under GPL-3.0. The CLA grants us the legal right to also offer commercial licenses, which funds continued development.
 
 **Q: What if I don't want to sign?**
 A: We understand! We can't accept contributions without a CLA due to our dual-licensing model. However, you can still:
 - Open issues with suggestions
 - Discuss ideas in GitHub Discussions
-- Fork the project for your own use under AGPL-3.0
+- Fork the project for your own use under GPL-3.0
 
 ### Corporate Contributors
 

@@ -450,7 +450,7 @@ The CLI (`comfygit` package) is built on top of this core library:
 
 ## License
 
-ComfyGit Core is licensed under **AGPL-3.0**.
+ComfyGit Core is licensed under **GPL-3.0**.
 
 See [LICENSE.txt](../../LICENSE.txt) for the full license text.
 
