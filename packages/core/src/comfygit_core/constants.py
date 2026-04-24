@@ -9,6 +9,7 @@ PYTORCH_PACKAGE_NAMES = {
     'triton', 'triton-windows',
 
     # NVIDIA CUDA packages
+    'cuda-bindings', 'cuda-toolkit',
     'nvidia-cublas-cu11', 'nvidia-cublas-cu12',
     'nvidia-cuda-runtime-cu11', 'nvidia-cuda-runtime-cu12',
     'nvidia-cuda-nvrtc-cu11', 'nvidia-cuda-nvrtc-cu12',
@@ -25,6 +26,7 @@ PYTORCH_PACKAGE_NAMES = {
     'nvidia-cufile-cu11', 'nvidia-cufile-cu12',  # cuFile (GPUDirect Storage)
     'nvidia-cusparselt-cu11', 'nvidia-cusparselt-cu12',  # structured-sparse LT
     'nvidia-nvjitlink-cu11', 'nvidia-nvjitlink-cu12',  # NVJitLink
+    'nvidia-nvshmem-cu11', 'nvidia-nvshmem-cu12',  # NVSHMEM
 
     # NOTE: nvidia-ml-py and nvidia-ml-py3 are NOT included
     # These are optional NVML bindings for monitoring that PyTorch doesn't depend on

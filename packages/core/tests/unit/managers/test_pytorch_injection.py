@@ -488,6 +488,49 @@ class TestSyncProjectWithPyTorchManager:
         restored_content = temp_env["pyproject_path"].read_text()
         assert restored_content == original_content
 
+    def test_sync_project_backend_override_reinstalls_pytorch_runtime_packages(self, temp_env, monkeypatch):
+        """Backend overrides should revalidate PyTorch's NVIDIA runtime wheels."""
+        from unittest.mock import MagicMock
+
+        from comfygit_core.constants import PYTORCH_CORE_PACKAGES, PYTORCH_PACKAGE_NAMES
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        pytorch_manager = PyTorchBackendManager(temp_env["cec_path"])
+
+        monkeypatch.setattr(
+            "comfygit_core.utils.pytorch_prober.probe_pytorch_versions",
+            lambda *_args, **_kwargs: (
+                {
+                    "torch": "2.11.0+cu129",
+                    "torchvision": "0.26.0+cu129",
+                    "torchaudio": "2.11.0+cu129",
+                },
+                "cu129",
+            ),
+        )
+
+        mock_result = MagicMock()
+        mock_result.stdout = ""
+        mock_uv_command = MagicMock()
+        mock_uv_command.sync.return_value = mock_result
+
+        uv_manager = UVProjectManager(
+            uv_command=mock_uv_command,
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project(pytorch_manager=pytorch_manager)
+        normal_reinstall = mock_uv_command.sync.call_args.kwargs["reinstall_package"]
+        assert normal_reinstall == sorted(PYTORCH_CORE_PACKAGES)
+
+        uv_manager.sync_project(pytorch_manager=pytorch_manager, backend_override="cu129")
+        override_reinstall = mock_uv_command.sync.call_args.kwargs["reinstall_package"]
+        assert override_reinstall == sorted(PYTORCH_PACKAGE_NAMES)
+        assert "nvidia-cusparselt-cu12" in override_reinstall
+        assert "nvidia-nvshmem-cu12" in override_reinstall
+
     def test_sync_project_restores_on_sync_error(self, temp_env):
         """sync_project should restore config even when uv sync fails."""
         from unittest.mock import MagicMock
