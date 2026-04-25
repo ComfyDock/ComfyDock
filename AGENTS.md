@@ -17,7 +17,7 @@ work.
 | `docs/contracts/` | Active truth-layer contracts. Highest-precedence behavioral guarantees. |
 | `docs/specs/` | Active truth-layer lifecycle, manifest, and dependency semantics. |
 | `docs/comfygit-docs/` | Public user documentation site. Do not treat as active architecture truth. |
-| `docker/`, `scripts/`, `qa/`, `tests/` | Runtime images, helper scripts, QA docs, and cross-package tests. |
+| `docker/`, `scripts/`, `tests/` | Runtime images, helper scripts, and cross-package tests. |
 
 ## Truth Layer
 
