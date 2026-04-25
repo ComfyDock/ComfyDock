@@ -12,7 +12,6 @@ When deciding what the system is supposed to do, prefer sources in this order:
 2. `docs/specs/` - lifecycle behavior, state transitions, and data semantics.
 3. `packages/*/docs/` - package architecture, design notes, and reference.
 4. `docs/comfygit-docs/` - public-facing user documentation.
-5. `.beads/issues.jsonl` - historical task archive and context only.
 
 If two active truth-layer documents conflict, update the truth layer before
 changing implementation. Public docs should follow the truth layer, not define it.
@@ -51,8 +50,8 @@ Validation classes:
   implementation detail into a clause.
 - Reference clause IDs in substantial commits, tests, or implementation notes
   when practical.
-- Use beads only as historical context unless the user explicitly asks for bead
-  migration or task-tracker work.
+- Treat retired task-system state as local-only context unless the user
+  explicitly asks for task-tracker migration or cleanup.
 
 ## Validation
 

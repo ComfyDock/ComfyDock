@@ -4,9 +4,9 @@ description: |
   Tests the core environment lifecycle: fixture validation, status commands,
   and running ComfyUI. These are the fundamental operations every user performs.
 
-# Map to implementing work items for traceability
-beads:
-  e2e-infrastructure: cg-i7s
+# Map to active truth-layer clauses for traceability
+clauses:
+  - CGSYNC-LIFE-03
 
 scenarios:
   # ============================================================================
@@ -16,7 +16,7 @@ scenarios:
     description: |
       Validates that a pre-built fixture environment has the expected structure
       and that basic CLI commands work against it.
-    beads: [cg-i7s.1, cg-i7s.2, cg-i7s.3, cg-i7s.4]
+    clauses: [CGSYNC-LIFE-01, CGSYNC-LIFE-03]
 
     tests:
       - id: fixture-structure
@@ -81,7 +81,7 @@ scenarios:
     description: |
       Tests starting and stopping ComfyUI. This is the critical path - if users
       can't run ComfyUI, nothing else matters.
-    beads: [cg-i7s]
+    clauses: [CGSYNC-LIFE-03]
 
     tests:
       - id: run-comfyui-cpu

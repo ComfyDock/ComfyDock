@@ -27,7 +27,6 @@ Before changing behavior, check the active truth layer in this order:
 2. `docs/specs/` - lifecycle/state-machine behavior and manifest semantics.
 3. `packages/*/docs/` - package architecture, design notes, and reference.
 4. `docs/comfygit-docs/` - public user documentation.
-5. `.beads/issues.jsonl` - historical task archive and context only.
 
 Use `docs/spec-driven-development.md` for clause syntax and validation rules.
 If implementation direction conflicts with an active clause, update the truth
@@ -158,13 +157,6 @@ uv run pytest packages/deploy/tests/ -v
 
 If available in the current environment, `/validate` runs the repo validation
 workspace script (`dev/scripts/validation-workspace.sh`).
-
-## Historical Beads
-
-The tracked `.beads/issues.jsonl` file is historical reference material. It can
-be useful for recovering old rationale, but it is no longer the primary workflow
-or source of truth. Do not run a beads-first workflow unless the user explicitly
-asks for bead migration, bead cleanup, or task-tracker work.
 
 ## Engineering Preferences
 

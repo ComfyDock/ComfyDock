@@ -94,5 +94,7 @@ docs/contexts
 # MEOW agent orchestration runtime
 .meow/
 
-# Beads issue tracking - synced via beads-sync branch only
-.beads/issues.jsonl
+# Local/retired agent task systems
+.beads/
+.threads/
+.ctxr/
