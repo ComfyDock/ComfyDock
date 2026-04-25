@@ -1724,6 +1724,16 @@ class Environment:
         return [installed_nodes[nid] for nid in unused_ids]
 
     @_requires_env_lock
+    def update_node_criticality(self, node_identifier: str, criticality: str) -> bool:
+        """Update package-level custom-node criticality.
+
+        Custom-node criticality is a user-declared deployment/readiness signal.
+        It is not inferred from workflow graph usage because custom nodes may
+        affect runtime behavior through hooks, extensions, or side effects.
+        """
+        return self.pyproject.nodes.set_criticality(node_identifier, criticality)
+
+    @_requires_env_lock
     def prune_unused_nodes(
         self,
         exclude: list[str] | None = None,

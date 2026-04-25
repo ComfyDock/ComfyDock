@@ -28,24 +28,28 @@ need appears.
 
 ## Custom Nodes
 
-### CGCRIT-NODE-01 [PLANNED]: Custom nodes use required or optional criticality
+### CGCRIT-NODE-01 [PARTIAL]: Custom nodes use required or optional criticality
 Validation: MIXED
 
 Custom node criticality should initially support only `required` and `optional`.
-This keeps build-readiness behavior easy to reason about.
+This keeps build-readiness behavior easy to reason about. Core manifest
+read/write support exists; manager UI and cloud readiness behavior are tracked
+as follow-on work.
 
-### CGCRIT-NODE-02 [PLANNED]: Missing custom node criticality reads as required
+### CGCRIT-NODE-02 [LIVE]: Missing custom node criticality reads as required
 Validation: TEST
 
-Readers should treat missing custom node criticality as required. Writers should
-eventually emit the field explicitly once manager/core UI supports editing it.
+Readers should treat missing custom node criticality as required. Core writers
+should emit the field explicitly for newly written node entries.
 
-### CGCRIT-NODE-03 [PLANNED]: Graph usage does not override user-declared node criticality
+### CGCRIT-NODE-03 [LIVE]: Graph usage does not override user-declared node criticality
 Validation: HUMAN_REVIEW
 
 Workflow graph analysis may help explain why a node looks unused, but it must not
-silently downgrade a node from required to optional. Custom nodes can affect
-runtime behavior outside visible workflow node instances.
+silently set, downgrade, or upgrade package-level custom node criticality.
+Custom nodes can affect runtime behavior outside visible workflow node
+instances, so only explicit user action may mark an installed custom node
+optional.
 
 ## Readiness Outcomes
 

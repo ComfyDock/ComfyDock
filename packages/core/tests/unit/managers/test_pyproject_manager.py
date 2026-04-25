@@ -172,6 +172,72 @@ class TestNodeHandlerFormatting:
         # Verify nodes section exists
         assert "[tool.comfygit.nodes" in content
         assert "test-node-id" in content
+        assert 'criticality = "required"' in content
+
+    def test_get_existing_defaults_missing_node_criticality_to_required(self, temp_pyproject):
+        """Legacy manifests without node criticality should read as required."""
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["nodes"] = {
+            "legacy-node": {
+                "name": "legacy-node",
+                "version": "1.0.0",
+                "source": "registry",
+            }
+        }
+        manager.save(config)
+
+        nodes = manager.nodes.get_existing()
+
+        assert nodes["legacy-node"].criticality == "required"
+
+    def test_add_node_preserves_optional_criticality(self, temp_pyproject):
+        """Explicit optional criticality should round-trip through pyproject."""
+        manager = PyprojectManager(temp_pyproject)
+        node_info = NodeInfo(
+            name="scratch-node",
+            version="dev",
+            source="development",
+            criticality="optional",
+        )
+
+        manager.nodes.add(node_info, "scratch-node")
+
+        nodes = manager.nodes.get_existing()
+        assert nodes["scratch-node"].criticality == "optional"
+
+    def test_set_node_criticality_updates_existing_node(self, temp_pyproject):
+        """Users should be able to explicitly override package-level criticality."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(name="test-node", version="1.0.0", source="registry"),
+            "test-node",
+        )
+
+        changed = manager.nodes.set_criticality("test-node", "optional")
+
+        nodes = manager.nodes.get_existing()
+        assert changed is True
+        assert nodes["test-node"].criticality == "optional"
+
+    def test_set_node_criticality_returns_false_for_missing_node(self, temp_pyproject):
+        """Missing nodes should not create manifest entries while updating criticality."""
+        manager = PyprojectManager(temp_pyproject)
+
+        changed = manager.nodes.set_criticality("missing-node", "optional")
+
+        assert changed is False
+
+    def test_invalid_node_criticality_is_rejected(self, temp_pyproject):
+        """Custom-node criticality intentionally supports only required or optional."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(name="test-node", version="1.0.0", source="registry"),
+            "test-node",
+        )
+
+        with pytest.raises(ValueError, match="Invalid node criticality"):
+            manager.nodes.set_criticality("test-node", "flexible")
 
     def test_remove_all_nodes_cleans_section(self, temp_pyproject):
         """Test removing all nodes cleans up empty section."""

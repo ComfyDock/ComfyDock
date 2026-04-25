@@ -1517,11 +1517,32 @@ class NodeHandler(BaseHandler):
                 source=node_data.get('source', 'unknown'),
                 download_url=node_data.get('download_url'),
                 dependency_sources=node_data.get('dependency_sources'),
+                criticality=node_data.get('criticality', 'required'),
                 branch=node_data.get('branch'),
                 pinned_commit=node_data.get('pinned_commit'),
             )
 
         return result
+
+    def set_criticality(self, node_identifier: str, criticality: str) -> bool:
+        """Set package-level custom-node criticality.
+
+        Criticality is intentionally user-declared package metadata. Workflow graph
+        analysis must not infer or mutate it.
+        """
+        from ..models.shared import normalize_node_criticality
+
+        normalized = normalize_node_criticality(criticality)
+        config = self.load()
+        nodes = config.get('tool', {}).get('comfygit', {}).get('nodes', {})
+
+        if node_identifier not in nodes:
+            return False
+
+        nodes[node_identifier]['criticality'] = normalized
+        self.save(config)
+        logger.debug("Set custom node criticality: %s -> %s", node_identifier, normalized)
+        return True
 
     def remove(self, node_identifier: str) -> bool:
         """Remove a custom node and its associated dependency group."""

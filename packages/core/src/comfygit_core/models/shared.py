@@ -11,6 +11,20 @@ from .exceptions import ComfyDockError
 if TYPE_CHECKING:
     from comfygit_core.models.manifest import ManifestModel
 
+NODE_CRITICALITY_REQUIRED = "required"
+NODE_CRITICALITY_OPTIONAL = "optional"
+NODE_CRITICALITY_VALUES = frozenset({NODE_CRITICALITY_REQUIRED, NODE_CRITICALITY_OPTIONAL})
+
+
+def normalize_node_criticality(value: str | None) -> str:
+    """Return a valid custom-node criticality, defaulting omitted values to required."""
+    if value is None:
+        return NODE_CRITICALITY_REQUIRED
+    if value not in NODE_CRITICALITY_VALUES:
+        allowed = ", ".join(sorted(NODE_CRITICALITY_VALUES))
+        raise ValueError(f"Invalid node criticality: {value!r}. Expected one of: {allowed}")
+    return value
+
 
 @dataclass
 class NodeInfo:
@@ -75,10 +89,14 @@ class NodeInfo:
     # Metadata
     source: str = "unknown"             # "registry", "git", "development", or "unknown"
     dependency_sources: list[str] | None = None  # UV source names added for this node's deps
+    criticality: str = NODE_CRITICALITY_REQUIRED  # "required" or "optional"
 
     # Git reference fields for dev nodes (optional, used for sharing)
     branch: str | None = None           # Branch to track (e.g., "dev", "main")
     pinned_commit: str | None = None    # Commit hash at export time (advisory only)
+
+    def __post_init__(self) -> None:
+        self.criticality = normalize_node_criticality(self.criticality)
 
     @property
     def identifier(self) -> str:
@@ -156,6 +174,7 @@ class NodeInfo:
             registry_id=node_config.get("registry_id"),
             repository=node_config.get("repository"),
             dependency_sources=node_config.get("dependency_sources"),
+            criticality=normalize_node_criticality(node_config.get("criticality")),
             branch=node_config.get("branch"),
             pinned_commit=node_config.get("pinned_commit"),
         )
@@ -399,4 +418,3 @@ class LegacyCleanupResult:
     removed_path: str | None = None   # Path that was removed (as string)
     legacy_environments: list[str] = field(default_factory=list)  # Envs still using legacy
     message: str = ""
-

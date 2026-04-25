@@ -48,7 +48,7 @@ Core should preserve whether a node came from a registry entry, a Git/source URL
 or a local development path. Local development paths are not portable by
 themselves.
 
-### CGSPEC-NODE-03 [PLANNED]: Node criticality defaults to required
+### CGSPEC-NODE-03 [LIVE]: Node criticality defaults to required
 Validation: TEST
 
 When a custom node manifest entry omits criticality, readers should treat it as
@@ -61,6 +61,7 @@ Validation: MIXED
 An optional custom node can be present in a local authoring environment without
 being required for cloud build readiness. The manifest should still make this
 intent explicit so cloud planners do not have to infer it from workflow JSON.
+Workflow graph analysis must not set this field automatically.
 
 ## Models
 

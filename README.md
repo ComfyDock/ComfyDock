@@ -25,7 +25,6 @@ ComfyUI Manager helps you browse, install, and update custom nodes in a single s
 
 - **ComfyUI Manager:** manage nodes in-place (one environment)
 - **ComfyGit:** create per-project environments with commits, branches, rollback, export/import
-- **Together:** install ComfyUI Manager inside a ComfyGit environment and use both
 
 ## Installation
 

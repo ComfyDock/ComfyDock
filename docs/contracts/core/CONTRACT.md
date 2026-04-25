@@ -80,20 +80,23 @@ Model references can be required, flexible, or optional. Required unresolved
 models must be surfaced as blockers during export/import/build-readiness flows;
 optional unresolved models may be treated as warnings.
 
-### CGCORE-DEP-04 [PLANNED]: Custom node criticality is manifest-declared
+### CGCORE-DEP-04 [PARTIAL]: Custom node criticality is manifest-declared
 Validation: MIXED
 
 Custom nodes should support an explicit `criticality = "required" | "optional"`
 field in manifest metadata. Missing criticality defaults to required. Required
 nodes without a reproducible acquisition path block build readiness; optional
-nodes warn instead.
+nodes warn instead. Core manifest storage exists; build-readiness enforcement is
+still future work.
 
-### CGCORE-DEP-05 [PLANNED]: Workflow graph usage is advisory for custom node criticality
+### CGCORE-DEP-05 [LIVE]: Workflow graph usage is advisory for custom node criticality
 Validation: HUMAN_REVIEW
 
 The presence or absence of custom node types in workflow JSON is not authoritative
 proof that an installed custom node package is safe to omit. Side effects,
-extensions, and runtime hooks mean user-declared criticality wins.
+extensions, and runtime hooks mean graph analysis must not mutate package-level
+criticality. Only explicit user action may mark an installed custom node
+optional.
 
 ## Resolution And Sync
 

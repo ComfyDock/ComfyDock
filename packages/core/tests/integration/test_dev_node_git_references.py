@@ -54,7 +54,7 @@ class TestPhase1NodeInfoGitFields:
         assert node_info.pinned_commit == "abc123def"
 
     def test_node_info_from_pyproject_reads_branch(self, tmp_path):
-        """from_pyproject_config should read branch field from pyproject.toml."""
+        """from_pyproject_config should read branch and default criticality."""
         # ARRANGE - Create pyproject with branch field
         pyproject_path = tmp_path / "pyproject.toml"
         pyproject_path.write_text("""
@@ -78,6 +78,7 @@ pinned_commit = "abc123def"
 
         # ASSERT
         assert node_info is not None
+        assert node_info.criticality == "required", "Missing criticality should default to required"
         assert node_info.branch == "dev", "Should read branch from pyproject"
         assert node_info.pinned_commit == "abc123def", "Should read pinned_commit from pyproject"
 
