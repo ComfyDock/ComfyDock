@@ -1,7 +1,14 @@
 ## Important Documents
-#### only read if instructed
-- docs/layer-hierarchy.md
-- docs/architecture.md
+
+- ../../docs/contracts/core/CONTRACT.md - active core contract and invariants.
+- ../../docs/specs/environment-manifest-model.md - tracked manifest semantics.
+- ../../docs/specs/environment-sync-lifecycle.md - sync/run/git lifecycle.
+- ../../docs/specs/dependency-criticality.md - model/node required vs optional behavior.
+- docs/architecture.md - core layer overview.
+- docs/layer-hierarchy.md - package-local layering reference.
+
+Treat root `docs/contracts/` and `docs/specs/` as the active truth layer. Package
+docs here provide architecture and reference detail.
 
 ## Core Package
 - Code under packages/core should be assumed to be a library and properly abstracted from client rendering code.
