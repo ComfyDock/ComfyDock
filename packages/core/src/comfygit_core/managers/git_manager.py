@@ -73,6 +73,10 @@ overlays/.*
 
 # Lock file (machine-specific due to PyTorch platform variants)
 uv.lock
+
+# Generated ComfyUI metadata (recreated from the selected ComfyUI version)
+comfyui_builtins.json
+comfyui_folder_paths.json
 """
 
     def ensure_git_identity(self) -> None:

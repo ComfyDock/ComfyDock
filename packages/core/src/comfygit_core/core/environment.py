@@ -613,7 +613,10 @@ class Environment:
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
+        self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
+        self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
         self._untrack_uvlock_if_tracked()
+        self._untrack_generated_metadata_if_tracked()
 
         return migrated
 
@@ -2633,6 +2636,20 @@ class Environment:
             # Untrack without deleting the file
             _git(["rm", "--cached", "uv.lock"], self.cec_path, check=False)
             logger.info("Untracked uv.lock (now gitignored)")
+
+    def _untrack_generated_metadata_if_tracked(self) -> None:
+        """Untrack generated ComfyUI metadata files if previously committed."""
+        from ..utils.git import _git
+
+        for filename in ("comfyui_builtins.json", "comfyui_folder_paths.json"):
+            result = _git(
+                ["ls-files", filename],
+                self.cec_path,
+                check=False
+            )
+            if result.stdout.strip() == filename:
+                _git(["rm", "--cached", filename], self.cec_path, check=False)
+                logger.info(f"Untracked {filename} (now gitignored)")
 
     # =====================================================
     # Metadata Management

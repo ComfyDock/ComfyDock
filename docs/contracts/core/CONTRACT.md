@@ -26,6 +26,14 @@ Callers should enter core behavior through Workspace and Environment APIs rather
 than directly orchestrating manager internals. Manager classes may be used for
 internal composition, tests, and advanced package-local behavior.
 
+### CGCORE-LIB-04 [PLANNED]: Core owns reusable readiness and provenance policy
+Validation: MIXED
+
+Environment readiness, portable provenance classification, and dependency source
+candidate discovery should live in core services. CLI, manager UI, deploy
+tooling, and cloud planners should adapt those results for presentation instead
+of carrying parallel policy implementations.
+
 ## Portable Environment Contract
 
 ### CGCORE-MAN-01 [LIVE]: Environment manifests are the portable source of truth
@@ -85,9 +93,10 @@ Validation: MIXED
 
 Custom nodes should support an explicit `criticality = "required" | "optional"`
 field in manifest metadata. Missing criticality defaults to required. Required
-nodes without a reproducible acquisition path block build readiness; optional
-nodes warn instead. Core manifest storage exists; build-readiness enforcement is
-still future work.
+nodes without a reproducible acquisition path must be reported by readiness
+checks. Optional nodes remain tracked as local environment state but should not be
+treated as required portable build inputs. Core manifest storage exists;
+centralized core readiness enforcement is still future work.
 
 ### CGCORE-DEP-05 [LIVE]: Workflow graph usage is advisory for custom node criticality
 Validation: HUMAN_REVIEW
@@ -97,6 +106,15 @@ proof that an installed custom node package is safe to omit. Side effects,
 extensions, and runtime hooks mean graph analysis must not mutate package-level
 criticality. Only explicit user action may mark an installed custom node
 optional.
+
+### CGCORE-DEP-06 [PLANNED]: Model source candidate discovery is reusable core logic
+Validation: MIXED
+
+Scanning workflow files for embedded model URLs, classifying provider links,
+scoring candidate source matches, deduplicating candidates, and filtering already
+known model sources are dependency-domain behavior. Core should expose this as
+UI-agnostic source-candidate services so manager, CLI, and cloud build planning
+can share the same logic.
 
 ## Resolution And Sync
 

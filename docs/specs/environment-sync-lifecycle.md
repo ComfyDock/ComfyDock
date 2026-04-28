@@ -53,6 +53,32 @@ Validation: TEST
 When git operations change tracked environment state, sync/repair should reconcile
 the derived runtime so the local environment matches the checked-out commit.
 
+## Readiness And Handoff
+
+### CGSYNC-READY-01 [PLANNED]: Core exposes a UI-agnostic readiness result
+Validation: MIXED
+
+Core should provide a structured readiness result that callers can use for
+export, push, cloud build planning, and future deploy gates. The result should
+separate hard source-state blockers from reproducibility warnings and should not
+contain CLI or manager presentation decisions.
+
+### CGSYNC-READY-02 [PLANNED]: Readiness uses core provenance semantics
+Validation: MIXED
+
+Readiness checks should classify model source gaps, custom node portable
+provenance gaps, and dependency criticality through core services. Manager, CLI,
+deploy, and cloud code should not reimplement divergent rules for the same
+manifest state.
+
+### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
+Validation: MIXED
+
+Core should expose reusable services for finding likely model source candidates
+from workflow metadata and saved workflow text. Callers may present those
+candidates differently, but scoring, deduplication, provider classification, and
+already-known-source filtering should remain shared.
+
 ## Cloud Compatibility
 
 ### CGSYNC-CLOUD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
@@ -62,8 +88,10 @@ Cloud build planning should read the same manifest fields core writes locally.
 If cloud needs a field for reproducibility, core/manager should make that field
 first-class rather than relying on cloud-specific heuristics.
 
-### CGSYNC-CLOUD-02 [PLANNED]: Source metadata should be inspectable before push
+### CGSYNC-CLOUD-02 [PARTIAL]: Source metadata should be inspectable before push
 Validation: MIXED
 
 Users should be able to see and fix missing required model/node source metadata
-before pushing a commit that cloud cannot build.
+before pushing a commit that cloud cannot build. Manager has a first-pass
+readiness surface for export/push handoff; core-owned services and cloud build
+planner integration are still planned.

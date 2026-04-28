@@ -33,8 +33,8 @@ Validation: MIXED
 
 Custom node criticality should initially support only `required` and `optional`.
 This keeps build-readiness behavior easy to reason about. Core manifest
-read/write support exists; manager UI and cloud readiness behavior are tracked
-as follow-on work.
+read/write support and manager UI controls exist; centralized core readiness and
+cloud build behavior are tracked as follow-on work.
 
 ### CGCRIT-NODE-02 [LIVE]: Missing custom node criticality reads as required
 Validation: TEST
@@ -53,14 +53,18 @@ optional.
 
 ## Readiness Outcomes
 
-### CGCRIT-READY-01 [PLANNED]: Required unresolved dependencies block cloud build readiness
+### CGCRIT-READY-01 [PARTIAL]: Required unresolved dependencies block reproducibility readiness
 Validation: MIXED
 
-Required models or custom nodes without an acquisition path should block cloud
-build readiness and local push-readiness once those checks exist.
+Required models or custom nodes without an acquisition path should be reported as
+reproducibility issues before export, push, or cloud build planning. Manager
+surfaces this today for local handoff flows; the reusable core readiness service
+and cloud build planner integration are still planned.
 
-### CGCRIT-READY-02 [PLANNED]: Optional unresolved dependencies produce warnings
+### CGCRIT-READY-02 [PARTIAL]: Optional custom node gaps are not portable build inputs
 Validation: MIXED
 
-Optional models or custom nodes without an acquisition path should produce
-warnings that can be reviewed without blocking the user from continuing.
+Optional custom nodes may remain tracked in local environment state without being
+required for export, push, or cloud build readiness. Detailed inspection may show
+that an optional node lacks portable provenance, but top-level reproducibility
+checks should not treat it as a dependency the portable build must acquire.

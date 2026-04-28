@@ -55,13 +55,15 @@ When a custom node manifest entry omits criticality, readers should treat it as
 `required`. This keeps existing manifests conservative while allowing users to
 mark intentionally non-deployable or experimental nodes as `optional`.
 
-### CGSPEC-NODE-04 [PLANNED]: Optional nodes may remain installed locally without blocking builds
+### CGSPEC-NODE-04 [PARTIAL]: Optional nodes may remain installed locally without blocking builds
 Validation: MIXED
 
 An optional custom node can be present in a local authoring environment without
 being required for cloud build readiness. The manifest should still make this
 intent explicit so cloud planners do not have to infer it from workflow JSON.
-Workflow graph analysis must not set this field automatically.
+Workflow graph analysis must not set this field automatically. Core and manager
+can now persist this intent; centralized core readiness and cloud planner
+consumption are still in progress.
 
 ## Models
 
