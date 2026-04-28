@@ -88,6 +88,9 @@ from workflow metadata and saved workflow text. Callers may present those
 candidates differently, but scoring, deduplication, provider classification, and
 already-known-source filtering should remain shared.
 
+Manager currently owns the first source-candidate UI implementation. Extract it
+when cloud dependency proof needs the same candidate discovery behavior.
+
 ## Cloud Compatibility
 
 ### CGSYNC-CLOUD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
