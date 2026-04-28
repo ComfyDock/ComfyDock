@@ -7,7 +7,7 @@ from pathlib import Path
 
 from comfygit_core.core.workspace import Workspace
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
-from comfygit_core.models.protocols import ExportCallbacks, ImportCallbacks
+from comfygit_core.models.protocols import ImportCallbacks
 
 from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
@@ -792,69 +792,79 @@ class GlobalCommands:
         print(f"📦 Exporting environment: {env.name}")
         print()
 
-        # Export callbacks
-        class CLIExportCallbacks(ExportCallbacks):
-            def __init__(self):
-                self.models_without_sources = []
+        from comfygit_core.services.environment_readiness import build_environment_readiness
 
-            def on_models_without_sources(self, models: list):
-                self.models_without_sources = models
+        readiness = build_environment_readiness(env, include_blocking=True)
+        blocking_issues = [
+            issue
+            for issue in readiness.blocking_issues
+            if issue.type != "unresolved_issues" or not args.allow_issues
+        ]
 
-        callbacks = CLIExportCallbacks()
+        if blocking_issues:
+            print("✗ Export blocked:")
+            for issue in blocking_issues:
+                print(f"  • {issue.message}")
+                if issue.details:
+                    for detail in issue.details:
+                        print(f"    - {detail}")
+
+            issue_types = {issue.type for issue in blocking_issues}
+            if "uncommitted_workflows" in issue_types or "uncommitted_git_changes" in issue_types:
+                print("\n💡 Commit first:")
+                print("   cg commit -m 'Pre-export checkpoint'")
+            if "unresolved_issues" in issue_types:
+                print("\n💡 Resolve workflow issues first:")
+                print("   cg workflow resolve <workflow_name>")
+                print("   Or export anyway with: cg export --allow-issues")
+            sys.exit(1)
+
+        warnings = readiness.warnings
+        warning_count = (
+            len(warnings.models_without_sources)
+            + len(warnings.nodes_without_provenance)
+        )
+
+        if warning_count > 0 and not args.allow_issues:
+            print("⚠️  Export reproducibility warnings:")
+            print(f"\n{warning_count} dependency detail(s) are missing.\n")
+
+            if warnings.models_without_sources:
+                print("Models without download sources:")
+                for warning in warnings.models_without_sources[:3]:
+                    print(f"  • {warning.filename}")
+                    if warning.workflows:
+                        workflows_str = ", ".join(warning.workflows)
+                        print(f"    Used by: {workflows_str}")
+                remaining = len(warnings.models_without_sources) - 3
+                if remaining > 0:
+                    print(f"  ... and {remaining} more model(s)")
+
+            if warnings.nodes_without_provenance:
+                if warnings.models_without_sources:
+                    print()
+                print("Custom nodes without portable source metadata:")
+                for warning in warnings.nodes_without_provenance[:3]:
+                    print(f"  • {warning.name} ({warning.source}, {warning.criticality})")
+                    print(f"    {warning.reason}")
+                remaining = len(warnings.nodes_without_provenance) - 3
+                if remaining > 0:
+                    print(f"  ... and {remaining} more node(s)")
+
+            print("\n⚠️  Another machine or ComfyGit Cloud may not rebuild this exactly.")
+            print("   Add model sources or mark local-only development nodes optional.")
+
+            response = input("\nContinue export? (y/N): ").strip().lower()
+            if response != "y":
+                print("\n✗ Export cancelled")
+                sys.exit(1)
 
         try:
-            tarball_path = env.export_environment(output_path, callbacks=callbacks, allow_issues=args.allow_issues)
-
-            # Check if we need user confirmation
-            if callbacks.models_without_sources and not args.allow_issues:
-                print("⚠️  Export validation:")
-                print(f"\n{len(callbacks.models_without_sources)} model(s) have no source URLs.\n")
-
-                # Show first 3 models initially
-                shown_all = len(callbacks.models_without_sources) <= 3
-
-                def show_models(show_all=False):
-                    if show_all or len(callbacks.models_without_sources) <= 3:
-                        for model_info in callbacks.models_without_sources:
-                            print(f"  • {model_info.filename}")
-                            workflows_str = ", ".join(model_info.workflows)
-                            print(f"    Used by: {workflows_str}")
-                    else:
-                        for model_info in callbacks.models_without_sources[:3]:
-                            print(f"  • {model_info.filename}")
-                            workflows_str = ", ".join(model_info.workflows)
-                            print(f"    Used by: {workflows_str}")
-                        remaining = len(callbacks.models_without_sources) - 3
-                        print(f"\n  ... and {remaining} more")
-
-                show_models()
-
-                print("\n⚠️  Recipients won't be able to download these models automatically.")
-                print("   Add sources: cg model add-source")
-
-                # Single confirmation loop
-                while True:
-                    if shown_all or len(callbacks.models_without_sources) <= 3:
-                        response = input("\nContinue export? (y/N): ").strip().lower()
-                    else:
-                        response = input("\nContinue export? (y/N) or (s)how all models: ").strip().lower()
-
-                    if response == 's' and not shown_all:
-                        print()
-                        show_models(show_all=True)
-                        shown_all = True
-                        print("\n⚠️  Recipients won't be able to download these models automatically.")
-                        print("   Add sources: cg model add-source")
-                        continue
-                    elif response == 'y':
-                        break
-                    else:
-                        print("\n✗ Export cancelled")
-                        print("   Fix with: cg model add-source")
-                        # Clean up the created tarball
-                        if tarball_path.exists():
-                            tarball_path.unlink()
-                        sys.exit(1)
+            tarball_path = env.export_environment(
+                output_path,
+                callbacks=None,
+                allow_issues=args.allow_issues,
+            )
 
             size_mb = tarball_path.stat().st_size / (1024 * 1024)
             print(f"\n✅ Export complete: {tarball_path.name} ({size_mb:.1f} MB)")

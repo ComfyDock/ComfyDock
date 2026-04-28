@@ -2105,70 +2105,33 @@ class Environment:
         """
         from ..managers.export_import_manager import ExportImportManager
         from ..models.exceptions import CDExportError, ExportErrorContext
-
-        # Validation: Get workflow status first for comprehensive checks
-        status = self.workflow_manager.get_workflow_status()
-
-        # Check for uncommitted workflow changes (new, modified, or deleted)
-        if status.sync_status.has_changes:
-            context = ExportErrorContext(
-                uncommitted_workflows=(
-                    status.sync_status.new +
-                    status.sync_status.modified +
-                    status.sync_status.deleted
-                )
-            )
-            raise CDExportError(
-                "Cannot export with uncommitted workflow changes",
-                context=context
-            )
-
-        # Validation: Check for uncommitted git changes in .cec/
-        if self.git_manager.has_uncommitted_changes():
-            context = ExportErrorContext(uncommitted_git_changes=True)
-            raise CDExportError(
-                "Cannot export with uncommitted git changes",
-                context=context
-            )
-
-        # Validation: Check all workflows are resolved (unless allow_issues)
-        if not status.is_commit_safe and not allow_issues:
-            context = ExportErrorContext(has_unresolved_issues=True)
-            raise CDExportError(
-                "Cannot export - workflows have unresolved issues",
-                context=context
-            )
-
-        # Check for models without sources and collect workflow usage
         from ..models.shared import ModelWithoutSourceInfo
+        from ..services.environment_readiness import build_environment_readiness
 
-        models_without_sources: list[ModelWithoutSourceInfo] = []
-        models_by_hash = {m.hash: m for m in self.pyproject.models.get_all() if not m.sources}
+        readiness = build_environment_readiness(self, include_blocking=True)
 
-        if models_by_hash:
-            # Map models to workflows that use them
-            all_workflows = self.pyproject.workflows.get_all_with_resolutions()
-            for workflow_name in all_workflows.keys():
-                workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name)
-                for wf_model in workflow_models:
-                    if wf_model.hash and wf_model.hash in models_by_hash:
-                        # Find or create entry for this model
-                        existing = next((m for m in models_without_sources if m.hash == wf_model.hash), None)
-                        if existing:
-                            existing.workflows.append(workflow_name)
-                        else:
-                            model_data = models_by_hash[wf_model.hash]
-                            models_without_sources.append(
-                                ModelWithoutSourceInfo(
-                                    filename=model_data.filename,
-                                    hash=wf_model.hash,
-                                    workflows=[workflow_name]
-                                )
-                            )
+        for issue in readiness.blocking_issues:
+            if issue.type == "uncommitted_workflows":
+                context = ExportErrorContext(uncommitted_workflows=issue.details)
+                raise CDExportError(issue.message, context=context)
 
-            # Notify callback with structured data
-            if callbacks:
-                callbacks.on_models_without_sources(models_without_sources)
+            if issue.type == "uncommitted_git_changes":
+                context = ExportErrorContext(uncommitted_git_changes=True)
+                raise CDExportError(issue.message, context=context)
+
+            if issue.type == "unresolved_issues" and not allow_issues:
+                context = ExportErrorContext(has_unresolved_issues=True)
+                raise CDExportError(issue.message, context=context)
+
+        if callbacks and readiness.warnings.models_without_sources:
+            callbacks.on_models_without_sources([
+                ModelWithoutSourceInfo(
+                    filename=warning.filename,
+                    hash=warning.hash or "",
+                    workflows=list(warning.workflows),
+                )
+                for warning in readiness.warnings.models_without_sources
+            ])
 
         # Auto-populate git info for dev nodes before export
         self._auto_populate_dev_node_git_info(callbacks)

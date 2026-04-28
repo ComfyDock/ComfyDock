@@ -63,9 +63,10 @@ export, push, cloud build planning, and future deploy gates. The result should
 separate hard source-state blockers from reproducibility warnings and should not
 contain CLI or manager presentation decisions.
 
-Core now exposes the local handoff readiness result used by Manager export and
-push preview flows. This remains partial until workflow contract readiness,
-runtime readiness, and cloud build-plan readiness consume the same shape.
+Core now exposes the local handoff readiness result used by Manager export,
+Manager push preview, and CLI export flows. This remains partial until workflow
+contract readiness, runtime readiness, and cloud build-plan readiness consume
+the same shape.
 
 ### CGSYNC-READY-02 [PARTIAL]: Readiness uses core provenance semantics
 Validation: MIXED
@@ -76,8 +77,8 @@ deploy, and cloud code should not reimplement divergent rules for the same
 manifest state.
 
 Core now owns the current model-source and custom-node provenance semantics used
-by Manager. Source candidate discovery and cloud dependency-proof integration
-are still planned.
+by Manager and CLI handoff flows. Source candidate discovery and cloud
+dependency-proof integration are still planned.
 
 ### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
 Validation: MIXED
