@@ -29,6 +29,11 @@ _EXPORTS: dict[str, str] = {
     "WorkflowContractOutput": "manifest",
     "NamedWorkflowContract": "manifest",
     "WorkflowExecutionContract": "manifest",
+    "EnvironmentReadiness": "readiness",
+    "ModelSourceWarning": "readiness",
+    "NodeProvenanceWarning": "readiness",
+    "ReadinessBlockingIssue": "readiness",
+    "ReadinessWarnings": "readiness",
 }
 
 __all__ = sorted(_EXPORTS)

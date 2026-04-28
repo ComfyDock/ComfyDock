@@ -55,7 +55,7 @@ the derived runtime so the local environment matches the checked-out commit.
 
 ## Readiness And Handoff
 
-### CGSYNC-READY-01 [PLANNED]: Core exposes a UI-agnostic readiness result
+### CGSYNC-READY-01 [PARTIAL]: Core exposes a UI-agnostic readiness result
 Validation: MIXED
 
 Core should provide a structured readiness result that callers can use for
@@ -63,13 +63,21 @@ export, push, cloud build planning, and future deploy gates. The result should
 separate hard source-state blockers from reproducibility warnings and should not
 contain CLI or manager presentation decisions.
 
-### CGSYNC-READY-02 [PLANNED]: Readiness uses core provenance semantics
+Core now exposes the local handoff readiness result used by Manager export and
+push preview flows. This remains partial until workflow contract readiness,
+runtime readiness, and cloud build-plan readiness consume the same shape.
+
+### CGSYNC-READY-02 [PARTIAL]: Readiness uses core provenance semantics
 Validation: MIXED
 
 Readiness checks should classify model source gaps, custom node portable
 provenance gaps, and dependency criticality through core services. Manager, CLI,
 deploy, and cloud code should not reimplement divergent rules for the same
 manifest state.
+
+Core now owns the current model-source and custom-node provenance semantics used
+by Manager. Source candidate discovery and cloud dependency-proof integration
+are still planned.
 
 ### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
 Validation: MIXED
@@ -93,5 +101,5 @@ Validation: MIXED
 
 Users should be able to see and fix missing required model/node source metadata
 before pushing a commit that cloud cannot build. Manager has a first-pass
-readiness surface for export/push handoff; core-owned services and cloud build
-planner integration are still planned.
+readiness surface for export/push handoff backed by a core readiness service;
+cloud build planner integration is still planned.

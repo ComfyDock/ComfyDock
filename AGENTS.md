@@ -82,6 +82,26 @@ moving core policy into CLI handlers unless it is truly command-specific.
 Deploy code should consume manifest/core semantics rather than inventing parallel
 environment metadata.
 
+## Core Type Boundaries
+
+Core is consumed by Manager, CLI, Deploy, and Cloud. Stable domain results that
+cross package or repo boundaries should use typed dataclasses, protocols, or
+explicit model objects instead of anonymous nested dictionaries.
+
+Use dictionaries at serialization and dynamic-data edges:
+
+- HTTP/API responses
+- JSON/TOML parsing
+- provider payloads with unstable schemas
+- narrow test fixtures
+
+When a typed result needs to cross an API boundary, expose a `to_dict()` method
+or dedicated serializer at that edge. Keep the core service return type typed so
+callers can inspect the shape through IDEs and type checkers. Avoid
+`dict[str, Any]` returns for stable domain concepts such as readiness results,
+build plans, dependency proofs, source candidates, environment summaries, and
+manifest-derived reports.
+
 ## Environment Model
 
 ComfyGit keeps portable environment truth separate from machine-local runtime
@@ -126,6 +146,7 @@ uv run pytest packages/core/tests/ -v
 uv run pytest packages/cli/tests/ -v
 uv run pytest packages/deploy/tests/ -v
 uv run ruff check --fix
+uv run ty check packages/core/src/comfygit_core/models/readiness.py packages/core/src/comfygit_core/services/environment_readiness.py
 ```
 
 All packages use lockstep versioning:
@@ -154,6 +175,15 @@ uv run pytest packages/core/tests/ -v
 uv run pytest packages/cli/tests/ -v
 uv run pytest packages/deploy/tests/ -v
 ```
+
+Type validation for new/changed core library boundaries:
+
+```bash
+uv run ty check <changed-core-files>
+```
+
+Start with targeted files rather than forcing whole-repo type strictness at
+once. Expand coverage when the touched areas are clean.
 
 If available in the current environment, `/validate` runs the repo validation
 workspace script (`dev/scripts/validation-workspace.sh`).

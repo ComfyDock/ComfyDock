@@ -24,6 +24,12 @@ _EXPORTS: dict[str, str] = {
     "WorkflowAnalysisService": "workflow_analysis_service",
     "ModelSourceCandidate": "model_source_lookup",
     "ModelSourceLookupService": "model_source_lookup",
+    "build_environment_readiness": "environment_readiness",
+    "collect_model_source_warnings": "environment_readiness",
+    "collect_node_provenance_warnings": "environment_readiness",
+    "model_has_sources": "environment_readiness",
+    "node_criticality": "environment_readiness",
+    "node_has_portable_provenance": "environment_readiness",
 }
 
 __all__ = sorted(_EXPORTS)

@@ -26,13 +26,18 @@ Callers should enter core behavior through Workspace and Environment APIs rather
 than directly orchestrating manager internals. Manager classes may be used for
 internal composition, tests, and advanced package-local behavior.
 
-### CGCORE-LIB-04 [PLANNED]: Core owns reusable readiness and provenance policy
+### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
 
 Environment readiness, portable provenance classification, and dependency source
 candidate discovery should live in core services. CLI, manager UI, deploy
 tooling, and cloud planners should adapt those results for presentation instead
 of carrying parallel policy implementations.
+
+Core now exposes a first reusable readiness service for local handoff flows. It
+classifies model source gaps, required custom-node provenance gaps, and optional
+custom-node exclusions without Manager-specific UI decisions. Workflow source
+candidate discovery and cloud build-plan integration remain follow-on work.
 
 ## Portable Environment Contract
 
@@ -95,8 +100,8 @@ Custom nodes should support an explicit `criticality = "required" | "optional"`
 field in manifest metadata. Missing criticality defaults to required. Required
 nodes without a reproducible acquisition path must be reported by readiness
 checks. Optional nodes remain tracked as local environment state but should not be
-treated as required portable build inputs. Core manifest storage exists;
-centralized core readiness enforcement is still future work.
+treated as required portable build inputs. Core manifest storage and local
+readiness enforcement exist; cloud build-plan consumption is still future work.
 
 ### CGCORE-DEP-05 [LIVE]: Workflow graph usage is advisory for custom node criticality
 Validation: HUMAN_REVIEW
