@@ -43,7 +43,7 @@ changes in the environment repository.
 ### CGSYNC-GIT-02 [PARTIAL]: Push-readiness should report reproducibility blockers
 Validation: MIXED
 
-Before pushing an environment intended for cloud consumption, ComfyGit should be
+Before pushing an environment intended for another runtime, ComfyGit should be
 able to report obvious blockers such as required models without sources or
 required node packages without portable acquisition metadata.
 
@@ -59,13 +59,13 @@ the derived runtime so the local environment matches the checked-out commit.
 Validation: MIXED
 
 Core should provide a structured readiness result that callers can use for
-export, push, cloud build planning, and future deploy gates. The result should
+export, push, build planning, and future deploy gates. The result should
 separate hard source-state blockers from reproducibility warnings and should not
 contain CLI or manager presentation decisions.
 
 Core now exposes the local handoff readiness result used by Manager export,
 Manager push preview, and CLI export flows. This remains partial until workflow
-contract readiness, runtime readiness, and cloud build-plan readiness consume
+contract readiness, runtime readiness, and build-plan readiness consume
 the same shape.
 
 ### CGSYNC-READY-02 [PARTIAL]: Readiness uses core provenance semantics
@@ -73,11 +73,11 @@ Validation: MIXED
 
 Readiness checks should classify model source gaps, custom node portable
 provenance gaps, and dependency criticality through core services. Manager, CLI,
-deploy, and cloud code should not reimplement divergent rules for the same
+deploy, and runtime adapter code should not reimplement divergent rules for the same
 manifest state.
 
 Core now owns the current model-source and custom-node provenance semantics used
-by Manager and CLI handoff flows. Source candidate discovery and cloud
+by Manager and CLI handoff flows. Source candidate discovery and
 dependency-proof integration are still planned.
 
 ### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
@@ -89,21 +89,21 @@ candidates differently, but scoring, deduplication, provider classification, and
 already-known-source filtering should remain shared.
 
 Manager currently owns the first source-candidate UI implementation. Extract it
-when cloud dependency proof needs the same candidate discovery behavior.
+when build/dependency proof needs the same candidate discovery behavior.
 
-## Cloud Compatibility
+## Build Compatibility
 
-### CGSYNC-CLOUD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
+### CGSYNC-BUILD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
 Validation: MIXED
 
-Cloud build planning should read the same manifest fields core writes locally.
-If cloud needs a field for reproducibility, core/manager should make that field
-first-class rather than relying on cloud-specific heuristics.
+Build planning should read the same manifest fields core writes locally. If a
+runtime needs a field for reproducibility, core/manager should make that field
+first-class rather than relying on adapter-specific heuristics.
 
-### CGSYNC-CLOUD-02 [PARTIAL]: Source metadata should be inspectable before push
+### CGSYNC-BUILD-02 [PARTIAL]: Source metadata should be inspectable before push
 Validation: MIXED
 
 Users should be able to see and fix missing required model/node source metadata
-before pushing a commit that cloud cannot build. Manager has a first-pass
+before pushing a commit that another runtime cannot build. Manager has a first-pass
 readiness surface for export/push handoff backed by a core readiness service;
-cloud build planner integration is still planned.
+build planner integration is still planned.

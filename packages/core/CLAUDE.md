@@ -5,7 +5,7 @@
 `packages/core` is the UI-agnostic library package. It owns workspace and
 environment state, manifest semantics, sync/materialization behavior, model and
 node metadata, git orchestration, and callback/protocol contracts used by CLI,
-manager, deploy, and cloud-facing tooling.
+manager, deploy, and future runtime tooling.
 
 ## Active Truth Layer
 
@@ -31,8 +31,8 @@ Package docs are supporting reference:
   strategies, protocols, return values, and exceptions so callers own UX.
 - Prefer `Workspace` and `Environment` as public entry points. Keep direct manager
   access for internal composition, tests, and package-local advanced behavior.
-- Do not put cloud-only policy into core. Core should write/read portable
-  manifest semantics that cloud can consume.
+- Do not put service-specific deployment policy into core. Core should
+  write/read portable manifest semantics that runtime adapters can consume.
 
 ## Source Map
 
@@ -90,7 +90,7 @@ Custom node criticality is planned as explicit manifest metadata:
 
 - Supported values should start as `required` and `optional`.
 - Missing criticality reads as `required`.
-- Optional unresolved nodes warn instead of blocking cloud/build readiness.
+- Optional unresolved nodes warn instead of blocking build readiness.
 - Workflow graph usage can inform UI messaging, but must not silently downgrade
   user-declared custom node criticality.
 

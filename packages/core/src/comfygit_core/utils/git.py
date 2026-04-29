@@ -1318,7 +1318,7 @@ def git_revert(repo_path: Path, commit: str, no_commit: bool = False) -> None:
 
 
 # =============================================================================
-# Git Authentication (for cloud deployments)
+# Git Authentication (for remote deployments)
 # =============================================================================
 
 def _create_askpass_script(token: str) -> Path:

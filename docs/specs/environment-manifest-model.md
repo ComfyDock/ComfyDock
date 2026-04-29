@@ -1,7 +1,7 @@
 # Environment Manifest Model
 
 This spec describes the tracked environment data shape that core, manager, CLI,
-deploy, and ComfyGit Cloud should agree on.
+deploy, and serve/runtime adapters should agree on.
 
 ## Manifest Authority
 
@@ -33,6 +33,24 @@ Workflow input/output contracts should be stored in tracked environment state so
 future build/deploy systems can expose a stable execution API for a workflow at a
 specific commit.
 
+### CGSPEC-MAN-05 [PLANNED]: Workflow contracts should be executable without Manager
+Validation: MIXED
+
+Workflow execution contracts are portable environment metadata, not ComfyGit
+Manager UI state. A ComfyGit environment created or maintained by CLI alone
+should still be able to serve contract-shaped workflow requests when the runtime
+has the workflow JSON, manifest contract, and a reachable ComfyUI server.
+
+### CGSPEC-MAN-06 [PLANNED]: API workflow prompts are not manifest truth
+Validation: MIXED
+
+Environment repositories should not need to track ComfyUI API-format prompt JSON
+beside the UI-format workflow JSON. The UI workflow remains the editable,
+reviewable, user-authored artifact; the API prompt is generated from it when a
+runtime needs to submit work to ComfyUI's `/prompt` endpoint. If tooling stores
+an API prompt for debugging, caching, or validation, that artifact must be
+treated as derived and replaceable rather than authoritative manifest state.
+
 ## Custom Nodes
 
 ### CGSPEC-NODE-01 [LIVE]: Installed node packages are manifest-visible
@@ -59,11 +77,11 @@ mark intentionally non-deployable or experimental nodes as `optional`.
 Validation: MIXED
 
 An optional custom node can be present in a local authoring environment without
-being required for cloud build readiness. The manifest should still make this
-intent explicit so cloud planners do not have to infer it from workflow JSON.
-Workflow graph analysis must not set this field automatically. Core and manager
-can now persist this intent; centralized core readiness and cloud planner
-consumption are still in progress.
+being required for build readiness. The manifest should still make this intent
+explicit so build planners do not have to infer it from workflow JSON. Workflow
+graph analysis must not set this field automatically. Core and manager can now
+persist this intent; centralized core readiness and build planner consumption are
+still in progress.
 
 ## Models
 
@@ -77,7 +95,7 @@ location, category, source URLs when known, and content hash when available.
 Validation: TEST
 
 A required model that lacks a usable source and cannot be matched by known hash
-is not reproducible. Export, import, push-readiness, or cloud-build readiness
+is not reproducible. Export, import, push-readiness, or build-readiness
 flows should surface that as a blocking issue.
 
 ### CGSPEC-MODEL-03 [LIVE]: Optional model gaps are warnings

@@ -2,7 +2,7 @@
 
 ComfyGit Core owns environment state, dependency metadata, local runtime
 materialization, and library APIs used by the CLI, manager, deploy tooling, and
-future cloud services.
+future runtime adapters.
 
 ## Library Boundary
 
@@ -31,13 +31,13 @@ Validation: MIXED
 
 Environment readiness, portable provenance classification, and dependency source
 candidate discovery should live in core services. CLI, manager UI, deploy
-tooling, and cloud planners should adapt those results for presentation instead
-of carrying parallel policy implementations.
+tooling, and runtime planners should adapt those results for presentation
+instead of carrying parallel policy implementations.
 
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
 custom-node exclusions without Manager- or CLI-specific UI decisions. Workflow
-source candidate discovery and cloud build-plan integration remain follow-on
+source candidate discovery and deploy/build integration remain follow-on
 work.
 
 ## Portable Environment Contract
@@ -67,9 +67,55 @@ their current disk contents as authoritative.
 ### CGCORE-MAN-04 [LIVE]: Git commits are environment snapshots
 Validation: TEST
 
-Environment changes meant to be shared or used by cloud services should be
+Environment changes meant to be shared or used by external runtimes should be
 recorded in git. Core git operations should preserve the environment repository
 as the auditable history of manifest and workflow changes.
+
+## Workflow Contract Execution
+
+### CGCORE-EXEC-01 [PARTIAL]: Core owns workflow contract execution semantics
+Validation: MIXED
+
+Core should provide UI-agnostic services for turning a tracked workflow execution
+contract into a ComfyUI API prompt and for interpreting ComfyUI execution
+history back into declared contract outputs. Manager, CLI, deploy/serve tooling,
+and other runtime adapters should share these semantics rather than implementing
+parallel contract-to-prompt mappers.
+
+Core already stores workflow execution contracts in the manifest and exposes
+read/write APIs through Environment. Prompt construction and output extraction
+logic should live in core before `cg serve` or build/deploy paths rely on it as
+a stable runtime contract.
+
+### CGCORE-EXEC-02 [PLANNED]: Core contract execution stays transport-agnostic
+Validation: STATIC
+
+Core should not own HTTP routing, websocket proxying, ComfyUI process
+supervision, deployment provider APIs, run persistence, auth, or object storage
+delivery. Those responsibilities belong to caller packages such as manager,
+CLI/serve, deploy, or external runtime adapters. Core should expose
+deterministic library functions and typed results that those packages can adapt
+to their transports.
+
+### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over core semantics
+Validation: MIXED
+
+A future ComfyGit serve runtime should expose contract-shaped workflow endpoints
+for a ComfyGit environment by loading manifest/workflow state, calling core
+contract execution services, and communicating with a local ComfyUI server. The
+serve runtime may provide HTTP endpoints, progress streams, output retrieval, and
+storage adapters, but it must not redefine the manifest or contract semantics.
+
+### CGCORE-EXEC-04 [PLANNED]: API prompts are derived execution artifacts
+Validation: TEST
+
+The committed source of truth for workflow execution is the UI-format workflow
+JSON plus the manifest workflow contract. ComfyUI API prompts should be produced
+just in time from those tracked artifacts, patched with contract input values,
+and submitted to ComfyUI as disposable runtime data. Core should not require
+manager, CLI, or runtime callers to persist API prompt JSON alongside the
+workflow unless a future caller explicitly creates a non-authoritative
+debug/cache artifact.
 
 ## Dependency Reproducibility
 
@@ -102,7 +148,7 @@ field in manifest metadata. Missing criticality defaults to required. Required
 nodes without a reproducible acquisition path must be reported by readiness
 checks. Optional nodes remain tracked as local environment state but should not be
 treated as required portable build inputs. Core manifest storage and local
-readiness enforcement exist; cloud build-plan consumption is still future work.
+readiness enforcement exist; deploy/build consumption is still future work.
 
 ### CGCORE-DEP-05 [LIVE]: Workflow graph usage is advisory for custom node criticality
 Validation: HUMAN_REVIEW
@@ -119,7 +165,7 @@ Validation: MIXED
 Scanning workflow files for embedded model URLs, classifying provider links,
 scoring candidate source matches, deduplicating candidates, and filtering already
 known model sources are dependency-domain behavior. Core should expose this as
-UI-agnostic source-candidate services so manager, CLI, and cloud build planning
+UI-agnostic source-candidate services so manager, CLI, and build planning
 can share the same logic.
 
 ## Resolution And Sync

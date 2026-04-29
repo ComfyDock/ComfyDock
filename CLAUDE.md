@@ -36,7 +36,7 @@ Key current direction:
 
 - Environment repositories use tracked `pyproject.toml` as the portable source
   of truth.
-- Git commits are environment snapshots for local collaboration and cloud build
+- Git commits are environment snapshots for local collaboration and build
   planning.
 - Machine-specific settings such as PyTorch backend and local editable sources
   stay gitignored and are injected during sync/run.
@@ -84,9 +84,10 @@ environment metadata.
 
 ## Core Type Boundaries
 
-Core is consumed by Manager, CLI, Deploy, and Cloud. Stable domain results that
-cross package or repo boundaries should use typed dataclasses, protocols, or
-explicit model objects instead of anonymous nested dictionaries.
+Core is consumed by Manager, CLI, Deploy, and future runtime adapters. Stable
+domain results that cross package or repo boundaries should use typed
+dataclasses, protocols, or explicit model objects instead of anonymous nested
+dictionaries.
 
 Use dictionaries at serialization and dynamic-data edges:
 

@@ -256,6 +256,3 @@ from comfygit_core.utils.git import parse_git_url
 
 By contributing, you agree that your contribution will be licensed under the
 repository's [GPL-3.0](LICENSE.txt) license.
-
-ComfyGit Cloud is a separate hosted service and is not part of this
-open-source repository.

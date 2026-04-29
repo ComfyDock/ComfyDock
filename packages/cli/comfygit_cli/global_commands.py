@@ -851,7 +851,7 @@ class GlobalCommands:
                 if remaining > 0:
                     print(f"  ... and {remaining} more node(s)")
 
-            print("\n⚠️  Another machine or ComfyGit Cloud may not rebuild this exactly.")
+            print("\n⚠️  Another machine may not rebuild this exactly.")
             print("   Add model sources or mark local-only development nodes optional.")
 
             response = input("\nContinue export? (y/N): ").strip().lower()

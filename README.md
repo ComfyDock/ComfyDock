@@ -124,6 +124,3 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 ## License
 
 ComfyGit is licensed under [GPL-3.0](LICENSE.txt).
-
-ComfyGit Cloud is a separate hosted service and is not part of this open-source
-repository.
