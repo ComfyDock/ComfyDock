@@ -93,6 +93,103 @@ class TestModelHandlerFormatting:
         assert "[tool.comfygit.models]" in content
         assert "xyz789" in content
 
+
+class TestWorkflowExecutionContractLoading:
+    """Test workflow execution contracts load through the canonical model."""
+
+    def test_get_execution_contract_loads_workflow_contract_model(self, temp_pyproject):
+        from comfygit_core.models import WorkflowExecutionContract as PublicWorkflowExecutionContract
+        from comfygit_core.models.workflow_contract import WorkflowExecutionContract
+
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["tool"]["comfygit"]["workflows"] = {
+            "simple_txt2img": {
+                "path": "workflows/simple_txt2img.json",
+                "execution_contract": {
+                    "version": 1,
+                    "default_contract": "default",
+                    "contracts": {
+                        "default": {
+                            "display_name": "Default",
+                            "description": "Primary API shape",
+                            "inputs": [
+                                {
+                                    "name": "prompt",
+                                    "type": "string",
+                                    "node_id": 6,
+                                    "widget_idx": 0,
+                                    "required": True,
+                                    "default": "a test prompt",
+                                },
+                                {
+                                    "name": "steps",
+                                    "type": "integer",
+                                    "node_id": "3",
+                                    "widget_index": 2,
+                                    "required": False,
+                                    "default": 30,
+                                    "min": 1,
+                                    "max": 150,
+                                },
+                            ],
+                            "outputs": [
+                                {
+                                    "name": "image",
+                                    "type": "image",
+                                    "node_id": 9,
+                                    "selector": "slot:0",
+                                }
+                            ],
+                        }
+                    },
+                },
+            }
+        }
+        manager.save(config)
+
+        contract = manager.workflows.get_execution_contract("simple_txt2img")
+
+        assert isinstance(contract, WorkflowExecutionContract)
+        assert isinstance(contract, PublicWorkflowExecutionContract)
+        assert contract is not None
+        assert contract.active_contract is not None
+        assert contract.active_contract.display_name == "Default"
+        assert contract.active_contract.inputs[0].name == "prompt"
+        assert contract.active_contract.inputs[1].widget_idx == 2
+        assert contract.active_contract.inputs[1].widget_index == 2
+        assert contract.active_contract.outputs[0].selector_slot == 0
+        assert contract.to_public_schema() == {
+            "inputs": [
+                {
+                    "name": "prompt",
+                    "type": "string",
+                    "node_id": 6,
+                    "required": True,
+                    "widget_idx": 0,
+                    "default": "a test prompt",
+                },
+                {
+                    "name": "steps",
+                    "type": "integer",
+                    "node_id": "3",
+                    "required": False,
+                    "widget_idx": 2,
+                    "default": 30,
+                    "min": 1,
+                    "max": 150,
+                },
+            ],
+            "outputs": [
+                {
+                    "name": "image",
+                    "type": "image",
+                    "node_id": 9,
+                    "selector": "slot:0",
+                }
+            ],
+        }
+
     def test_add_both_model_categories(self, temp_pyproject):
         """Test adding multiple models to global manifest."""
         from comfygit_core.models.manifest import ManifestModel

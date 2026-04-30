@@ -42,7 +42,6 @@ from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
-    from comfygit_core.models.manifest import WorkflowExecutionContract
     from comfygit_core.models.protocols import (
         ExportCallbacks,
         ImportCallbacks,
@@ -54,6 +53,7 @@ if TYPE_CHECKING:
 
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.merge_plan import MergeResult, MergeValidation
+    from ..models.workflow_contract import WorkflowExecutionContract
     from ..models.workflow import (
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,

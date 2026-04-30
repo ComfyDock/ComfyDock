@@ -20,8 +20,8 @@ from tomlkit.exceptions import TOMLKitError
 from comfygit_core.models.manifest import (
     ManifestModel,
     ManifestWorkflowModel,
-    WorkflowExecutionContract,
 )
+from comfygit_core.models.workflow_contract import WorkflowExecutionContract
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
