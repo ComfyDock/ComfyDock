@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -148,12 +148,46 @@ class Link:
 @dataclass
 class Group:
     """Represents a visual grouping of nodes."""
-    id: int
-    title: str
-    bounding: tuple[float, float, float, float]  # [x, y, width, height]
-    color: str
+    title: str = ""
+    bounding: tuple[float, float, float, float] = (0, 0, 0, 0)  # [x, y, width, height]
+    color: str = "#3f789e"
+    id: int | None = None
     font_size: int = 24
     flags: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Group:
+        """Parse ComfyUI group metadata.
+
+        Older workflow JSONs may omit group IDs, and newer/extension-authored
+        workflows may add fields we do not model. Groups are visual metadata, so
+        parsing should not block dependency analysis.
+        """
+        bounding = data.get("bounding", (0, 0, 0, 0))
+        if isinstance(bounding, list):
+            bounding = tuple(bounding)
+
+        return cls(
+            id=data.get("id"),
+            title=data.get("title", ""),
+            bounding=bounding,
+            color=data.get("color", "#3f789e"),
+            font_size=data.get("font_size", 24),
+            flags=data.get("flags", {}),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize group metadata without inventing absent optional fields."""
+        data = {
+            "title": self.title,
+            "bounding": list(self.bounding),
+            "color": self.color,
+            "font_size": self.font_size,
+            "flags": self.flags,
+        }
+        if self.id is not None:
+            data["id"] = self.id
+        return data
 
 @dataclass
 class Workflow:
@@ -281,7 +315,11 @@ class Workflow:
         links = [Link.from_array(link) for link in data.get('links', [])]
 
         # Parse groups (if present)
-        groups = [Group(**group) for group in data.get('groups', [])]
+        groups = [
+            Group.from_dict(group)
+            for group in data.get('groups', [])
+            if isinstance(group, dict)
+        ]
 
         # Store top-level UUID refs in metadata for reconstruction
         if top_level_uuid_refs:
@@ -338,7 +376,7 @@ class Workflow:
             'last_node_id': self.last_node_id,
             'last_link_id': self.last_link_id,
             'links': [link.to_array() for link in self.links],
-            'groups': [asdict(group) for group in self.groups],
+            'groups': [group.to_dict() for group in self.groups],
             'config': self.config,
             'version': self.version
         }
