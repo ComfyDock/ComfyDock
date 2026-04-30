@@ -711,6 +711,27 @@ packages = []
 
             sys.exit(result.returncode)
 
+    @with_env_logging("serve")
+    def serve(self, args: argparse.Namespace, logger=None) -> None:
+        """Serve workflow contracts for the specified environment."""
+        from .serve_runtime import ServeConfig, serve_environment
+
+        env = self._get_env(args)
+        config = ServeConfig(
+            host=args.host,
+            port=args.port,
+            comfy_url=args.comfy_url,
+        )
+        try:
+            serve_environment(env, config)
+        except KeyboardInterrupt:
+            print("\nStopped ComfyGit serve.")
+        except OSError as e:
+            if logger:
+                logger.error("Serve failed", exc_info=True)
+            print(f"✗ Failed to start serve: {e}", file=sys.stderr)
+            sys.exit(1)
+
     @with_env_logging("sync")
     def sync(self, args: argparse.Namespace, logger=None) -> None:
         """Sync environment packages and dependencies."""

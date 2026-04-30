@@ -578,6 +578,29 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
 
+    # serve - Front a running ComfyUI instance with contract-shaped endpoints
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve workflow contracts for this environment",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host/interface to bind (default: 127.0.0.1)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8190,
+        help="Port to bind (default: 8190)",
+    )
+    serve_parser.add_argument(
+        "--comfy-url",
+        default="http://127.0.0.1:8188",
+        help="Running ComfyUI API URL (default: http://127.0.0.1:8188)",
+    )
+    serve_parser.set_defaults(func=env_cmds.serve)
+
     # status - Show environment status
     status_parser = subparsers.add_parser("status", help="Show status (both sync and git status)")
     status_parser.add_argument("-v", "--verbose", action="store_true", help="Show full details")

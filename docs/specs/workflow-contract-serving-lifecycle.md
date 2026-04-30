@@ -17,7 +17,7 @@ travel with the workflow JSON when an environment is exported, pushed, or built.
 Core currently persists and reads workflow execution contracts. Runtime execution
 services for those contracts are still planned.
 
-### CGSERVE-CORE-02 [PLANNED]: Core converts workflow contracts into API prompts
+### CGSERVE-CORE-02 [PARTIAL]: Core converts workflow contracts into API prompts
 Validation: TEST
 
 Core should expose a service that accepts workflow JSON, a workflow execution
@@ -33,7 +33,14 @@ workflow contains UI/editor data such as nodes, links, groups, and viewport
 state. Persisting both formats by default would create duplicate workflow truth
 and force manager/CLI save paths to generate extra files.
 
-### CGSERVE-CORE-02A [PLANNED]: Server-side conversion should be deterministic
+Core now exposes a first prompt-build service that accepts saved workflow JSON,
+a typed workflow contract, and contract input values, then returns a typed
+ComfyUI API prompt build result with applied inputs, structured issues, output
+bindings, and a widget-index-to-API-input map. The current implementation covers
+the basic server-side conversion and prompt patching path. ComfyUI
+`object_info`-assisted validation remains future work.
+
+### CGSERVE-CORE-02A [PARTIAL]: Server-side conversion should be deterministic
 Validation: TEST
 
 Core should implement the UI-workflow-to-API-prompt conversion as deterministic
@@ -42,7 +49,13 @@ frontend process. Tests should compare supported workflows against API prompts
 exported by ComfyUI's frontend conversion where practical, so ComfyGit can track
 the supported conversion surface explicitly.
 
-### CGSERVE-CORE-03 [PLANNED]: Core extracts declared outputs from ComfyUI history
+The first implementation runs in core without a browser, Manager custom node, or
+ComfyUI frontend process. It resolves ComfyUI link arrays into API prompt input
+links, skips isolated visual note nodes, and preserves the original widget
+indexes used by Manager-authored contracts. Comparison tests against frontend
+export output are still planned.
+
+### CGSERVE-CORE-03 [PARTIAL]: Core extracts declared outputs from ComfyUI history
 Validation: TEST
 
 Core should expose a service that accepts a workflow execution contract and a
@@ -50,7 +63,13 @@ ComfyUI history entry, then returns the declared output metadata for the
 contract. Output extraction should be based on contract output bindings rather
 than ad hoc endpoint-specific assumptions.
 
-### CGSERVE-CORE-04 [PLANNED]: Core validates contract bindings before execution
+Core now exposes a first output extraction helper that accepts declared contract
+outputs and a ComfyUI history entry, then returns typed output results with
+artifact references. The current implementation handles local history artifact
+references such as image filenames, subfolders, and output types. Selector-slot
+filtering and richer history validation remain planned.
+
+### CGSERVE-CORE-04 [PARTIAL]: Core validates contract bindings before execution
 Validation: MIXED
 
 Core should be able to report contract execution issues such as missing required
@@ -59,9 +78,14 @@ history data, or workflow/object-info mismatches before or during execution.
 Callers should receive typed errors or result objects instead of scraping string
 messages.
 
+Core now reports typed prompt-build issues for unknown inputs, missing required
+inputs, missing nodes, missing widget bindings, type coercion failures, enum
+validation, and numeric bounds validation. Output-history validation and
+ComfyUI `object_info` mismatch validation remain planned.
+
 ## Runtime Adapter Boundary
 
-### CGSERVE-RUN-01 [PLANNED]: `cg serve` fronts ComfyUI with contract-shaped endpoints
+### CGSERVE-RUN-01 [PARTIAL]: `cg serve` fronts ComfyUI with contract-shaped endpoints
 Validation: MIXED
 
 A serve runtime should expose HTTP endpoints shaped around ComfyGit workflow
@@ -69,6 +93,12 @@ contracts while communicating with a local ComfyUI server through ComfyUI's
 normal API. External callers should send contract inputs to ComfyGit; ComfyGit
 should translate those inputs into a ComfyUI prompt and map the resulting
 artifacts back to contract outputs.
+
+The CLI now provides a first `cg serve` adapter that resolves the active or
+`-e <env>` environment, serves contract metadata, converts contract-shaped run
+requests through core prompt-building logic, submits prompts to a configured
+ComfyUI API URL, optionally waits for history, and returns local output
+references. This adapter does not launch ComfyUI.
 
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node
 Validation: MIXED
