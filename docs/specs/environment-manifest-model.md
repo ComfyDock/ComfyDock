@@ -61,6 +61,16 @@ them back to numeric values when loading typed workflow contract models. This
 keeps the manifest parseable by strict TOML readers without losing numeric
 precision for runtime and UI consumers.
 
+### CGSPEC-MAN-08 [LIVE]: Core exposes a typed read-only manifest snapshot
+Validation: TEST
+
+Core should expose a typed read-only projection of the current manifest that is
+derived from the same freshness-aware `pyproject.toml` load path as existing
+handlers. The snapshot is a consumer-facing read model for services such as
+readiness, build planning, and serve/runtime adapters. It must not replace the
+`pyproject.toml` file as the persisted authority, and callers should request a
+new snapshot after manifest mutations.
+
 ## Custom Nodes
 
 ### CGSPEC-NODE-01 [LIVE]: Installed node packages are manifest-visible

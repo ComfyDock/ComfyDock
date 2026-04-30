@@ -18,6 +18,7 @@ from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
 from comfygit_core.models.manifest import (
+    EnvironmentManifestSnapshot,
     ManifestModel,
     ManifestWorkflowModel,
 )
@@ -176,6 +177,16 @@ class PyprojectManager:
 
         return config
 
+    def get_manifest_snapshot(self, force_reload: bool = False) -> EnvironmentManifestSnapshot:
+        """Return a typed read-only projection of the current manifest.
+
+        The snapshot is derived from the same freshness-aware `load()` path as
+        handler reads. Callers should request a new snapshot after any manifest
+        mutation instead of retaining one as an authority.
+        """
+        return EnvironmentManifestSnapshot.from_toml_dict(
+            self.load(force_reload=force_reload)
+        )
 
     def save(self, config: dict | None = None) -> None:
         """Save the configuration to pyproject.toml.

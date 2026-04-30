@@ -277,6 +277,124 @@ class TestWorkflowExecutionContractLoading:
         assert f'max = "{large_uint64_bound}"' in content
         tomllib.loads(content)
 
+    def test_get_manifest_snapshot_projects_major_manifest_sections(self, temp_pyproject):
+        from comfygit_core.models import EnvironmentManifestSnapshot
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+        from comfygit_core.models.workflow_contract import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowContractOutput,
+            WorkflowExecutionContract,
+        )
+
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["dependency-groups"] = {
+            "demo-node-a1b2c3d4": ["requests>=2"],
+        }
+        config["tool"]["uv"] = {
+            "exclude-dependencies": ["opencv-python"],
+            "constraint-dependencies": ["numpy<3"],
+            "sources": {"demo-package": {"git": "https://example.invalid/demo.git"}},
+        }
+        manager.save(config)
+
+        manager.nodes.add(
+            NodeInfo(
+                name="DemoNode",
+                repository="https://example.invalid/DemoNode.git",
+                version="abc123",
+                source="git",
+                criticality="optional",
+            ),
+            "demo-node",
+        )
+        manager.models.add_model(
+            ManifestModel(
+                hash="modelhash",
+                filename="model.safetensors",
+                size=123,
+                relative_path="checkpoints/model.safetensors",
+                category="checkpoints",
+                sources=["https://example.invalid/model.safetensors"],
+            )
+        )
+        manager.workflows.set_node_packs("simple_txt2img", {"demo-node"})
+        manager.workflows.set_custom_node_mapping(
+            "simple_txt2img",
+            "DemoNodeType",
+            "demo-node",
+        )
+        manager.workflows.set_workflow_models(
+            "simple_txt2img",
+            [
+                ManifestWorkflowModel(
+                    filename="model.safetensors",
+                    category="checkpoints",
+                    criticality="required",
+                    status="resolved",
+                    nodes=[
+                        WorkflowNodeWidgetRef(
+                            node_id="4",
+                            node_type="CheckpointLoaderSimple",
+                            widget_index=0,
+                            widget_value="model.safetensors",
+                        )
+                    ],
+                    hash="modelhash",
+                )
+            ],
+        )
+        manager.workflows.set_execution_contract(
+            "simple_txt2img",
+            WorkflowExecutionContract(
+                contracts={
+                    "default": NamedWorkflowContract(
+                        inputs=[
+                            WorkflowContractInput(
+                                name="prompt",
+                                type="string",
+                                node_id="6",
+                                widget_idx=0,
+                                required=True,
+                            )
+                        ],
+                        outputs=[
+                            WorkflowContractOutput(
+                                name="image",
+                                type="image",
+                                node_id="9",
+                                selector="primary",
+                            )
+                        ],
+                    )
+                }
+            ),
+        )
+
+        snapshot = manager.get_manifest_snapshot()
+
+        assert isinstance(snapshot, EnvironmentManifestSnapshot)
+        assert snapshot.project.name == "test-project"
+        assert snapshot.comfyui_version == "v0.3.60"
+        assert snapshot.python_version == "3.11"
+        assert snapshot.uv.exclude_dependencies == ("opencv-python",)
+        assert snapshot.uv.constraints == ("numpy<3",)
+        assert snapshot.dependency_groups["demo-node-a1b2c3d4"] == ("requests>=2",)
+        assert snapshot.nodes["demo-node"].criticality == "optional"
+        assert snapshot.models["modelhash"].relative_path == "checkpoints/model.safetensors"
+
+        workflow = snapshot.workflows["simple_txt2img"]
+        assert workflow.path == "workflows/simple_txt2img.json"
+        assert workflow.node_packs == ("demo-node",)
+        assert workflow.custom_node_map["DemoNodeType"] == "demo-node"
+        assert workflow.models[0].hash == "modelhash"
+        assert workflow.has_execution_contract is True
+        assert workflow.execution_contract is not None
+        assert workflow.execution_contract.active_contract is not None
+        assert workflow.execution_contract.active_contract.inputs[0].name == "prompt"
+
     def test_add_both_model_categories(self, temp_pyproject):
         """Test adding multiple models to global manifest."""
         from comfygit_core.models.manifest import ManifestModel

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     )
 
     from ..caching.workflow_cache import WorkflowCacheRepository
+    from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow_contract import WorkflowExecutionContract
     from ..models.workflow import (
@@ -1864,6 +1865,11 @@ class Environment:
     # =====================================================
     # Workflow Contract Management
     # =====================================================
+
+    @_requires_env_lock
+    def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
+        """Return a typed read-only projection of the current manifest."""
+        return self.pyproject.get_manifest_snapshot()
 
     @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
