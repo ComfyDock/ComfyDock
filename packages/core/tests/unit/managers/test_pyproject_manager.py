@@ -190,6 +190,93 @@ class TestWorkflowExecutionContractLoading:
             ],
         }
 
+    def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
+        import tomllib
+
+        from comfygit_core.models.workflow_contract import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowExecutionContract,
+        )
+
+        manager = PyprojectManager(temp_pyproject)
+        large_uint64_bound = 18446744073709552000
+        contract = WorkflowExecutionContract(
+            contracts={
+                "default": NamedWorkflowContract(
+                    inputs=[
+                        WorkflowContractInput(
+                            name="seed",
+                            type="number",
+                            node_id="3",
+                            required=True,
+                            widget_idx=0,
+                            default=large_uint64_bound,
+                            min=0,
+                            max=large_uint64_bound,
+                        ),
+                    ],
+                    outputs=[],
+                )
+            }
+        )
+
+        manager.workflows.set_execution_contract("simple_txt2img", contract)
+        content = temp_pyproject.read_text()
+
+        assert f'default = "{large_uint64_bound}"' in content
+        assert f'max = "{large_uint64_bound}"' in content
+        tomllib.loads(content)
+
+        loaded = manager.workflows.get_execution_contract("simple_txt2img")
+
+        assert loaded is not None
+        active = loaded.active_contract
+        assert active is not None
+        seed_input = active.inputs[0]
+        assert seed_input.default == large_uint64_bound
+        assert seed_input.max == large_uint64_bound
+        assert loaded.to_public_schema()["inputs"][0]["default"] == large_uint64_bound
+        assert loaded.to_public_schema()["inputs"][0]["max"] == large_uint64_bound
+
+    def test_save_sanitizes_existing_raw_contract_numbers_for_uv(self, temp_pyproject):
+        import tomllib
+
+        manager = PyprojectManager(temp_pyproject)
+        large_uint64_bound = 18446744073709552000
+        config = manager.load()
+        config["tool"]["comfygit"]["workflows"] = {
+            "simple_txt2img": {
+                "path": "workflows/simple_txt2img.json",
+                "execution_contract": {
+                    "version": 1,
+                    "default_contract": "default",
+                    "contracts": {
+                        "default": {
+                            "inputs": [
+                                {
+                                    "name": "seed",
+                                    "type": "number",
+                                    "node_id": "3",
+                                    "required": True,
+                                    "default": large_uint64_bound,
+                                    "max": large_uint64_bound,
+                                }
+                            ],
+                            "outputs": [],
+                        }
+                    },
+                },
+            }
+        }
+
+        manager.save(config)
+        content = temp_pyproject.read_text()
+
+        assert f'default = "{large_uint64_bound}"' in content
+        assert f'max = "{large_uint64_bound}"' in content
+        tomllib.loads(content)
+
     def test_add_both_model_categories(self, temp_pyproject):
         """Test adding multiple models to global manifest."""
         from comfygit_core.models.manifest import ManifestModel

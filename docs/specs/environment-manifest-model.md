@@ -51,6 +51,16 @@ runtime needs to submit work to ComfyUI's `/prompt` endpoint. If tooling stores
 an API prompt for debugging, caching, or validation, that artifact must be
 treated as derived and replaceable rather than authoritative manifest state.
 
+### CGSPEC-MAN-07 [LIVE]: Workflow contract numeric metadata must remain TOML-safe
+Validation: TEST
+
+Workflow contract inputs may mirror ComfyUI widget metadata whose numeric values
+exceed TOML's signed 64-bit integer range, especially unsigned seed bounds. Core
+must serialize out-of-range integers as strings in `pyproject.toml` and convert
+them back to numeric values when loading typed workflow contract models. This
+keeps the manifest parseable by strict TOML readers without losing numeric
+precision for runtime and UI consumers.
+
 ## Custom Nodes
 
 ### CGSPEC-NODE-01 [LIVE]: Installed node packages are manifest-visible

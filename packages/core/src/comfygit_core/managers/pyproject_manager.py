@@ -21,7 +21,10 @@ from comfygit_core.models.manifest import (
     ManifestModel,
     ManifestWorkflowModel,
 )
-from comfygit_core.models.workflow_contract import WorkflowExecutionContract
+from comfygit_core.models.workflow_contract import (
+    WorkflowExecutionContract,
+    toml_safe_contract_value,
+)
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
@@ -188,6 +191,8 @@ class PyprojectManager:
         if config is None:
             raise CDPyprojectError("No configuration to save")
 
+        self._sanitize_workflow_contracts_for_toml(config)
+
         # Clean up empty sections before saving
         self._cleanup_empty_sections(config)
 
@@ -208,6 +213,53 @@ class PyprojectManager:
         self._cache_mtime = None
 
         logger.debug(f"Saved pyproject.toml to {self.path}")
+
+    def _sanitize_workflow_contracts_for_toml(self, config: dict) -> bool:
+        """Make workflow contract numeric fields safe for TOML writers.
+
+        TOML integers are signed 64-bit. ComfyUI widgets may expose unsigned
+        64-bit seed bounds, so oversized integers must be serialized as strings
+        to keep pyproject.toml parseable by UV and other strict TOML readers.
+        """
+        changed = False
+        workflows = (
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("workflows", {})
+        )
+        if not isinstance(workflows, dict):
+            return False
+
+        for workflow_data in workflows.values():
+            if not isinstance(workflow_data, dict):
+                continue
+            execution_contract = workflow_data.get("execution_contract")
+            if not isinstance(execution_contract, dict):
+                continue
+            contracts = execution_contract.get("contracts", {})
+            if not isinstance(contracts, dict):
+                continue
+
+            for contract_data in contracts.values():
+                if not isinstance(contract_data, dict):
+                    continue
+                inputs = contract_data.get("inputs", [])
+                if not isinstance(inputs, list):
+                    continue
+
+                for input_data in inputs:
+                    if not isinstance(input_data, dict):
+                        continue
+                    for key in ("default", "min", "max"):
+                        if key not in input_data:
+                            continue
+                        original_value = input_data[key]
+                        safe_value = toml_safe_contract_value(original_value)
+                        if safe_value != original_value or type(safe_value) is not type(original_value):
+                            input_data[key] = safe_value
+                            changed = True
+
+        return changed
 
     def reset_lazy_handlers(self):
         """Clear all cached properties to force re-initialization."""
@@ -539,6 +591,10 @@ class PyprojectManager:
 
                 try:
                     config = self.load()
+                    if self._sanitize_workflow_contracts_for_toml(config):
+                        self.save(config)
+                        original_content = self.path.read_text(encoding="utf-8")
+                        config = self.load(force_reload=True)
 
                     # Strip tracked local path sources before local overlays are applied.
                     if any(overlay.is_local for overlay in effective_overlays):

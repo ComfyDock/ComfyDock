@@ -45,6 +45,9 @@ ContractValue = str | int | float | bool | list[Any] | dict[str, Any] | None
 ContractNodeId = str | int
 ContractNumericBound = int | float
 
+TOML_INT_MIN = -(2**63)
+TOML_INT_MAX = 2**63 - 1
+
 
 def _omit_none(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
@@ -81,10 +84,58 @@ def _as_number(value: Any) -> ContractNumericBound | None:
     try:
         if value is None or value == "":
             return None
-        parsed = float(value)
+        text = str(value).strip()
+        if text == "":
+            return None
+        if "." not in text and "e" not in text.lower():
+            return int(text)
+        parsed = float(text)
     except (TypeError, ValueError):
         return None
     return int(parsed) if parsed.is_integer() else parsed
+
+
+def _normalize_contract_default(value: Any, input_type: str) -> ContractValue:
+    if input_type == "integer":
+        parsed = _as_int(value)
+        return parsed if parsed is not None else value
+    if input_type == "number":
+        parsed = _as_number(value)
+        return parsed if parsed is not None else value
+    if input_type == "boolean":
+        if value is None:
+            return None
+        return _as_bool(value, default=False)
+    return value
+
+
+def _toml_safe_int(value: int) -> int | str:
+    if TOML_INT_MIN <= value <= TOML_INT_MAX:
+        return value
+    return str(value)
+
+
+def _toml_safe_value(value: Any) -> Any:
+    """Return a TOML-compatible value without losing large integer precision.
+
+    TOML integers are signed 64-bit. ComfyUI widgets can expose unsigned 64-bit
+    seed bounds, so values outside TOML's integer range are serialized as
+    strings and converted back when contract models are loaded.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return _toml_safe_int(value)
+    if isinstance(value, list):
+        return [_toml_safe_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _toml_safe_value(item) for key, item in value.items()}
+    return value
+
+
+def toml_safe_contract_value(value: Any) -> Any:
+    """Return a contract value that can be written into `pyproject.toml`."""
+    return _toml_safe_value(value)
 
 
 def _as_str(value: Any) -> str | None:
@@ -144,6 +195,23 @@ class WorkflowContractInput:
             "display_name": self.display_name,
             "widget_idx": self.widget_idx,
             "field_key": self.field_key,
+            "default": _toml_safe_value(self.default),
+            "min": _toml_safe_value(self.min),
+            "max": _toml_safe_value(self.max),
+            "enum_values": self.enum_values if self.enum_values else None,
+            "description": self.description,
+        }
+        return _omit_none(payload)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "name": self.name,
+            "type": self.type,
+            "node_id": self.node_id,
+            "required": self.required,
+            "display_name": self.display_name,
+            "widget_idx": self.widget_idx,
+            "field_key": self.field_key,
             "default": self.default,
             "min": self.min,
             "max": self.max,
@@ -151,9 +219,6 @@ class WorkflowContractInput:
             "description": self.description,
         }
         return _omit_none(payload)
-
-    def to_dict(self) -> dict[str, Any]:
-        return self.to_toml_dict()
 
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowContractInput":
@@ -172,7 +237,7 @@ class WorkflowContractInput:
             display_name=_as_str(data.get("display_name")),
             widget_idx=_as_int(widget_idx),
             field_key=_as_str(data.get("field_key")),
-            default=data.get("default"),
+            default=_normalize_contract_default(data.get("default"), str(data["type"])),
             min=_as_number(data.get("min")),
             max=_as_number(data.get("max")),
             enum_values=_as_str_list(data.get("enum_values")),
@@ -211,7 +276,15 @@ class WorkflowContractOutput:
         return _omit_none(payload)
 
     def to_dict(self) -> dict[str, Any]:
-        return self.to_toml_dict()
+        payload = {
+            "name": self.name,
+            "type": self.type,
+            "node_id": self.node_id,
+            "display_name": self.display_name,
+            "selector": self.selector,
+            "description": self.description,
+        }
+        return _omit_none(payload)
 
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowContractOutput":
@@ -248,7 +321,13 @@ class NamedWorkflowContract:
         return _omit_none(payload)
 
     def to_dict(self) -> dict[str, Any]:
-        return self.to_toml_dict()
+        payload: dict[str, Any] = {
+            "inputs": [item.to_dict() for item in self.inputs],
+            "outputs": [item.to_dict() for item in self.outputs],
+            "display_name": self.display_name,
+            "description": self.description,
+        }
+        return _omit_none(payload)
 
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "NamedWorkflowContract":
@@ -295,7 +374,14 @@ class WorkflowExecutionContract:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        return self.to_toml_dict()
+        return {
+            "version": self.version,
+            "default_contract": self.default_contract,
+            "contracts": {
+                name: contract.to_dict()
+                for name, contract in self.contracts.items()
+            },
+        }
 
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowExecutionContract":
@@ -319,8 +405,8 @@ class WorkflowExecutionContract:
         if active is None:
             return {"inputs": [], "outputs": []}
         return {
-            "inputs": [input_item.to_toml_dict() for input_item in active.inputs],
-            "outputs": [output_item.to_toml_dict() for output_item in active.outputs],
+            "inputs": [input_item.to_dict() for input_item in active.inputs],
+            "outputs": [output_item.to_dict() for output_item in active.outputs],
         }
 
     def to_full_dict(self) -> dict[str, Any]:
