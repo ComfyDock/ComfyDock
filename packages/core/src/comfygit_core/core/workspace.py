@@ -22,6 +22,11 @@ from ..models.exceptions import (
     ComfyDockError,
     UVCommandError,
 )
+from ..models.materialization import (
+    MaterializeResult,
+    MaterializeSourceType,
+    ModelMaterializationStrategy,
+)
 from ..models.shared import ModelDetails, ModelWithLocation
 from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
@@ -726,6 +731,108 @@ class Workspace:
         finally:
             # Cleanup runs on ANY exit (Exception, KeyboardInterrupt, etc.)
             # Only cleanup if environment wasn't successfully completed
+            cec_path = env_path / ".cec"
+            if not is_environment_complete(cec_path) and env_path.exists():
+                if not cleanup_partial_environment(env_path):
+                    logger.warning(
+                        f"Could not fully remove partial environment at {env_path}. "
+                        f"You may need to delete it manually or reboot to release file locks."
+                    )
+
+    def materialize_environment(
+        self,
+        source: str | Path,
+        name: str,
+        *,
+        branch: str | None = None,
+        models_dir: Path | None = None,
+        model_strategy: ModelMaterializationStrategy = "skip",
+        torch_backend: str = "auto",
+        no_manager: bool = True,
+        replace: bool = False,
+        set_active: bool = False,
+        callbacks: "ImportCallbacks | None" = None,
+    ) -> MaterializeResult:
+        """Hydrate a portable environment source for headless runtime/build use."""
+        from ..utils.git import is_git_url
+
+        _validate_environment_name(name)
+
+        if models_dir is not None:
+            self.set_models_directory(models_dir)
+
+        env_path = self.paths.environments / name
+        if env_path.exists():
+            if not replace:
+                raise CDEnvironmentExistsError(f"Environment '{name}' already exists")
+            self.delete_environment(name, delete_user_data=False)
+
+        source_type: MaterializeSourceType
+
+        try:
+            source_text = str(source)
+            source_path = Path(source_text).expanduser()
+
+            if is_git_url(source_text):
+                source_type = "git"
+                environment = EnvironmentFactory.import_from_git(
+                    git_url=source_text,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    branch=branch,
+                    torch_backend=torch_backend,
+                )
+            elif source_path.exists() and source_path.is_dir():
+                source_type = "directory"
+                environment = EnvironmentFactory.import_from_directory(
+                    source_path=source_path,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    torch_backend=torch_backend,
+                )
+            else:
+                source_type = "bundle"
+                if not source_path.exists():
+                    raise FileNotFoundError(f"Materialize source not found: {source_path}")
+                environment = EnvironmentFactory.import_from_bundle(
+                    tarball_path=source_path,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    torch_backend=torch_backend,
+                )
+
+            environment.finalize_import(
+                model_strategy=model_strategy,
+                callbacks=callbacks,
+                no_manager=no_manager,
+                create_import_commit=False,
+                fail_on_sync_errors=True,
+            )
+
+            if set_active:
+                self.set_active_environment(environment.name)
+
+            return MaterializeResult(
+                environment_name=environment.name,
+                workspace_path=self.path,
+                environment_path=environment.path,
+                cec_path=environment.cec_path,
+                comfyui_path=environment.comfyui_path,
+                source_type=source_type,
+                model_strategy=model_strategy,
+                torch_backend=environment.torch_backend,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to materialize environment: {e}")
+            if isinstance(e, ComfyDockError):
+                raise
+            raise RuntimeError(f"Failed to materialize environment '{name}': {e}") from e
+
+        finally:
             cec_path = env_path / ".cec"
             if not is_environment_complete(cec_path) and env_path.exists():
                 if not cleanup_partial_environment(env_path):

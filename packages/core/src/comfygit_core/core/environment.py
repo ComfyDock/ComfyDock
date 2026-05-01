@@ -7,6 +7,8 @@ from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import tomlkit
+
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
 from ..factories.uv_factory import create_uv_for_environment
@@ -54,7 +56,6 @@ if TYPE_CHECKING:
     from ..caching.workflow_cache import WorkflowCacheRepository
     from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
-    from ..models.workflow_contract import WorkflowExecutionContract
     from ..models.workflow import (
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
         ResolutionResult,
         WorkflowSyncStatus,
     )
+    from ..models.workflow_contract import WorkflowExecutionContract
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
@@ -494,8 +496,42 @@ class Environment:
     def _set_headless_marker(self) -> None:
         """Persist headless marker in pyproject.toml."""
         config = self.pyproject.load()
-        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        self._set_comfygit_scalar(config, "headless", True)
         self.pyproject.save(config)
+
+    def _set_comfygit_scalar(self, config: dict, key: str, value: object) -> None:
+        """Set a scalar on [tool.comfygit] before child tables.
+
+        TOML requires table values to appear before child tables such as
+        [tool.comfygit.nodes.*]. TOMLKit can silently drop scalars appended
+        after those child tables, so rebuild this table in a valid order.
+        """
+        tool = config.setdefault("tool", {})
+        comfygit_cfg = tool.setdefault("comfygit", {})
+        rebuilt = tomlkit.table()
+        child_items: list[tuple[str, object]] = []
+
+        for existing_key, existing_value in comfygit_cfg.items():
+            if existing_key == key:
+                continue
+            if isinstance(existing_value, dict):
+                child_items.append((existing_key, existing_value))
+            else:
+                rebuilt[existing_key] = existing_value
+
+        rebuilt[key] = value
+        for child_key, child_value in child_items:
+            rebuilt[child_key] = child_value
+
+        tool["comfygit"] = rebuilt
+
+    def _prepare_headless_import(self) -> None:
+        """Prepare imported/materialized environments that should not load Manager."""
+        from ..constants import MANAGER_NODE_ID
+
+        if self.pyproject.nodes.remove(MANAGER_NODE_ID):
+            logger.info("Removed comfygit-manager from headless environment manifest")
+        self._set_headless_marker()
 
     def _clear_headless_marker(self) -> None:
         """Remove headless marker after manager installation."""
@@ -2216,6 +2252,9 @@ class Environment:
         model_strategy: str = "all",
         callbacks: ImportCallbacks | None = None,
         no_manager: bool = False,
+        *,
+        create_import_commit: bool = True,
+        fail_on_sync_errors: bool = False,
     ) -> None:
         """Complete import setup after .cec extraction.
 
@@ -2232,6 +2271,8 @@ class Environment:
             model_strategy: "all", "required", or "skip"
             callbacks: Optional progress callbacks
             no_manager: Skip comfygit-manager install/registration (headless mode)
+            create_import_commit: Commit final import/materialization changes
+            fail_on_sync_errors: Raise if sync reports or raises dependency errors
 
         Raises:
             ValueError: If ComfyUI already exists or .cec not properly initialized
@@ -2374,7 +2415,7 @@ class Environment:
         # Auto-register comfygit-manager if present in imported environment
         # (replaces legacy symlink system - manager is now per-environment)
         if no_manager:
-            self._set_headless_marker()
+            self._prepare_headless_import()
             logger.info("Manager registration skipped during import (--no-manager)")
         else:
             self._register_imported_manager()
@@ -2480,9 +2521,14 @@ class Environment:
             elif not sync_result.success and callbacks:
                 for error in sync_result.errors:
                     callbacks.on_error(f"Node sync: {error}")
+            if fail_on_sync_errors and not sync_result.success:
+                error_text = "; ".join(sync_result.errors) if sync_result.errors else "unknown sync error"
+                raise RuntimeError(f"Environment sync failed during materialization: {error_text}")
         except Exception as e:
             if callbacks:
                 callbacks.on_error(f"Node sync failed: {e}")
+            if fail_on_sync_errors:
+                raise
 
         # Phase 5: Prepare and resolve models
         if callbacks:
@@ -2548,13 +2594,16 @@ class Environment:
         if download_failures and callbacks:
             callbacks.on_download_failures(download_failures)
 
+        if no_manager:
+            self._set_headless_marker()
+
         # Mark environment as fully initialized
         from ..utils.environment_cleanup import mark_environment_complete
         mark_environment_complete(self.cec_path)
 
         # Phase 7: Commit all changes from import process
         # This captures: workflows copied, nodes synced, models resolved, pyproject updates
-        if self.git_manager.has_uncommitted_changes():
+        if create_import_commit and self.git_manager.has_uncommitted_changes():
             self.git_manager.commit_with_identity("Imported environment", add_all=True)
             logger.info("Committed import changes")
 

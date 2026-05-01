@@ -156,7 +156,7 @@ class PyprojectManager:
             with open(self.path, encoding='utf-8') as f:
                 config = tomlkit.load(f)
         except (OSError, TOMLKitError) as e:
-            raise CDPyprojectInvalidError(f"Failed to parse pyproject.toml at {self.path}: {e}")
+            raise CDPyprojectInvalidError(f"Failed to parse pyproject.toml at {self.path}: {e}") from e
 
         if not config:
             raise CDPyprojectInvalidError(f"pyproject.toml is empty at {self.path}")
@@ -217,7 +217,7 @@ class PyprojectManager:
             with open(self.path, 'w', encoding='utf-8') as f:
                 tomlkit.dump(config, f)
         except OSError as e:
-            raise CDPyprojectError(f"Failed to write pyproject.toml to {self.path}: {e}")
+            raise CDPyprojectError(f"Failed to write pyproject.toml to {self.path}: {e}") from e
 
         # Invalidate cache after save to ensure fresh reads
         self._config_cache = None
@@ -359,10 +359,16 @@ class PyprojectManager:
         # Create a new table with sections in the correct order
         new_table = tomlkit.table()
 
-        # Add metadata fields first
-        for key in ['schema_version', 'comfyui_version', 'python_version', 'manifest_state']:
-            if key in comfygit:
-                new_table[key] = comfygit[key]
+        # Add scalar metadata fields first. Preserve unknown scalar metadata so
+        # callers can add new top-level manifest flags without this formatter
+        # silently dropping them.
+        for key, value in comfygit.items():
+            if key in {"nodes", "workflows", "models"}:
+                continue
+            if key == "":
+                continue
+            if not isinstance(value, dict):
+                new_table[key] = value
 
         # Add nodes if it exists
         if has_nodes:

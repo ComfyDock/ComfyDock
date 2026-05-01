@@ -256,6 +256,41 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     import_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts, use defaults for workspace initialization")
     import_parser.set_defaults(func=global_cmds.import_env)
 
+    # materialize - Hydrate a portable environment for headless runtime/build use
+    materialize_parser = subparsers.add_parser(
+        "materialize",
+        help="Materialize a ComfyGit environment from a directory, tarball, or git URL",
+    )
+    materialize_parser.add_argument("source", type=str, help="Source directory, .tar.gz bundle, or git repository URL")
+    materialize_parser.add_argument("--name", type=str, required=True, help="Name for the materialized environment")
+    materialize_parser.add_argument("--workspace", type=Path, help="Workspace path to create/use")
+    materialize_parser.add_argument("--models-dir", type=Path, help="Global model directory for the workspace")
+    materialize_parser.add_argument("--branch", "-b", type=str, help="Git branch, tag, or commit to materialize")
+    materialize_parser.add_argument(
+        "--torch-backend",
+        default="auto",
+        metavar="BACKEND",
+        help=(
+            "PyTorch backend. Examples: auto (detect GPU), cpu, "
+            "cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). "
+            "Default: auto"
+        ),
+    )
+    materialize_parser.add_argument(
+        "--models",
+        choices=["all", "required", "skip"],
+        default="skip",
+        help="Model download strategy. Default: skip",
+    )
+    materialize_parser.add_argument(
+        "--with-manager",
+        action="store_true",
+        help="Install/register comfygit-manager during materialization",
+    )
+    materialize_parser.add_argument("--use", action="store_true", help="Set materialized environment as active")
+    materialize_parser.add_argument("--replace", action="store_true", help="Replace an existing environment with the same name")
+    materialize_parser.set_defaults(func=global_cmds.materialize_env)
+
     # export - Export ComfyGit environment
     export_parser = subparsers.add_parser("export", help="Export ComfyGit environment (include relevant files from .cec)")
     export_parser.add_argument("path", type=Path, nargs="?", help="Path to output file")

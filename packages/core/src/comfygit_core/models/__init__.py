@@ -29,6 +29,8 @@ _EXPORTS: dict[str, str] = {
     "ManifestProjectSnapshot": "manifest",
     "ManifestUVSnapshot": "manifest",
     "ManifestWorkflowEntry": "manifest",
+    "MaterializeOptions": "materialization",
+    "MaterializeResult": "materialization",
     "WorkflowContractInput": "workflow_contract",
     "WorkflowContractOutput": "workflow_contract",
     "NamedWorkflowContract": "workflow_contract",

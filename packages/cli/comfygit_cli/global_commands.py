@@ -76,6 +76,22 @@ class GlobalCommands:
             print("\n✓ Workspace initialized! Continuing with command...\n")
             return workspace
 
+    def _get_or_create_workspace_at(self, workspace_path: Path | None, models_dir: Path | None = None) -> Workspace:
+        """Get or create a workspace at an explicit path for non-interactive commands."""
+        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
+
+        try:
+            workspace = WorkspaceFactory.find(workspace_path)
+        except CDWorkspaceNotFoundError:
+            workspace = WorkspaceFactory.create(workspace_path)
+
+        WorkspaceLogger.set_workspace_path(workspace.path)
+
+        if models_dir is not None:
+            workspace.set_models_directory(models_dir.resolve())
+
+        return workspace
+
     def init(self, args: argparse.Namespace) -> None:
         """Initialize a new ComfyGit workspace.
 
@@ -333,7 +349,6 @@ class GlobalCommands:
         import json
 
         import tomlkit
-
         from comfygit_core.services.workflow_analysis_service import WorkflowAnalysisService
 
         workspace = get_workspace_optional()
@@ -757,6 +772,101 @@ class GlobalCommands:
 
         except Exception as e:
             print(f"\n✗ Import failed: {e}")
+            sys.exit(1)
+
+        sys.exit(0)
+
+    @with_workspace_logging("materialize")
+    def materialize_env(self, args: argparse.Namespace) -> None:
+        """Materialize a ComfyGit environment for headless runtime/build use."""
+
+        class CLIMaterializeCallbacks(ImportCallbacks):
+            def on_phase(self, phase: str, description: str):
+                print(f"   {description}")
+
+            def on_dependency_group_start(self, group_name: str, is_optional: bool):
+                optional_marker = " (optional)" if is_optional else ""
+                print(f"      Installing {group_name}{optional_marker}...", end="", flush=True)
+
+            def on_dependency_group_complete(self, group_name: str, success: bool, error: str | None = None):
+                if success:
+                    print(" ✓")
+                else:
+                    print(f" ✗ {error or 'failed'}")
+
+            def on_workflow_copied(self, workflow_name: str):
+                print(f"   Copied: {workflow_name}")
+
+            def on_node_installed(self, node_name: str):
+                print(f"   Installed: {node_name}")
+
+            def on_workflow_resolved(self, workflow_name: str, downloads: int):
+                suffix = f" ({downloads} model downloads)" if downloads else ""
+                print(f"   Resolved: {workflow_name}{suffix}")
+
+            def on_error(self, error: str):
+                print(f"   Error: {error}")
+
+            def on_download_failures(self, failures: list[tuple[str, str]]):
+                for workflow_name, model_name in failures:
+                    print(f"   Model download failed: {model_name} ({workflow_name})")
+
+            def on_download_batch_start(self, count: int):
+                print(f"   Downloading {count} model(s)")
+
+            def on_download_file_start(self, name: str, idx: int, total: int):
+                print(f"   [{idx}/{total}] {name}")
+
+            def on_download_file_progress(self, downloaded: int, total: int | None):
+                return None
+
+            def on_download_file_complete(self, name: str, success: bool, error: str | None):
+                if success:
+                    print(f"   Downloaded: {name}")
+                else:
+                    print(f"   Download failed: {name}: {error}")
+
+            def on_download_batch_complete(self, success: int, total: int):
+                print(f"   Downloaded {success}/{total} model(s)")
+
+        try:
+            workspace = self._get_or_create_workspace_at(
+                getattr(args, "workspace", None),
+                getattr(args, "models_dir", None),
+            )
+
+            print("📦 Materializing environment")
+            print(f"   Source: {args.source}")
+            print(f"   Name: {args.name}")
+            print(f"   Workspace: {workspace.path}")
+            print(f"   Models: {args.models}")
+            print(f"   Manager: {'enabled' if args.with_manager else 'disabled'}")
+            print()
+
+            result = workspace.materialize_environment(
+                source=args.source,
+                name=args.name,
+                branch=getattr(args, "branch", None),
+                model_strategy=args.models,
+                torch_backend=args.torch_backend,
+                no_manager=not args.with_manager,
+                replace=args.replace,
+                set_active=args.use,
+                callbacks=CLIMaterializeCallbacks(),
+            )
+
+            print(f"\n✅ Materialize complete: {result.environment_name}")
+            print(f"   Source type: {result.source_type}")
+            print(f"   Environment: {result.environment_path}")
+            print(f"   ComfyUI: {result.comfyui_path}")
+
+            if args.use:
+                print(f"   '{result.environment_name}' set as active environment")
+            else:
+                print(f"\nActivate with: cg use {result.environment_name}")
+
+        except Exception as e:
+            print(f"\n✗ Materialize failed: {e}")
             sys.exit(1)
 
         sys.exit(0)
