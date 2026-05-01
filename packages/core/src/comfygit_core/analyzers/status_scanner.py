@@ -359,12 +359,16 @@ class StatusScanner:
             if expected_node.source == 'development':
                 continue
 
-            if expected_node.version and current_node.version != expected_node.version:
+            actual_version = current_node.version
+            if expected_node.source == "git" and current_node.git_commit:
+                actual_version = current_node.git_commit
+
+            if expected_node.version and actual_version != expected_node.version:
                 comparison.version_mismatches.append(
                     {
                         "name": name,
                         "expected": expected_node.version,
-                        "actual": current_node.version,
+                        "actual": actual_version,
                     }
                 )
 
