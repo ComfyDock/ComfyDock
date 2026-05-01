@@ -32,6 +32,15 @@ Repair should use the manifest, lockfile, and local configuration to restore
 missing or damaged derived runtime state. Gaps should be tracked as implementation
 work, not treated as new truth.
 
+### CGSYNC-LIFE-05 [PLANNED]: Materialize hydrates runtime state without authoring UX
+Validation: MIXED
+
+Headless runtime hydration belongs to the materialization lifecycle, not to
+interactive import behavior. `cg materialize` should reuse sync/import internals
+where practical, but it should use non-interactive defaults, explicit workspace
+selection, strict sync failure handling, and no authoring commit by default.
+See `docs/specs/environment-materialization-lifecycle.md`.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes
@@ -99,6 +108,11 @@ Validation: MIXED
 Build planning should read the same manifest fields core writes locally. If a
 runtime needs a field for reproducibility, core/manager should make that field
 first-class rather than relying on adapter-specific heuristics.
+
+Materialization is the local/headless hydration step that build and runtime
+adapters can call before running smoke tests or serve endpoints. It should not
+create a second dependency policy; it should consume the same manifest and
+readiness semantics described here.
 
 ### CGSYNC-BUILD-02 [PARTIAL]: Source metadata should be inspectable before push
 Validation: MIXED

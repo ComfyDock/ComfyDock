@@ -71,6 +71,25 @@ Environment changes meant to be shared or used by external runtimes should be
 recorded in git. Core git operations should preserve the environment repository
 as the auditable history of manifest and workflow changes.
 
+### CGCORE-MAN-05 [PLANNED]: Materialization is a headless runtime hydration path
+Validation: MIXED
+
+Core should expose a reusable materialization API that turns a portable
+environment source into a runnable local environment without interactive prompts
+or authoring-oriented side effects. Materialization may reuse import/sync
+machinery, but callers should be able to select build/runtime defaults such as
+skipping model downloads, omitting Manager registration, using an explicit
+workspace, and failing hard on dependency sync errors.
+
+### CGCORE-MAN-06 [PLANNED]: Directory materialization copies only portable source files
+Validation: TEST
+
+When a plain directory is used as an environment source, core should copy only
+portable environment recipe files into the target environment repository.
+Runtime artifacts such as virtual environments, caches, local overlays, ComfyUI
+checkouts, generated databases, logs, and model bytes are not portable source
+truth and should not be copied by directory materialization.
+
 ## Workflow Contract Execution
 
 ### CGCORE-EXEC-01 [PARTIAL]: Core owns workflow contract execution semantics
@@ -191,3 +210,11 @@ Validation: TEST
 Editable local package and node paths are development conveniences. They should be
 kept in local configuration unless explicitly converted into portable manifest
 source metadata.
+
+### CGCORE-SYNC-04 [PLANNED]: Build/runtime materialization fails on sync errors by default
+Validation: TEST
+
+Interactive import flows may surface recoverable warnings and let users repair an
+environment later. Headless build/runtime materialization should treat dependency
+sync failures, missing required acquisition metadata, and invalid manifest state
+as command failures unless the caller explicitly opts into a weaker mode.

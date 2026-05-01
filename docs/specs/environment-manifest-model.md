@@ -71,6 +71,16 @@ readiness, build planning, and serve/runtime adapters. It must not replace the
 `pyproject.toml` file as the persisted authority, and callers should request a
 new snapshot after manifest mutations.
 
+### CGSPEC-MAN-09 [PLANNED]: Materialization consumes manifest truth, not runtime state
+Validation: TEST
+
+Headless materialization should hydrate ComfyUI, uv, workflows, custom nodes, and
+model links from the portable manifest repository plus machine-local
+configuration. It should not treat existing virtualenvs, local ComfyUI checkout
+contents, caches, generated databases, or model bytes as portable manifest input.
+Plain directory materialization should copy only recipe files needed to recreate
+the environment.
+
 ## Custom Nodes
 
 ### CGSPEC-NODE-01 [LIVE]: Installed node packages are manifest-visible
