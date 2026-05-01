@@ -41,6 +41,26 @@ where practical, but it should use non-interactive defaults, explicit workspace
 selection, strict sync failure handling, and no authoring commit by default.
 See `docs/specs/environment-materialization-lifecycle.md`.
 
+### CGSYNC-LIFE-06 [PLANNED]: Risky dependency changes are previewed before apply
+Validation: MIXED
+
+When adding a node would require changing already-resolved shared Python
+packages, ComfyGit should not silently mutate the current environment. Core
+should provide a UI-agnostic resolver preview that simulates adding the node to a
+temporary project copy, re-locks that project, and reports the package diff
+before the real manifest, lockfile, or virtual environment are changed.
+
+The preview should report added, removed, upgraded, downgraded, and otherwise
+changed packages in a typed shape that Manager, CLI, and automation can present
+consistently. This preview is different from the existing dependency probe: the
+probe may infer constraints from a temporary venv install, while the resolver
+preview should model the full manifest/lockfile result that would be applied.
+
+Callers may then offer explicit actions such as cancelling, applying the
+resolved dependency changes to the current environment, or trying the change on
+a new branch. A blind force install that bypasses this preview remains an
+advanced escape hatch, not the default dependency policy.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes
