@@ -236,28 +236,12 @@ class NodeLookupService:
             try:
                 if node_info.source == "registry":
                     if not node_info.download_url:
-                        # Fallback: Clone from repository if download URL missing
-                        if node_info.repository:
-                            logger.info(
-                                f"No CDN package for '{node_info.name}', "
-                                f"falling back to git clone from {node_info.repository}"
-                            )
-                            # Update source to git for this installation
-                            node_info.source = "git"
-                            # Only use version as ref if it's a valid git ref (not pure semver)
-                            ref = node_info.version if _is_valid_git_ref(node_info.version) else None
-                            if node_info.version and not ref:
-                                logger.info(
-                                    f"Version '{node_info.version}' is not a valid git ref, "
-                                    f"cloning default branch instead"
-                                )
-                            git_clone(node_info.repository, temp_path, depth=1, ref=ref, timeout=30)
-                        else:
-                            logger.error(
-                                f"Cannot download '{node_info.name}': "
-                                f"no CDN package and no repository URL"
-                            )
-                            return None
+                        logger.error(
+                            f"Cannot download registry node '{node_info.name}': "
+                            f"no registry artifact is available. "
+                            f"Choose an explicit git install if repository acquisition is acceptable."
+                        )
+                        return None
                     else:
                         download_and_extract_archive(node_info.download_url, temp_path)
                 elif node_info.source == "git":
