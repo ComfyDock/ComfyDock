@@ -1321,7 +1321,7 @@ class WorkflowManager:
     def update_workflow_model_paths(
         self,
         resolution: ResolutionResult
-    ) -> None:
+    ) -> int:
         """Update workflow JSON files with resolved and stripped model paths.
 
         IMPORTANT: Only updates paths for BUILTIN ComfyUI nodes. Custom nodes are
@@ -1334,6 +1334,9 @@ class WorkflowManager:
 
         Args:
             resolution: Resolution result with ref→model mapping
+
+        Returns:
+            Number of builtin model path widget values updated.
 
         Raises:
             FileNotFoundError if workflow not found
@@ -1378,6 +1381,8 @@ class WorkflowManager:
                     # Strip base directory prefix for ComfyUI BUILTIN node loaders
                     # e.g., "checkpoints/sd15/model.ckpt" → "sd15/model.ckpt"
                     display_path = self._strip_base_directory_for_node(ref.node_type, model.relative_path)
+                    if old_path == display_path:
+                        continue
                     node.widgets_values[widget_idx] = display_path
                     logger.debug(f"Updated node {node_id} widget {widget_idx}: {old_path} → {display_path}")
                     updated_count += 1
@@ -1402,6 +1407,7 @@ class WorkflowManager:
         # Note: We intentionally do NOT update .cec here
         # The .cec copy represents "committed state" and should only be updated during commit
         # This ensures workflow status correctly shows as "new" or "modified" until committed
+        return updated_count
 
     def _get_default_criticality(self, category: str) -> str:
         """Determine smart default criticality based on model category.
