@@ -14,6 +14,7 @@ from packaging.version import parse as parse_version
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
+from ..managers.pytorch_backend_manager import PyTorchBackendManager
 from ..managers.uv_project_manager import UVProjectManager
 from ..models.dependency_resolution import (
     DependencyResolutionPreview,
@@ -143,6 +144,8 @@ class DependencyResolutionPreviewService:
         pyproject.nodes.add(node_package.node_info, node_package.identifier)
 
     def _lock_temp_project(self, temp_project: Path) -> None:
+        pyproject = PyprojectManager(temp_project / "pyproject.toml")
+        pytorch_manager = PyTorchBackendManager(temp_project)
         uv = UVCommand(
             binary_path=self.uv_binary,
             project_env=temp_project / ".venv-preview",
@@ -151,6 +154,11 @@ class DependencyResolutionPreviewService:
             cwd=temp_project,
             torch_backend=self.torch_backend,
         )
+        if pytorch_manager.has_backend():
+            with pyproject.pytorch_injection_context(pytorch_manager):
+                uv.lock()
+            return
+
         uv.lock()
 
     def _lockfile_changed(self, temp_project: Path) -> bool:

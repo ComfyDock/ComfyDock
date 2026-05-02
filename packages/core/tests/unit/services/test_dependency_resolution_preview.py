@@ -49,3 +49,49 @@ def test_package_version_change_properties_group_by_kind():
     assert [change.name for change in preview.removed] == ["b"]
     assert [change.name for change in preview.downgraded] == ["c"]
     assert [change.name for change in preview.upgraded] == ["d"]
+
+
+def test_lock_temp_project_injects_pytorch_backend_and_restores_pyproject(tmp_path, monkeypatch):
+    from comfygit_core.integrations.uv_command import UVCommand
+
+    temp_project = tmp_path / "project"
+    temp_project.mkdir()
+    pyproject = temp_project / "pyproject.toml"
+    original = """[project]
+name = "preview-test"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = ["torch", "torchaudio", "torchvision"]
+
+[tool.comfygit]
+python_version = "3.11"
+"""
+    pyproject.write_text(original, encoding="utf-8")
+    (temp_project / ".pytorch-backend").write_text(
+        "cu126\n"
+        "torch=2.11.0+cu126\n"
+        "torchaudio=2.11.0+cu126\n"
+        "torchvision=0.26.0+cu126\n",
+        encoding="utf-8",
+    )
+
+    observed = {}
+
+    def fake_lock(self, **_flags):
+        content = (self._cwd / "pyproject.toml").read_text(encoding="utf-8")
+        observed["content"] = content
+
+    monkeypatch.setattr(UVCommand, "lock", fake_lock)
+
+    service = DependencyResolutionPreviewService(
+        cec_path=temp_project,
+        workspace_path=tmp_path / "workspace",
+    )
+
+    service._lock_temp_project(temp_project)
+
+    assert "pytorch-cu126" in observed["content"]
+    assert "torch==2.11.0+cu126" in observed["content"]
+    assert "torchaudio==2.11.0+cu126" in observed["content"]
+    assert "torchvision==0.26.0+cu126" in observed["content"]
+    assert pyproject.read_text(encoding="utf-8") == original
