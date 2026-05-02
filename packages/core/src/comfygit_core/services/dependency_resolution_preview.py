@@ -13,6 +13,7 @@ from packaging.version import parse as parse_version
 
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
+from ..managers.overlay_manager import OverlayManager
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.pytorch_backend_manager import PyTorchBackendManager
 from ..managers.uv_project_manager import UVProjectManager
@@ -33,6 +34,7 @@ class DependencyResolutionPreviewService:
     PROJECT_FILES = (
         "pyproject.toml",
         "uv.lock",
+        ".overlay-config.toml",
         ".pytorch-backend",
         ".python-version",
         "package_config.toml",
@@ -58,9 +60,10 @@ class DependencyResolutionPreviewService:
         """Return the lockfile diff for adding ``node_package``.
 
         The real project is never mutated. The service copies the minimum project
-        files needed for a uv solve into a temporary directory, applies the same
-        dependency-group mutation used by node installation, runs ``uv lock``, and
-        compares the original lock with the proposed lock.
+        files needed for a uv solve into a temporary directory, locks that
+        baseline with the same active overlays used by sync, applies the same
+        dependency-group mutation used by node installation, re-locks, and
+        compares the overlay-aware baseline with the proposed lock.
         """
         if not node_package.requirements:
             return DependencyResolutionPreview(
@@ -74,12 +77,21 @@ class DependencyResolutionPreviewService:
         with tempfile.TemporaryDirectory(prefix="comfygit-resolution-preview-") as temp_dir:
             temp_project = Path(temp_dir)
             self._copy_project_files(temp_project)
+            excluded_names = self._lock_diff_excluded_names(temp_project)
 
             try:
-                before = self._read_lock_packages(self.cec_path / "uv.lock")
+                self._lock_temp_project(temp_project)
+                baseline_lock = (temp_project / "uv.lock").read_bytes()
+                before = self._read_lock_packages(
+                    temp_project / "uv.lock",
+                    excluded_names=excluded_names,
+                )
                 self._apply_node_package(temp_project, node_package)
                 self._lock_temp_project(temp_project)
-                after = self._read_lock_packages(temp_project / "uv.lock")
+                after = self._read_lock_packages(
+                    temp_project / "uv.lock",
+                    excluded_names=excluded_names,
+                )
             except UVCommandError as exc:
                 return DependencyResolutionPreview(
                     success=False,
@@ -105,7 +117,7 @@ class DependencyResolutionPreviewService:
                 node_name=node_package.name,
                 requirements=tuple(node_package.requirements),
                 changes=tuple(changes),
-                lockfile_changed=self._lockfile_changed(temp_project),
+                lockfile_changed=self._lockfile_changed(temp_project, baseline_lock),
             )
 
     def _copy_project_files(self, temp_project: Path) -> None:
@@ -146,6 +158,7 @@ class DependencyResolutionPreviewService:
     def _lock_temp_project(self, temp_project: Path) -> None:
         pyproject = PyprojectManager(temp_project / "pyproject.toml")
         pytorch_manager = PyTorchBackendManager(temp_project)
+        overlay_manager = OverlayManager(temp_project)
         uv = UVCommand(
             binary_path=self.uv_binary,
             project_env=temp_project / ".venv-preview",
@@ -154,24 +167,55 @@ class DependencyResolutionPreviewService:
             cwd=temp_project,
             torch_backend=self.torch_backend,
         )
+        pytorch_config: dict[str, Any] | None = None
         if pytorch_manager.has_backend():
-            with pyproject.pytorch_injection_context(pytorch_manager):
+            config = pyproject.load()
+            python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+            pytorch_config = pytorch_manager.get_pytorch_config(
+                python_version=python_version,
+            )
+
+        overlays = overlay_manager.collect_overlays(pytorch_config=pytorch_config)
+        if overlays:
+            with pyproject.uv_injection_context(overlays=overlays):
                 uv.lock()
             return
 
         uv.lock()
 
-    def _lockfile_changed(self, temp_project: Path) -> bool:
-        original = self.cec_path / "uv.lock"
+    def _lockfile_changed(self, temp_project: Path, baseline_lock: bytes) -> bool:
         proposed = temp_project / "uv.lock"
-        if not original.exists() or not proposed.exists():
-            return original.exists() != proposed.exists()
-        return original.read_bytes() != proposed.read_bytes()
+        if not proposed.exists():
+            return bool(baseline_lock)
+        return proposed.read_bytes() != baseline_lock
 
-    def _read_lock_packages(self, lock_path: Path) -> dict[str, dict[str, Any]]:
+    def _lock_diff_excluded_names(self, temp_project: Path) -> set[str]:
+        """Return lock package names that are not user-meaningful dependency changes."""
+        pyproject_path = temp_project / "pyproject.toml"
+        if not pyproject_path.exists():
+            return set()
+
+        try:
+            config = tomlkit.loads(pyproject_path.read_text(encoding="utf-8"))
+        except Exception:
+            return set()
+
+        project_name = config.get("project", {}).get("name")
+        if not isinstance(project_name, str):
+            return set()
+
+        return {canonicalize_name(project_name)}
+
+    def _read_lock_packages(
+        self,
+        lock_path: Path,
+        *,
+        excluded_names: set[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
         if not lock_path.exists():
             return {}
 
+        excluded = excluded_names or set()
         data = tomlkit.loads(lock_path.read_text(encoding="utf-8"))
         packages = data.get("package", [])
         result: dict[str, dict[str, Any]] = {}
@@ -183,13 +227,55 @@ class DependencyResolutionPreviewService:
             if not isinstance(name, str):
                 continue
             key = canonicalize_name(name)
+            if key in excluded:
+                continue
             result[key] = {
                 "name": key,
                 "version": self._string_or_none(package.get("version")),
-                "fingerprint": repr(self._plain(package)),
+                "fingerprint": repr(self._lock_package_fingerprint(package, lock_path.parent)),
             }
 
         return result
+
+    def _lock_package_fingerprint(
+        self,
+        package: dict[str, Any],
+        lock_dir: Path,
+    ) -> dict[str, Any]:
+        """Return meaningful lock fields for diffing installed package behavior."""
+        fingerprint: dict[str, Any] = {
+            "name": self._string_or_none(package.get("name")),
+            "version": self._string_or_none(package.get("version")),
+        }
+
+        source = package.get("source")
+        if isinstance(source, dict):
+            fingerprint["source"] = self._normalize_lock_source(source, lock_dir)
+
+        dependencies = package.get("dependencies")
+        if dependencies:
+            fingerprint["dependencies"] = self._plain(dependencies)
+
+        optional_dependencies = package.get("optional-dependencies")
+        if optional_dependencies:
+            fingerprint["optional_dependencies"] = self._plain(optional_dependencies)
+
+        return fingerprint
+
+    def _normalize_lock_source(self, source: dict[str, Any], lock_dir: Path) -> dict[str, Any]:
+        normalized = self._plain(source)
+        if not isinstance(normalized, dict):
+            return {}
+
+        for key in ("editable", "directory", "path"):
+            value = normalized.get(key)
+            if isinstance(value, str):
+                source_path = Path(value)
+                if not source_path.is_absolute():
+                    source_path = lock_dir / source_path
+                normalized[key] = str(source_path.resolve())
+
+        return normalized
 
     def _diff_packages(
         self,

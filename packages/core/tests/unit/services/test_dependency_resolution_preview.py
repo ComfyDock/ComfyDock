@@ -1,4 +1,5 @@
 from comfygit_core.models.dependency_resolution import PackageVersionChange
+from comfygit_core.models.shared import NodeInfo, NodePackage
 from comfygit_core.services.dependency_resolution_preview import (
     DependencyResolutionPreviewService,
 )
@@ -51,7 +52,10 @@ def test_package_version_change_properties_group_by_kind():
     assert [change.name for change in preview.upgraded] == ["d"]
 
 
-def test_lock_temp_project_injects_pytorch_backend_and_restores_pyproject(tmp_path, monkeypatch):
+def test_lock_temp_project_injects_overlays_pytorch_backend_and_restores_pyproject(
+    tmp_path,
+    monkeypatch,
+):
     from comfygit_core.integrations.uv_command import UVCommand
 
     temp_project = tmp_path / "project"
@@ -74,6 +78,24 @@ python_version = "3.11"
         "torchvision=0.26.0+cu126\n",
         encoding="utf-8",
     )
+    (temp_project / ".overlay-config.toml").write_text(
+        'active = ["stability"]\n',
+        encoding="utf-8",
+    )
+    overlays_dir = temp_project / "overlays"
+    overlays_dir.mkdir()
+    (overlays_dir / "stability.toml").write_text(
+        """[overlay]
+description = "Test active overlay"
+
+[dependencies]
+packages = ["example-lib==1.2.3"]
+
+[constraints]
+packages = ["click<8.2"]
+""",
+        encoding="utf-8",
+    )
 
     observed = {}
 
@@ -94,4 +116,140 @@ python_version = "3.11"
     assert "torch==2.11.0+cu126" in observed["content"]
     assert "torchaudio==2.11.0+cu126" in observed["content"]
     assert "torchvision==0.26.0+cu126" in observed["content"]
+    assert "example-lib==1.2.3" in observed["content"]
+    assert "click<8.2" in observed["content"]
     assert pyproject.read_text(encoding="utf-8") == original
+
+
+def test_copy_project_files_includes_overlay_activation_config(tmp_path):
+    cec_path = tmp_path / "source"
+    cec_path.mkdir()
+    (cec_path / "pyproject.toml").write_text("[project]\nname = \"example\"\n", encoding="utf-8")
+    (cec_path / ".overlay-config.toml").write_text('active = ["stability"]\n', encoding="utf-8")
+
+    temp_project = tmp_path / "temp"
+    temp_project.mkdir()
+
+    service = DependencyResolutionPreviewService(
+        cec_path=cec_path,
+        workspace_path=tmp_path / "workspace",
+    )
+
+    service._copy_project_files(temp_project)
+
+    assert (temp_project / ".overlay-config.toml").read_text(encoding="utf-8") == (
+        'active = ["stability"]\n'
+    )
+
+
+def test_preview_diffs_against_overlay_aware_baseline(tmp_path, monkeypatch):
+    cec_path = tmp_path / "source"
+    cec_path.mkdir()
+    (cec_path / "pyproject.toml").write_text("[project]\nname = \"example\"\n", encoding="utf-8")
+    (cec_path / "uv.lock").write_text(
+        """[[package]]
+name = "comfygit-core"
+version = "0.3.22"
+source = { registry = "https://pypi.org/simple" }
+""",
+        encoding="utf-8",
+    )
+
+    baseline_lock = """[[package]]
+name = "comfygit-core"
+version = "0.3.22"
+source = { editable = "../core" }
+"""
+    proposed_lock = baseline_lock + """
+[[package]]
+name = "depthflow"
+version = "0.9.1"
+source = { registry = "https://pypi.org/simple" }
+"""
+
+    def fake_lock(self, temp_project):
+        lock_text = proposed_lock if (temp_project / ".node-applied").exists() else baseline_lock
+        (temp_project / "uv.lock").write_text(lock_text, encoding="utf-8")
+
+    def fake_apply(self, temp_project, node_package):
+        (temp_project / ".node-applied").write_text(node_package.name, encoding="utf-8")
+
+    monkeypatch.setattr(DependencyResolutionPreviewService, "_lock_temp_project", fake_lock)
+    monkeypatch.setattr(DependencyResolutionPreviewService, "_apply_node_package", fake_apply)
+
+    service = DependencyResolutionPreviewService(
+        cec_path=cec_path,
+        workspace_path=tmp_path / "workspace",
+    )
+    node_package = NodePackage(
+        node_info=NodeInfo(name="ComfyUI-Depthflow-Nodes", registry_id="comfyui-depthflow-nodes"),
+        requirements=["depthflow==0.9.1"],
+    )
+
+    preview = service.preview_node_package(node_package)
+
+    assert preview.success is True
+    assert preview.lockfile_changed is True
+    assert preview.changes == (
+        PackageVersionChange("depthflow", None, "0.9.1", "added"),
+    )
+
+
+def test_read_lock_packages_can_exclude_root_project_package(tmp_path):
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text(
+        """[[package]]
+name = "comfygit-env-example"
+version = "0.1.0"
+
+[[package]]
+name = "depthflow"
+version = "0.9.1"
+""",
+        encoding="utf-8",
+    )
+    service = DependencyResolutionPreviewService.__new__(DependencyResolutionPreviewService)
+
+    packages = service._read_lock_packages(
+        lock_path,
+        excluded_names={"comfygit-env-example"},
+    )
+
+    assert list(packages) == ["depthflow"]
+
+
+def test_lock_fingerprint_normalizes_relative_editable_sources(tmp_path):
+    service = DependencyResolutionPreviewService.__new__(DependencyResolutionPreviewService)
+    absolute_source = {
+        "editable": str(tmp_path / "packages" / "core"),
+    }
+    relative_source = {
+        "editable": "packages/core",
+    }
+    lock_dir = tmp_path
+
+    assert service._normalize_lock_source(absolute_source, lock_dir) == (
+        service._normalize_lock_source(relative_source, lock_dir)
+    )
+
+
+def test_lock_fingerprint_ignores_distribution_archive_metadata(tmp_path):
+    service = DependencyResolutionPreviewService.__new__(DependencyResolutionPreviewService)
+
+    first = {
+        "name": "greenlet",
+        "version": "3.5.0",
+        "source": {"registry": "https://pypi.org/simple"},
+        "wheels": [{"url": "one.whl"}],
+    }
+    second = {
+        "name": "greenlet",
+        "version": "3.5.0",
+        "source": {"registry": "https://pypi.org/simple"},
+        "wheels": [{"url": "one.whl"}, {"url": "two.whl"}],
+        "sdist": {"url": "source.tar.gz"},
+    }
+
+    assert service._lock_package_fingerprint(first, tmp_path) == (
+        service._lock_package_fingerprint(second, tmp_path)
+    )

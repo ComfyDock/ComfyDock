@@ -75,6 +75,16 @@ or apply a package diff while any environment-mutating node install is active.
 Once the install queue is idle, clicking review should run the core preview
 against the current manifest and lockfile state.
 
+Resolver previews must model the same local sync inputs used by real
+environment sync. That includes active overlays from `.overlay-config.toml`,
+local overlays such as `overlays/.local.toml`, and machine-local PyTorch backend
+selection from `.pytorch-backend`. These files are not portable manifest truth,
+but they are part of the current machine's dependency solve and must be included
+when answering "what would this install change here?".
+The comparison baseline should be generated with those same active overlays
+before the proposed node is added, so existing overlay-vs-lock drift is not
+reported as part of the node install diff.
+
 Apply must be guarded by the preview baseline. A preview result should include
 hashes for the manifest and lockfile state it was generated from, plus a stable
 fingerprint of the normalized package diff. Applying an accepted preview should
