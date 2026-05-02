@@ -54,7 +54,11 @@ if TYPE_CHECKING:
     )
 
     from ..caching.workflow_cache import WorkflowCacheRepository
-    from ..models.dependency_resolution import DependencyResolutionPreview
+    from ..models.dependency_resolution import (
+        DependencyResolutionAcceptance,
+        DependencyResolutionApplyResult,
+        DependencyResolutionPreview,
+    )
     from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
@@ -1472,6 +1476,15 @@ class Environment:
         return self.node_manager.preview_add_node_dependency_changes(identifier)
 
     @_requires_env_lock
+    def apply_reviewed_node_dependency_changes(
+        self,
+        identifier: str,
+        acceptance: DependencyResolutionAcceptance,
+    ) -> DependencyResolutionApplyResult:
+        """Apply a reviewed node install if the accepted dependency preview is current."""
+        return self.node_manager.apply_reviewed_dependency_changes(identifier, acceptance)
+
+    @_requires_env_lock
     def install_nodes_with_progress(
         self,
         node_ids: list[str],
@@ -2219,14 +2232,16 @@ class Environment:
 
             if git_info is None:
                 # Not a git repo - notify callback
-                if callbacks and hasattr(callbacks, 'on_dev_node_no_git'):
-                    callbacks.on_dev_node_no_git(node_info.name)
+                no_git_callback = getattr(callbacks, 'on_dev_node_no_git', None)
+                if callable(no_git_callback):
+                    no_git_callback(node_info.name)
                 continue
 
             if not git_info.remote_url:
                 # Git repo but no remote - notify callback
-                if callbacks and hasattr(callbacks, 'on_dev_node_no_git'):
-                    callbacks.on_dev_node_no_git(node_info.name)
+                no_git_callback = getattr(callbacks, 'on_dev_node_no_git', None)
+                if callable(no_git_callback):
+                    no_git_callback(node_info.name)
                 continue
 
             # Update node info with git data

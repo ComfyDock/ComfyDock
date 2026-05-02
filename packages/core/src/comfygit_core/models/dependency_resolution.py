@@ -30,6 +30,9 @@ class DependencyResolutionPreview:
     error: str | None = None
     stderr: str = ""
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    baseline_fingerprint: str = ""
+    diff_fingerprint: str = ""
+    proposed_fingerprint: str = ""
 
     @property
     def added(self) -> tuple[PackageVersionChange, ...]:
@@ -47,3 +50,24 @@ class DependencyResolutionPreview:
     def downgraded(self) -> tuple[PackageVersionChange, ...]:
         return tuple(change for change in self.changes if change.kind == "downgraded")
 
+
+@dataclass(frozen=True)
+class DependencyResolutionAcceptance:
+    """User acceptance of a specific dependency preview."""
+
+    identifier: str
+    baseline_fingerprint: str
+    diff_fingerprint: str
+    proposed_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class DependencyResolutionApplyResult:
+    """Result of applying a reviewed dependency change."""
+
+    success: bool
+    identifier: str
+    node_name: str
+    installed: bool
+    needs_restart: bool
+    message: str = ""

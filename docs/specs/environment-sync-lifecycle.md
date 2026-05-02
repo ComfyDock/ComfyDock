@@ -85,19 +85,19 @@ The comparison baseline should be generated with those same active overlays
 before the proposed node is added, so existing overlay-vs-lock drift is not
 reported as part of the node install diff.
 
-Apply must be guarded by the preview baseline. A preview result should include
-hashes for the manifest and lockfile state it was generated from, plus a stable
-fingerprint of the normalized package diff. Applying an accepted preview should
-abort if the current hashes differ from the preview baseline, and the final
-applied dependency diff should match the accepted fingerprint. If the preview
-itself cannot be generated without package metadata/build work, callers should
-treat that as a separate preview failure state rather than as an approved
-dependency change.
+Apply must be guarded by the preview baseline. A preview result includes a
+fingerprint of the current resolved package baseline, a fingerprint of the
+normalized package diff, and a fingerprint of the proposed resolved package
+state. Applying an accepted preview must re-run the preview against the current
+environment state under the environment operation lock and abort if the accepted
+fingerprints no longer match. If the preview itself cannot be generated without
+package metadata/build work, callers should treat that as a separate preview
+failure state rather than as an approved dependency change.
 
-Current implementation status: core exposes the typed preview primitive and
-environment/node-manager entry points. Manager and CLI apply flows still need to
-present the preview and require explicit user confirmation before applying risky
-resolver changes.
+Current implementation status: core exposes the typed preview primitive,
+fingerprinted preview results, and a guarded apply entry point on Environment
+and NodeManager. Manager can present and apply reviewed node dependency changes.
+CLI parity for reviewed dependency apply remains future work.
 
 ## Git And Remote Flows
 

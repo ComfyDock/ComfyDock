@@ -9,9 +9,14 @@ from ..analyzers.node_git_analyzer import get_node_git_info
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
-from ..models.dependency_resolution import DependencyResolutionPreview
+from ..models.dependency_resolution import (
+    DependencyResolutionAcceptance,
+    DependencyResolutionApplyResult,
+    DependencyResolutionPreview,
+)
 from ..models.exceptions import (
     CDDependencyConflictError,
+    CDDependencyPreviewStaleError,
     CDEnvironmentError,
     CDNodeConflictError,
     CDNodeNotFoundError,
@@ -271,6 +276,7 @@ class NodeManager:
         extras: list[str] | None = None,
         all_extras: bool = False,
         skip_optional_overlays: bool = True,
+        allow_reviewed_dependency_changes: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -284,6 +290,9 @@ class NodeManager:
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
             skip_optional_overlays: If True, only inject pytorch overlays during sync
+            allow_reviewed_dependency_changes: If True, apply probe-discovered
+                constraints even when they conflict with the current environment.
+                Callers must guard this with a fresh accepted preview.
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -480,13 +489,20 @@ class NodeManager:
                         + ", ".join(discovered_constraints)
                     )
 
-                    # Validate constraints don't conflict with existing environment
-                    # This catches issues BEFORE modifying pyproject.toml
-                    self._validate_constraints_against_environment(
-                        node_package.name,
-                        discovered_constraints,
-                        node_package.requirements,
-                    )
+                    if allow_reviewed_dependency_changes:
+                        logger.info(
+                            "Applying reviewed dependency changes for '%s'; "
+                            "skipping constraint conflict block",
+                            node_package.name,
+                        )
+                    else:
+                        # Validate constraints don't conflict with existing environment
+                        # This catches issues BEFORE modifying pyproject.toml
+                        self._validate_constraints_against_environment(
+                            node_package.name,
+                            discovered_constraints,
+                            node_package.requirements,
+                        )
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
@@ -602,6 +618,50 @@ class NodeManager:
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
+
+    def apply_reviewed_dependency_changes(
+        self,
+        identifier: str,
+        acceptance: DependencyResolutionAcceptance,
+    ) -> DependencyResolutionApplyResult:
+        """Apply a node install only if the accepted dependency preview is current."""
+        if acceptance.identifier != identifier:
+            raise CDDependencyPreviewStaleError(
+                "Accepted dependency preview does not match the requested node identifier"
+            )
+
+        preview = self.preview_add_node_dependency_changes(identifier)
+        if not preview.success:
+            raise CDDependencyPreviewStaleError(
+                preview.error or "Unable to regenerate dependency preview before apply"
+            )
+
+        if (
+            preview.baseline_fingerprint != acceptance.baseline_fingerprint
+            or preview.diff_fingerprint != acceptance.diff_fingerprint
+            or (
+                acceptance.proposed_fingerprint
+                and preview.proposed_fingerprint != acceptance.proposed_fingerprint
+            )
+        ):
+            raise CDDependencyPreviewStaleError(
+                "Dependency preview is stale. Regenerate the preview before applying."
+            )
+
+        node_info = self.add_node(
+            identifier,
+            allow_reviewed_dependency_changes=True,
+            skip_optional_overlays=False,
+        )
+
+        return DependencyResolutionApplyResult(
+            success=True,
+            identifier=identifier,
+            node_name=node_info.name,
+            installed=True,
+            needs_restart=True,
+            message=f"Installed {node_info.name}",
+        )
 
     def preview_add_node_dependency_changes(
         self,
@@ -1017,6 +1077,9 @@ class NodeManager:
 
         # Determine ref: branch takes priority over pinned_commit
         ref = node_info.branch or node_info.pinned_commit
+        if not node_info.repository:
+            logger.error(f"Cannot clone dev node '{node_info.name}': missing repository URL")
+            return False
 
         logger.info(f"Cloning dev node '{node_info.name}' from {node_info.repository}")
         if ref:

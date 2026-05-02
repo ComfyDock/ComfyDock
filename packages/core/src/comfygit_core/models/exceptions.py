@@ -157,6 +157,11 @@ class CDDependencyConflictError(ComfyDockError):
         """Get suggested actions for resolving this conflict."""
         return self.context.suggested_actions if self.context else []
 
+
+class CDDependencyPreviewStaleError(ComfyDockError):
+    """Raised when a reviewed dependency preview no longer matches current state."""
+    pass
+
 # ===================================================
 # Registry exceptions
 # ===================================================

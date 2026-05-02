@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -118,6 +120,9 @@ class DependencyResolutionPreviewService:
                 requirements=tuple(node_package.requirements),
                 changes=tuple(changes),
                 lockfile_changed=self._lockfile_changed(temp_project, baseline_lock),
+                baseline_fingerprint=self._packages_fingerprint(before),
+                diff_fingerprint=self._changes_fingerprint(changes),
+                proposed_fingerprint=self._packages_fingerprint(after),
             )
 
     def _copy_project_files(self, temp_project: Path) -> None:
@@ -306,6 +311,25 @@ class DependencyResolutionPreviewService:
                 changes.append(PackageVersionChange(name, current, proposed, "changed"))
 
         return changes
+
+    def _packages_fingerprint(self, packages: dict[str, dict[str, Any]]) -> str:
+        return self._stable_hash(packages)
+
+    def _changes_fingerprint(self, changes: list[PackageVersionChange]) -> str:
+        payload = [
+            {
+                "name": change.name,
+                "current": change.current,
+                "proposed": change.proposed,
+                "kind": change.kind,
+            }
+            for change in changes
+        ]
+        return self._stable_hash(payload)
+
+    def _stable_hash(self, value: Any) -> str:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _version_change_kind(
         self,

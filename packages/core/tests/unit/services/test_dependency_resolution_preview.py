@@ -1,4 +1,12 @@
-from comfygit_core.models.dependency_resolution import PackageVersionChange
+import pytest
+from comfygit_core.managers.node_manager import NodeManager
+from comfygit_core.models.dependency_resolution import (
+    DependencyResolutionAcceptance,
+    DependencyResolutionApplyResult,
+    DependencyResolutionPreview,
+    PackageVersionChange,
+)
+from comfygit_core.models.exceptions import CDDependencyPreviewStaleError
 from comfygit_core.models.shared import NodeInfo, NodePackage
 from comfygit_core.services.dependency_resolution_preview import (
     DependencyResolutionPreviewService,
@@ -189,6 +197,9 @@ source = { registry = "https://pypi.org/simple" }
     preview = service.preview_node_package(node_package)
 
     assert preview.success is True
+    assert preview.baseline_fingerprint
+    assert preview.diff_fingerprint
+    assert preview.proposed_fingerprint
     assert preview.lockfile_changed is True
     assert preview.changes == (
         PackageVersionChange("depthflow", None, "0.9.1", "added"),
@@ -253,3 +264,73 @@ def test_lock_fingerprint_ignores_distribution_archive_metadata(tmp_path):
     assert service._lock_package_fingerprint(first, tmp_path) == (
         service._lock_package_fingerprint(second, tmp_path)
     )
+
+
+def test_apply_reviewed_dependency_changes_requires_fresh_matching_preview():
+    manager = NodeManager.__new__(NodeManager)
+    preview = DependencyResolutionPreview(
+        success=True,
+        node_name="ComfyUI-Depthflow-Nodes",
+        baseline_fingerprint="baseline",
+        diff_fingerprint="diff",
+        proposed_fingerprint="proposed",
+    )
+    acceptance = DependencyResolutionAcceptance(
+        identifier="comfyui-depthflow-nodes",
+        baseline_fingerprint="baseline",
+        diff_fingerprint="diff",
+        proposed_fingerprint="proposed",
+    )
+    installed = {}
+
+    manager.preview_add_node_dependency_changes = lambda identifier: preview
+
+    def fake_add_node(identifier, **kwargs):
+        installed["identifier"] = identifier
+        installed["kwargs"] = kwargs
+        return NodeInfo(name="ComfyUI-Depthflow-Nodes")
+
+    manager.add_node = fake_add_node
+
+    result = manager.apply_reviewed_dependency_changes(
+        "comfyui-depthflow-nodes",
+        acceptance,
+    )
+
+    assert result == DependencyResolutionApplyResult(
+        success=True,
+        identifier="comfyui-depthflow-nodes",
+        node_name="ComfyUI-Depthflow-Nodes",
+        installed=True,
+        needs_restart=True,
+        message="Installed ComfyUI-Depthflow-Nodes",
+    )
+    assert installed["kwargs"] == {
+        "allow_reviewed_dependency_changes": True,
+        "skip_optional_overlays": False,
+    }
+
+
+def test_apply_reviewed_dependency_changes_rejects_stale_preview():
+    manager = NodeManager.__new__(NodeManager)
+    preview = DependencyResolutionPreview(
+        success=True,
+        node_name="ComfyUI-Depthflow-Nodes",
+        baseline_fingerprint="new-baseline",
+        diff_fingerprint="diff",
+        proposed_fingerprint="proposed",
+    )
+    acceptance = DependencyResolutionAcceptance(
+        identifier="comfyui-depthflow-nodes",
+        baseline_fingerprint="old-baseline",
+        diff_fingerprint="diff",
+        proposed_fingerprint="proposed",
+    )
+    manager.preview_add_node_dependency_changes = lambda identifier: preview
+    manager.add_node = lambda identifier, **kwargs: NodeInfo(name="should-not-install")
+
+    with pytest.raises(CDDependencyPreviewStaleError):
+        manager.apply_reviewed_dependency_changes(
+            "comfyui-depthflow-nodes",
+            acceptance,
+        )
