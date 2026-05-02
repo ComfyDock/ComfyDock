@@ -41,12 +41,12 @@ where practical, but it should use non-interactive defaults, explicit workspace
 selection, strict sync failure handling, and no authoring commit by default.
 See `docs/specs/environment-materialization-lifecycle.md`.
 
-### CGSYNC-LIFE-06 [PLANNED]: Risky dependency changes are previewed before apply
+### CGSYNC-LIFE-06 [PARTIAL]: Risky dependency changes are previewed before apply
 Validation: MIXED
 
 When adding a node would require changing already-resolved shared Python
 packages, ComfyGit should not silently mutate the current environment. Core
-should provide a UI-agnostic resolver preview that simulates adding the node to a
+provides a UI-agnostic resolver preview that simulates adding the node to a
 temporary project copy, re-locks that project, and reports the package diff
 before the real manifest, lockfile, or virtual environment are changed.
 
@@ -60,6 +60,34 @@ Callers may then offer explicit actions such as cancelling, applying the
 resolved dependency changes to the current environment, or trying the change on
 a new branch. A blind force install that bypasses this preview remains an
 advanced escape hatch, not the default dependency policy.
+
+Dependency review is exceptional. Normal additive installs should proceed
+without review. A review should be requested when install preflight detects that
+the node would materially change already-resolved shared packages, especially
+downgrades, protected package changes, or constraint conflicts. Build/toolchain
+failures such as packages that cannot compile in the current environment should
+remain normal install failures with logs unless a resolver preview can produce a
+meaningful lockfile diff.
+
+Preview generation should be lazy and fresh. UI surfaces may mark a package as
+`dependency_review_required` during an install attempt, but they should not show
+or apply a package diff while any environment-mutating node install is active.
+Once the install queue is idle, clicking review should run the core preview
+against the current manifest and lockfile state.
+
+Apply must be guarded by the preview baseline. A preview result should include
+hashes for the manifest and lockfile state it was generated from, plus a stable
+fingerprint of the normalized package diff. Applying an accepted preview should
+abort if the current hashes differ from the preview baseline, and the final
+applied dependency diff should match the accepted fingerprint. If the preview
+itself cannot be generated without package metadata/build work, callers should
+treat that as a separate preview failure state rather than as an approved
+dependency change.
+
+Current implementation status: core exposes the typed preview primitive and
+environment/node-manager entry points. Manager and CLI apply flows still need to
+present the preview and require explicit user confirmation before applying risky
+resolver changes.
 
 ## Git And Remote Flows
 

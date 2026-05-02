@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     )
 
     from ..caching.workflow_cache import WorkflowCacheRepository
+    from ..models.dependency_resolution import DependencyResolutionPreview
     from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
@@ -1464,6 +1465,11 @@ class Environment:
             all_extras=all_extras,
             **add_kwargs,
         )
+
+    @_requires_env_lock
+    def preview_add_node_dependency_changes(self, identifier: str) -> DependencyResolutionPreview:
+        """Preview lockfile dependency changes for adding a node."""
+        return self.node_manager.preview_add_node_dependency_changes(identifier)
 
     @_requires_env_lock
     def install_nodes_with_progress(

@@ -31,6 +31,8 @@ _EXPORTS: dict[str, str] = {
     "ManifestWorkflowEntry": "manifest",
     "MaterializeOptions": "materialization",
     "MaterializeResult": "materialization",
+    "DependencyResolutionPreview": "dependency_resolution",
+    "PackageVersionChange": "dependency_resolution",
     "WorkflowContractInput": "workflow_contract",
     "WorkflowContractOutput": "workflow_contract",
     "NamedWorkflowContract": "workflow_contract",

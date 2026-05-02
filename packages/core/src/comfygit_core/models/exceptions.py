@@ -128,9 +128,13 @@ class DependencyConflictContext:
     # The node being added
     node_name: str
 
+    # Broad failure class used by frontends to decide whether a dependency
+    # review preview is useful.
+    conflict_kind: str = "resolution_conflict"
+
     # Parsed conflict information
-    conflicting_packages: list[tuple[str, str]]  # Package pairs that conflict
-    conflict_descriptions: list[str]  # Simplified conflict messages
+    conflicting_packages: list[tuple[str, str]] = field(default_factory=list)  # Package pairs that conflict
+    conflict_descriptions: list[str] = field(default_factory=list)  # Simplified conflict messages
 
     # Raw UV stderr for verbose mode
     raw_stderr: str = ""

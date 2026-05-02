@@ -9,6 +9,7 @@ from ..analyzers.node_git_analyzer import get_node_git_info
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
+from ..models.dependency_resolution import DependencyResolutionPreview
 from ..models.exceptions import (
     CDDependencyConflictError,
     CDEnvironmentError,
@@ -19,6 +20,7 @@ from ..models.exceptions import (
     NodeConflictContext,
 )
 from ..models.shared import NodeInfo, NodePackage, NodeRemovalResult, UpdateResult
+from ..services.dependency_resolution_preview import DependencyResolutionPreviewService
 from ..services.node_lookup_service import NodeLookupService
 from ..strategies.confirmation import AutoConfirmStrategy, ConfirmationStrategy
 from ..utils.conflict_parser import extract_conflicting_packages
@@ -600,6 +602,66 @@ class NodeManager:
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
+
+    def preview_add_node_dependency_changes(
+        self,
+        identifier: str,
+    ) -> DependencyResolutionPreview:
+        """Preview dependency changes for adding a node without mutating the environment."""
+        logger.info("Previewing dependency changes for node: %s", identifier)
+
+        registry_id = None
+        github_url = None
+        if is_github_url(identifier):
+            github_url = identifier
+            if resolved := self.node_repository.resolve_github_url(identifier):
+                registry_id = resolved.id
+        else:
+            registry_id = identifier.split('@')[0] if '@' in identifier else identifier
+
+        node_info = self.node_lookup.get_node(identifier)
+        if github_url and registry_id:
+            node_info.registry_id = registry_id
+            node_info.repository = github_url
+
+        existing_entry = self._find_node_by_name(node_info.name)
+        if existing_entry:
+            existing_identifier, existing_node = existing_entry
+            raise CDNodeConflictError(
+                f"Node '{node_info.name}' is already installed (version {existing_node.version})",
+                context=NodeConflictContext(
+                    conflict_type='already_tracked',
+                    node_name=node_info.name,
+                    existing_identifier=existing_identifier,
+                    is_development=(existing_node.version == 'dev'),
+                ),
+            )
+
+        cache_path = self.node_lookup.download_to_cache(node_info)
+        if not cache_path:
+            raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
+
+        requirements = self.node_lookup.scan_requirements(
+            cache_path,
+            package_config=self.package_config,
+        )
+        node_package = NodePackage(node_info=node_info, requirements=requirements)
+
+        service = DependencyResolutionPreviewService(
+            cec_path=self.pyproject.path.parent,
+            workspace_path=self.resolution_tester.workspace_path,
+            uv_binary=Path(self.uv.binary),
+            torch_backend=self._get_torch_backend_for_preview(),
+        )
+        return service.preview_node_package(node_package)
+
+    def _get_torch_backend_for_preview(self) -> str | None:
+        if self.pytorch_manager is None:
+            return None
+        try:
+            return self.pytorch_manager.get_backend()
+        except Exception:
+            return None
 
     def remove_node(self, identifier: str, untrack_only: bool = False):
         """Remove a custom node by identifier or name (case-insensitive).
@@ -1795,6 +1857,7 @@ class NodeManager:
         # Create enhanced context
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="resolution_conflict",
             conflicting_packages=conflict_pairs,
             conflict_descriptions=test_result.conflicts,
             raw_stderr=test_result.stderr,
@@ -1865,6 +1928,7 @@ class NodeManager:
 
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="probe_install_failure",
             conflicting_packages=[],
             conflict_descriptions=[
                 f"Probe failed to install requirement: {req}"
@@ -1993,6 +2057,7 @@ class NodeManager:
 
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="constraint_conflict",
             conflicting_packages=[(pkg_name, requiring_pkg)],
             conflict_descriptions=[
                 f"Node requires {pkg_name}{constraint_spec} but {requiring_pkg} requires {existing_spec}"
