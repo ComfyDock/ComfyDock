@@ -26,6 +26,7 @@ class ModelSourceWarning:
     hash: str | None = None
     criticality: str = "required"
     workflows: list[str] = field(default_factory=list)
+    source_candidates: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

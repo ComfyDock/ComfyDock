@@ -32,6 +32,7 @@ _EXPORTS: dict[str, str] = {
     "collect_model_source_warnings": "environment_readiness",
     "collect_node_provenance_warnings": "environment_readiness",
     "model_has_sources": "environment_readiness",
+    "model_source_candidates": "environment_readiness",
     "node_criticality": "environment_readiness",
     "node_has_portable_provenance": "environment_readiness",
 }

@@ -154,16 +154,36 @@ def test_model_without_manifest_or_repository_source_is_reported_once():
     ]
 
 
-def test_model_repository_sources_satisfy_model_source_readiness():
+def test_model_repository_sources_are_reported_as_repair_candidates():
     model = FakeModel(filename="checkpoint.safetensors", hash="abc123", sources=[])
     env = make_env(
         models=[model],
         workflows={"simple": object()},
         workflow_models={"simple": [FakeModel(filename="checkpoint.safetensors", hash="abc123")]},
-        model_sources={"abc123": [{"url": "https://example.test/model.safetensors"}]},
+        model_sources={
+            "abc123": [
+                {
+                    "type": "huggingface",
+                    "url": "https://example.test/model.safetensors",
+                }
+            ]
+        },
     )
 
-    assert collect_model_source_warnings(env) == []
+    assert collect_model_source_warnings(env) == [
+        ModelSourceWarning(
+            filename="checkpoint.safetensors",
+            hash="abc123",
+            criticality="required",
+            workflows=["simple"],
+            source_candidates=[
+                {
+                    "type": "huggingface",
+                    "url": "https://example.test/model.safetensors",
+                }
+            ],
+        )
+    ]
 
 
 def test_blocking_source_state_can_be_included():

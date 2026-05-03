@@ -133,6 +133,7 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
                     criticality=_safe_str(getattr(model_data, "criticality", None))
                     or "required",
                     workflows=[],
+                    source_candidates=model_source_candidates(env, model_data),
                 )
                 warnings_by_key[key] = warning
             warning.workflows.append(workflow_name)
@@ -150,28 +151,49 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
             hash=_safe_str(getattr(model_data, "hash", None)),
             criticality=_safe_str(getattr(model_data, "criticality", None)) or "required",
             workflows=[],
+            source_candidates=model_source_candidates(env, model_data),
         )
 
     return list(warnings_by_key.values())
 
 
 def model_has_sources(env: Any, model: Any) -> bool:
-    if getattr(model, "sources", None):
-        return True
+    """Return whether the environment manifest itself records a model source."""
+    return bool(getattr(model, "sources", None))
 
+
+def model_source_candidates(env: Any, model: Any) -> list[dict[str, Any]]:
+    """Return workspace-index source hints without satisfying manifest readiness."""
     model_hash = _safe_str(getattr(model, "hash", None))
     if not model_hash:
-        return False
+        return []
 
     model_repository = getattr(getattr(env, "workspace", None), "model_repository", None)
     get_sources = getattr(model_repository, "get_sources", None)
     if not callable(get_sources):
-        return False
+        return []
 
     try:
-        return bool(_safe_list(get_sources(model_hash)))
+        sources = _safe_list(get_sources(model_hash))
     except Exception:
-        return False
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        url = _safe_str(source.get("url"))
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        candidates.append(
+            {
+                "type": _safe_str(source.get("type")) or "custom",
+                "url": url,
+            }
+        )
+    return candidates
 
 
 def collect_node_provenance_warnings(env: Any) -> list[NodeProvenanceWarning]:
