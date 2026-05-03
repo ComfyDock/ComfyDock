@@ -71,17 +71,17 @@ Environment changes meant to be shared or used by external runtimes should be
 recorded in git. Core git operations should preserve the environment repository
 as the auditable history of manifest and workflow changes.
 
-### CGCORE-MAN-05 [PLANNED]: Materialization is a headless runtime hydration path
+### CGCORE-MAN-05 [LIVE]: Materialization is a headless runtime hydration path
 Validation: MIXED
 
-Core should expose a reusable materialization API that turns a portable
+Core exposes a reusable materialization API that turns a portable
 environment source into a runnable local environment without interactive prompts
-or authoring-oriented side effects. Materialization may reuse import/sync
-machinery, but callers should be able to select build/runtime defaults such as
+or authoring-oriented side effects. Materialization reuses import/sync
+machinery, and callers can select build/runtime defaults such as
 skipping model downloads, omitting Manager registration, using an explicit
 workspace, and failing hard on dependency sync errors.
 
-### CGCORE-MAN-06 [PLANNED]: Directory materialization copies only portable source files
+### CGCORE-MAN-06 [LIVE]: Directory materialization copies only portable source files
 Validation: TEST
 
 When a plain directory is used as an environment source, core should copy only
@@ -144,6 +144,11 @@ Validation: TEST
 ComfyGit-managed environments use uv to resolve and sync Python dependencies.
 Manual package installs into the environment virtualenv are not durable unless
 captured in manifest dependency state or machine-local injection config.
+The `comfygit-system` dependency group owns uv as a ComfyGit-managed resolver
+tool and must keep it on a version new enough to support the manifest features
+ComfyGit writes, including dependency exclusions. Transitive packages may not
+force uv below that floor; core records a matching uv override when seeding or
+repairing the system group.
 
 ### CGCORE-DEP-02 [LIVE]: Models are external assets, not image/package payloads
 Validation: MIXED
@@ -186,6 +191,32 @@ scoring candidate source matches, deduplicating candidates, and filtering alread
 known model sources are dependency-domain behavior. Core should expose this as
 UI-agnostic source-candidate services so manager, CLI, and build planning
 can share the same logic.
+
+### CGCORE-DEP-07 [LIVE]: Sync may repair ComfyGit-managed tool floors
+Validation: TEST
+
+Current ComfyGit code is allowed to normalize older environment manifests during
+create, sync, repair, run, materialization, or node-install paths when the
+manifest contains stale ComfyGit-managed tool constraints. In practice this means
+core may rewrite the `comfygit-system` uv dependency and matching
+`[tool.uv].override-dependencies` entry so tracked manifest features such as
+`exclude-dependencies` are actually enforced by the resolver.
+
+This policy intentionally favors keeping pre-customer environments runnable over
+preserving historical tool versions exactly. The resulting manifest diff is a
+real environment change and should be visible to callers that report dirty
+environment state.
+
+### CGCORE-DEP-08 [DEFERRED]: User-owned history should separate runtime minimums from materialized tool versions
+Validation: HUMAN_REVIEW
+
+Once ComfyGit environments are user-owned compatibility artifacts, the system
+should distinguish between the minimum tool version required by the current
+ComfyGit runtime and the exact tool version used when a historical environment
+commit was last materialized. At that point, checkout of an older commit should
+avoid silent toolchain migration where practical and should instead surface an
+explicit repair or migration action when current ComfyGit cannot safely operate
+with the recorded toolchain.
 
 ## Resolution And Sync
 

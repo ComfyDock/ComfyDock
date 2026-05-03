@@ -979,8 +979,8 @@ index = "pytorch-cu129"
 class TestInitialPyprojectConfig:
     """Test initial pyproject.toml configuration."""
 
-    def test_initial_pyproject_has_empty_uv_section(self):
-        """Test that newly created pyproject.toml has empty uv section.
+    def test_initial_pyproject_has_system_uv_override(self):
+        """Test that newly created pyproject.toml has the system uv override.
 
         exclude-dependencies is set by first sync() from package_config.toml,
         not hardcoded in initial config.
@@ -996,10 +996,10 @@ class TestInitialPyprojectConfig:
             comfyui_commit_sha="abc123"
         )
 
-        # Verify uv section exists but is empty (sync will populate it)
+        # Verify uv section exists with only system-tool policy.
         assert "tool" in config
         assert "uv" in config["tool"]
-        assert config["tool"]["uv"] == {}
+        assert config["tool"]["uv"] == {"override-dependencies": ["uv>=0.10.0"]}
 
 
 class TestExcludeDependencies:

@@ -42,7 +42,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
-SYSTEM_DEPENDENCIES = ["uv>=0.7"]
+SYSTEM_UV_DEPENDENCY = "uv>=0.10.0"
+SYSTEM_DEPENDENCIES = [SYSTEM_UV_DEPENDENCY]
 
 
 class NodeManager:
@@ -86,9 +87,10 @@ class NodeManager:
         This prevents essential tooling (notably `uv`) from being orphaned when
         hash-named node dependency groups are removed during node upgrades.
         """
-        groups = self.pyproject.dependencies.get_groups()
-        if SYSTEM_DEPENDENCY_GROUP not in groups:
-            self.pyproject.dependencies.add_to_group(SYSTEM_DEPENDENCY_GROUP, SYSTEM_DEPENDENCIES)
+        self.pyproject.ensure_system_uv_dependency(
+            dependency=SYSTEM_UV_DEPENDENCY,
+            group=SYSTEM_DEPENDENCY_GROUP,
+        )
 
     def _sync_uv(self, skip_optional_overlays: bool = True, **kwargs) -> None:
         self._ensure_system_group()

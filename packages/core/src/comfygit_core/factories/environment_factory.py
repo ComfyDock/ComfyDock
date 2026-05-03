@@ -596,10 +596,12 @@ class EnvironmentFactory:
                     "python_version": python_version,
                     "nodes": {}
                 },
-                "uv": {}
+                "uv": {
+                    "override-dependencies": ["uv>=0.10.0"],
+                }
             },
             "dependency-groups": {
-                "comfygit-system": ["uv>=0.7"],
+                "comfygit-system": ["uv>=0.10.0"],
             },
         }
 

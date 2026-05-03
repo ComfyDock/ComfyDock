@@ -11,10 +11,10 @@ declared environment from portable truth.
 
 ## Command Shape
 
-### CGMAT-CMD-01 [PLANNED]: `cg materialize` is a top-level headless command
+### CGMAT-CMD-01 [LIVE]: `cg materialize` is a top-level headless command
 Validation: MIXED
 
-The CLI should expose a top-level `cg materialize SOURCE` command that creates a
+The CLI exposes a top-level `cg materialize SOURCE` command that creates a
 managed environment from a portable source without prompting. The command should
 accept an explicit environment name and should be usable in Dockerfile, CI, and
 remote-machine setup scripts.
@@ -31,10 +31,10 @@ Expected options include:
 - `--use` to set the materialized environment active.
 - `--replace` to intentionally remove an existing target environment.
 
-### CGMAT-CMD-02 [PLANNED]: Materialize defaults are runtime-safe
+### CGMAT-CMD-02 [LIVE]: Materialize defaults are runtime-safe
 Validation: TEST
 
-`cg materialize` should default to behavior suitable for build/runtime contexts:
+`cg materialize` defaults to behavior suitable for build/runtime contexts:
 
 - model strategy: `skip`
 - Manager registration: disabled
@@ -48,19 +48,19 @@ downloads or Manager installation explicitly.
 
 ## Source Handling
 
-### CGMAT-SRC-01 [PLANNED]: Materialization supports Git, bundle, and directory sources
+### CGMAT-SRC-01 [LIVE]: Materialization supports Git, bundle, and directory sources
 Validation: MIXED
 
-Materialization should accept the same portable sources as import where possible:
+Materialization accepts the same portable sources as import where possible:
 Git repositories, exported bundles, and plain directories containing a portable
 environment repository. Git and bundle sources may reuse existing import source
 preparation logic. Directory sources require a dedicated preparation path.
 
-### CGMAT-SRC-02 [PLANNED]: Directory sources are copied as portable recipe input
+### CGMAT-SRC-02 [LIVE]: Directory sources are copied as portable recipe input
 Validation: TEST
 
 A directory source is valid when it contains a `pyproject.toml` environment
-manifest. The materialization path should copy portable recipe files such as:
+manifest. The materialization path copies portable recipe files such as:
 
 - `pyproject.toml`
 - `.python-version`
@@ -83,7 +83,7 @@ The materialization path should not copy:
 Git sources preserve repository identity through the Git import path. Plain
 directory sources are treated as source snapshots, not as Git history.
 
-### CGMAT-SRC-03 [PLANNED]: Model directory is configured before environment construction
+### CGMAT-SRC-03 [LIVE]: Model directory is configured before environment construction
 Validation: TEST
 
 When `--models-dir` is provided, workspace model-directory configuration should
@@ -93,10 +93,10 @@ construction risks creating symlinks to stale model paths.
 
 ## Core API Shape
 
-### CGMAT-API-01 [PLANNED]: Core exposes typed materialization inputs and results
+### CGMAT-API-01 [LIVE]: Core exposes typed materialization inputs and results
 Validation: STATIC
 
-Core should expose typed materialization objects rather than passing ad hoc
+Core exposes typed materialization objects rather than passing ad hoc
 dictionaries through CLI and runtime code. A minimal model should include:
 
 - source path or URL
@@ -116,23 +116,23 @@ The result should report the materialized environment name, workspace path,
 environment path, manifest repository path, ComfyUI path, selected model strategy,
 and resolved torch backend when available.
 
-### CGMAT-API-02 [PLANNED]: Workspace owns materialization orchestration
+### CGMAT-API-02 [LIVE]: Workspace owns materialization orchestration
 Validation: MIXED
 
 Callers should enter materialization through a workspace-level API rather than
 orchestrating factory and environment internals directly. The workspace API
-should validate the environment name, configure machine-local model directory
-state, prepare the source through the appropriate factory method, call
-finalization with materialization defaults, and clean up partial environments on
+validates the environment name, configures machine-local model directory
+state, prepares the source through the appropriate factory method, calls
+finalization with materialization defaults, and cleans up partial environments on
 failure.
 
-### CGMAT-API-03 [PLANNED]: Import finalization is shared but parameterized
+### CGMAT-API-03 [LIVE]: Import finalization is shared but parameterized
 Validation: TEST
 
-Materialization should reuse the existing import finalization phases where
+Materialization reuses the existing import finalization phases where
 possible: ComfyUI restore/clone, built-in extraction, symlink setup, workflow
 copy, uv sync, custom node installation, and model-intent preparation. The shared
-finalization path should be parameterized so import and materialize can differ
+finalization path is parameterized so import and materialize can differ
 without duplicating the environment setup pipeline.
 
 Important behavioral switches:
@@ -145,7 +145,7 @@ Important behavioral switches:
 
 ## Failure And Cleanup
 
-### CGMAT-FAIL-01 [PLANNED]: Materialization exits nonzero on dependency sync failure
+### CGMAT-FAIL-01 [LIVE]: Materialization exits nonzero on dependency sync failure
 Validation: TEST
 
 If uv sync, custom-node installation, required dependency resolution, or manifest
@@ -153,7 +153,7 @@ validation fails, materialization should fail the command and leave no completed
 environment marker. Partial environment cleanup should use the same cleanup
 policy as import/create.
 
-### CGMAT-FAIL-02 [PLANNED]: Model downloads are explicit materialization work
+### CGMAT-FAIL-02 [PARTIAL]: Model downloads are explicit materialization work
 Validation: TEST
 
 Materialization should preserve model download intents even when `--models skip`
@@ -163,14 +163,14 @@ materialization when downloads were explicitly requested.
 
 ## Non-Goals
 
-### CGMAT-NONGOAL-01 [PLANNED]: Materialize does not launch ComfyUI
+### CGMAT-NONGOAL-01 [LIVE]: Materialize does not launch ComfyUI
 Validation: HUMAN_REVIEW
 
 Materialization prepares an environment. It does not run ComfyUI, start
 `cg serve`, bind network ports, or expose endpoints. Runtime launch belongs to
 `cg run`, `cg serve`, container entrypoints, or deployment adapters.
 
-### CGMAT-NONGOAL-02 [PLANNED]: Materialize does not redefine readiness policy
+### CGMAT-NONGOAL-02 [LIVE]: Materialize does not redefine readiness policy
 Validation: MIXED
 
 Materialization should consume core readiness, provenance, and dependency

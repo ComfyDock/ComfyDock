@@ -87,6 +87,50 @@ class PyprojectManager:
 
     # ===== Core Operations =====
 
+    def ensure_system_uv_dependency(
+        self,
+        dependency: str = "uv>=0.10.0",
+        group: str = "comfygit-system",
+    ) -> None:
+        """Ensure uv remains a ComfyGit-managed system tool."""
+        config = self.load()
+
+        if 'dependency-groups' not in config:
+            config['dependency-groups'] = tomlkit.table()
+        if group not in config['dependency-groups']:
+            config['dependency-groups'][group] = []
+
+        group_deps = config['dependency-groups'][group]
+        if not isinstance(group_deps, list):
+            group_deps = [group_deps] if group_deps else []
+
+        def _name(spec: str) -> str:
+            return self.uv_config._extract_package_name(spec)
+
+        group_deps = [dep for dep in group_deps if _name(str(dep)) != "uv"]
+        group_deps.append(dependency)
+        config['dependency-groups'][group] = group_deps
+
+        self.uv_config.ensure_section(config, 'tool', 'uv')
+
+        constraints = config['tool']['uv'].get('constraint-dependencies', [])
+        if not isinstance(constraints, list):
+            constraints = [constraints] if constraints else []
+        constraints = [item for item in constraints if _name(str(item)) != "uv"]
+        if constraints:
+            config['tool']['uv']['constraint-dependencies'] = constraints
+        else:
+            config['tool']['uv'].pop('constraint-dependencies', None)
+
+        overrides = config['tool']['uv'].get('override-dependencies', [])
+        if not isinstance(overrides, list):
+            overrides = [overrides] if overrides else []
+        overrides = [item for item in overrides if _name(str(item)) != "uv"]
+        overrides.append(dependency)
+        config['tool']['uv']['override-dependencies'] = overrides
+
+        self.save(config)
+
     def exists(self) -> bool:
         """Check if the pyproject.toml file exists."""
         return self.path.exists()
@@ -1257,6 +1301,29 @@ class UVConfigHandler(BaseHandler):
             constraints.append(package)
 
         config['tool']['uv']['constraint-dependencies'] = constraints
+        self.save(config)
+
+    def add_override(self, package: str) -> None:
+        """Add an override dependency to [tool.uv]."""
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        overrides = config['tool']['uv'].get('override-dependencies', [])
+        if not isinstance(overrides, list):
+            overrides = [overrides] if overrides else []
+
+        pkg_name = self._extract_package_name(package)
+
+        for i, existing in enumerate(overrides):
+            if self._extract_package_name(existing) == pkg_name:
+                logger.info(f"Updating override: {existing} -> {package}")
+                overrides[i] = package
+                break
+        else:
+            logger.info(f"Adding override: {package}")
+            overrides.append(package)
+
+        config['tool']['uv']['override-dependencies'] = overrides
         self.save(config)
 
     def add_no_build_isolation_package(self, package_name: str) -> None:

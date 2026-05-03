@@ -99,6 +99,31 @@ fingerprinted preview results, and a guarded apply entry point on Environment
 and NodeManager. Manager can present and apply reviewed node dependency changes.
 CLI parity for reviewed dependency apply remains future work.
 
+### CGSYNC-LIFE-07 [LIVE]: Sync normalizes ComfyGit-managed resolver tools
+Validation: TEST
+
+Before running uv sync, core should ensure the environment manifest expresses the
+current ComfyGit-managed resolver policy. This includes keeping `uv` in the
+`comfygit-system` dependency group at the current minimum and recording a
+matching uv override so transitive dependencies cannot force the resolver below
+the version needed for manifest features such as `exclude-dependencies`.
+
+This normalization applies to create, sync, repair, run, materialization, and
+node-install paths that reconcile the environment. In the current pre-customer
+phase, an old checkout may therefore become dirty after reconciliation because
+ComfyGit repaired stale system-tool metadata.
+
+### CGSYNC-LIFE-08 [DEFERRED]: Historical toolchain migrations should become explicit
+Validation: HUMAN_REVIEW
+
+The current lifecycle intentionally repairs old ComfyGit-managed resolver
+metadata during reconciliation. After environments become user-owned
+compatibility artifacts, checkout and sync should grow a more explicit migration
+mode: current ComfyGit may declare the runtime minimum it needs, while the
+environment records the exact tool version it was last materialized with.
+Reconciliation should then ask the caller to migrate or repair when those layers
+conflict instead of silently changing historical commits.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes

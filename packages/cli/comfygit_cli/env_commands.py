@@ -2253,7 +2253,7 @@ packages = []
         if system_uv:
             print("⚙️ Repair: using system uv to reinstall uv into the environment venv")
             install = subprocess.run(
-                [system_uv, "pip", "install", "--python", str(venv_python), "uv>=0.7"],
+                [system_uv, "pip", "install", "--python", str(venv_python), "uv>=0.10.0"],
                 text=True,
                 capture_output=True,
             )
@@ -2284,7 +2284,7 @@ packages = []
                     sys.exit(1)
 
             install = subprocess.run(
-                [str(venv_python), "-m", "pip", "install", "uv>=0.7"],
+                [str(venv_python), "-m", "pip", "install", "uv>=0.10.0"],
                 text=True,
                 capture_output=True,
             )

@@ -252,9 +252,9 @@ class TestNodeManagerSystemDependencyGroup:
 
         nm._sync_uv(quiet=True, all_groups=True)
 
-        mock_pyproject.dependencies.add_to_group.assert_called_once_with(
-            "comfygit-system",
-            ["uv>=0.7"],
+        mock_pyproject.ensure_system_uv_dependency.assert_called_once_with(
+            dependency="uv>=0.10.0",
+            group="comfygit-system",
         )
         mock_uv.sync_project.assert_called_once()
 
@@ -385,7 +385,7 @@ class TestNodeManagerDependencyProvisioning:
 
     def test_sync_uv_does_not_duplicate_system_group(self):
         mock_pyproject = Mock()
-        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.7"]}
+        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.10.0"]}
 
         mock_uv = Mock()
         nm = NodeManager(mock_pyproject, mock_uv, Mock(), Mock(), Mock(), Mock())

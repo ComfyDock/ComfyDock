@@ -149,3 +149,18 @@ Validation: TEST
 Local editable source paths and private local indexes belong in gitignored local
 configuration. They should be injected into uv resolution when active, but not
 committed as the portable environment recipe.
+
+### CGSPEC-LOCAL-03 [LIVE]: ComfyGit-managed resolver floors are tracked policy
+Validation: TEST
+
+The minimum uv resolver version required by current ComfyGit behavior is tracked
+in the environment manifest because resolver capability changes the meaning of
+portable fields such as `exclude-dependencies`. Core may maintain this policy
+through the `comfygit-system` dependency group and a matching
+`[tool.uv].override-dependencies` entry. Machine-local uv source paths and
+editable package locations remain local configuration, but the resolver floor
+needed to interpret the manifest is portable ComfyGit policy.
+
+Recording the exact uv version used by a historical materialization is deferred.
+That future field should describe reproducibility of a past run without blocking
+current ComfyGit from declaring the minimum resolver capability it needs.

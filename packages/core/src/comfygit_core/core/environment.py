@@ -715,6 +715,7 @@ class Environment:
         self.pyproject.uv_config.set_exclude_dependencies(
             self.package_config.exclude_packages
         )
+        self.pyproject.ensure_system_uv_dependency()
 
         extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
 
