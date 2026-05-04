@@ -241,6 +241,78 @@ def parse_git_url_with_subdir(url: str) -> tuple[str, str | None]:
 
     return base_url, subdir
 
+
+def git_list_remote_refs(
+    url: str,
+    repo_path: Path | None = None,
+) -> dict[str, object]:
+    """List importable remote refs for a Git repository.
+
+    Args:
+        url: Git repository URL. Optional #subdirectory suffix is ignored for
+            remote-ref discovery because refs belong to the repository.
+        repo_path: Working directory for the git command. Defaults to cwd.
+
+    Returns:
+        Dict containing default_branch, head_commit, branches, and tags.
+    """
+    base_url, _ = parse_git_url_with_subdir(url)
+    cwd = repo_path or Path.cwd()
+    result = _git(
+        ["ls-remote", "--symref", base_url, "HEAD", "refs/heads/*", "refs/tags/*"],
+        cwd,
+    )
+
+    default_branch: str | None = None
+    head_commit: str | None = None
+    branches_by_name: dict[str, str] = {}
+    tags_by_name: dict[str, str] = {}
+
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith("ref:"):
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == "HEAD":
+                ref_name = parts[1]
+                if ref_name.startswith("refs/heads/"):
+                    default_branch = ref_name.removeprefix("refs/heads/")
+            continue
+
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+
+        commit_sha, ref_name = parts[0], parts[1]
+        if ref_name == "HEAD":
+            head_commit = commit_sha
+        elif ref_name.startswith("refs/heads/"):
+            branches_by_name[ref_name.removeprefix("refs/heads/")] = commit_sha
+        elif ref_name.startswith("refs/tags/") and not ref_name.endswith("^{}"):
+            tags_by_name[ref_name.removeprefix("refs/tags/")] = commit_sha
+
+    def branch_sort_key(item: tuple[str, str]) -> tuple[int, str]:
+        name, _ = item
+        return (0 if name == default_branch else 1, name.lower())
+
+    branches = [
+        {"name": name, "commit": commit, "is_default": name == default_branch}
+        for name, commit in sorted(branches_by_name.items(), key=branch_sort_key)
+    ]
+    tags = [
+        {"name": name, "commit": commit}
+        for name, commit in sorted(tags_by_name.items(), key=lambda item: item[0].lower())
+    ]
+
+    return {
+        "default_branch": default_branch,
+        "head_commit": head_commit,
+        "branches": branches,
+        "tags": tags,
+    }
+
 def git_rev_parse(repo_path: Path, ref: str = "HEAD", abbrev_ref: bool = False) -> str | None:
     """Parse a git reference to get its value.
 

@@ -1,10 +1,16 @@
 """Unit tests for git utility functions."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from comfygit_core.utils.git import git_clone, git_clone_subdirectory, parse_git_url_with_subdir
+from comfygit_core.utils.git import (
+    git_clone,
+    git_clone_subdirectory,
+    git_list_remote_refs,
+    parse_git_url_with_subdir,
+)
 
 
 class TestParseGitUrlWithSubdir:
@@ -106,3 +112,68 @@ class TestGitCloneCommitDetection:
         assert mock_git.call_count == 2
         assert mock_git.call_args_list[0].args[0] == ["clone", "https://github.com/example/repo.git", str(target_path)]
         assert mock_git.call_args_list[1].args[0] == ["checkout", full_hash]
+
+
+class TestGitListRemoteRefs:
+    """Test remote ref parsing for git import source selection."""
+
+    @patch("comfygit_core.utils.git._git")
+    def test_lists_default_branch_branches_and_tags(self, mock_git):
+        mock_git.return_value = SimpleNamespace(stdout="\n".join([
+            "ref: refs/heads/test1\tHEAD",
+            "1111111111111111111111111111111111111111\tHEAD",
+            "2222222222222222222222222222222222222222\trefs/heads/main",
+            "1111111111111111111111111111111111111111\trefs/heads/test1",
+            "3333333333333333333333333333333333333333\trefs/tags/v1.0.0",
+            "4444444444444444444444444444444444444444\trefs/tags/v1.0.0^{}",
+        ]))
+
+        refs = git_list_remote_refs("https://github.com/example/repo.git#subdir")
+
+        mock_git.assert_called_once_with(
+            [
+                "ls-remote",
+                "--symref",
+                "https://github.com/example/repo.git",
+                "HEAD",
+                "refs/heads/*",
+                "refs/tags/*",
+            ],
+            Path.cwd(),
+        )
+        assert refs["default_branch"] == "test1"
+        assert refs["head_commit"] == "1111111111111111111111111111111111111111"
+        assert refs["branches"] == [
+            {
+                "name": "test1",
+                "commit": "1111111111111111111111111111111111111111",
+                "is_default": True,
+            },
+            {
+                "name": "main",
+                "commit": "2222222222222222222222222222222222222222",
+                "is_default": False,
+            },
+        ]
+        assert refs["tags"] == [
+            {"name": "v1.0.0", "commit": "3333333333333333333333333333333333333333"},
+        ]
+
+    @patch("comfygit_core.utils.git._git")
+    def test_handles_remote_without_symref_default(self, mock_git):
+        mock_git.return_value = SimpleNamespace(stdout="\n".join([
+            "2222222222222222222222222222222222222222\trefs/heads/main",
+        ]))
+
+        refs = git_list_remote_refs("https://github.com/example/repo.git")
+
+        assert refs["default_branch"] is None
+        assert refs["head_commit"] is None
+        assert refs["branches"] == [
+            {
+                "name": "main",
+                "commit": "2222222222222222222222222222222222222222",
+                "is_default": False,
+            },
+        ]
+        assert refs["tags"] == []
