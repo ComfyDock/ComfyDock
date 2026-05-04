@@ -35,6 +35,11 @@ from comfygit_core.utils.retry import (
 logger = get_logger(__name__)
 
 DEFAULT_CIVITAI_URL = "https://civitai.com/api/v1"
+DEFAULT_CIVITAI_SEARCH_URL = "https://search-new.civitai.com"
+DEFAULT_CIVITAI_SEARCH_INDEX = "models_v9"
+DEFAULT_CIVITAI_SEARCH_CLIENT_KEY = (
+    "8c46eb2508e21db1e9828a97968d91ab1ca1caa5f70a00e88a2ba1e286603b61"
+)
 
 
 class CivitAIError(CDRegistryError):
@@ -126,6 +131,119 @@ class CivitAIClient:
         return SearchResponse(
             items=[], total_items=0, current_page=1, page_size=0, total_pages=0
         )
+
+    def search_models_ranked(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        types: str | list[str] | None = None,
+        username: str | None = None,
+    ) -> SearchResponse:
+        """Search models using CivitAI's public search index ranking.
+
+        The public v1 ``/models?query=...`` endpoint can return weak textual
+        matches for user-facing searches. CivitAI's own site first asks the
+        public Meilisearch model index for ranked IDs, then resolves model
+        metadata. We mirror that behavior and fall back to the v1 API if the
+        search index is unavailable.
+        """
+        ranked_ids = self.search_model_index_ids(
+            query,
+            limit=limit,
+            types=types,
+            username=username,
+        )
+        if not ranked_ids:
+            return self.search_models(
+                query=query,
+                limit=limit,
+                types=types,
+                username=username,
+            )
+
+        models: list[CivitAIModel] = []
+        for model_id in ranked_ids:
+            model = self.get_model(model_id)
+            if model is not None:
+                models.append(model)
+
+        return SearchResponse(
+            items=models,
+            total_items=len(models),
+            current_page=1,
+            page_size=len(models),
+            total_pages=1,
+        )
+
+    def search_model_index_ids(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        types: str | list[str] | None = None,
+        username: str | None = None,
+    ) -> list[int]:
+        """Return ranked model IDs from CivitAI's public search index."""
+        query = query.strip()
+        if not query:
+            return []
+
+        search_url = os.environ.get("CIVITAI_SEARCH_HOST", DEFAULT_CIVITAI_SEARCH_URL).rstrip("/")
+        search_key = os.environ.get(
+            "CIVITAI_SEARCH_CLIENT_KEY",
+            DEFAULT_CIVITAI_SEARCH_CLIENT_KEY,
+        )
+        search_index = os.environ.get("CIVITAI_SEARCH_INDEX", DEFAULT_CIVITAI_SEARCH_INDEX)
+
+        filters: list[str] = []
+        type_values = self._normalize_search_filter_values(types)
+        if type_values:
+            filters.append(
+                "type IN ["
+                + ", ".join(json.dumps(value) for value in type_values)
+                + "]"
+            )
+        if username:
+            filters.append(f"user.username = {json.dumps(username)}")
+
+        body: dict[str, Any] = {
+            "q": query,
+            "limit": max(1, min(limit, 50)),
+            "attributesToRetrieve": ["id"],
+        }
+        if filters:
+            body["filter"] = filters
+
+        url = f"{search_url}/indexes/{search_index}/search"
+        cache_key = f"{url}:{json.dumps(body, sort_keys=True)}"
+        cached_data = self.cache_manager.get("civitai-search", cache_key)
+        if cached_data is not None:
+            return self._ids_from_search_index_response(cached_data)
+
+        self.rate_limiter.wait_if_needed("civitai_search")
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            method="POST",
+        )
+        req.add_header("User-Agent", "ComfyGit/1.0")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {search_key}")
+        req.add_header("Origin", "https://civitai.com")
+        req.add_header("Referer", "https://civitai.com/")
+
+        try:
+            with urllib.request.urlopen(req, timeout=15) as response:
+                if response.status == 200:
+                    json_data = json.loads(response.read().decode("utf-8"))
+                    self.cache_manager.set("civitai-search", cache_key, json_data)
+                    return self._ids_from_search_index_response(json_data)
+        except Exception as e:
+            logger.warning("CivitAI search index request failed: %s", e)
+
+        return []
 
     def search_models_iter(
         self, params: SearchParams | None = None, **kwargs
@@ -277,6 +395,26 @@ class CivitAIClient:
             return [CivitAITag.from_api_data(t) for t in data["items"]]
 
         return []
+
+    @staticmethod
+    def _normalize_search_filter_values(value: str | list[str] | None) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            raw_values = value.split(",")
+        else:
+            raw_values = value
+        return [item.strip() for item in raw_values if item and item.strip()]
+
+    @staticmethod
+    def _ids_from_search_index_response(data: dict) -> list[int]:
+        ids: list[int] = []
+        for hit in data.get("hits", []):
+            try:
+                ids.append(int(hit["id"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return ids
 
     def _detect_hash_algorithm(self, hash_value: str) -> str:
         """Auto-detect hash algorithm by length and pattern.

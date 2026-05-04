@@ -73,6 +73,38 @@ class TestCivitAIClient:
         assert response.items[0].id == 123
         assert response.total_items == 1
 
+    @patch("urllib.request.urlopen")
+    def test_search_model_index_ids_uses_public_search_index(self, mock_urlopen, cache_manager):
+        """Text search should ask CivitAI's ranked model index for IDs."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({
+            "hits": [
+                {"id": 81458, "name": "AbsoluteReality"},
+                {"id": 1530714, "name": "AbsoluteReality_1.8.1_INPAINTING+NSFW(pmv7)"},
+            ]
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        client = CivitAIClient(cache_manager=cache_manager)
+        ids = client.search_model_index_ids(
+            "absolute reality",
+            limit=10,
+            types="Checkpoint",
+            username="Lykon",
+        )
+
+        assert ids == [81458, 1530714]
+        request = mock_urlopen.call_args.args[0]
+        assert request.full_url == "https://search-new.civitai.com/indexes/models_v9/search"
+        assert request.get_header("Authorization").startswith("Bearer ")
+
+        body = json.loads(request.data.decode("utf-8"))
+        assert body["q"] == "absolute reality"
+        assert body["limit"] == 10
+        assert body["attributesToRetrieve"] == ["id"]
+        assert body["filter"] == ['type IN ["Checkpoint"]', 'user.username = "Lykon"']
+
     def test_search_params_to_dict(self):
         """Test SearchParams converts to query dict correctly."""
         params = SearchParams(
