@@ -2,7 +2,14 @@ import json
 import socket
 from urllib.request import urlopen
 
-from comfygit_cli.supervisor_control import SupervisorControlServer
+from comfygit_core.lifecycle.switch_observer import (
+    SUPERVISOR_INFO_FILE,
+    SWITCH_LOGS_ROUTE,
+    SWITCH_STATUS_FILE,
+    SWITCH_STATUS_ROUTE,
+    SwitchObserverServer,
+    write_switch_status,
+)
 
 
 def _free_port() -> int:
@@ -19,33 +26,30 @@ def _get_json(url: str) -> dict:
 def test_supervisor_control_exposes_status_and_logs(tmp_path):
     metadata_dir = tmp_path / ".metadata"
     metadata_dir.mkdir()
-    (metadata_dir / ".switch_status.json").write_text(
-        json.dumps(
-            {
-                "state": "syncing",
-                "progress": 30,
-                "message": "Syncing target environment",
-                "target_env": "target",
-                "source_env": "source",
-            }
-        ),
-        encoding="utf-8",
+    write_switch_status(
+        metadata_dir,
+        state="syncing",
+        progress=30,
+        message="Syncing target environment",
+        target_env="target",
+        source_env="source",
     )
 
     port = _free_port()
-    server = SupervisorControlServer(tmp_path, "127.0.0.1", port)
+    server = SwitchObserverServer(tmp_path, "127.0.0.1", port)
     try:
         server.start()
         server.append_log("Switch request accepted")
 
-        status = _get_json(f"http://127.0.0.1:{port}/v2/comfygit/switch_status")
-        logs = _get_json(f"http://127.0.0.1:{port}/v2/comfygit/switch_logs")
+        status = _get_json(f"http://127.0.0.1:{port}{SWITCH_STATUS_ROUTE}")
+        logs = _get_json(f"http://127.0.0.1:{port}{SWITCH_LOGS_ROUTE}")
 
         assert status["state"] == "syncing"
         assert status["target_env"] == "target"
         assert logs["logs"][-1]["message"] == "Switch request accepted"
-        assert (metadata_dir / ".supervisor_control.json").exists()
+        assert (metadata_dir / SUPERVISOR_INFO_FILE).exists()
+        assert (metadata_dir / SWITCH_STATUS_FILE).exists()
     finally:
         server.stop()
 
-    assert not (metadata_dir / ".supervisor_control.json").exists()
+    assert not (metadata_dir / SUPERVISOR_INFO_FILE).exists()

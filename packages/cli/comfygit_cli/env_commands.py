@@ -18,6 +18,13 @@ from comfygit_core.models.exceptions import (
     CDRegistryDataError,
     UVCommandError,
 )
+from comfygit_core.lifecycle.switch_observer import (
+    SwitchObserverServer,
+    cleanup_supervisor_advertisement,
+    cleanup_switch_status,
+    read_switch_status,
+    write_switch_status,
+)
 
 from .formatters.error_formatter import NodeErrorFormatter
 from .strategies.interactive import InteractiveModelStrategy, InteractiveNodeStrategy
@@ -31,7 +38,6 @@ if TYPE_CHECKING:
 from .cli_utils import get_workspace_or_exit
 from .logging.environment_logger import with_env_logging
 from .logging.logging_config import get_logger
-from .supervisor_control import SupervisorControlServer
 
 logger = get_logger(__name__)
 
@@ -763,21 +769,21 @@ packages = []
 
             sys.exit(result.returncode)
 
-    def _start_supervisor_control(self) -> SupervisorControlServer | None:
+    def _start_supervisor_control(self) -> SwitchObserverServer | None:
         port_text = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_PORT")
         if not port_text:
-            (self.workspace.path / ".metadata" / ".supervisor_control.json").unlink(missing_ok=True)
+            cleanup_supervisor_advertisement(self.workspace.path)
             return None
 
         try:
             port = int(port_text)
         except ValueError:
             print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
-            (self.workspace.path / ".metadata" / ".supervisor_control.json").unlink(missing_ok=True)
+            cleanup_supervisor_advertisement(self.workspace.path)
             return None
 
         host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST", "127.0.0.1")
-        control = SupervisorControlServer(self.workspace.path, host, port)
+        control = SwitchObserverServer(self.workspace.path, host, port)
         try:
             control.start()
             return control
@@ -788,7 +794,7 @@ packages = []
 
     def _append_switch_log(
         self,
-        supervisor_control: SupervisorControlServer | None,
+        supervisor_control: SwitchObserverServer | None,
         message: str,
         level: str = "info",
     ) -> None:
@@ -847,20 +853,14 @@ packages = []
         target_env: str,
         source_env: str,
     ) -> None:
-        status_file = self.workspace.path / ".metadata" / ".switch_status.json"
         try:
-            status_file.write_text(
-                json.dumps(
-                    {
-                        "state": state,
-                        "progress": progress,
-                        "message": message,
-                        "target_env": target_env,
-                        "source_env": source_env,
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
+            write_switch_status(
+                self.workspace.path / ".metadata",
+                state=state,
+                progress=progress,
+                message=message,
+                target_env=target_env,
+                source_env=source_env,
             )
         except Exception:
             pass
@@ -872,16 +872,15 @@ packages = []
             pass
 
     def _schedule_switch_status_cleanup(self, target_env: str) -> None:
-        status_file = self.workspace.path / ".metadata" / ".switch_status.json"
+        metadata_dir = self.workspace.path / ".metadata"
 
         def cleanup() -> None:
-            try:
-                status = json.loads(status_file.read_text(encoding="utf-8"))
-            except Exception:
+            status = read_switch_status(metadata_dir)
+            if not status:
                 return
 
             if status.get("state") == "complete" and status.get("target_env") == target_env:
-                status_file.unlink(missing_ok=True)
+                cleanup_switch_status(metadata_dir)
 
         timer = threading.Timer(8.0, cleanup)
         timer.daemon = True

@@ -124,6 +124,19 @@ environment records the exact tool version it was last materialized with.
 Reconciliation should then ask the caller to migrate or repair when those layers
 conflict instead of silently changing historical commits.
 
+### CGSYNC-LIFE-09 [LIVE]: Switch observer primitives are shared core lifecycle state
+Validation: TEST
+
+Core owns the restart-stable switch observer primitives that are shared by the
+CLI supervisor and Manager integration. This includes the switch status schema,
+switch log entry schema, metadata filenames, read/write helpers, observer
+advertisement payload, and small HTTP observer server used to expose status and
+recent logs outside the ComfyUI process being restarted.
+
+Process-specific lifecycle authorities, such as `cg run` and the Manager
+orchestrator, may still decide when to stop, sync, and restart ComfyUI. They
+should not duplicate the status/log schema or observer server implementation.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes

@@ -1890,6 +1890,7 @@ class GlobalCommands:
             is_orchestrator_running,
             kill_orchestrator_process,
         )
+        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
 
         metadata_dir = self.workspace.path / ".metadata"
 
@@ -1902,7 +1903,7 @@ class GlobalCommands:
             ".control_port",
             ".cmd",
             ".switch_request.json",
-            ".switch_status.json",
+            SWITCH_STATUS_FILE,
             ".switch.lock",
             ".startup_state.json",
             ".cmd.tmp.* (temp files)"
