@@ -33,23 +33,33 @@ Workflow input/output contracts should be stored in tracked environment state so
 future build/deploy systems can expose a stable execution API for a workflow at a
 specific commit.
 
-### CGSPEC-MAN-05 [PLANNED]: Workflow contracts should be executable without Manager
+### CGSPEC-MAN-05 [PLANNED]: Workflow contracts should be executable without Manager after authoring
 Validation: MIXED
 
 Workflow execution contracts are portable environment metadata, not ComfyGit
-Manager UI state. A ComfyGit environment created or maintained by CLI alone
-should still be able to serve contract-shaped workflow requests when the runtime
-has the workflow JSON, manifest contract, and a reachable ComfyUI server.
+Manager UI state. After a contract has been authored and saved by Manager, a
+materialized runtime should be able to serve contract-shaped workflow requests
+without the Manager frontend installed when it has the manifest contract, the
+captured API prompt artifact, and a reachable ComfyUI server.
 
-### CGSPEC-MAN-06 [PLANNED]: API workflow prompts are not manifest truth
+CLI-only environments are not a supported path for authoring new contracts in
+the local-first slice because they cannot capture ComfyUI's native frontend API
+prompt export from the loaded graph.
+
+### CGSPEC-MAN-06 [PLANNED]: API workflow prompts are tracked contract artifacts
 Validation: MIXED
 
-Environment repositories should not need to track ComfyUI API-format prompt JSON
-beside the UI-format workflow JSON. The UI workflow remains the editable,
-reviewable, user-authored artifact; the API prompt is generated from it when a
-runtime needs to submit work to ComfyUI's `/prompt` endpoint. If tooling stores
-an API prompt for debugging, caching, or validation, that artifact must be
-treated as derived and replaceable rather than authoritative manifest state.
+Environment repositories should track ComfyUI API-format prompt JSON for
+workflow contracts that have been saved through Manager. The UI workflow remains
+the editable, reviewable, user-authored artifact; the captured API prompt is the
+executable artifact for the saved I/O mapping and should be used by runtime
+contract execution.
+
+The manifest contract should reference the API prompt artifact path and record
+basic provenance such as capture source and tool versions when available. The
+recommended tracked location is `.cec/workflow_api/<workflow>.api.json`, kept
+adjacent to `.cec/workflows/` without embedding large API prompt JSON directly
+inside `pyproject.toml`.
 
 ### CGSPEC-MAN-07 [LIVE]: Workflow contract numeric metadata must remain TOML-safe
 Validation: TEST

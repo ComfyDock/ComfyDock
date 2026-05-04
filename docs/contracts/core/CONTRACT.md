@@ -92,19 +92,20 @@ truth and should not be copied by directory materialization.
 
 ## Workflow Contract Execution
 
-### CGCORE-EXEC-01 [PARTIAL]: Core owns workflow contract execution semantics
+### CGCORE-EXEC-01 [PARTIAL]: Core owns stored workflow contract execution semantics
 Validation: MIXED
 
-Core should provide UI-agnostic services for turning a tracked workflow execution
-contract into a ComfyUI API prompt and for interpreting ComfyUI execution
-history back into declared contract outputs. Manager, CLI, deploy/serve tooling,
-and other runtime adapters should share these semantics rather than implementing
-parallel contract-to-prompt mappers.
+Core should provide UI-agnostic services for loading a tracked workflow
+execution contract, applying caller inputs to its captured ComfyUI API prompt
+artifact, and interpreting ComfyUI execution history back into declared contract
+outputs. Manager, CLI, deploy/serve tooling, and other runtime adapters should
+share these semantics rather than implementing parallel contract execution
+mappers.
 
 Core already stores workflow execution contracts in the manifest and exposes
-read/write APIs through Environment. Prompt construction and output extraction
-logic should live in core before `cg serve` or build/deploy paths rely on it as
-a stable runtime contract.
+read/write APIs through Environment. The legacy core-side UI-workflow conversion
+path is no longer a supported contract authoring or runtime dependency; runtime
+execution should consume Manager-captured API prompt artifacts.
 
 ### CGCORE-EXEC-02 [PLANNED]: Core contract execution stays transport-agnostic
 Validation: STATIC
@@ -116,25 +117,37 @@ CLI/serve, deploy, or external runtime adapters. Core should expose
 deterministic library functions and typed results that those packages can adapt
 to their transports.
 
-### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over core semantics
+### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over stored contract semantics
 Validation: MIXED
 
 A future ComfyGit serve runtime should expose contract-shaped workflow endpoints
-for a ComfyGit environment by loading manifest/workflow state, calling core
-contract execution services, and communicating with a local ComfyUI server. The
-serve runtime may provide HTTP endpoints, progress streams, output retrieval, and
-storage adapters, but it must not redefine the manifest or contract semantics.
+for a ComfyGit environment by loading manifest state, captured API prompt
+artifacts, calling core contract execution services, and communicating with a
+local ComfyUI server. The serve runtime may provide HTTP endpoints, progress
+streams, output retrieval, and storage adapters, but it must not redefine the
+manifest or contract semantics.
 
-### CGCORE-EXEC-04 [PLANNED]: API prompts are derived execution artifacts
+### CGCORE-EXEC-04 [PLANNED]: API prompts are captured execution artifacts
 Validation: TEST
 
-The committed source of truth for workflow execution is the UI-format workflow
-JSON plus the manifest workflow contract. ComfyUI API prompts should be produced
-just in time from those tracked artifacts, patched with contract input values,
-and submitted to ComfyUI as disposable runtime data. Core should not require
-manager, CLI, or runtime callers to persist API prompt JSON alongside the
-workflow unless a future caller explicitly creates a non-authoritative
-debug/cache artifact.
+The committed source of truth for workflow contract execution is the manifest
+workflow contract plus a captured ComfyUI API-format prompt artifact produced
+during Manager-based contract authoring. The UI-format workflow JSON remains the
+editable source workflow, but runtime contract execution should use the captured
+API prompt artifact that corresponds to the saved I/O mapping.
+
+Core should not regenerate API prompts from UI-format workflow JSON. If the
+captured API prompt artifact is missing, the contract should be treated as
+incomplete and repaired by re-saving the contract through Manager.
+
+### CGCORE-EXEC-05 [RETIRED]: Core converts UI workflows into API prompts
+Validation: HUMAN_REVIEW
+
+Core-side UI-workflow-to-API-prompt conversion is retired. ComfyUI frontend
+behavior changes too quickly, and the backend lacks the loaded LiteGraph,
+frontend widget, subgraph, mute/bypass, and native export context needed to keep
+a parallel converter trustworthy. The converter should be removed from supported
+paths rather than retained as a fallback.
 
 ## Dependency Reproducibility
 

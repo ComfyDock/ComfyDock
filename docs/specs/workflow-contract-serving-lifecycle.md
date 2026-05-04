@@ -2,58 +2,60 @@
 
 This spec describes the intended path from a tracked ComfyGit workflow contract
 to a runtime API that can execute the workflow through ComfyUI. It captures the
-shared semantics that should be implemented in core before a dedicated
-`cg serve` runtime or deployment layer depends on them.
+shared semantics for executing Manager-authored contracts from committed
+environment state.
 
 ## Core Execution Semantics
 
-### CGSERVE-CORE-01 [PARTIAL]: Contracts are already tracked environment truth
+### CGSERVE-CORE-01 [PARTIAL]: Contracts are tracked environment truth
 Validation: TEST
 
 Workflow execution contracts are stored in the environment manifest under the
 named workflow entry. They are part of the committed environment state and should
-travel with the workflow JSON when an environment is exported, pushed, or built.
+travel with the workflow JSON and captured API prompt artifact when an
+environment is exported, pushed, materialized, or built.
 
 Core currently persists and reads workflow execution contracts. Runtime execution
 services for those contracts are still planned.
 
-### CGSERVE-CORE-02 [PARTIAL]: Core converts workflow contracts into API prompts
+### CGSERVE-CORE-02 [PLANNED]: Contract authoring captures the API prompt artifact
 Validation: TEST
 
-Core should expose a service that accepts workflow JSON, a workflow execution
-contract, user-provided contract inputs, and ComfyUI `object_info`, then returns
-a ComfyUI API prompt plus structured information about applied and missing
-inputs. The service should handle UI-format workflow conversion, widget-name
-resolution, basic type coercion, default input application, and prompt patching.
+The supported contract-authoring path runs inside ComfyUI with the ComfyGit
+Manager installed. When the user saves an I/O mapping contract, Manager should
+capture the same API-format prompt that ComfyUI's frontend would submit/export
+for the loaded workflow graph and store that JSON as a tracked environment
+artifact.
 
-The UI-format workflow JSON remains the committed source artifact. The API prompt
-is a just-in-time runtime artifact because ComfyUI's `/prompt` endpoint expects
-API-format nodes keyed by node ID with `class_type` and `inputs`, while the saved
-workflow contains UI/editor data such as nodes, links, groups, and viewport
-state. Persisting both formats by default would create duplicate workflow truth
-and force manager/CLI save paths to generate extra files.
+The UI-format workflow JSON remains the editable workflow artifact. The captured
+API prompt is the executable contract artifact for the mapped workflow state.
+It should only be refreshed by an explicit contract save/update action, because
+later edits to the UI workflow may make the saved mapping stale without
+invalidating the previously captured executable prompt.
 
-Core now exposes a first prompt-build service that accepts saved workflow JSON,
-a typed workflow contract, and contract input values, then returns a typed
-ComfyUI API prompt build result with applied inputs, structured issues, output
-bindings, and a widget-index-to-API-input map. The current implementation covers
-the basic server-side conversion and prompt patching path. ComfyUI
-`object_info`-assisted validation remains future work.
-
-### CGSERVE-CORE-02A [PARTIAL]: Server-side conversion should be deterministic
+### CGSERVE-CORE-02A [PLANNED]: Stored API prompts are required for contract execution
 Validation: TEST
 
-Core should implement the UI-workflow-to-API-prompt conversion as deterministic
-library behavior that can run without a browser, Manager custom node, or ComfyUI
-frontend process. Tests should compare supported workflows against API prompts
-exported by ComfyUI's frontend conversion where practical, so ComfyGit can track
-the supported conversion surface explicitly.
+Contract runtime paths should load the captured API prompt artifact referenced
+by the manifest contract metadata. They must not attempt to regenerate a ComfyUI
+API prompt from UI-format workflow JSON at runtime.
 
-The first implementation runs in core without a browser, Manager custom node, or
-ComfyUI frontend process. It resolves ComfyUI link arrays into API prompt input
-links, skips isolated visual note nodes, and preserves the original widget
-indexes used by Manager-authored contracts. Comparison tests against frontend
-export output are still planned.
+If a workflow contract lacks a captured API prompt artifact, runtime callers
+should report the contract as incomplete and ask the user to re-save the
+contract in Manager. Missing artifacts should not fall back to server-side
+workflow conversion.
+
+### CGSERVE-CORE-02B [RETIRED]: Core performs UI-workflow-to-API-prompt conversion
+Validation: HUMAN_REVIEW
+
+The prior direction of maintaining a core-side converter from ComfyUI UI-format
+workflow JSON to API-format prompt JSON is retired. Core does not have the same
+graph, LiteGraph, widget, subgraph, bypass, and frontend-version context as
+ComfyUI's native export path. Keeping a parallel converter creates a high-risk
+second source of execution truth that can silently drift from ComfyUI behavior.
+
+The converter should be removed from supported runtime and authoring paths
+rather than kept as a fallback.
 
 ### CGSERVE-CORE-03 [PARTIAL]: Core extracts declared outputs from ComfyUI history
 Validation: TEST
@@ -69,19 +71,20 @@ artifact references. The current implementation handles local history artifact
 references such as image filenames, subfolders, and output types. Selector-slot
 filtering and richer history validation remain planned.
 
-### CGSERVE-CORE-04 [PARTIAL]: Core validates contract bindings before execution
+### CGSERVE-CORE-04 [PARTIAL]: Core validates contract artifacts before execution
 Validation: MIXED
 
-Core should be able to report contract execution issues such as missing required
-inputs, invalid node IDs, invalid widget indexes, outputs pointing to unavailable
-history data, or workflow/object-info mismatches before or during execution.
-Callers should receive typed errors or result objects instead of scraping string
-messages.
+Core should be able to report contract execution issues such as missing captured
+API prompt artifacts, missing referenced workflow entries, invalid contract
+input bindings, outputs pointing to unavailable history data, or incompatible
+stored prompt metadata before or during execution. Callers should receive typed
+errors or result objects instead of scraping string messages.
 
 Core now reports typed prompt-build issues for unknown inputs, missing required
 inputs, missing nodes, missing widget bindings, type coercion failures, enum
-validation, and numeric bounds validation. Output-history validation and
-ComfyUI `object_info` mismatch validation remain planned.
+validation, and numeric bounds validation in the legacy build path. These checks
+must be re-centered on stored API prompt artifacts as the conversion path is
+removed.
 
 ## Runtime Adapter Boundary
 
@@ -96,16 +99,24 @@ artifacts back to contract outputs.
 
 The CLI now provides a first `cg serve` adapter that resolves the active or
 `-e <env>` environment, serves contract metadata, converts contract-shaped run
-requests through core prompt-building logic, submits prompts to a configured
-ComfyUI API URL, optionally waits for history, and returns local output
-references. This adapter does not launch ComfyUI.
+requests through legacy core prompt-building logic, submits prompts to a
+configured ComfyUI API URL, optionally waits for history, and returns local
+output references. This adapter does not launch ComfyUI.
 
-### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node
+This adapter should move to loading stored Manager-captured API prompt artifacts
+before the contract runtime path is considered stable.
+
+### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED
 
-Contract serving must not require the ComfyGit Manager node to be installed in
-the environment. Manager may author and test contracts, but serve should operate
-from core manifest/workflow state so CLI-created environments remain deployable.
+Contract serving must not require the ComfyGit Manager node to be installed in a
+materialized runtime environment after the contract has been authored. Manager is
+the supported authoring path for creating or updating contracts because it can
+capture ComfyUI-native API prompts from the loaded frontend graph.
+
+Serve should operate from committed manifest state and captured API prompt
+artifacts. CLI-only environments may run existing contracts but are not a
+supported path for authoring new API-prompt-backed contracts.
 
 ### CGSERVE-RUN-03 [PLANNED]: Serve owns transport and lifecycle concerns
 Validation: MIXED

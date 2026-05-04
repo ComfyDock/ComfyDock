@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+GIT_ACQUISITION_VERSION_ALIASES = {"nightly", "dev"}
+
+
 def _is_valid_git_ref(version: str | None) -> bool:
     """Check if a version string is a valid git ref (tag, branch, or commit hash).
 
@@ -55,6 +58,11 @@ def _is_valid_git_ref(version: str | None) -> bool:
 
     # Everything else (branch names like "main", "dev", "feature/foo") is valid
     return True
+
+
+def _is_explicit_git_acquisition_version(version: str | None) -> bool:
+    """Return whether a registry version label means explicit git acquisition."""
+    return (version or "").lower() in GIT_ACQUISITION_VERSION_ALIASES
 
 
 class NodeLookupService:
@@ -137,6 +145,16 @@ class NodeLookupService:
                 node_version = self.registry_client.install_node(registry_node.id, version)
                 if node_version:
                     registry_node.latest_version = node_version
+                elif _is_explicit_git_acquisition_version(requested_version) and registry_node.repository:
+                    repo_info = self.github_client.get_repository_info(registry_node.repository)
+                    if repo_info:
+                        return NodeInfo(
+                            name=repo_info.name,
+                            registry_id=registry_node.id,
+                            repository=repo_info.clone_url,
+                            source="git",
+                            version=repo_info.latest_commit,
+                        )
                 return NodeInfo.from_registry_node(registry_node)
         except CDRegistryError as e:
             logger.warning(f"Cannot reach registry: {e}")

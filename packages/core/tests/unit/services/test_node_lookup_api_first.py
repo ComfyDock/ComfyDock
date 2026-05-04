@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
 import pytest
+from comfygit_core.clients.github_client import GitHubRepoInfo
 from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.services.node_lookup_service import NodeLookupService
@@ -183,6 +184,81 @@ class TestNodeLookupAPIFirst:
 
         # ASSERT
         assert result is None
+
+    def test_find_node_uses_git_for_explicit_nightly_registry_request(self, cache_dir):
+        """SHOULD treat registry @nightly as explicit git acquisition."""
+        # ARRANGE
+        mock_registry_client = MagicMock()
+        mock_github_client = MagicMock()
+
+        mock_registry_node = RegistryNodeInfo(
+            id="test-package-id",
+            name="Test Package",
+            description="Test package with nightly/git only",
+            repository="https://github.com/test/repo",
+            latest_version=None,
+        )
+        mock_registry_client.get_node.return_value = mock_registry_node
+        mock_registry_client.install_node.return_value = None
+        mock_github_client.get_repository_info.return_value = GitHubRepoInfo(
+            owner="test",
+            name="repo",
+            default_branch="main",
+            clone_url="https://github.com/test/repo.git",
+            latest_commit="a" * 40,
+        )
+
+        service = NodeLookupService(cache_path=cache_dir)
+        service.registry_client = mock_registry_client
+        service.github_client = mock_github_client
+
+        # ACT
+        result = service.find_node("test-package-id@nightly")
+
+        # ASSERT
+        mock_registry_client.get_node.assert_called_once_with("test-package-id")
+        mock_registry_client.install_node.assert_called_once_with("test-package-id", "nightly")
+        mock_github_client.get_repository_info.assert_called_once_with("https://github.com/test/repo")
+
+        assert result is not None
+        assert result.source == "git"
+        assert result.registry_id == "test-package-id"
+        assert result.repository == "https://github.com/test/repo.git"
+        assert result.version == "a" * 40
+
+    def test_find_node_does_not_use_git_for_plain_registry_request_without_artifact(self, cache_dir):
+        """SHOULD not silently use git when no explicit git acquisition was requested."""
+        # ARRANGE
+        mock_registry_client = MagicMock()
+        mock_github_client = MagicMock()
+
+        mock_registry_node = RegistryNodeInfo(
+            id="test-package-id",
+            name="Test Package",
+            description="Test package without registry artifact",
+            repository="https://github.com/test/repo",
+            latest_version=None,
+        )
+        mock_registry_client.get_node.return_value = mock_registry_node
+        mock_registry_client.install_node.return_value = None
+
+        service = NodeLookupService(cache_path=cache_dir)
+        service.registry_client = mock_registry_client
+        service.github_client = mock_github_client
+
+        # ACT
+        result = service.find_node("test-package-id")
+
+        # ASSERT
+        mock_registry_client.get_node.assert_called_once_with("test-package-id")
+        mock_registry_client.install_node.assert_called_once_with("test-package-id", None)
+        mock_github_client.get_repository_info.assert_not_called()
+
+        assert result is not None
+        assert result.source == "registry"
+        assert result.registry_id == "test-package-id"
+        assert result.repository == "https://github.com/test/repo"
+        assert not result.download_url
 
 
 class TestWorkspaceConfigNoPreferRegistryCache:
