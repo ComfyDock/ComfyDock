@@ -116,4 +116,5 @@ class TestCivitAIClient:
         assert "format=SafeTensor" in url
         assert "size=pruned" in url
         assert "fp=fp16" in url
-        assert "token=test-token" in url
+        assert "test-token" not in url
+        assert "token=" not in url

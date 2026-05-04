@@ -58,6 +58,16 @@ class ModelSize(str, Enum):
     PRUNED = "pruned"
 
 
+def _safe_enum(enum_cls, value):
+    """Parse provider enum values without failing on newly added API values."""
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return value
+
+
 @dataclass
 class FileHashes:
     """File hash values for different algorithms."""
@@ -117,9 +127,9 @@ class CivitAIFile:
             primary=data.get("primary", False),
             download_url=data.get("downloadUrl"),
             hashes=FileHashes.from_api_data(data.get("hashes")),
-            fp=FloatPrecision(metadata["fp"]) if metadata.get("fp") else None,
-            size=ModelSize(metadata["size"]) if metadata.get("size") else None,
-            format=FileFormat(metadata["format"]) if metadata.get("format") else None,
+            fp=_safe_enum(FloatPrecision, metadata.get("fp")),
+            size=_safe_enum(ModelSize, metadata.get("size")),
+            format=_safe_enum(FileFormat, metadata.get("format")),
         )
 
     def get_preferred_hash(self) -> str | None:
@@ -275,7 +285,7 @@ class CivitAIModel:
             id=data.get("id", 0),
             name=data.get("name", ""),
             description=data.get("description"),
-            type=ModelType(data["type"]) if data.get("type") else None,
+            type=_safe_enum(ModelType, data.get("type")),
             nsfw=data.get("nsfw", False),
             tags=tags,
             mode=data.get("mode"),

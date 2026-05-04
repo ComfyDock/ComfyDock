@@ -234,9 +234,11 @@ class CivitAIClient:
             fp: Float precision (fp16, fp32)
 
         Returns:
-            Download URL with authentication if configured
+            Clean download URL without embedded authentication
 
         Note: The actual download will redirect to a pre-signed S3 URL
+        Note: Authentication must be attached by the downloader at request time.
+              Do not persist API keys in source/download URLs.
         """
         params: dict[str, str] = {}
         if file_format:
@@ -249,11 +251,6 @@ class CivitAIClient:
         base = f"https://civitai.com/api/download/models/{version_id}"
         if params:
             base += f"?{urllib.parse.urlencode(params)}"
-
-        # Add API token if available (required for some models)
-        if self._api_key:
-            separator = "&" if "?" in base else "?"
-            base += f"{separator}token={self._api_key}"
 
         return base
 

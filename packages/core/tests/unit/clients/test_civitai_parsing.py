@@ -30,6 +30,23 @@ def cache_manager():
 class TestCivitAIResponseParsing:
     """Test parsing of real CivitAI API responses."""
 
+    def test_unknown_provider_enums_are_preserved(self):
+        """CivitAI can add enum values before docs/models are updated."""
+        parsed = CivitAIFile.from_api_data({
+            "id": 1,
+            "name": "diffusers-model",
+            "sizeKB": 1.0,
+            "metadata": {
+                "fp": "bf16",
+                "size": "custom",
+                "format": "Diffusers",
+            },
+        })
+
+        assert parsed.fp == "bf16"
+        assert parsed.size == "custom"
+        assert parsed.format == "Diffusers"
+
     @patch("urllib.request.urlopen")
     def test_parse_model_search_response(self, mock_urlopen, cache_manager):
         """Test parsing complex model search response with TextualInversion."""
