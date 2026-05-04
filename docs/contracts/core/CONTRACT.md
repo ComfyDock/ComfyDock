@@ -127,7 +127,7 @@ local ComfyUI server. The serve runtime may provide HTTP endpoints, progress
 streams, output retrieval, and storage adapters, but it must not redefine the
 manifest or contract semantics.
 
-### CGCORE-EXEC-04 [PLANNED]: API prompts are captured execution artifacts
+### CGCORE-EXEC-04 [PARTIAL]: API prompts are captured execution artifacts
 Validation: TEST
 
 The committed source of truth for workflow contract execution is the manifest
@@ -139,6 +139,11 @@ API prompt artifact that corresponds to the saved I/O mapping.
 Core should not regenerate API prompts from UI-format workflow JSON. If the
 captured API prompt artifact is missing, the contract should be treated as
 incomplete and repaired by re-saving the contract through Manager.
+
+Core now persists Manager-submitted API prompt artifacts and runtime prompt
+preparation loads the stored artifact instead of converting the UI workflow.
+Additional runtime validation and artifact lifecycle coverage remain follow-on
+work.
 
 ### CGCORE-EXEC-05 [RETIRED]: Core converts UI workflows into API prompts
 Validation: HUMAN_REVIEW

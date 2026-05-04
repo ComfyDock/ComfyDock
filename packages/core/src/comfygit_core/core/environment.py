@@ -1,8 +1,11 @@
 """Simplified Environment - owns everything about a single ComfyUI environment."""
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -72,6 +75,12 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+
+
+def _workflow_api_prompt_relpath(workflow_name: str) -> Path:
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", workflow_name).strip()
+    safe_name = safe_name or "workflow"
+    return Path("workflow_api") / f"{safe_name}.api.json"
 
 
 def _requires_env_lock(method):
@@ -1933,14 +1942,44 @@ class Environment:
         return self.pyproject.workflows.get_execution_contract(workflow_name)
 
     @_requires_env_lock
-    def set_workflow_execution_contract(self, workflow_name: str, contract: WorkflowExecutionContract) -> None:
+    def set_workflow_execution_contract(
+        self,
+        workflow_name: str,
+        contract: WorkflowExecutionContract,
+        api_prompt_data: dict | None = None,
+    ) -> None:
         """Create or replace the saved execution contract for a workflow."""
+        if api_prompt_data is not None:
+            rel_path = _workflow_api_prompt_relpath(workflow_name)
+            api_prompt_path = self.cec_path / rel_path
+            api_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            with api_prompt_path.open("w", encoding="utf-8") as handle:
+                json.dump(api_prompt_data, handle, indent=2)
+                handle.write("\n")
+
+            contract.api_prompt_file = rel_path.as_posix()
+            contract.api_prompt_source = "comfyui_frontend"
+            contract.api_prompt_generated_by = "comfygit-manager"
+            contract.api_prompt_generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         self.pyproject.workflows.set_execution_contract(workflow_name, contract)
 
     @_requires_env_lock
     def remove_workflow_execution_contract(self, workflow_name: str) -> bool:
         """Remove the saved execution contract for a workflow."""
-        return self.pyproject.workflows.remove_execution_contract(workflow_name)
+        contract = self.pyproject.workflows.get_execution_contract(workflow_name)
+        removed = self.pyproject.workflows.remove_execution_contract(workflow_name)
+        if removed and contract is not None and contract.api_prompt_file:
+            api_prompt_path = self.cec_path / contract.api_prompt_file
+            try:
+                if api_prompt_path.exists() and api_prompt_path.is_file():
+                    api_prompt_path.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "Failed to remove API prompt artifact for workflow '%s': %s",
+                    workflow_name,
+                    exc,
+                )
+        return removed
 
     # =====================================================
     # Model Source Management

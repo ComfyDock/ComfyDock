@@ -18,7 +18,6 @@ _EXPORTS: dict[str, str] = {
     "RegistryDataManager": "registry_data_manager",
     "detect_workflow_input_format": "workflow_input",
     "normalize_workflow_input": "workflow_input",
-    "workflow_to_api_prompt": "workflow_execution",
     "build_contract_prompt": "workflow_execution",
     "build_manifest_contract_prompt": "workflow_execution",
     "extract_contract_outputs": "workflow_execution",

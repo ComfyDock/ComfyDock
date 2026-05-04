@@ -38,7 +38,7 @@ class PromptBuildIssue:
 
 @dataclass(frozen=True)
 class ContractPromptBuildResult:
-    """Result of converting a workflow contract request to a ComfyUI prompt."""
+    """Result of patching a stored ComfyUI API prompt for a contract request."""
 
     workflow_name: str
     contract_name: str

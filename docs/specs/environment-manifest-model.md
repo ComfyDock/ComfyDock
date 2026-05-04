@@ -46,7 +46,7 @@ CLI-only environments are not a supported path for authoring new contracts in
 the local-first slice because they cannot capture ComfyUI's native frontend API
 prompt export from the loaded graph.
 
-### CGSPEC-MAN-06 [PLANNED]: API workflow prompts are tracked contract artifacts
+### CGSPEC-MAN-06 [PARTIAL]: API workflow prompts are tracked contract artifacts
 Validation: MIXED
 
 Environment repositories should track ComfyUI API-format prompt JSON for
@@ -60,6 +60,10 @@ basic provenance such as capture source and tool versions when available. The
 recommended tracked location is `.cec/workflow_api/<workflow>.api.json`, kept
 adjacent to `.cec/workflows/` without embedding large API prompt JSON directly
 inside `pyproject.toml`.
+
+Core now writes Manager-submitted API prompt artifacts to `workflow_api/` and
+records their relative path plus basic provenance in `pyproject.toml`. More
+complete provenance fields and compatibility checks remain follow-on work.
 
 ### CGSPEC-MAN-07 [LIVE]: Workflow contract numeric metadata must remain TOML-safe
 Validation: TEST

@@ -19,60 +19,40 @@ from comfygit_core.services.workflow_execution import (
     build_contract_prompt,
     build_manifest_contract_prompt,
     extract_contract_outputs,
-    workflow_to_api_prompt,
 )
-from comfygit_core.services.workflow_input import normalize_workflow_input
 
 
-def _txt2img_workflow() -> dict:
+def _txt2img_api_prompt() -> dict:
     return {
-        "nodes": [
-            {
-                "id": 4,
-                "type": "CheckpointLoaderSimple",
-                "inputs": [
-                    {"name": "ckpt_name", "type": "COMBO", "widget": {"name": "ckpt_name"}},
-                ],
-                "outputs": [
-                    {"name": "MODEL", "type": "MODEL", "links": [1], "slot_index": 0},
-                    {"name": "CLIP", "type": "CLIP", "links": [3], "slot_index": 1},
-                    {"name": "VAE", "type": "VAE", "links": [8], "slot_index": 2},
-                ],
-                "widgets_values": ["model.safetensors"],
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["4", 0],
+                "seed": 733306923873351,
+                "steps": 20,
+                "cfg": 8,
+                "sampler_name": "euler",
             },
-            {
-                "id": 3,
-                "type": "KSampler",
-                "inputs": [
-                    {"name": "model", "type": "MODEL", "link": 1},
-                    {"name": "seed", "type": "INT", "widget": {"name": "seed"}},
-                    {"name": "steps", "type": "INT", "widget": {"name": "steps"}},
-                    {"name": "cfg", "type": "FLOAT", "widget": {"name": "cfg"}},
-                    {"name": "sampler_name", "type": "COMBO", "widget": {"name": "sampler_name"}},
-                ],
-                "outputs": [{"name": "LATENT", "type": "LATENT", "links": [7], "slot_index": 0}],
-                "widgets_values": [733306923873351, "randomize", 20, 8, "euler"],
+        },
+        "4": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {
+                "ckpt_name": "model.safetensors",
             },
-            {
-                "id": 9,
-                "type": "SaveImage",
-                "inputs": [
-                    {"name": "images", "type": "IMAGE", "link": 7},
-                    {"name": "filename_prefix", "type": "STRING", "widget": {"name": "filename_prefix"}},
-                ],
-                "outputs": [],
-                "widgets_values": ["ComfyGit"],
+        },
+        "6": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": "old prompt",
             },
-            {
-                "id": 11,
-                "type": "MarkdownNote",
-                "widgets_values": ["This is editor-only help text."],
+        },
+        "9": {
+            "class_type": "SaveImage",
+            "inputs": {
+                "images": ["3", 0],
+                "filename_prefix": "ComfyGit",
             },
-        ],
-        "links": [
-            [1, 4, 0, 3, 0, "MODEL"],
-            [7, 3, 0, 9, 0, "IMAGE"],
-        ],
+        },
     }
 
 
@@ -85,6 +65,7 @@ def _contract(*, required_prompt: bool = True) -> NamedWorkflowContract:
                 node_id="3",
                 required=True,
                 widget_idx=0,
+                field_key="seed",
                 default=733306923873351,
             ),
             WorkflowContractInput(
@@ -93,6 +74,7 @@ def _contract(*, required_prompt: bool = True) -> NamedWorkflowContract:
                 node_id="3",
                 required=True,
                 widget_idx=2,
+                field_key="steps",
                 default=20,
             ),
             WorkflowContractInput(
@@ -101,6 +83,7 @@ def _contract(*, required_prompt: bool = True) -> NamedWorkflowContract:
                 node_id="3",
                 required=True,
                 widget_idx=3,
+                field_key="cfg",
                 default=8,
             ),
             WorkflowContractInput(
@@ -109,6 +92,7 @@ def _contract(*, required_prompt: bool = True) -> NamedWorkflowContract:
                 node_id="6",
                 required=required_prompt,
                 widget_idx=0,
+                field_key="text",
             ),
         ],
         outputs=[
@@ -122,40 +106,10 @@ def _contract(*, required_prompt: bool = True) -> NamedWorkflowContract:
     )
 
 
-def test_workflow_to_api_prompt_resolves_links_and_skips_ui_only_widgets() -> None:
-    workflow = normalize_workflow_input(_txt2img_workflow())
-
-    prompt, widget_map = workflow_to_api_prompt(workflow)
-
-    assert "11" not in prompt
-    assert prompt["3"]["inputs"]["model"] == ["4", 0]
-    assert prompt["3"]["inputs"]["seed"] == 733306923873351
-    assert prompt["3"]["inputs"]["steps"] == 20
-    assert prompt["3"]["inputs"]["cfg"] == 8
-    assert prompt["3"]["inputs"]["sampler_name"] == "euler"
-    assert widget_map["3"] == {
-        0: "seed",
-        2: "steps",
-        3: "cfg",
-        4: "sampler_name",
-    }
-
-
-def test_build_contract_prompt_applies_values_by_original_widget_index() -> None:
-    workflow_data = _txt2img_workflow()
-    workflow_data["nodes"].append(
-        {
-            "id": 6,
-            "type": "CLIPTextEncode",
-            "inputs": [{"name": "text", "type": "STRING", "widget": {"name": "text"}}],
-            "outputs": [{"name": "CONDITIONING", "type": "CONDITIONING", "links": [], "slot_index": 0}],
-            "widgets_values": ["old prompt"],
-        }
-    )
-
+def test_build_contract_prompt_applies_values_by_api_input_key() -> None:
     result = build_contract_prompt(
         "simple",
-        workflow_data,
+        _txt2img_api_prompt(),
         _contract(),
         {"prompt": "new prompt", "steps": "30", "cfg": "7.5"},
     )
@@ -168,18 +122,7 @@ def test_build_contract_prompt_applies_values_by_original_widget_index() -> None
 
 
 def test_build_contract_prompt_reports_missing_required_input_without_default() -> None:
-    workflow_data = _txt2img_workflow()
-    workflow_data["nodes"].append(
-        {
-            "id": 6,
-            "type": "CLIPTextEncode",
-            "inputs": [{"name": "text", "type": "STRING", "widget": {"name": "text"}}],
-            "outputs": [],
-            "widgets_values": ["old prompt"],
-        }
-    )
-
-    result = build_contract_prompt("simple", workflow_data, _contract(), {})
+    result = build_contract_prompt("simple", _txt2img_api_prompt(), _contract(), {})
 
     assert not result.is_ready
     assert [issue.code for issue in result.issues] == ["missing_required_input"]
@@ -188,7 +131,7 @@ def test_build_contract_prompt_reports_missing_required_input_without_default() 
 def test_build_contract_prompt_warns_for_unknown_inputs() -> None:
     result = build_contract_prompt(
         "simple",
-        _txt2img_workflow(),
+        _txt2img_api_prompt(),
         NamedWorkflowContract(),
         {"extra": "ignored"},
     )
@@ -199,21 +142,53 @@ def test_build_contract_prompt_warns_for_unknown_inputs() -> None:
 
 
 def test_build_manifest_contract_prompt_loads_workflow_from_snapshot(tmp_path: Path) -> None:
-    workflow_dir = tmp_path / "workflows"
-    workflow_dir.mkdir()
-    workflow_path = workflow_dir / "simple.json"
-    workflow_data = _txt2img_workflow()
-    workflow_data["nodes"].append(
-        {
-            "id": 6,
-            "type": "CLIPTextEncode",
-            "inputs": [{"name": "text", "type": "STRING", "widget": {"name": "text"}}],
-            "outputs": [],
-            "widgets_values": ["old prompt"],
-        }
-    )
-    workflow_path.write_text(json.dumps(workflow_data), encoding="utf-8")
+    api_dir = tmp_path / "workflow_api"
+    api_dir.mkdir()
+    api_path = api_dir / "simple.api.json"
+    api_path.write_text(json.dumps(_txt2img_api_prompt()), encoding="utf-8")
 
+    pyproject_path = tmp_path / "pyproject.toml"
+    with pyproject_path.open("w", encoding="utf-8") as handle:
+        tomlkit.dump(
+            {
+                "project": {
+                    "name": "demo",
+                    "version": "0.1.0",
+                    "requires-python": ">=3.11",
+                    "dependencies": [],
+                },
+                "tool": {
+                    "comfygit": {
+                        "comfyui_version": "v0.3.60",
+                        "python_version": "3.11",
+                    }
+                },
+            },
+            handle,
+        )
+    manager = PyprojectManager(pyproject_path)
+    manager.workflows.add_workflow("simple")
+    manager.workflows.set_execution_contract(
+        "simple",
+        WorkflowExecutionContract(
+            contracts={"default": _contract()},
+            api_prompt_file="workflow_api/simple.api.json",
+            api_prompt_source="comfyui_frontend",
+        ),
+    )
+
+    result = build_manifest_contract_prompt(
+        manager.get_manifest_snapshot(),
+        tmp_path,
+        "simple",
+        {"prompt": "manifest prompt"},
+    )
+
+    assert result.is_ready
+    assert result.prompt["6"]["inputs"]["text"] == "manifest prompt"
+
+
+def test_build_manifest_contract_prompt_requires_stored_api_prompt(tmp_path: Path) -> None:
     pyproject_path = tmp_path / "pyproject.toml"
     with pyproject_path.open("w", encoding="utf-8") as handle:
         tomlkit.dump(
@@ -240,15 +215,13 @@ def test_build_manifest_contract_prompt_loads_workflow_from_snapshot(tmp_path: P
         WorkflowExecutionContract(contracts={"default": _contract()}),
     )
 
-    result = build_manifest_contract_prompt(
-        manager.get_manifest_snapshot(),
-        tmp_path,
-        "simple",
-        {"prompt": "manifest prompt"},
-    )
-
-    assert result.is_ready
-    assert result.prompt["6"]["inputs"]["text"] == "manifest prompt"
+    with pytest.raises(ValueError, match="captured API prompt"):
+        build_manifest_contract_prompt(
+            manager.get_manifest_snapshot(),
+            tmp_path,
+            "simple",
+            {"prompt": "manifest prompt"},
+        )
 
 
 def test_build_manifest_contract_prompt_rejects_unknown_workflow(tmp_path: Path) -> None:

@@ -1,14 +1,13 @@
-"""Build ComfyUI API prompts from workflow execution contracts."""
+"""Build ComfyUI API prompts from stored workflow execution contract artifacts."""
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Mapping
 
 from comfygit_core.models.manifest import EnvironmentManifestSnapshot
-from comfygit_core.models.workflow import Workflow, WorkflowNode
 from comfygit_core.models.workflow_contract import (
     NamedWorkflowContract,
     WorkflowContractInput,
@@ -21,59 +20,23 @@ from comfygit_core.models.workflow_execution import (
     PromptAppliedInput,
     PromptBuildIssue,
 )
-from comfygit_core.services.workflow_input import normalize_workflow_input
-
-
-_VISUAL_NOTE_NODE_TYPES = {
-    "Note",
-    "MarkdownNote",
-    "Note Plus (mtb)",
-}
-
-
-def workflow_to_api_prompt(workflow: Workflow) -> tuple[ComfyUIPrompt, Mapping[str, Mapping[int, str]]]:
-    """Convert a parsed UI workflow to a ComfyUI API prompt.
-
-    The returned widget map links original `widgets_values` indexes to API input
-    keys. Contract inputs authored in Manager use the original widget index, so
-    callers must use this map when applying contract values.
-    """
-
-    link_lookup = {
-        link.id: [str(link.source_node_id), link.source_slot]
-        for link in workflow.links
-    }
-
-    prompt: ComfyUIPrompt = {}
-    widget_input_maps: dict[str, Mapping[int, str]] = {}
-
-    for node_id, node in workflow.nodes.items():
-        if _is_visual_note_node(node):
-            continue
-
-        api_inputs, widget_map = _node_api_inputs(node, link_lookup)
-        prompt[str(node_id)] = {
-            "class_type": node.type,
-            "inputs": api_inputs,
-        }
-        widget_input_maps[str(node_id)] = MappingProxyType(widget_map)
-
-    return prompt, MappingProxyType(widget_input_maps)
 
 
 def build_contract_prompt(
     workflow_name: str,
-    workflow_data: dict[str, Any],
+    api_prompt_data: dict[str, Any],
     contract: NamedWorkflowContract,
     input_values: Mapping[str, Any] | None = None,
     *,
     contract_name: str = "default",
 ) -> ContractPromptBuildResult:
-    """Prepare a ComfyUI API prompt for a named workflow contract."""
+    """Patch a stored ComfyUI API prompt for a named workflow contract.
 
-    workflow = normalize_workflow_input(workflow_data)
-    prompt, widget_input_map = workflow_to_api_prompt(workflow)
+    `api_prompt_data` must already be in ComfyUI API prompt shape. Core does
+    not convert UI-format workflows into API prompts.
+    """
 
+    prompt = _normalize_api_prompt_data(api_prompt_data)
     issues: list[PromptBuildIssue] = []
     applied_inputs: list[PromptAppliedInput] = []
     provided_inputs = dict(input_values or {})
@@ -93,9 +56,8 @@ def build_contract_prompt(
     for contract_input in contract.inputs:
         node_id = str(contract_input.node_id)
         prompt_node = prompt.get(node_id)
-        workflow_node = workflow.nodes.get(node_id)
 
-        if prompt_node is None or workflow_node is None:
+        if prompt_node is None:
             issues.append(
                 PromptBuildIssue(
                     code="missing_node",
@@ -109,14 +71,14 @@ def build_contract_prompt(
             )
             continue
 
-        input_key = _contract_input_key(contract_input, workflow_node, widget_input_map)
+        input_key = _contract_input_key(contract_input)
         if input_key is None:
             issues.append(
                 PromptBuildIssue(
-                    code="missing_widget_binding",
+                    code="missing_api_input_binding",
                     message=(
-                        f"Contract input '{contract_input.name}' does not map to "
-                        f"a ComfyUI API input on node '{node_id}'."
+                        f"Contract input '{contract_input.name}' does not declare "
+                        f"a stored ComfyUI API input key."
                     ),
                     input_name=contract_input.name,
                     node_id=node_id,
@@ -134,6 +96,22 @@ def build_contract_prompt(
             continue
 
         prompt_node_inputs = prompt_node.setdefault("inputs", {})
+        if not isinstance(prompt_node_inputs, dict):
+            prompt_node_inputs = {}
+            prompt_node["inputs"] = prompt_node_inputs
+        if input_key not in prompt_node_inputs:
+            issues.append(
+                PromptBuildIssue(
+                    code="missing_api_input",
+                    message=(
+                        f"Contract input '{contract_input.name}' maps to API input "
+                        f"'{input_key}', but node '{node_id}' does not contain that input."
+                    ),
+                    input_name=contract_input.name,
+                    node_id=node_id,
+                )
+            )
+            continue
         prompt_node_inputs[input_key] = value
         applied_inputs.append(
             PromptAppliedInput(
@@ -151,7 +129,6 @@ def build_contract_prompt(
         outputs=tuple(contract.outputs),
         applied_inputs=tuple(applied_inputs),
         issues=tuple(issues),
-        widget_input_map=widget_input_map,
     )
 
 
@@ -163,17 +140,20 @@ def build_manifest_contract_prompt(
     *,
     contract_name: str | None = None,
 ) -> ContractPromptBuildResult:
-    """Load a workflow from a manifest snapshot and prepare a contract prompt."""
+    """Load a stored API prompt from a manifest snapshot and prepare a contract prompt."""
 
     workflow_entry = manifest.workflows.get(workflow_name)
     if workflow_entry is None:
         raise ValueError(f"Workflow '{workflow_name}' is not tracked in the manifest.")
-    if workflow_entry.path is None:
-        raise ValueError(f"Workflow '{workflow_name}' does not declare a workflow path.")
     if workflow_entry.execution_contract is None:
         raise ValueError(f"Workflow '{workflow_name}' does not declare an execution contract.")
 
     execution_contract = workflow_entry.execution_contract
+    if not execution_contract.api_prompt_file:
+        raise ValueError(
+            f"Workflow '{workflow_name}' contract does not declare a captured API prompt file. "
+            "Re-save the contract in ComfyGit Manager."
+        )
     selected_contract_name = contract_name or execution_contract.default_contract
     contract = execution_contract.contracts.get(selected_contract_name)
     if contract is None:
@@ -181,13 +161,21 @@ def build_manifest_contract_prompt(
             f"Workflow '{workflow_name}' does not declare contract '{selected_contract_name}'."
         )
 
-    workflow_path = manifest_dir / workflow_entry.path
-    with workflow_path.open(encoding="utf-8") as handle:
-        workflow_data = json.load(handle)
+    api_prompt_path = _resolve_manifest_artifact_path(
+        manifest_dir,
+        execution_contract.api_prompt_file,
+    )
+    if not api_prompt_path.exists():
+        raise ValueError(
+            f"Workflow '{workflow_name}' contract API prompt file is missing: "
+            f"{execution_contract.api_prompt_file}. Re-save the contract in ComfyGit Manager."
+        )
+    with api_prompt_path.open(encoding="utf-8") as handle:
+        api_prompt_data = json.load(handle)
 
     return build_contract_prompt(
         workflow_name,
-        workflow_data,
+        api_prompt_data,
         contract,
         input_values,
         contract_name=selected_contract_name,
@@ -223,12 +211,6 @@ def extract_contract_outputs(
         )
 
     return tuple(results)
-
-
-def _is_visual_note_node(node: WorkflowNode) -> bool:
-    has_links = any(input_item.link is not None for input_item in node.inputs)
-    has_output_links = any(output.links for output in node.outputs)
-    return node.type in _VISUAL_NOTE_NODE_TYPES and not has_links and not has_output_links
 
 
 def _extract_output_artifacts(
@@ -275,94 +257,41 @@ def _history_output_keys(output_type: str) -> tuple[str, ...]:
     return ("images", "videos", "gifs", "audio", "audios", "files")
 
 
-def _node_api_inputs(
-    node: WorkflowNode,
-    link_lookup: Mapping[int, list[Any]],
-) -> tuple[dict[str, Any], dict[int, str]]:
-    inputs: dict[str, Any] = {}
-    widget_input_map: dict[int, str] = {}
-    widget_value_index = 0
-
-    for input_item in node.inputs:
-        if input_item.link is not None:
-            linked_value = link_lookup.get(input_item.link)
-            if linked_value is not None:
-                inputs[input_item.name] = linked_value
-            continue
-
-        if not input_item.widget:
-            continue
-
-        matched_index = _next_matching_widget_index(
-            node.widgets_values,
-            start=widget_value_index,
-            input_type=input_item.type,
-        )
-        if matched_index is None:
-            continue
-
-        inputs[input_item.name] = node.widgets_values[matched_index]
-        widget_input_map[matched_index] = input_item.name
-        widget_value_index = matched_index + 1
-
-    return inputs, widget_input_map
+def _contract_input_key(contract_input: WorkflowContractInput) -> str | None:
+    return contract_input.field_key
 
 
-def _next_matching_widget_index(
-    values: list[Any],
-    *,
-    start: int,
-    input_type: str,
-) -> int | None:
-    for index in range(start, len(values)):
-        if _widget_value_matches_input_type(values[index], input_type):
-            return index
-    return None
+def _normalize_api_prompt_data(data: dict[str, Any]) -> ComfyUIPrompt:
+    """Return a deep-copied ComfyUI API prompt from supported stored shapes."""
+    candidate: Any = data
+    if isinstance(data, dict):
+        if isinstance(data.get("output"), dict):
+            candidate = data["output"]
+        elif isinstance(data.get("prompt"), dict):
+            candidate = data["prompt"]
+
+    if not isinstance(candidate, dict):
+        raise ValueError("Stored API prompt must be a JSON object.")
+
+    prompt: ComfyUIPrompt = {}
+    for node_id, node_data in candidate.items():
+        if not isinstance(node_data, dict):
+            raise ValueError(f"Stored API prompt node '{node_id}' must be an object.")
+        node_payload = copy.deepcopy(node_data)
+        inputs = node_payload.get("inputs")
+        if inputs is None:
+            node_payload["inputs"] = {}
+        elif not isinstance(inputs, dict):
+            raise ValueError(f"Stored API prompt node '{node_id}' has non-object inputs.")
+        prompt[str(node_id)] = node_payload
+    return prompt
 
 
-def _widget_value_matches_input_type(value: Any, input_type: str) -> bool:
-    normalized_type = input_type.upper()
-    if value is None:
-        return True
-    if normalized_type in {"INT", "INTEGER"}:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if normalized_type in {"FLOAT", "NUMBER"}:
-        return isinstance(value, int | float) and not isinstance(value, bool)
-    if normalized_type in {"BOOLEAN", "BOOL"}:
-        return isinstance(value, bool)
-    if normalized_type in {"STRING", "COMBO"}:
-        return isinstance(value, str)
-    return True
-
-
-def _contract_input_key(
-    contract_input: WorkflowContractInput,
-    workflow_node: WorkflowNode,
-    widget_input_map: Mapping[str, Mapping[int, str]],
-) -> str | None:
-    if contract_input.field_key:
-        return contract_input.field_key
-
-    node_widget_map = widget_input_map.get(str(contract_input.node_id), {})
-    if contract_input.widget_idx is not None:
-        input_key = node_widget_map.get(contract_input.widget_idx)
-        if input_key:
-            return input_key
-
-    return _workflow_node_widget_input_key(workflow_node, contract_input)
-
-
-def _workflow_node_widget_input_key(
-    workflow_node: WorkflowNode,
-    contract_input: WorkflowContractInput,
-) -> str | None:
-    for input_item in workflow_node.inputs:
-        if not input_item.widget:
-            continue
-        widget_name = input_item.widget.get("name") if isinstance(input_item.widget, dict) else None
-        if widget_name == contract_input.name or input_item.name == contract_input.name:
-            return input_item.name
-    return None
+def _resolve_manifest_artifact_path(manifest_dir: Path, relative_path: str) -> Path:
+    path = Path(relative_path)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Contract API prompt path must be relative to the manifest: {relative_path}")
+    return manifest_dir / path
 
 
 def _resolve_contract_value(

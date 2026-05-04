@@ -354,6 +354,12 @@ class WorkflowExecutionContract:
     version: int = 1
     default_contract: str = "default"
     contracts: dict[str, NamedWorkflowContract] = field(default_factory=dict)
+    api_prompt_file: str | None = None
+    api_prompt_source: str | None = None
+    api_prompt_generated_by: str | None = None
+    api_prompt_generated_at: str | None = None
+    comfyui_version: str | None = None
+    manager_version: str | None = None
 
     @property
     def active_contract(self) -> NamedWorkflowContract | None:
@@ -364,24 +370,38 @@ class WorkflowExecutionContract:
         return self.active_contract is not None
 
     def to_toml_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "version": self.version,
             "default_contract": self.default_contract,
+            "api_prompt_file": self.api_prompt_file,
+            "api_prompt_source": self.api_prompt_source,
+            "api_prompt_generated_by": self.api_prompt_generated_by,
+            "api_prompt_generated_at": self.api_prompt_generated_at,
+            "comfyui_version": self.comfyui_version,
+            "manager_version": self.manager_version,
             "contracts": {
                 name: contract.to_toml_dict()
                 for name, contract in self.contracts.items()
             },
         }
+        return _omit_none(payload)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "version": self.version,
             "default_contract": self.default_contract,
+            "api_prompt_file": self.api_prompt_file,
+            "api_prompt_source": self.api_prompt_source,
+            "api_prompt_generated_by": self.api_prompt_generated_by,
+            "api_prompt_generated_at": self.api_prompt_generated_at,
+            "comfyui_version": self.comfyui_version,
+            "manager_version": self.manager_version,
             "contracts": {
                 name: contract.to_dict()
                 for name, contract in self.contracts.items()
             },
         }
+        return _omit_none(payload)
 
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowExecutionContract":
@@ -397,6 +417,12 @@ class WorkflowExecutionContract:
             version=_as_int(data.get("version")) or 1,
             default_contract=_as_str(data.get("default_contract")) or "default",
             contracts=contracts,
+            api_prompt_file=_as_str(data.get("api_prompt_file")),
+            api_prompt_source=_as_str(data.get("api_prompt_source")),
+            api_prompt_generated_by=_as_str(data.get("api_prompt_generated_by")),
+            api_prompt_generated_at=_as_str(data.get("api_prompt_generated_at")),
+            comfyui_version=_as_str(data.get("comfyui_version")),
+            manager_version=_as_str(data.get("manager_version")),
         )
 
     def to_public_schema(self) -> dict[str, Any]:

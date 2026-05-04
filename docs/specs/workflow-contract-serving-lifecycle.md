@@ -18,7 +18,7 @@ environment is exported, pushed, materialized, or built.
 Core currently persists and reads workflow execution contracts. Runtime execution
 services for those contracts are still planned.
 
-### CGSERVE-CORE-02 [PLANNED]: Contract authoring captures the API prompt artifact
+### CGSERVE-CORE-02 [PARTIAL]: Contract authoring captures the API prompt artifact
 Validation: TEST
 
 The supported contract-authoring path runs inside ComfyUI with the ComfyGit
@@ -33,7 +33,12 @@ It should only be refreshed by an explicit contract save/update action, because
 later edits to the UI workflow may make the saved mapping stale without
 invalidating the previously captured executable prompt.
 
-### CGSERVE-CORE-02A [PLANNED]: Stored API prompts are required for contract execution
+Core and Manager now support the first save-time artifact path: Manager submits
+the captured API prompt on contract save, core writes it under `workflow_api/`,
+and the manifest execution contract records artifact provenance. Broader
+compatibility checks against ComfyUI frontend versions remain future work.
+
+### CGSERVE-CORE-02A [PARTIAL]: Stored API prompts are required for contract execution
 Validation: TEST
 
 Contract runtime paths should load the captured API prompt artifact referenced
@@ -44,6 +49,11 @@ If a workflow contract lacks a captured API prompt artifact, runtime callers
 should report the contract as incomplete and ask the user to re-save the
 contract in Manager. Missing artifacts should not fall back to server-side
 workflow conversion.
+
+Core runtime prompt preparation now loads the manifest-referenced API prompt
+artifact and errors when the artifact reference or file is missing. Existing
+serve adapters still need broader end-to-end validation against captured
+artifacts.
 
 ### CGSERVE-CORE-02B [RETIRED]: Core performs UI-workflow-to-API-prompt conversion
 Validation: HUMAN_REVIEW
