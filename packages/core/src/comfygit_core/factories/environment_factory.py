@@ -540,6 +540,10 @@ class EnvironmentFactory:
         if workflows_src.exists() and workflows_src.is_dir():
             shutil.copytree(workflows_src, cec_path / "workflows", dirs_exist_ok=True)
 
+        workflow_api_src = source_path / "workflow_api"
+        if workflow_api_src.exists() and workflow_api_src.is_dir():
+            shutil.copytree(workflow_api_src, cec_path / "workflow_api", dirs_exist_ok=True)
+
         overlays_src = source_path / "overlays"
         if overlays_src.exists() and overlays_src.is_dir():
             overlays_dst = cec_path / "overlays"

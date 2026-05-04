@@ -26,6 +26,8 @@ nodes = {}
     (source / "package_config.toml").write_text("[package]\n", encoding="utf-8")
     (source / "workflows").mkdir()
     (source / "workflows" / "test.json").write_text("{}", encoding="utf-8")
+    (source / "workflow_api").mkdir()
+    (source / "workflow_api" / "test.api.json").write_text("{}", encoding="utf-8")
     (source / "overlays").mkdir()
     (source / "overlays" / "shared.toml").write_text("[overlay]\n", encoding="utf-8")
     (source / "overlays" / ".local.toml").write_text("[overlay]\n", encoding="utf-8")
@@ -52,6 +54,7 @@ def test_import_from_directory_copies_only_portable_files(test_workspace, tmp_pa
     assert (env.cec_path / ".python-version").read_text(encoding="utf-8") == "3.12\n"
     assert (env.cec_path / "package_config.toml").exists()
     assert (env.cec_path / "workflows" / "test.json").exists()
+    assert (env.cec_path / "workflow_api" / "test.api.json").exists()
     assert (env.cec_path / "overlays" / "shared.toml").exists()
     assert not (env.cec_path / "overlays" / ".local.toml").exists()
     assert not (env.cec_path / ".venv").exists()

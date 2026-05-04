@@ -65,6 +65,13 @@ Core now writes Manager-submitted API prompt artifacts to `workflow_api/` and
 records their relative path plus basic provenance in `pyproject.toml`. More
 complete provenance fields and compatibility checks remain follow-on work.
 
+Because the manifest stores only a relative artifact pointer, the pointed-to
+API prompt JSON is part of the environment manifest payload. Export tarballs
+and directory-source materialization must include `workflow_api/` files, and git
+handoff flows must require those files to be committed when referenced by a
+workflow execution contract. Losing the file while preserving the manifest
+contract leaves the contract non-executable.
+
 ### CGSPEC-MAN-07 [LIVE]: Workflow contract numeric metadata must remain TOML-safe
 Validation: TEST
 

@@ -1,5 +1,6 @@
 """Integration tests for export/import functionality."""
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,10 @@ version = "0.1.0"
         workflows_path.mkdir()
         (workflows_path / "test.json").write_text('{"nodes": []}')
 
+        workflow_api_path = cec_path / "workflow_api"
+        workflow_api_path.mkdir()
+        (workflow_api_path / "test.api.json").write_text('{"1": {"inputs": {}}}')
+
         # Export
         output_path = tmp_path / "export.tar.gz"
         manager = ExportImportManager(cec_path, comfyui_path)
@@ -47,6 +52,10 @@ version = "0.1.0"
         # Verify
         assert result.exists()
         assert result.stat().st_size > 0
+        with tarfile.open(result, "r:gz") as tar:
+            names = set(tar.getnames())
+        assert "workflows/test.json" in names
+        assert "workflow_api/test.api.json" in names
 
     def test_import_extracts_tarball(self, tmp_path):
         """Test that import extracts tarball correctly."""
@@ -61,6 +70,9 @@ version = "0.1.0"
         workflows = source_cec / "workflows"
         workflows.mkdir()
         (workflows / "test.json").write_text('{}')
+        workflow_api = source_cec / "workflow_api"
+        workflow_api.mkdir()
+        (workflow_api / "test.api.json").write_text('{"1": {"inputs": {}}}')
 
         # Export
         tarball_path = tmp_path / "test.tar.gz"
@@ -80,6 +92,7 @@ version = "0.1.0"
         assert target_cec.exists()
         assert (target_cec / "pyproject.toml").exists()
         assert (target_cec / "workflows" / "test.json").exists()
+        assert (target_cec / "workflow_api" / "test.api.json").exists()
 
 
 class TestPrepareImportModels:

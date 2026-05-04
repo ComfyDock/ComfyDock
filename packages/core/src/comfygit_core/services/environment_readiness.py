@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from ..models.readiness import (
@@ -12,6 +13,13 @@ from ..models.readiness import (
     ReadinessBlockingIssue,
     ReadinessWarnings,
 )
+
+
+def _resolve_manifest_artifact_path(manifest_dir: Path, relative_path: str) -> Path:
+    path = Path(relative_path)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Contract API prompt path must be relative to the manifest: {relative_path}")
+    return manifest_dir / path
 
 
 def _safe_list(value: Any) -> list[Any]:
@@ -226,6 +234,77 @@ def collect_node_provenance_warnings(env: Any) -> list[NodeProvenanceWarning]:
     return warnings
 
 
+def collect_contract_artifact_blockers(env: Any) -> list[ReadinessBlockingIssue]:
+    """Collect workflow contracts whose referenced API prompt artifact is unavailable."""
+    pyproject = getattr(env, "pyproject", None)
+    workflows_manager = getattr(pyproject, "workflows", None)
+    if not workflows_manager:
+        return []
+
+    manifest_dir = getattr(env, "cec_path", None)
+    if manifest_dir is None:
+        pyproject_path = getattr(pyproject, "path", None)
+        manifest_dir = Path(pyproject_path).parent if pyproject_path else None
+    if manifest_dir is None:
+        return []
+    manifest_dir = Path(manifest_dir)
+
+    get_workflows = getattr(workflows_manager, "get_all_with_resolutions", None)
+    workflow_map = get_workflows() if callable(get_workflows) else {}
+    if not isinstance(workflow_map, Mapping):
+        return []
+
+    get_execution_contract = getattr(workflows_manager, "get_execution_contract", None)
+    missing: list[str] = []
+    invalid: list[str] = []
+
+    for workflow_name, workflow_data in workflow_map.items():
+        workflow_name = str(workflow_name)
+        contract = (
+            get_execution_contract(workflow_name)
+            if callable(get_execution_contract)
+            else None
+        )
+        if contract is None and isinstance(workflow_data, Mapping):
+            contract_data = workflow_data.get("execution_contract")
+            if isinstance(contract_data, dict):
+                from ..models.workflow_contract import WorkflowExecutionContract
+
+                contract = WorkflowExecutionContract.from_toml_dict(contract_data)
+
+        api_prompt_file = _safe_str(getattr(contract, "api_prompt_file", None))
+        if not api_prompt_file:
+            continue
+
+        try:
+            api_prompt_path = _resolve_manifest_artifact_path(manifest_dir, api_prompt_file)
+        except ValueError:
+            invalid.append(f"{workflow_name}: {api_prompt_file}")
+            continue
+
+        if not api_prompt_path.exists():
+            missing.append(f"{workflow_name}: {api_prompt_file}")
+
+    issues: list[ReadinessBlockingIssue] = []
+    if missing:
+        issues.append(
+            ReadinessBlockingIssue(
+                type="missing_contract_api_prompts",
+                message="Cannot hand off environment - workflow contract API prompt files are missing",
+                details=missing,
+            )
+        )
+    if invalid:
+        issues.append(
+            ReadinessBlockingIssue(
+                type="invalid_contract_api_prompt_paths",
+                message="Cannot hand off environment - workflow contract API prompt paths are invalid",
+                details=invalid,
+            )
+        )
+    return issues
+
+
 def build_environment_readiness(
     env: Any, *, include_blocking: bool = True
 ) -> EnvironmentReadiness:
@@ -270,6 +349,8 @@ def build_environment_readiness(
                     details=[],
                 )
             )
+
+        blocking_issues.extend(collect_contract_artifact_blockers(env))
 
     return EnvironmentReadiness(
         blocking_issues=blocking_issues,

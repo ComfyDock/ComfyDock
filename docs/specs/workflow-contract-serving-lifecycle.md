@@ -15,8 +15,14 @@ named workflow entry. They are part of the committed environment state and shoul
 travel with the workflow JSON and captured API prompt artifact when an
 environment is exported, pushed, materialized, or built.
 
+For a Manager-authored contract, the portable execution unit is the manifest
+contract metadata plus the referenced `workflow_api/*.api.json` file. Export
+bundles, directory materialization sources, and git-pushed environment commits
+must preserve those API prompt JSON files alongside `workflows/*.json`.
+
 Core currently persists and reads workflow execution contracts. Runtime execution
-services for those contracts are still planned.
+now depends on captured API prompt artifacts, while full handoff validation is
+still being tightened across export, materialize, and push paths.
 
 ### CGSERVE-CORE-02 [PARTIAL]: Contract authoring captures the API prompt artifact
 Validation: TEST
@@ -38,6 +44,10 @@ the captured API prompt on contract save, core writes it under `workflow_api/`,
 and the manifest execution contract records artifact provenance. Broader
 compatibility checks against ComfyUI frontend versions remain future work.
 
+`workflow_api/` is tracked portable state, not derived runtime state. It should
+not be filtered out by export packaging, directory-source materialization, or
+git commit/push flows when the files are referenced by workflow contracts.
+
 ### CGSERVE-CORE-02A [PARTIAL]: Stored API prompts are required for contract execution
 Validation: TEST
 
@@ -54,6 +64,11 @@ Core runtime prompt preparation now loads the manifest-referenced API prompt
 artifact and errors when the artifact reference or file is missing. Existing
 serve adapters still need broader end-to-end validation against captured
 artifacts.
+
+Export, push-readiness, and build/materialize planning should report a workflow
+contract with a missing referenced API prompt artifact as a blocking issue. A
+portable environment that advertises a runnable contract but lacks its
+`workflow_api/*.api.json` file is incomplete.
 
 ### CGSERVE-CORE-02B [RETIRED]: Core performs UI-workflow-to-API-prompt conversion
 Validation: HUMAN_REVIEW

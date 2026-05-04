@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from comfygit_core.services.environment_readiness import (
     build_environment_readiness,
+    collect_contract_artifact_blockers,
     collect_model_source_warnings,
     collect_node_provenance_warnings,
 )
@@ -47,15 +48,19 @@ class FakeModelsManager:
 
 
 class FakeWorkflowsManager:
-    def __init__(self, workflows=None, workflow_models=None):
+    def __init__(self, workflows=None, workflow_models=None, execution_contracts=None):
         self._workflows = workflows or {}
         self._workflow_models = workflow_models or {}
+        self._execution_contracts = execution_contracts or {}
 
     def get_all_with_resolutions(self):
         return self._workflows
 
     def get_workflow_models(self, name):
         return self._workflow_models.get(name, [])
+
+    def get_execution_contract(self, name):
+        return self._execution_contracts.get(name)
 
 
 class FakeModelRepository:
@@ -82,12 +87,21 @@ class FakeWorkflowManager:
         return self._status
 
 
-def make_env(nodes=None, models=None, workflows=None, workflow_models=None, model_sources=None):
+def make_env(
+    nodes=None,
+    models=None,
+    workflows=None,
+    workflow_models=None,
+    model_sources=None,
+    execution_contracts=None,
+    cec_path=None,
+):
     return SimpleNamespace(
+        cec_path=cec_path,
         pyproject=SimpleNamespace(
             nodes=FakeNodesManager(nodes or []),
             models=FakeModelsManager(models or []),
-            workflows=FakeWorkflowsManager(workflows, workflow_models),
+            workflows=FakeWorkflowsManager(workflows, workflow_models, execution_contracts),
         ),
         workspace=SimpleNamespace(model_repository=FakeModelRepository(model_sources)),
     )
@@ -202,6 +216,49 @@ def test_blocking_source_state_can_be_included():
 
     assert readiness.can_export is False
     assert readiness.blocking_issues[0].type == "uncommitted_workflows"
+
+
+def test_missing_referenced_contract_api_prompt_blocks_handoff(tmp_path):
+    env = make_env(
+        workflows={"simple": object()},
+        execution_contracts={
+            "simple": SimpleNamespace(api_prompt_file="workflow_api/simple.api.json")
+        },
+        cec_path=tmp_path,
+    )
+    sync_status = SimpleNamespace(
+        has_changes=False,
+        new=[],
+        modified=[],
+        deleted=[],
+    )
+    env.workflow_manager = FakeWorkflowManager(
+        SimpleNamespace(sync_status=sync_status, is_commit_safe=True)
+    )
+    env.git_manager = FakeGitManager(has_changes=False)
+
+    readiness = build_environment_readiness(env, include_blocking=True)
+
+    assert readiness.can_export is False
+    assert readiness.blocking_issues[-1].type == "missing_contract_api_prompts"
+    assert readiness.blocking_issues[-1].details == [
+        "simple: workflow_api/simple.api.json"
+    ]
+
+
+def test_existing_referenced_contract_api_prompt_is_not_blocking(tmp_path):
+    api_dir = tmp_path / "workflow_api"
+    api_dir.mkdir()
+    (api_dir / "simple.api.json").write_text("{}", encoding="utf-8")
+    env = make_env(
+        workflows={"simple": object()},
+        execution_contracts={
+            "simple": SimpleNamespace(api_prompt_file="workflow_api/simple.api.json")
+        },
+        cec_path=tmp_path,
+    )
+
+    assert collect_contract_artifact_blockers(env) == []
 
 
 def test_readiness_serializes_to_manager_api_shape():

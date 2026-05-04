@@ -160,6 +160,11 @@ Manager push preview, and CLI export flows. This remains partial until workflow
 contract readiness, runtime readiness, and build-plan readiness consume
 the same shape.
 
+Workflow contract readiness includes API prompt artifact availability. If a
+manifest execution contract references `workflow_api/<name>.api.json`, handoff
+readiness should verify that the file exists in `.cec/` before export, push, or
+build/materialize planning succeeds.
+
 ### CGSYNC-READY-02 [PARTIAL]: Readiness uses core provenance semantics
 Validation: MIXED
 

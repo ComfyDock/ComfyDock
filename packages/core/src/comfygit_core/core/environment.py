@@ -1131,6 +1131,22 @@ class Environment:
                 "  Run: cg commit -m 'message' first"
             )
 
+        from ..services.environment_readiness import collect_contract_artifact_blockers
+
+        contract_artifact_issues = collect_contract_artifact_blockers(self)
+        if contract_artifact_issues:
+            details = [
+                detail
+                for issue in contract_artifact_issues
+                for detail in issue.details
+            ]
+            detail_text = "\n".join(f"  • {detail}" for detail in details)
+            raise CDEnvironmentError(
+                "Cannot push with missing or invalid workflow contract API prompt files.\n"
+                f"{detail_text}\n"
+                "  Re-save the affected contract in ComfyGit Manager, then commit again."
+            )
+
         # Note: Workflow issue validation happens during commit (execute_commit checks is_commit_safe).
         # By the time we reach push, all committed changes have already been validated.
         # No need to re-check workflow issues here.

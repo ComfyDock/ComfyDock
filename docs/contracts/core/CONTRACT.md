@@ -142,8 +142,10 @@ incomplete and repaired by re-saving the contract through Manager.
 
 Core now persists Manager-submitted API prompt artifacts and runtime prompt
 preparation loads the stored artifact instead of converting the UI workflow.
-Additional runtime validation and artifact lifecycle coverage remain follow-on
-work.
+The artifact path recorded in the manifest is a contract boundary: core export,
+import/materialize, and push-readiness paths must preserve or validate the
+referenced `workflow_api/*.api.json` file instead of treating it as optional
+derived state. Additional runtime validation remains follow-on work.
 
 ### CGCORE-EXEC-05 [RETIRED]: Core converts UI workflows into API prompts
 Validation: HUMAN_REVIEW
