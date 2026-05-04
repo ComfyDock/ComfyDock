@@ -8,6 +8,7 @@ This tests the refined behavior where:
 """
 
 import argparse
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -353,3 +354,64 @@ class TestRunBehavior:
 
         with pytest.raises(SystemExit):
             cmd.run(args)
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_consumes_switch_request_without_exiting_supervisor(self, mock_get_workspace, tmp_path):
+        """Exit 43 should switch the long-lived cg run process to the requested env."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        current_env = MagicMock()
+        current_env.name = "source-env"
+        current_env.get_current_branch.return_value = "main"
+        current_env.pytorch_manager.has_backend.return_value = True
+        current_env.pytorch_manager.ensure_backend.return_value = "cu126"
+        current_env.sync.return_value = MagicMock(success=True)
+        current_env.run.return_value = MagicMock(returncode=43)
+
+        target_env = MagicMock()
+        target_env.name = "target-env"
+        target_env.get_current_branch.return_value = "main"
+        target_env.sync.return_value = MagicMock(success=True)
+        target_env.run.return_value = MagicMock(returncode=0)
+
+        metadata_dir = tmp_path / ".metadata"
+        metadata_dir.mkdir()
+        (metadata_dir / ".switch.lock").touch()
+        (metadata_dir / ".switch_request.json").write_text(
+            json.dumps({"target_env": "target-env", "source_env": "source-env"}),
+            encoding="utf-8",
+        )
+
+        mock_workspace = MagicMock()
+        mock_workspace.path = tmp_path
+        mock_workspace.get_active_environment.return_value = current_env
+        mock_workspace.get_environment.return_value = target_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend=None,
+            no_sync=False,
+            args=[],
+            extra=[],
+            all_extras=False,
+            overlay=[],
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            cmd.run(args)
+
+        assert exc.value.code == 0
+        mock_workspace.get_environment.assert_called_with("target-env", auto_sync=False)
+        target_env.sync.assert_called_once()
+        target_env.run.assert_called_once()
+        assert not (metadata_dir / ".switch_request.json").exists()
+        assert not (metadata_dir / ".switch.lock").exists()
+
+        status = json.loads((metadata_dir / ".switch_status.json").read_text(encoding="utf-8"))
+        assert status["state"] == "complete"
+        assert status["target_env"] == "target-env"

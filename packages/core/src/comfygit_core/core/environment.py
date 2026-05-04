@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1432,8 +1433,18 @@ class Environment:
         python = self.uv_manager.python_executable
         cmd = [str(python), "main.py"] + (args or [])
 
+        child_env = os.environ.copy()
+        child_env["COMFYGIT_ENV_NAME"] = self.name
+        child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+
         logger.info(f"Starting ComfyUI with: {' '.join(cmd)}")
-        return run_command(cmd, cwd=self.comfyui_path, capture_output=False, timeout=None)
+        return run_command(
+            cmd,
+            cwd=self.comfyui_path,
+            capture_output=False,
+            timeout=None,
+            env=child_env,
+        )
 
     # =====================================================
     # Node Management
