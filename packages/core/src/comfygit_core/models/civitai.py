@@ -204,6 +204,7 @@ class CivitAIModelVersion:
     images: list[CivitAIImage] | None = None
     model: CivitAIBasicModelInfo | None = None
     download_count: int = 0
+    thumbs_up_count: int = 0
     rating_count: int = 0
     rating: float = 0.0
 
@@ -226,6 +227,7 @@ class CivitAIModelVersion:
             images=[CivitAIImage.from_api_data(i) for i in data.get("images", [])],
             model=CivitAIBasicModelInfo.from_api_data(data.get("model")),
             download_count=stats.get("downloadCount", 0),
+            thumbs_up_count=stats.get("thumbsUpCount", 0),
             rating_count=stats.get("ratingCount", 0),
             rating=stats.get("rating", 0.0),
         )
@@ -261,6 +263,7 @@ class CivitAIModel:
 
     # Stats
     download_count: int = 0
+    thumbs_up_count: int = 0
     favorite_count: int = 0
     comment_count: int = 0
     rating_count: int = 0
@@ -295,6 +298,7 @@ class CivitAIModel:
                 for v in data.get("modelVersions", [])
             ],
             download_count=stats.get("downloadCount", 0),
+            thumbs_up_count=stats.get("thumbsUpCount", 0),
             favorite_count=stats.get("favoriteCount", 0),
             comment_count=stats.get("commentCount", 0),
             rating_count=stats.get("ratingCount", 0),

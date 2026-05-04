@@ -92,6 +92,7 @@ class TestCivitAIClient:
             limit=10,
             types="Checkpoint",
             username="Lykon",
+            sort="Most Downloaded",
         )
 
         assert ids == [81458, 1530714]
@@ -103,7 +104,28 @@ class TestCivitAIClient:
         assert body["q"] == "absolute reality"
         assert body["limit"] == 10
         assert body["attributesToRetrieve"] == ["id"]
-        assert body["filter"] == ['type IN ["Checkpoint"]', 'user.username = "Lykon"']
+        assert body["filter"] == [
+            'type IN ["Checkpoint"]',
+            'user.username = "Lykon"',
+            "nsfwLevel NOT IN [16, 32]",
+        ]
+        assert body["sort"] == ["metrics.downloadCount:desc"]
+
+    @patch("urllib.request.urlopen")
+    def test_search_model_index_ids_uses_selected_nsfw_level(self, mock_urlopen, cache_manager):
+        """NSFW filtering excludes levels above the selected threshold."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({"hits": [{"id": 81458}]}).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        client = CivitAIClient(cache_manager=cache_manager)
+        ids = client.search_model_index_ids("absolute", nsfw_level=2)
+
+        assert ids == [81458]
+        request = mock_urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        assert body["filter"] == ["nsfwLevel NOT IN [4, 8, 16, 32]"]
 
     def test_search_params_to_dict(self):
         """Test SearchParams converts to query dict correctly."""

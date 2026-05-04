@@ -139,6 +139,8 @@ class CivitAIClient:
         limit: int = 20,
         types: str | list[str] | None = None,
         username: str | None = None,
+        sort: str | None = None,
+        nsfw_level: int = 8,
     ) -> SearchResponse:
         """Search models using CivitAI's public search index ranking.
 
@@ -153,6 +155,8 @@ class CivitAIClient:
             limit=limit,
             types=types,
             username=username,
+            sort=sort,
+            nsfw_level=nsfw_level,
         )
         if not ranked_ids:
             return self.search_models(
@@ -160,6 +164,8 @@ class CivitAIClient:
                 limit=limit,
                 types=types,
                 username=username,
+                sort=sort,
+                nsfw="true" if nsfw_level > 2 else "false",
             )
 
         models: list[CivitAIModel] = []
@@ -183,6 +189,8 @@ class CivitAIClient:
         limit: int = 20,
         types: str | list[str] | None = None,
         username: str | None = None,
+        sort: str | None = None,
+        nsfw_level: int = 8,
     ) -> list[int]:
         """Return ranked model IDs from CivitAI's public search index."""
         query = query.strip()
@@ -206,6 +214,13 @@ class CivitAIClient:
             )
         if username:
             filters.append(f"user.username = {json.dumps(username)}")
+        excluded_nsfw_levels = self._excluded_nsfw_levels(nsfw_level)
+        if excluded_nsfw_levels:
+            # CivitAI stores browsing levels as arrays. Requiring allowed
+            # levels still admits mixed models with higher-rated examples, so
+            # exclude levels above the selected threshold explicitly.
+            levels = ", ".join(str(level) for level in excluded_nsfw_levels)
+            filters.append(f"nsfwLevel NOT IN [{levels}]")
 
         body: dict[str, Any] = {
             "q": query,
@@ -214,6 +229,9 @@ class CivitAIClient:
         }
         if filters:
             body["filter"] = filters
+        sort_fields = self._search_sort_fields(sort)
+        if sort_fields:
+            body["sort"] = sort_fields
 
         url = f"{search_url}/indexes/{search_index}/search"
         cache_key = f"{url}:{json.dumps(body, sort_keys=True)}"
@@ -405,6 +423,29 @@ class CivitAIClient:
         else:
             raw_values = value
         return [item.strip() for item in raw_values if item and item.strip()]
+
+    @staticmethod
+    def _search_sort_fields(sort: str | None) -> list[str]:
+        normalized = (sort or "").strip().lower().replace("_", " ")
+        if normalized in ("", "relevance", "best match", "best-match"):
+            return []
+        if normalized in ("most downloaded", "downloads", "download count"):
+            return ["metrics.downloadCount:desc"]
+        if normalized in ("most liked", "highest rated", "likes", "rating"):
+            return ["metrics.thumbsUpCount:desc"]
+        if normalized in ("newest", "new"):
+            return ["createdAt:desc"]
+        if normalized == "oldest":
+            return ["createdAt:asc"]
+        return []
+
+    @staticmethod
+    def _excluded_nsfw_levels(nsfw_level: int | str | None) -> list[int]:
+        try:
+            level = int(nsfw_level) if nsfw_level is not None else 8
+        except (TypeError, ValueError):
+            level = 8
+        return [candidate for candidate in (1, 2, 4, 8, 16, 32) if candidate > level]
 
     @staticmethod
     def _ids_from_search_index_response(data: dict) -> list[int]:
