@@ -21,6 +21,7 @@ class ModelAnalysis:
     """Analysis of a single model in the import."""
     filename: str
     hash: str | None
+    size: int | None
     sources: list[str]
     relative_path: str
     locally_available: bool
@@ -34,6 +35,12 @@ class NodeAnalysis:
     name: str
     source: str  # "registry" | "development" | "git"
     install_spec: str | None
+    registry_id: str | None
+    repository: str | None
+    version: str | None
+    branch: str | None
+    pinned_commit: str | None
+    dependency_sources: list[str] | None
     is_dev_node: bool
 
 
@@ -48,6 +55,9 @@ class WorkflowAnalysis:
 @dataclass
 class ImportAnalysis:
     """Complete analysis of an import before finalization."""
+
+    # Raw manifest preview
+    manifest_toml: str
 
     # ComfyUI version
     comfyui_version: str | None
@@ -114,8 +124,8 @@ class ImportAnalyzer:
         """
         # Parse pyproject.toml
         pyproject_path = cec_path / "pyproject.toml"
-        with open(pyproject_path, encoding='utf-8') as f:
-            pyproject_data = tomlkit.load(f)
+        manifest_toml = pyproject_path.read_text(encoding="utf-8")
+        pyproject_data = tomlkit.parse(manifest_toml)
 
         comfygit_config = pyproject_data.get("tool", {}).get("comfygit", {})
 
@@ -131,6 +141,7 @@ class ImportAnalyzer:
 
         # Build summary
         return ImportAnalysis(
+            manifest_toml=manifest_toml,
             comfyui_version=comfygit_config.get("comfyui_version"),
             comfyui_version_type=comfygit_config.get("comfyui_version_type"),
             models=models,
@@ -182,6 +193,7 @@ class ImportAnalyzer:
             models.append(ModelAnalysis(
                 filename=model_data.get("filename", "unknown"),
                 hash=model_hash,
+                size=model_data.get("size"),
                 sources=sources,
                 relative_path=model_data.get("relative_path", ""),
                 locally_available=locally_available,
@@ -203,6 +215,12 @@ class ImportAnalyzer:
                 name=node_name,
                 source=source,
                 install_spec=node_data.get("install_spec"),
+                registry_id=node_data.get("registry_id"),
+                repository=node_data.get("repository"),
+                version=node_data.get("version"),
+                branch=node_data.get("branch"),
+                pinned_commit=node_data.get("pinned_commit"),
+                dependency_sources=node_data.get("dependency_sources"),
                 is_dev_node=(source == "development")
             ))
 

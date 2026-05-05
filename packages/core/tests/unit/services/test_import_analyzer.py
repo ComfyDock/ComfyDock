@@ -18,6 +18,7 @@ def sample_pyproject():
                 "models": {
                     "abc123": {
                         "filename": "model1.safetensors",
+                        "size": 1024,
                         "relative_path": "checkpoints/model1.safetensors",
                         "sources": ["https://example.com/model1.safetensors"]
                     },
@@ -34,14 +35,19 @@ def sample_pyproject():
                 },
                 "nodes": {
                     "rgthree-comfy": {
-                        "source": "registry"
+                        "source": "registry",
+                        "registry_id": "rgthree-comfy",
+                        "version": "1.2.3"
                     },
                     "my-dev-node": {
                         "source": "development"
                     },
                     "custom-git-node": {
                         "source": "git",
-                        "install_spec": "https://github.com/user/repo.git"
+                        "install_spec": "https://github.com/user/repo.git",
+                        "repository": "https://github.com/user/repo.git",
+                        "branch": "main",
+                        "pinned_commit": "abcdef123456"
                     }
                 },
                 "workflows": {
@@ -104,6 +110,7 @@ def test_analyze_models(sample_pyproject, mock_model_repository, mock_node_mappi
 
         # Verify model analysis
         assert analysis.total_models == 3
+        assert "model1.safetensors" in analysis.manifest_toml
         assert analysis.models_locally_available == 1  # ghi789
         assert analysis.models_needing_download == 1  # abc123 (has source, not local)
         assert analysis.models_without_sources == 1  # def456 (no sources, not local)
@@ -111,6 +118,7 @@ def test_analyze_models(sample_pyproject, mock_model_repository, mock_node_mappi
         # Verify individual models
         model1 = next(m for m in analysis.models if m.hash == "abc123")
         assert model1.filename == "model1.safetensors"
+        assert model1.size == 1024
         assert not model1.locally_available
         assert model1.needs_download
         assert len(model1.sources) == 1
@@ -149,6 +157,8 @@ def test_analyze_nodes(sample_pyproject, mock_model_repository, mock_node_mappin
         # Verify individual nodes
         registry_node = next(n for n in analysis.nodes if n.name == "rgthree-comfy")
         assert registry_node.source == "registry"
+        assert registry_node.registry_id == "rgthree-comfy"
+        assert registry_node.version == "1.2.3"
         assert not registry_node.is_dev_node
 
         dev_node = next(n for n in analysis.nodes if n.name == "my-dev-node")
@@ -158,6 +168,9 @@ def test_analyze_nodes(sample_pyproject, mock_model_repository, mock_node_mappin
         git_node = next(n for n in analysis.nodes if n.name == "custom-git-node")
         assert git_node.source == "git"
         assert git_node.install_spec == "https://github.com/user/repo.git"
+        assert git_node.repository == "https://github.com/user/repo.git"
+        assert git_node.branch == "main"
+        assert git_node.pinned_commit == "abcdef123456"
 
 
 def test_analyze_workflows(sample_pyproject, mock_model_repository, mock_node_mapping_repository):
