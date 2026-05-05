@@ -25,6 +25,10 @@ from comfygit_core.lifecycle.switch_observer import (
     read_switch_status,
     write_switch_status,
 )
+from comfygit_core.lifecycle.comfyui_readiness import (
+    resolve_comfyui_endpoint,
+    wait_for_comfyui_ready,
+)
 
 from .formatters.error_formatter import NodeErrorFormatter
 from .strategies.interactive import InteractiveModelStrategy, InteractiveNodeStrategy
@@ -725,27 +729,20 @@ packages = []
                     all_extras=all_extras,
                 )
 
-            if switch_source_env:
-                self._write_switch_status(
-                    state="complete",
-                    progress=100,
-                    message=f"Successfully switched to {env.name}",
-                    target_env=env.name,
-                    source_env=switch_source_env,
-                )
-                self._append_switch_log(
-                    supervisor_control,
-                    f"Switch complete; starting ComfyUI for {env.name}",
-                )
-                self._release_switch_lock()
-                self._schedule_switch_status_cleanup(env.name)
-                switch_source_env = None
-
             print(f"🎮 Starting ComfyUI in environment: {env.name}{branch_display}")
             if comfyui_args:
                 print(f"   Arguments: {' '.join(comfyui_args)}")
 
-            result = env.run(comfyui_args)
+            if switch_source_env:
+                result = self._run_switched_comfyui(
+                    env,
+                    comfyui_args,
+                    source_env=switch_source_env,
+                    supervisor_control=supervisor_control,
+                )
+                switch_source_env = None
+            else:
+                result = env.run(comfyui_args)
 
             if result.returncode == RESTART_EXIT_CODE:
                 print("\n🔄 Restart requested, syncing dependencies...\n")
@@ -800,6 +797,131 @@ packages = []
     ) -> None:
         if supervisor_control:
             supervisor_control.append_log(message, level=level)
+
+    def _run_switched_comfyui(
+        self,
+        env: Environment,
+        comfyui_args: list[str],
+        *,
+        source_env: str,
+        supervisor_control: SwitchObserverServer | None,
+    ) -> subprocess.CompletedProcess:
+        """Start target ComfyUI under `cg run` switch supervision.
+
+        The switch observer should not report success merely because the
+        supervisor accepted the target environment. It should remain in the
+        startup/validation states while the target ComfyUI child boots, teeing
+        child output into the same observer log, and only publish `complete`
+        after the target HTTP server is reachable.
+        """
+        self._write_switch_status(
+            state="starting",
+            progress=65,
+            message=f"Starting ComfyUI for {env.name}...",
+            target_env=env.name,
+            source_env=source_env,
+        )
+        self._append_switch_log(
+            supervisor_control,
+            f"Switch complete; starting ComfyUI for {env.name}",
+        )
+
+        python = env.uv_manager.python_executable
+        cmd = [str(python), "main.py"] + (comfyui_args or [])
+        child_env = os.environ.copy()
+        child_env["COMFYGIT_ENV_NAME"] = env.name
+        child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(env.comfyui_path),
+            env=child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        self._append_switch_log(
+            supervisor_control,
+            f"ComfyUI process started for {env.name} (pid {proc.pid})",
+        )
+        output_thread = threading.Thread(
+            target=self._tee_switched_comfyui_output,
+            args=(proc, supervisor_control),
+            name=f"ComfyGitSwitchOutput-{env.name}",
+            daemon=True,
+        )
+        output_thread.start()
+
+        self._write_switch_status(
+            state="validating",
+            progress=85,
+            message=f"Waiting for {env.name} to be ready...",
+            target_env=env.name,
+            source_env=source_env,
+        )
+        endpoint = resolve_comfyui_endpoint(comfyui_args)
+        self._append_switch_log(
+            supervisor_control,
+            f"Waiting for ComfyUI readiness at {endpoint.base_url}",
+        )
+
+        if wait_for_comfyui_ready(
+            proc,
+            endpoint,
+            timeout=240.0,
+            log=lambda message, level="info": self._append_switch_log(
+                supervisor_control,
+                message,
+                level=level,
+            ),
+        ):
+            self._write_switch_status(
+                state="complete",
+                progress=100,
+                message=f"Successfully switched to {env.name}",
+                target_env=env.name,
+                source_env=source_env,
+            )
+            self._append_switch_log(
+                supervisor_control,
+                f"ComfyUI is ready for {env.name}",
+            )
+            self._release_switch_lock()
+            self._schedule_switch_status_cleanup(env.name)
+        else:
+            self._write_switch_status(
+                state="critical_failure",
+                progress=100,
+                message=f"ComfyUI did not become ready for {env.name}",
+                target_env=env.name,
+                source_env=source_env,
+            )
+            self._append_switch_log(
+                supervisor_control,
+                f"ComfyUI did not become ready for {env.name}",
+                level="error",
+            )
+            self._release_switch_lock()
+
+        returncode = proc.wait()
+        output_thread.join(timeout=2)
+        return subprocess.CompletedProcess(cmd, returncode)
+
+    def _tee_switched_comfyui_output(
+        self,
+        proc: subprocess.Popen,
+        supervisor_control: SwitchObserverServer | None,
+    ) -> None:
+        if proc.stdout is None:
+            return
+
+        for line in proc.stdout:
+            clean = line.rstrip("\n")
+            print(clean, flush=True)
+            if clean:
+                self._append_switch_log(supervisor_control, clean)
 
     def _consume_switch_request(self, current_env: Environment) -> Environment | None:
         """Consume a Manager switch request while `cg run` is PID 1.
