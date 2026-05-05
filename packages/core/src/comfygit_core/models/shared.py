@@ -377,6 +377,21 @@ class ModelDetails:
 
 
 @dataclass
+class ModelDeleteResult:
+    """Result of deleting model files and their index locations."""
+    model_hash: str
+    filename: str
+    deleted_paths: list[str] = field(default_factory=list)
+    missing_paths: list[str] = field(default_factory=list)
+    errors: list[dict[str, str]] = field(default_factory=list)
+    remaining_locations: int = 0
+
+    @property
+    def status(self) -> str:
+        return "partial" if self.errors else "success"
+
+
+@dataclass
 class ModelWithoutSourceInfo:
     """Information about a model missing source URLs during export."""
     filename: str

@@ -1486,6 +1486,79 @@ class GlobalCommands:
             # Interactive mode
             self._add_source_interactive(env)
 
+    @with_workspace_logging("model delete")
+    def model_delete(self, args: argparse.Namespace) -> None:
+        """Delete model files from disk and clean their index entries."""
+        from comfygit_core.utils.common import format_size
+
+        identifier = args.identifier
+        logger.info(f"Deleting model: '{identifier}'")
+
+        try:
+            details = self.workspace.get_model_details(identifier)
+        except KeyError:
+            print(f"✗ Model not found: {identifier}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            print("  Use a full hash or a more specific filename.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            logger.error(f"Failed to load model details for '{identifier}': {exc}")
+            print(f"✗ Failed to load model details: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        model = details.model
+        locations = details.all_locations
+
+        print(f"Delete model: {model.filename}")
+        print(f"  Hash: {model.hash}")
+        print(f"  Size: {format_size(model.file_size)}")
+        print(f"  Locations: {len(locations)}")
+        for location in locations:
+            base_directory = location.get("base_directory")
+            relative_path = location.get("relative_path")
+            if base_directory and relative_path:
+                print(f"    • {Path(base_directory) / relative_path}")
+            else:
+                print(f"    • {location.get('path') or relative_path or 'unknown'}")
+
+        if not args.yes:
+            choice = input("\nDelete these model file(s) and clean index entries? [y/N]: ").strip().lower()
+            if choice not in {"y", "yes"}:
+                print("Delete cancelled")
+                return
+
+        try:
+            result = self.workspace.delete_model(identifier)
+        except Exception as exc:
+            logger.error(f"Failed to delete model '{identifier}': {exc}")
+            print(f"✗ Delete failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if result.deleted_paths:
+            print(f"\n✓ Deleted {len(result.deleted_paths)} file(s):")
+            for path in result.deleted_paths:
+                print(f"  • {path}")
+        else:
+            print("\nNo files were deleted from disk.")
+
+        if result.missing_paths:
+            print(f"\nCleaned {len(result.missing_paths)} stale index location(s):")
+            for path in result.missing_paths:
+                print(f"  • {path}")
+
+        if result.remaining_locations:
+            print(f"\nRemaining indexed locations: {result.remaining_locations}")
+
+        if result.errors:
+            print("\nDelete completed with errors:", file=sys.stderr)
+            for error in result.errors:
+                print(f"  • {error.get('path', '')}: {error.get('error', 'unknown error')}", file=sys.stderr)
+            sys.exit(1)
+
+        print("\n✓ Model index cleaned")
+
     def _add_source_direct(self, env, identifier: str, url: str):
         """Direct mode: add source to specific model."""
         result = env.add_model_source(identifier, url)
@@ -1885,12 +1958,13 @@ class GlobalCommands:
 
     def orch_clean(self, args: argparse.Namespace) -> None:
         """Clean orchestrator state files."""
+        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
+
         from .utils.orchestrator import (
             cleanup_orchestrator_state,
             is_orchestrator_running,
             kill_orchestrator_process,
         )
-        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
 
         metadata_dir = self.workspace.path / ".metadata"
 

@@ -349,6 +349,12 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     model_add_source_parser.add_argument("url", nargs="?", help="Download URL")
     model_add_source_parser.set_defaults(func=global_cmds.model_add_source)
 
+    # model delete
+    model_delete_parser = model_subparsers.add_parser("delete", help="Delete model files and clean index entries")
+    model_delete_parser.add_argument("identifier", help="Model hash, hash prefix, filename, or path")
+    model_delete_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    model_delete_parser.set_defaults(func=global_cmds.model_delete)
+
     # Registry management subcommands
     registry_parser = subparsers.add_parser("registry", help="Manage node registry cache")
     registry_subparsers = registry_parser.add_subparsers(dest="registry_command", help="Registry commands")

@@ -27,7 +27,7 @@ from ..models.materialization import (
     MaterializeSourceType,
     ModelMaterializationStrategy,
 )
-from ..models.shared import ModelDetails, ModelWithLocation
+from ..models.shared import ModelDeleteResult, ModelDetails, ModelWithLocation
 from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
 from ..services.registry_data_manager import RegistryDataManager
@@ -1039,6 +1039,89 @@ class Workspace:
             all_locations=locations,
             sources=sources
         )
+
+    @staticmethod
+    def _path_for_model_location(location: dict) -> Path:
+        """Resolve an indexed model location to a safe filesystem path."""
+        base_directory = location.get("base_directory")
+        relative_path = location.get("relative_path")
+        if not base_directory or not relative_path:
+            raise ValueError("Model location is missing base directory or relative path")
+
+        base_path = Path(base_directory).expanduser()
+        target_path = base_path / str(relative_path).replace("\\", "/")
+        base_resolved = base_path.resolve(strict=False)
+        parent_resolved = target_path.parent.resolve(strict=False)
+
+        try:
+            parent_resolved.relative_to(base_resolved)
+        except ValueError as exc:
+            raise ValueError(f"Refusing to delete model outside indexed base directory: {target_path}") from exc
+
+        return target_path
+
+    def delete_model(self, identifier: str) -> ModelDeleteResult:
+        """Delete every indexed file location for a model and clean index rows.
+
+        Args:
+            identifier: Model hash, hash prefix, filename, or path.
+
+        Returns:
+            Deletion result with deleted, missing, errored, and remaining paths.
+
+        Raises:
+            ValueError: Multiple matches found or an indexed location is unsafe.
+            KeyError: No model found matching identifier.
+        """
+        details = self.get_model_details(identifier)
+        model_repo = self.model_repository
+        result = ModelDeleteResult(
+            model_hash=details.model.hash,
+            filename=details.model.filename,
+        )
+
+        for location in details.all_locations:
+            try:
+                model_path = self._path_for_model_location(location)
+            except ValueError as exc:
+                result.errors.append({
+                    "path": str(location.get("path") or location.get("relative_path") or ""),
+                    "error": str(exc),
+                })
+                continue
+
+            path_str = str(model_path)
+            try:
+                if model_path.exists() or model_path.is_symlink():
+                    if not model_path.is_file() and not model_path.is_symlink():
+                        result.errors.append({
+                            "path": path_str,
+                            "error": "Indexed model location is not a file",
+                        })
+                        continue
+                    model_path.unlink()
+                    result.deleted_paths.append(path_str)
+                else:
+                    result.missing_paths.append(path_str)
+
+                location_id = location.get("id")
+                if location_id is not None:
+                    model_repo.remove_location_by_id(int(location_id))
+                else:
+                    model_repo.remove_location_for_directory(
+                        Path(location["base_directory"]),
+                        location["relative_path"],
+                    )
+            except Exception as exc:
+                result.errors.append({
+                    "path": path_str,
+                    "error": str(exc),
+                })
+
+        model_repo.clear_orphaned_models()
+        model_repo.clear_orphaned_model_sources()
+        result.remaining_locations = len(model_repo.get_locations(details.model.hash))
+        return result
 
     def get_model_stats(self):
         """Get model index statistics for current directory.
