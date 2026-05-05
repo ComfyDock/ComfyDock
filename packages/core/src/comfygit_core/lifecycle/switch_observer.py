@@ -7,7 +7,7 @@ import time
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SWITCH_STATUS_FILE = ".switch_status.json"
 SUPERVISOR_LOG_FILE = "supervisor-switch.log"
@@ -93,11 +93,17 @@ def read_switch_logs(metadata_dir: Path, line_count: int = 80) -> list[dict[str,
     return entries
 
 
-def write_supervisor_advertisement(workspace_path: Path, host: str, port: int) -> None:
+def write_supervisor_advertisement(
+    workspace_path: Path,
+    host: str,
+    port: int,
+    *,
+    kind: str = "cg_run_supervisor",
+) -> None:
     metadata_dir = metadata_dir_for(workspace_path)
     metadata_dir.mkdir(parents=True, exist_ok=True)
     (metadata_dir / SUPERVISOR_INFO_FILE).write_text(
-        json.dumps({"host": host, "port": port}, indent=2),
+        json.dumps({"host": host, "port": port, "kind": kind}, indent=2),
         encoding="utf-8",
     )
 
@@ -110,6 +116,7 @@ def read_supervisor_advertisement(workspace_path: Path) -> dict[str, Any] | None
     try:
         info = json.loads(info_file.read_text(encoding="utf-8"))
         info["port"] = int(info["port"])
+        info["kind"] = str(info.get("kind") or "cg_run_supervisor")
         return info
     except Exception:
         return None
@@ -131,11 +138,21 @@ def build_switch_observer_payload(public_origin: str, kind: str = "cg_run_superv
 class SwitchObserverServer:
     """Expose switch status and recent lifecycle log lines outside ComfyUI."""
 
-    def __init__(self, workspace_path: Path, host: str, port: int) -> None:
+    def __init__(
+        self,
+        workspace_path: Path,
+        host: str,
+        port: int,
+        *,
+        kind: str = "cg_run_supervisor",
+        post_handlers: dict[str, Callable[[], dict[str, Any]]] | None = None,
+    ) -> None:
         self.workspace_path = workspace_path
         self.metadata_dir = metadata_dir_for(workspace_path)
         self.host = host
         self.port = port
+        self.kind = kind
+        self.post_handlers = post_handlers or {}
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -152,7 +169,7 @@ class SwitchObserverServer:
             daemon=True,
         )
         self._thread.start()
-        write_supervisor_advertisement(self.workspace_path, self.host, self.port)
+        write_supervisor_advertisement(self.workspace_path, self.host, self.port, kind=self.kind)
         self.append_log(f"Supervisor control server listening on {self.host}:{self.port}")
 
     def stop(self) -> None:
@@ -201,11 +218,23 @@ class SwitchObserverServer:
 
                 self.send_error(404, "Not Found")
 
-            def _send_json(self, payload: dict[str, Any]) -> None:
+            def do_POST(self) -> None:
+                path = self.path.split("?", 1)[0]
+                handler = control.post_handlers.get(path)
+                if not handler:
+                    self.send_error(404, "Not Found")
+                    return
+
+                try:
+                    self._send_json(handler())
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+
+            def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
                 body = json.dumps(payload).encode("utf-8")
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "Content-Type")
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))

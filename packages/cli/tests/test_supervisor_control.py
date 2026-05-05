@@ -36,7 +36,7 @@ def test_supervisor_control_exposes_status_and_logs(tmp_path):
     )
 
     port = _free_port()
-    server = SwitchObserverServer(tmp_path, "127.0.0.1", port)
+    server = SwitchObserverServer(tmp_path, "127.0.0.1", port, kind="manager_orchestrator")
     try:
         server.start()
         server.append_log("Switch request accepted")
@@ -48,6 +48,7 @@ def test_supervisor_control_exposes_status_and_logs(tmp_path):
         assert status["target_env"] == "target"
         assert logs["logs"][-1]["message"] == "Switch request accepted"
         assert (metadata_dir / SUPERVISOR_INFO_FILE).exists()
+        assert json.loads((metadata_dir / SUPERVISOR_INFO_FILE).read_text())["kind"] == "manager_orchestrator"
         assert (metadata_dir / SWITCH_STATUS_FILE).exists()
     finally:
         server.stop()
