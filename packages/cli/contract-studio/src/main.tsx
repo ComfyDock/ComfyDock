@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MasonryPhotoAlbum } from "react-photo-album";
 import "react-photo-album/masonry.css";
-import { ChevronLeft, ChevronRight, Copy, Download, RotateCcw, Trash2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, Download, RotateCcw, Trash2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Media, NumberPicker, StudioSelect, Tip } from "@/app/components";
 import { ShapeProvider } from "@/lib/shape-context";
@@ -83,6 +83,8 @@ type RunResponse = {
 type GalleryItem = {
   id: string;
   contract: string;
+  contractWorkflow?: string;
+  contractName?: string;
   promptId?: string;
   output?: RunOutput;
   artifact?: OutputArtifact;
@@ -94,6 +96,7 @@ type GalleryItem = {
   width: number;
   height: number;
   inputs?: Record<string, unknown>;
+  rawResult?: RunResponse;
   error?: string;
   createdAt: string;
 };
@@ -149,6 +152,23 @@ function compactType(type: string) {
 
 function titleFromOutput(value?: string) {
   return (value || "Output").replace(/[_-]+/g, " ");
+}
+
+function formatGeneratedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function jsonBlock(value: unknown) {
+  return JSON.stringify(value ?? {}, null, 2);
 }
 
 function galleryPhoto(item: GalleryItem): GalleryPhoto {
@@ -214,7 +234,7 @@ function App() {
   const [selectedKey, setSelectedKey] = useState("");
   const [inputs, setInputs] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Ready");
+  const [, setStatus] = useState("Ready");
   const [issues, setIssues] = useState<RunIssue[]>([]);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -278,6 +298,8 @@ function App() {
       {
         id: pendingId,
         contract: contractTitle(selected),
+        contractWorkflow: selected.workflow,
+        contractName: selected.contract,
         type: "image",
         status: "pending",
         width: dimensions.width,
@@ -305,6 +327,8 @@ function App() {
           nextItems.push({
             id: `${result.prompt_id || Date.now()}-${output.name}-${artifact.filename || nextItems.length}`,
             contract: contractTitle(selected),
+            contractWorkflow: selected.workflow,
+            contractName: selected.contract,
             promptId: result.prompt_id,
             output,
             artifact,
@@ -316,6 +340,7 @@ function App() {
             width: type === "image" || type === "video" ? dimensions.width : 1,
             height: type === "image" || type === "video" ? dimensions.height : 1,
             inputs: submitInputs,
+            rawResult: result,
             createdAt: new Date().toISOString(),
           });
         }
@@ -440,27 +465,11 @@ function App() {
                 })}
               />
             </Field>
-            {selected ? (
-              <div className="contract-summary">
-                <strong>{selected.workflow}</strong>
-                <span>
-                  {selected.inputs.length} inputs / {selected.outputs.length} outputs
-                </span>
-              </div>
-            ) : null}
           </section>
         ) : null}
 
         {selected ? (
           <section className="runner-card">
-            <div className="runner-head">
-              <div>
-                <p className="eyebrow">Selected</p>
-                <h2>{contractTitle(selected)}</h2>
-              </div>
-              <span className="status-chip">{status}</span>
-            </div>
-
             {selected.description ? <p className="description">{selected.description}</p> : null}
 
             <div className="input-stack">
@@ -843,6 +852,47 @@ function OutputViewer({
           >
             <Media item={item} />
           </div>
+          <aside className="viewer-side" onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+            <div className="viewer-side-head">
+              <div>
+                <p className="eyebrow">Generation Details</p>
+                <h3>{item.filename || titleFromOutput(item.outputName)}</h3>
+              </div>
+            </div>
+            <div className="viewer-side-body">
+              <div className="detail-grid">
+                <span>Contract</span>
+                <strong>{item.contract}</strong>
+                <span>Workflow</span>
+                <strong>{item.contractWorkflow || "Unknown"}</strong>
+                <span>Name</span>
+                <strong>{item.contractName || "default"}</strong>
+                <span>Status</span>
+                <strong>{item.status}</strong>
+                <span>Generated</span>
+                <strong>{formatGeneratedAt(item.createdAt)}</strong>
+                <span>Prompt ID</span>
+                <strong>{item.promptId || "Not recorded"}</strong>
+                <span>Output</span>
+                <strong>{item.outputName || "Not recorded"}</strong>
+                <span>Type</span>
+                <strong>{item.type}</strong>
+              </div>
+
+              <ReadoutBlock title="Parameters" value={jsonBlock(item.inputs)} />
+              <details className="debug-disclosure">
+                <summary>
+                  <span>Raw API Output</span>
+                  <ChevronDown size={15} />
+                </summary>
+                <ReadoutBlock
+                  title="Raw API Output"
+                  value={jsonBlock(item.rawResult || item.error || item.artifact?.raw || item.artifact)}
+                  hideTitle
+                />
+              </details>
+            </div>
+          </aside>
           {hasNeighbors ? (
             <>
               <Tip content="Previous">
@@ -900,6 +950,22 @@ function OutputViewer({
             </Tip>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ReadoutBlock({ title, value, hideTitle = false }: { title: string; value: string; hideTitle?: boolean }) {
+  return (
+    <div className="prompt-readout">
+      {hideTitle ? null : <span>{title}</span>}
+      <div className="readout-box">
+        <pre>{value}</pre>
+        <Tip content={`Copy ${title.toLowerCase()}`}>
+          <button className="readout-copy" aria-label={`Copy ${title}`} onClick={() => void copyText(value)}>
+            <Copy size={13} />
+          </button>
+        </Tip>
       </div>
     </div>
   );
