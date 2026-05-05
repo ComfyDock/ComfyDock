@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MasonryPhotoAlbum } from "react-photo-album";
 import "react-photo-album/masonry.css";
-import { ChevronLeft, ChevronRight, Copy, Download, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Download, RotateCcw, Trash2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Media, NumberPicker, StudioSelect, Tip } from "@/app/components";
 import { ShapeProvider } from "@/lib/shape-context";
@@ -482,7 +482,14 @@ function App() {
               </div>
             ) : null}
 
-            <Button type="button" className="generate-button" onClick={runSelected} disabled={busy} loading={busy}>
+            <Button
+              type="button"
+              className="generate-button"
+              onClick={runSelected}
+              disabled={busy}
+              loading={busy}
+              leadingIcon={Wand2}
+            >
               {busy ? "Generating..." : "Generate"}
             </Button>
           </section>
@@ -651,13 +658,13 @@ function GalleryTile({
       {item.status !== "pending" ? (
         <span className="tile-hover-actions">
           {item.url ? (
-            <Tip content="Download" side="left">
+            <Tip content="Download" side="left" className="tile-action-tooltip">
               <a className="tile-icon" aria-label="Download" href={item.url} download onClick={(event) => event.stopPropagation()}>
                 <Download size={13} />
               </a>
             </Tip>
           ) : null}
-          <Tip content="Copy" side="left">
+          <Tip content="Copy" side="left" className="tile-action-tooltip">
             <span
               className="tile-icon"
               role="button"
@@ -670,7 +677,7 @@ function GalleryTile({
               <Copy size={14} />
             </span>
           </Tip>
-          <Tip content="Delete from gallery" side="left">
+          <Tip content="Delete from gallery" side="left" className="tile-action-tooltip">
             <span
               className="tile-delete"
               role="button"
@@ -704,27 +711,136 @@ function OutputViewer({
   onCopy: (item: GalleryItem) => void;
   onDelete: (item: GalleryItem) => void;
 }) {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef<{ id: number; x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
+  const dragEndRef = useRef(0);
+
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    dragRef.current = null;
+    dragEndRef.current = 0;
+  }, [item.id]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
       if (event.key === "ArrowLeft") onMove(-1);
       if (event.key === "ArrowRight") onMove(1);
       if (event.key === "Delete" || event.key === "Backspace") onDelete(item);
+      if (event.key === "+" || event.key === "=") zoomViewer(zoom + 0.25);
+      if (event.key === "-") zoomViewer(zoom - 0.25);
+      if (event.key === "0") resetViewer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [item, onClose, onDelete, onMove]);
+  }, [item, onClose, onDelete, onMove, zoom]);
+
+  function resetViewer() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function zoomViewer(nextZoom: number, anchor?: { x: number; y: number; element: HTMLElement }) {
+    const clamped = Math.max(0.5, Math.min(6, Number(nextZoom.toFixed(2))));
+    if (anchor && clamped > 1) {
+      const rect = anchor.element.getBoundingClientRect();
+      const anchorX = anchor.x - rect.left - rect.width / 2;
+      const anchorY = anchor.y - rect.top - rect.height / 2;
+      const scale = clamped / Math.max(zoom, 0.01);
+      setPan({
+        x: anchorX - (anchorX - pan.x) * scale,
+        y: anchorY - (anchorY - pan.y) * scale,
+      });
+    } else if (clamped <= 1) {
+      setPan({ x: 0, y: 0 });
+    }
+    setZoom(clamped);
+  }
+
+  function wheelViewer(event: React.WheelEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+    zoomViewer(zoom * factor, { x: event.clientX, y: event.clientY, element: event.currentTarget });
+  }
+
+  function clickViewer(event: React.MouseEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    if (Date.now() - dragEndRef.current < 220) return;
+    if (dragRef.current?.moved) return;
+    const media = event.currentTarget.querySelector("img, video") as HTMLElement | null;
+    if (!media) return;
+    const rect = media.getBoundingClientRect();
+    const inside =
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom;
+    if (!inside) onClose();
+  }
+
+  function startViewerDrag(event: React.PointerEvent<HTMLDivElement>) {
+    if (zoom <= 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+      moved: false,
+    };
+    setIsDragging(true);
+  }
+
+  function dragViewer(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    if (zoom > 1) setPan({ x: drag.panX + dx, y: drag.panY + dy });
+  }
+
+  function stopViewerDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (drag?.id === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (drag.moved) dragEndRef.current = Date.now();
+      setIsDragging(false);
+      window.setTimeout(() => {
+        dragRef.current = null;
+      }, 0);
+    }
+  }
 
   return (
-    <div
-      className="scrim"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="viewer-shell" onClick={(event) => event.stopPropagation()}>
+    <div className="scrim" onWheel={(event) => event.preventDefault()}>
+      <div className="viewer-shell">
         <div className="viewer-stage">
-          <div className="viewer-canvas">
+          <div
+            className={cn("viewer-canvas", zoom > 1 && "is-zoomed", isDragging && "is-dragging")}
+            style={{ "--zoom": zoom, "--pan-x": `${pan.x}px`, "--pan-y": `${pan.y}px` } as React.CSSProperties}
+            onWheel={wheelViewer}
+            onPointerDown={startViewerDrag}
+            onPointerMove={dragViewer}
+            onPointerUp={stopViewerDrag}
+            onPointerCancel={stopViewerDrag}
+            onDragStart={(event) => event.preventDefault()}
+            onClick={clickViewer}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              zoomViewer(zoom > 1 ? 1 : 2.5, { x: event.clientX, y: event.clientY, element: event.currentTarget });
+            }}
+          >
             <Media item={item} />
           </div>
           {hasNeighbors ? (
@@ -741,7 +857,24 @@ function OutputViewer({
               </Tip>
             </>
           ) : null}
-          <div className="viewer-dock">
+          <div className="viewer-dock" onClick={(event) => event.stopPropagation()}>
+            <Tip content="Zoom out">
+              <button className="icon-button" type="button" aria-label="Zoom out" onClick={() => zoomViewer(zoom - 0.25)} disabled={zoom <= 0.5}>
+                <ZoomOut size={15} />
+              </button>
+            </Tip>
+            <Tip content="Reset zoom">
+              <button className="text-button viewer-zoom" type="button" aria-label="Reset zoom" onClick={resetViewer}>
+                {zoom !== 1 ? <RotateCcw size={13} /> : null}
+                {Math.round(zoom * 100)}%
+              </button>
+            </Tip>
+            <Tip content="Zoom in">
+              <button className="icon-button" type="button" aria-label="Zoom in" onClick={() => zoomViewer(zoom + 0.25)} disabled={zoom >= 6}>
+                <ZoomIn size={15} />
+              </button>
+            </Tip>
+            <span className="viewer-divider" />
             <Tip content={item.type === "image" ? "Copy image" : "Copy output link"}>
               <button className="icon-button" type="button" aria-label="Copy output" onClick={() => void onCopy(item)}>
                 <Copy size={15} />

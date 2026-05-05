@@ -129,14 +129,16 @@ export function StudioSelect({
 export function Tip({
   content,
   side = "bottom",
+  className,
   children,
 }: {
   content: React.ReactNode;
   side?: "top" | "right" | "bottom" | "left";
+  className?: string;
   children: React.ReactElement;
 }) {
   return (
-    <FluidTooltip content={content} side={side} sideOffset={8} delayDuration={120}>
+    <FluidTooltip content={content} side={side} sideOffset={8} delayDuration={120} className={className}>
       {children}
     </FluidTooltip>
   );

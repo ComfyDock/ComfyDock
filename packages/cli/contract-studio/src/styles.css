@@ -114,6 +114,9 @@ select:focus-visible {
 
 .gallery-stage {
   min-width: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: auto;
   padding: 18px;
   background:
@@ -211,7 +214,8 @@ h2 {
 }
 
 .empty-stage {
-  min-height: calc(100vh - 82px);
+  min-height: 0;
+  height: 100%;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -364,8 +368,9 @@ h2 {
   top: 6px;
   right: 6px;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
   gap: 5px;
   opacity: 0;
   pointer-events: none;
@@ -387,6 +392,15 @@ h2 {
   text-decoration: none;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.22);
   transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 220ms var(--spring);
+}
+
+.tile-action-tooltip {
+  border-radius: 999px !important;
+  background: hsl(var(--foreground)) !important;
+  color: hsl(var(--background)) !important;
+  padding: 5px 9px !important;
+  box-shadow: 0 8px 26px rgb(0 0 0 / 0.28);
+  white-space: nowrap;
 }
 
 .tile-hover-actions .tile-icon:hover,
@@ -850,8 +864,28 @@ textarea::placeholder {
 
 .generate-button {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   margin-top: 16px;
+  border: 0 !important;
+  border-radius: calc(var(--radius) + 3px) !important;
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.005em;
+  gap: 8px !important;
+  box-shadow: var(--shadow-sm);
+  transition: transform 220ms var(--spring), box-shadow 220ms var(--ease-out), opacity 160ms var(--ease-out) !important;
+}
+
+.generate-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+
+.generate-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
 }
 
 .raw-card {
@@ -892,12 +926,25 @@ textarea::placeholder {
 
 .viewer-canvas {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: 0;
   min-height: 0;
+  width: 100%;
+  height: 100%;
   padding: 24px 24px 92px;
   overflow: hidden;
+  cursor: default;
+  touch-action: none;
+}
+
+.viewer-canvas.is-zoomed {
+  cursor: grab;
+}
+
+.viewer-canvas.is-zoomed:active {
+  cursor: grabbing;
 }
 
 .viewer-canvas img,
@@ -907,7 +954,23 @@ textarea::placeholder {
   max-height: calc(100vh - 132px);
   border-radius: var(--radius);
   object-fit: contain;
+  transform: translate3d(var(--pan-x, 0), var(--pan-y, 0), 0) scale(var(--zoom, 1));
+  transform-origin: center;
+  transition: transform 80ms var(--ease-soft);
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  will-change: transform;
   box-shadow: 0 24px 90px rgb(0 0 0 / 0.42);
+}
+
+.viewer-canvas.is-zoomed img,
+.viewer-canvas.is-zoomed video,
+.viewer-canvas.is-dragging img,
+.viewer-canvas.is-dragging video {
+  transition: none;
 }
 
 .viewer-canvas .media-fallback {
@@ -957,6 +1020,14 @@ textarea::placeholder {
   background: hsl(var(--accent));
   color: hsl(var(--foreground));
   transform: translateY(-1px);
+}
+
+.viewer-zoom {
+  min-width: 58px;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .danger-tone:hover {
@@ -1029,6 +1100,8 @@ textarea::placeholder {
 
   .gallery-stage {
     min-height: 58vh;
+    height: auto;
+    overflow: visible;
   }
 
   .viewer-canvas {
