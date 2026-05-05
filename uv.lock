@@ -368,6 +368,7 @@ name = "comfygit"
 version = "0.3.22"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "argcomplete" },
     { name = "comfygit-core" },
     { name = "requests" },
@@ -375,6 +376,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "argcomplete", specifier = ">=3.5.0" },
     { name = "comfygit-core", editable = "packages/core" },
     { name = "requests", specifier = ">=2.28.0" },

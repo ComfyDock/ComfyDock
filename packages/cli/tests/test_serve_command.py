@@ -2,11 +2,41 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_cli.serve_runtime import ComfyUIClient
+from comfygit_cli.serve_runtime import ComfyUIClient, _stamp_output_cache_busters, create_app
+
+
+async def _with_test_server(
+    handler: Callable[[web.Request], Awaitable[web.Response]],
+    method: str,
+    path: str,
+) -> tuple[str, web.AppRunner]:
+    app = web.Application()
+    app.router.add_route(method, path, handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = site._server.sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    port = sockets[0].getsockname()[1]
+    return f"http://127.0.0.1:{port}", runner
+
+
+async def _with_app_server(app: web.Application) -> tuple[str, web.AppRunner]:
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = site._server.sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    port = sockets[0].getsockname()[1]
+    return f"http://127.0.0.1:{port}", runner
 
 
 def test_serve_parser_defaults() -> None:
@@ -63,23 +93,42 @@ def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> 
     assert called_config.port == 9000
 
 
-@patch("comfygit_cli.serve_runtime.requests.post")
-def test_comfyui_client_submit_prompt_returns_prompt_id(mock_post) -> None:
-    response = MagicMock()
-    response.json.return_value = {"prompt_id": "abc123"}
-    mock_post.return_value = response
+@pytest.mark.asyncio
+async def test_serve_app_serves_contract_studio_root() -> None:
+    state = MagicMock()
+    app = create_app(state)
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.get(f"{base_url}/") as response:
+                text = await response.text()
 
-    client = ComfyUIClient("http://127.0.0.1:8188")
+        assert response.status == 200
+        assert "ComfyGit Studio" in text
+        assert "root" in text
+    finally:
+        await runner.cleanup()
 
-    assert client.submit_prompt({"1": {"class_type": "Test", "inputs": {}}}) == "abc123"
-    response.raise_for_status.assert_called_once()
-    mock_post.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_comfyui_client_submit_prompt_returns_prompt_id() -> None:
+    async def handler(request: web.Request) -> web.Response:
+        body = await request.json()
+        assert body == {"prompt": {"1": {"class_type": "Test", "inputs": {}}}}
+        return web.json_response({"prompt_id": "abc123"})
+
+    base_url, runner = await _with_test_server(handler, "POST", "/prompt")
+    try:
+        client = ComfyUIClient(base_url)
+
+        assert await client.submit_prompt({"1": {"class_type": "Test", "inputs": {}}}) == "abc123"
+    finally:
+        await runner.cleanup()
 
 
-@patch("comfygit_cli.serve_runtime.requests.get")
-def test_comfyui_client_unwraps_prompt_history(mock_get) -> None:
-    response = MagicMock()
-    response.json.return_value = {
+@pytest.mark.asyncio
+async def test_comfyui_client_unwraps_prompt_history() -> None:
+    history_payload = {
         "abc123": {
             "outputs": {
                 "9": {
@@ -90,8 +139,36 @@ def test_comfyui_client_unwraps_prompt_history(mock_get) -> None:
             }
         }
     }
-    mock_get.return_value = response
 
-    client = ComfyUIClient("http://127.0.0.1:8188")
+    async def handler(_request: web.Request) -> web.Response:
+        return web.json_response(history_payload)
 
-    assert client.get_history("abc123") == response.json.return_value["abc123"]
+    base_url, runner = await _with_test_server(handler, "GET", "/history/abc123")
+    try:
+        client = ComfyUIClient(base_url)
+
+        assert await client.get_history("abc123") == history_payload["abc123"]
+    finally:
+        await runner.cleanup()
+
+
+def test_stamp_output_cache_busters_updates_save_image_prefix() -> None:
+    prompt = {
+        "8": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "ComfyUI", "images": ["4", 0]},
+        },
+        "9": {
+            "class_type": "PreviewImage",
+            "inputs": {"images": ["4", 0]},
+        },
+    }
+    outputs = (
+        SimpleNamespace(type="image", node_id="8"),
+        SimpleNamespace(type="image", node_id="9"),
+    )
+
+    _stamp_output_cache_busters(prompt, outputs, "abc123")
+
+    assert prompt["8"]["inputs"]["filename_prefix"] == "ComfyUI_abc123"
+    assert "filename_prefix" not in prompt["9"]["inputs"]

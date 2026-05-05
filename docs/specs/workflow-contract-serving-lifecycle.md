@@ -126,10 +126,43 @@ The CLI now provides a first `cg serve` adapter that resolves the active or
 `-e <env>` environment, serves contract metadata, converts contract-shaped run
 requests through legacy core prompt-building logic, submits prompts to a
 configured ComfyUI API URL, optionally waits for history, and returns local
-output references. This adapter does not launch ComfyUI.
+output references. The adapter is implemented as an `aiohttp` runtime in the
+CLI package so it can grow into static UI serving, progress streams, websocket
+bridging, and output delivery without moving transport concerns into core. This
+adapter does not launch ComfyUI.
 
 This adapter should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.
+
+### CGSERVE-RUN-01A [PLANNED]: `cg serve` root hosts the contract studio UI
+Validation: MIXED
+
+The `cg serve` root path should render a browser UI for the served environment,
+not a blank or API-only landing. This hosted contract studio is a thin client
+over the same contract metadata and run endpoints that external callers use. It
+must not introduce a second execution path or workflow-specific graph builder.
+
+The first studio slice should list available contracts as cards, open a
+contract-specific generation view, render controls from contract input schema,
+submit generation requests to the matching contract run endpoint, and display
+image outputs returned by the same API response. Unsupported input or output
+types should degrade to plain fields or raw JSON instead of blocking the whole
+contract.
+
+### CGSERVE-RUN-01B [PLANNED]: Studio frontend is a packaged static asset
+Validation: STATIC
+
+The contract studio source should live in the CLI package as a normal
+React/Vite frontend project for local development ergonomics. Release builds
+should emit static assets into the Python package so `cg serve` can serve them
+without requiring Node.js at runtime. The packaged UI may use design patterns
+inspired by J AI Studio, but ComfyGit's UI remains contract-driven rather than
+model/profile-driven.
+
+During local development, the frontend may be built independently and served by
+the CLI `aiohttp` adapter from its emitted asset directory. The serve adapter
+owns static file routing, SPA fallback, and output proxy URLs; core continues to
+own only contract interpretation and prompt/output semantics.
 
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED
@@ -148,8 +181,13 @@ Validation: MIXED
 
 The serve runtime may own HTTP routing, async run records, ComfyUI request
 submission, history polling, progress streams, websocket/progress proxying,
-artifact retrieval, cancellation, and output delivery adapters. These concerns
-should stay outside core while still using core for contract interpretation.
+static hosted UI assets, artifact retrieval, cancellation, and output delivery
+adapters. These concerns should stay outside core while still using core for
+contract interpretation.
+
+The hosted studio should call the same serve endpoints that scripts and
+machines call. It is a presentation layer for contracts, not a privileged
+runtime path.
 
 ### CGSERVE-RUN-04 [PLANNED]: Deployed containers should expose serve, not raw ComfyUI
 Validation: HUMAN_REVIEW
