@@ -12,17 +12,21 @@ import pytest
 from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_cli.serve_runtime import (
+from comfygit_cli.serve_executor import (
     ComfyUIClient,
-    ServeConfig,
+    LocalComfyExecutor,
+    RunExecutionRequest,
     _attach_artifact_dimensions,
+    _image_dimensions_from_bytes,
+    _stamp_output_cache_busters,
+)
+from comfygit_cli.serve_runtime import (
+    ServeConfig,
     _content_type_for_filename,
     _gallery_items_for_outputs,
     _generated_upload_filename,
-    _image_dimensions_from_bytes,
     _prepare_contract_inputs,
     _record_failed_run,
-    _stamp_output_cache_busters,
     create_app,
 )
 from comfygit_cli.serve_state import (
@@ -500,6 +504,42 @@ def test_stamp_output_cache_busters_updates_save_image_prefix() -> None:
 
     assert prompt["8"]["inputs"]["filename_prefix"] == "ComfyUI_abc123"
     assert "filename_prefix" not in prompt["9"]["inputs"]
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_submits_and_records_submitted_callback() -> None:
+    class FakeClient:
+        async def submit_prompt(self, prompt: dict[str, dict[str, Any]]) -> str:
+            assert prompt["8"]["inputs"]["filename_prefix"] == "ComfyUI_run123"
+            return "prompt_123"
+
+    submitted: list[str] = []
+
+    async def on_submitted(prompt_id: str) -> None:
+        submitted.append(prompt_id)
+
+    executor = LocalComfyExecutor(cast(Any, FakeClient()))
+    result = await executor.execute(
+        RunExecutionRequest(
+            prompt={
+                "8": {
+                    "class_type": "SaveImage",
+                    "inputs": {"filename_prefix": "ComfyUI", "images": ["4", 0]},
+                }
+            },
+            outputs=(SimpleNamespace(type="image", node_id="8"),),
+            wait=False,
+            timeout_seconds=300,
+            poll_interval_seconds=1,
+            cache_token="run123",
+            on_submitted=on_submitted,
+        )
+    )
+
+    assert result.status == "submitted"
+    assert result.prompt_id == "prompt_123"
+    assert result.outputs == []
+    assert submitted == ["prompt_123"]
 
 
 @pytest.mark.asyncio

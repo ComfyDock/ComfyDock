@@ -228,7 +228,7 @@ ComfyGit serve endpoint. ComfyUI may run locally inside the same container or
 runtime, but callers should not need direct access to the ComfyUI UI/API to
 execute a declared contract.
 
-### CGSERVE-RUN-05 [PLANNED]: Contract execution is selected through a serve-owned executor strategy
+### CGSERVE-RUN-05 [PARTIAL]: Contract execution is selected through a serve-owned executor strategy
 Validation: MIXED
 
 `cg serve` should treat contract execution as a serve-owned strategy boundary.
@@ -253,6 +253,14 @@ ComfyUI history/output data back into contract-shaped results. This is an
 implementation detail of the local executor; the public serve API should expose
 file refs, run refs, artifact refs, and contract result objects rather than
 local filesystem paths or raw ComfyUI assumptions.
+
+Current implementation: `cg serve` has a serve-owned `RunExecutor` seam and a
+`LocalComfyExecutor` that submits prepared contract prompts to the configured
+ComfyUI HTTP API, waits for history when requested, and normalizes ComfyUI
+outputs back into contract output payloads. Request routing, sessions, upload
+refs, run records, gallery state, and output delivery remain owned by the serve
+runtime. Executor selection is not yet exposed as a user-facing configuration
+surface, and proxy execution is not implemented.
 
 ### CGSERVE-RUN-06 [PLANNED]: Proxy execution is an optional future executor mode
 Validation: HUMAN_REVIEW
