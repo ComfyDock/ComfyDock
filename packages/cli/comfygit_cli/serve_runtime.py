@@ -55,6 +55,16 @@ class ComfyGitServeTimeoutError(Exception):
     """Raised when a submitted ComfyUI prompt does not finish in time."""
 
 
+class ComfyUIRequestError(Exception):
+    """Raised when ComfyUI returns a structured non-2xx API response."""
+
+    def __init__(self, status: int, url: str, payload: Any) -> None:
+        self.status = status
+        self.url = url
+        self.payload = payload
+        super().__init__(_comfyui_error_message(payload) or f"ComfyUI returned HTTP {status}")
+
+
 @dataclass(frozen=True)
 class ServeConfig:
     """Configuration for the local ComfyGit serve adapter."""
@@ -182,8 +192,9 @@ class ComfyUIClient:
             data=data,
             timeout=timeout,
         ) as response:
-            response.raise_for_status()
-            payload = await response.json()
+            payload = await _response_payload(response)
+            if response.status >= 400:
+                raise ComfyUIRequestError(response.status, url, payload)
         return payload if isinstance(payload, dict) else {}
 
     async def _fetch_output_with_session(
@@ -453,6 +464,17 @@ async def run_contract_handler(request: web.Request) -> web.Response:
         )
     except ComfyGitServeTimeoutError as exc:
         return web.json_response({"error": "timeout", "message": str(exc)}, status=504)
+    except ComfyUIRequestError as exc:
+        return web.json_response(
+            {
+                "error": "comfyui_rejected_request",
+                "message": str(exc),
+                "comfy_status": exc.status,
+                "comfy_url": exc.url,
+                "comfyui": exc.payload,
+            },
+            status=400 if exc.status == 400 else 502,
+        )
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
         return web.json_response(
@@ -511,6 +533,47 @@ async def _read_json_body(request: web.Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Request body must be a JSON object.")
     return data
+
+
+async def _response_payload(response: aiohttp.ClientResponse) -> Any:
+    content_type = response.headers.get("content-type", "")
+    if "json" in content_type.lower():
+        return await response.json(content_type=None)
+    text = await response.text()
+    return {"message": text} if text else {}
+
+
+def _comfyui_error_message(payload: Any) -> str:
+    if not isinstance(payload, Mapping):
+        return str(payload) if payload else ""
+    error = payload.get("error")
+    if isinstance(error, Mapping):
+        message = str(error.get("message") or error.get("type") or "")
+    else:
+        message = str(payload.get("message") or error or "")
+    detail = _first_comfyui_node_error_detail(payload)
+    if message and detail:
+        return f"{message}: {detail}"
+    return detail or message
+
+
+def _first_comfyui_node_error_detail(payload: Mapping[str, Any]) -> str:
+    node_errors = payload.get("node_errors")
+    if not isinstance(node_errors, Mapping):
+        return ""
+    for node_error in node_errors.values():
+        if not isinstance(node_error, Mapping):
+            continue
+        errors = node_error.get("errors")
+        if not isinstance(errors, list):
+            continue
+        for error in errors:
+            if not isinstance(error, Mapping):
+                continue
+            detail = error.get("details") or error.get("message")
+            if detail:
+                return str(detail)
+    return ""
 
 
 def _contracts_payload(state: ServeState) -> dict[str, Any]:

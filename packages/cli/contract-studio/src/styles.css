@@ -224,18 +224,20 @@ h2 {
 }
 
 .gallery {
-  display: block;
+  display: grid;
+  grid-template-columns: repeat(var(--gallery-columns, 6), minmax(0, 1fr));
+  align-items: start;
+  gap: 7px;
   min-height: 0;
   padding-bottom: 120px;
   line-height: 0;
 }
 
-.react-photo-album {
-  width: 100%;
-}
-
-.react-photo-album--track {
-  align-items: flex-start;
+.gallery-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
 }
 
 .tile {
