@@ -18,6 +18,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       "/contracts": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
+      "/gallery": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/health": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/outputs": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/uploads": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",

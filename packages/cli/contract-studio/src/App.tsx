@@ -5,7 +5,7 @@ import { ContractInputControl } from "@/components/ContractInputControl";
 import { GalleryTile } from "@/components/GalleryTile";
 import { OutputViewer } from "@/components/OutputViewer";
 import { Button } from "@/components/ui/button";
-import { apiJson } from "@/lib/api";
+import { ApiError, apiJson } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import {
   contractTitle,
@@ -15,7 +15,15 @@ import {
   outputKind,
 } from "@/lib/format";
 import { inputDefaults, prepareSubmitInputs } from "@/lib/inputs";
-import type { ContractsResponse, GalleryItem, HealthResponse, RunIssue, RunResponse } from "@/types";
+import type {
+  ContractsResponse,
+  GalleryDeleteResponse,
+  GalleryItem,
+  GalleryResponse,
+  HealthResponse,
+  RunIssue,
+  RunResponse,
+} from "@/types";
 
 export function App() {
   const [contractsData, setContractsData] = useState<ContractsResponse | null>(null);
@@ -65,8 +73,10 @@ export function App() {
         apiJson<ContractsResponse>("/contracts"),
         apiJson<HealthResponse>("/health"),
       ]);
+      const nextGallery = await apiJson<GalleryResponse>("/gallery");
       setContractsData(nextContracts);
       setHealth(nextHealth);
+      setGallery(normalizeGalleryItems(nextGallery.items || []));
       setStatus("Ready");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not load contracts");
@@ -118,31 +128,9 @@ export function App() {
       );
       setRawResult(result);
       setIssues(result.issues || []);
-      const nextItems: GalleryItem[] = [];
-      for (const output of result.outputs || []) {
-        for (const artifact of output.artifacts || []) {
-          const type = outputKind(output, artifact);
-          nextItems.push({
-            id: `${result.prompt_id || Date.now()}-${output.name}-${artifact.filename || nextItems.length}`,
-            contract: contractTitle(selected),
-            contractWorkflow: selected.workflow,
-            contractName: selected.contract,
-            promptId: result.prompt_id,
-            output,
-            artifact,
-            filename: artifact.filename,
-            outputName: output.name,
-            type,
-            url: artifact.url,
-            status: "done",
-            width: type === "image" || type === "video" ? dimensions.width : 1,
-            height: type === "image" || type === "video" ? dimensions.height : 1,
-            inputs: displayInputs,
-            rawResult: result,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      }
+      const nextItems = result.gallery_items?.length
+        ? normalizeGalleryItems(result.gallery_items)
+        : galleryItemsFromOutputs(result, selected, dimensions, displayInputs);
       if (nextItems.length) {
         setGallery((current) => [...nextItems, ...current.filter((item) => item.id !== pendingId)]);
       } else {
@@ -151,6 +139,17 @@ export function App() {
       setStatus(result.status === "completed" ? "Completed" : result.status);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Generation failed";
+      const errorData = error instanceof ApiError ? runResponseFromUnknown(error.data) : null;
+      if (errorData?.issues?.length) {
+        setIssues(errorData.issues);
+      }
+      if (errorData?.gallery_items?.length) {
+        setRawResult(errorData);
+        const errorItems = normalizeGalleryItems(errorData.gallery_items);
+        setGallery((current) => [...errorItems, ...current.filter((item) => item.id !== pendingId)]);
+        setStatus(message);
+        return;
+      }
       setStatus(message);
       setGallery((current) =>
         current.map((item) => (item.id === pendingId ? { ...item, status: "error", error: message } : item)),
@@ -182,6 +181,11 @@ export function App() {
   function deleteGalleryItem(item: GalleryItem) {
     setGallery((current) => current.filter((candidate) => candidate.id !== item.id));
     setActiveId((current) => (current === item.id ? null : current));
+    if (!item.id.startsWith("pending-")) {
+      void apiJson<GalleryDeleteResponse>(`/gallery/${encodeURIComponent(item.id)}`, { method: "DELETE" }).catch(() => {
+        void refresh();
+      });
+    }
   }
 
   const visibleGallery = gallery.filter((item) => item.status !== "error" || item.error);
@@ -328,6 +332,54 @@ function distributeGalleryColumns(items: GalleryItem[], columnCount: number) {
     columns[index % columns.length].push(item);
   });
   return columns;
+}
+
+function galleryItemsFromOutputs(
+  result: RunResponse,
+  selected: NonNullable<ContractsResponse["contracts"][number]>,
+  dimensions: { width: number; height: number },
+  displayInputs: Record<string, unknown>,
+) {
+  const nextItems: GalleryItem[] = [];
+  for (const output of result.outputs || []) {
+    for (const artifact of output.artifacts || []) {
+      const type = outputKind(output, artifact);
+      nextItems.push({
+        id: `${result.prompt_id || Date.now()}-${output.name}-${artifact.filename || nextItems.length}`,
+        contract: contractTitle(selected),
+        contractWorkflow: selected.workflow,
+        contractName: selected.contract,
+        promptId: result.prompt_id,
+        output,
+        artifact,
+        filename: artifact.filename,
+        outputName: output.name,
+        type,
+        url: artifact.url,
+        status: "done",
+        width: type === "image" || type === "video" ? dimensions.width : 1,
+        height: type === "image" || type === "video" ? dimensions.height : 1,
+        inputs: displayInputs,
+        rawResult: result,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+  return nextItems;
+}
+
+function normalizeGalleryItems(items: GalleryItem[]) {
+  return items.map((item) => ({
+    ...item,
+    width: Math.max(1, Number(item.width || 1)),
+    height: Math.max(1, Number(item.height || 1)),
+    createdAt: item.createdAt || new Date().toISOString(),
+  }));
+}
+
+function runResponseFromUnknown(value: unknown): RunResponse | null {
+  if (!value || typeof value !== "object") return null;
+  return value as RunResponse;
 }
 
 function useGalleryColumnCount(stageRef: React.RefObject<HTMLElement | null>) {

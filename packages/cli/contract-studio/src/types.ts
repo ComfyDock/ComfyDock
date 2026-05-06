@@ -62,9 +62,11 @@ export type RunOutput = {
 
 export type RunResponse = {
   status: string;
+  run_id?: string;
   prompt_id?: string;
   issues?: RunIssue[];
   outputs?: RunOutput[];
+  gallery_items?: GalleryItem[];
   error?: string;
   message?: string;
 };
@@ -88,6 +90,17 @@ export type GalleryItem = {
   rawResult?: RunResponse;
   error?: string;
   createdAt: string;
+};
+
+export type GalleryResponse = {
+  state: "ephemeral" | "local" | string;
+  gallery: "private" | "shared" | string;
+  session_id: string;
+  items: GalleryItem[];
+};
+
+export type GalleryDeleteResponse = {
+  deleted: boolean;
 };
 
 export type GalleryPhoto = {

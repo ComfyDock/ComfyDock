@@ -283,7 +283,7 @@ executor slice.
 
 ## Runtime State And Gallery Persistence
 
-### CGSERVE-STATE-01 [PLANNED]: Serve state is adapter-owned runtime state
+### CGSERVE-STATE-01 [PARTIAL]: Serve state is adapter-owned runtime state
 Validation: MIXED
 
 `cg serve` may persist runtime state such as sessions, runs, gallery items,
@@ -295,7 +295,12 @@ Core owns contract interpretation and prompt/output semantics. Serve owns the
 runtime state adapter that records what happened while users interact with a
 served environment.
 
-### CGSERVE-STATE-02 [PLANNED]: Local SQLite is the default durable state adapter
+Current implementation: `cg serve` has serve-owned ephemeral and SQLite state
+stores for anonymous sessions, run records, and gallery item records. Upload
+refs remain in process memory for this slice, and broader progress snapshots and
+contract snapshots are still planned adapter responsibilities.
+
+### CGSERVE-STATE-02 [PARTIAL]: Local SQLite is the first durable state adapter
 Validation: TEST
 
 The first durable serve implementation should use SQLite as the local state
@@ -313,7 +318,12 @@ The SQLite state store should be optional. `cg serve` should keep an ephemeral
 mode for demos and tests where run/gallery state is held in memory and discarded
 on process exit.
 
-### CGSERVE-STATE-03 [PLANNED]: Gallery history is user/session scoped by policy
+Current implementation: `cg serve --state local` enables a SQLite state store,
+with `--state-db` available to override the default path. The default mode
+remains `--state ephemeral` until durable local persistence is explicitly
+requested.
+
+### CGSERVE-STATE-03 [PARTIAL]: Gallery history is user/session scoped by policy
 Validation: MIXED
 
 Studio gallery history should be persisted independently from any single
@@ -334,7 +344,11 @@ The first useful modes should be explicit:
 all Studio clients see the same gallery for the served environment. Later auth
 adapters may bind gallery state to authenticated user IDs.
 
-### CGSERVE-STATE-04 [PLANNED]: Serve state records stable artifact references, not large blobs
+Current implementation: the Studio gallery is loaded from `GET /gallery`, scoped
+by an anonymous browser cookie in `private` mode or by a shared scope key in
+`shared` mode. Gallery item deletion is scoped to the same policy.
+
+### CGSERVE-STATE-04 [PARTIAL]: Serve state records stable artifact references, not large blobs
 Validation: TEST
 
 Persisted run and gallery records should store metadata and references, not
@@ -346,6 +360,11 @@ Useful first fields include workflow name, contract name, submitted display
 inputs, prompt id, run status, created/updated timestamps, declared output name,
 artifact refs, local or signed artifact URLs, and a contract/API-prompt
 snapshot identifier when available.
+
+Current implementation: persisted run and gallery rows store display inputs,
+prompt ids, run status, output metadata, local output URLs, error payloads, and
+raw API result metadata as JSON. Media bytes remain in ComfyUI input/output
+locations and are not embedded in SQLite rows.
 
 ### CGSERVE-STATE-05 [DEFERRED]: Remote state and auth are adapter concerns
 Validation: MIXED

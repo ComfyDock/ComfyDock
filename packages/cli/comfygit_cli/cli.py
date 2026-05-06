@@ -646,6 +646,23 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         default=256,
         help="Maximum contract request body size in MiB (default: 256)",
     )
+    serve_parser.add_argument(
+        "--state",
+        choices=["ephemeral", "local"],
+        default="ephemeral",
+        help="Serve runtime state adapter (default: ephemeral)",
+    )
+    serve_parser.add_argument(
+        "--gallery",
+        choices=["private", "shared"],
+        default="private",
+        help="Gallery visibility policy for serve state (default: private)",
+    )
+    serve_parser.add_argument(
+        "--state-db",
+        type=Path,
+        help="SQLite database path for --state local (default: <workspace>/.metadata/serve/serve.sqlite)",
+    )
     serve_parser.set_defaults(func=env_cmds.serve)
 
     # status - Show environment status

@@ -21,10 +21,22 @@ from comfygit_core.services.workflow_execution import (
     extract_contract_outputs,
 )
 
+from .serve_state import (
+    EphemeralServeStateStore,
+    ServeGalleryItem,
+    ServeRunRecord,
+    ServeSession,
+    ServeStateStore,
+    SQLiteServeStateStore,
+    utc_now,
+)
+
 DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024
 UPLOAD_TOKEN_BYTES = 32
 DEFAULT_UPLOAD_CONTENT_TYPE = "application/octet-stream"
 DEFAULT_UPLOAD_EXTENSION = ".bin"
+SESSION_COOKIE_NAME = "comfygit_studio_session"
+SHARED_GALLERY_SCOPE = "shared"
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("image/jpeg", (".jpg", ".jpeg")),
@@ -73,6 +85,9 @@ class ServeConfig:
     port: int
     comfy_url: str
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+    state: str = "ephemeral"
+    gallery: str = "private"
+    state_db: Path | None = None
 
 
 class ComfyUIClient:
@@ -244,11 +259,13 @@ class ServeState:
         env: Environment,
         config: ServeConfig,
         session: aiohttp.ClientSession,
+        state_store: ServeStateStore | None = None,
     ) -> None:
         self.env = env
         self.config = config
         self.client = ComfyUIClient(config.comfy_url, session=session)
         self.uploads: dict[str, UploadRecord] = {}
+        self.state_store = state_store or _create_state_store(env, config)
 
     def manifest_snapshot(self):
         return self.env.get_manifest_snapshot()
@@ -267,18 +284,22 @@ def serve_environment(env: Environment, config: ServeConfig) -> None:
 async def _serve_environment_async(env: Environment, config: ServeConfig) -> None:
     async with aiohttp.ClientSession() as session:
         state = ServeState(env, config, session)
-        app = create_app(state)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, config.host, config.port)
-        await site.start()
-        print(f"Serving ComfyGit environment '{env.name}' on http://{config.host}:{config.port}")
-        print(f"ComfyUI API target: {config.comfy_url}")
-        print("Press Ctrl+C to stop.")
         try:
-            await asyncio.Event().wait()
+            app = create_app(state)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, config.host, config.port)
+            await site.start()
+            print(f"Serving ComfyGit environment '{env.name}' on http://{config.host}:{config.port}")
+            print(f"ComfyUI API target: {config.comfy_url}")
+            print(f"Serve state: {config.state} ({'persistent' if state.state_store.persistent else 'ephemeral'})")
+            print("Press Ctrl+C to stop.")
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await runner.cleanup()
         finally:
-            await runner.cleanup()
+            state.state_store.close()
 
 
 def create_app(state: ServeState) -> web.Application:
@@ -298,6 +319,8 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_post("/uploads/prepare", upload_prepare_handler)
     app.router.add_put("/uploads/{upload_id}", upload_put_handler)
     app.router.add_get("/uploads/{upload_id}/status", upload_status_handler)
+    app.router.add_get("/gallery", gallery_handler)
+    app.router.add_delete("/gallery/{item_id}", gallery_delete_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -311,6 +334,25 @@ def _max_request_bytes(state: ServeState) -> int:
 
 def _state(request: web.Request) -> ServeState:
     return request.app[SERVE_STATE_KEY]
+
+
+def _create_state_store(env: Environment, config: ServeConfig) -> ServeStateStore:
+    if config.state == "local":
+        return SQLiteServeStateStore(config.state_db or _default_state_db_path(env))
+    return EphemeralServeStateStore()
+
+
+def _default_state_db_path(env: Environment) -> Path:
+    workspace_paths = getattr(env, "workspace_paths", None)
+    metadata_dir = getattr(workspace_paths, "metadata", None)
+    if metadata_dir is not None:
+        return Path(metadata_dir) / "serve" / "serve.sqlite"
+    workspace = getattr(env, "workspace", None)
+    workspace_path = getattr(workspace, "path", None)
+    if workspace_path is not None:
+        return Path(workspace_path) / ".metadata" / "serve" / "serve.sqlite"
+    env_path = Path(getattr(env, "path", "."))
+    return env_path / ".metadata" / "serve" / "serve.sqlite"
 
 
 def _studio_static_dir() -> Path:
@@ -439,20 +481,45 @@ async def upload_status_handler(request: web.Request) -> web.Response:
     return web.json_response({"status": record.status, "file_ref": record.public_ref()})
 
 
+async def gallery_handler(request: web.Request) -> web.Response:
+    session = _serve_session(request)
+    payload = {
+        "state": _state(request).config.state,
+        "gallery": _state(request).config.gallery,
+        "session_id": session.session_id,
+        "items": _state(request).state_store.list_gallery_items(session.scope_key),
+    }
+    return _json_response_for_session(payload, session)
+
+
+async def gallery_delete_handler(request: web.Request) -> web.Response:
+    session = _serve_session(request)
+    deleted = _state(request).state_store.delete_gallery_item(
+        session.scope_key,
+        request.match_info["item_id"],
+    )
+    status = 200 if deleted else 404
+    return _json_response_for_session({"deleted": deleted}, session, status=status)
+
+
 async def run_contract_handler(request: web.Request) -> web.Response:
+    body: dict[str, Any] = {}
+    session = _serve_session(request)
     try:
+        body = await _read_json_body(request)
         payload = await _run_contract(
             _state(request),
+            session,
             request.match_info["workflow"],
             request.match_info["contract"],
-            await _read_json_body(request),
+            body,
         )
         status = 400 if payload.get("status") == "invalid_request" else 200
-        return web.json_response(payload, status=status)
+        return _json_response_for_session(payload, session, status=status)
     except web.HTTPRequestEntityTooLarge:
         state = _state(request)
         max_mib = _max_request_bytes(state) // (1024 * 1024)
-        return web.json_response(
+        return _json_response_for_session(
             {
                 "error": "request_too_large",
                 "message": (
@@ -460,35 +527,40 @@ async def run_contract_handler(request: web.Request) -> web.Response:
                     f"contract requests up to {max_mib} MiB."
                 ),
             },
+            session,
             status=413,
         )
     except ComfyGitServeTimeoutError as exc:
-        return web.json_response({"error": "timeout", "message": str(exc)}, status=504)
+        payload = {"error": "timeout", "message": str(exc)}
+        payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=504)
     except ComfyUIRequestError as exc:
-        return web.json_response(
-            {
-                "error": "comfyui_rejected_request",
-                "message": str(exc),
-                "comfy_status": exc.status,
-                "comfy_url": exc.url,
-                "comfyui": exc.payload,
-            },
-            status=400 if exc.status == 400 else 502,
-        )
+        payload = {
+            "error": "comfyui_rejected_request",
+            "message": str(exc),
+            "comfy_status": exc.status,
+            "comfy_url": exc.url,
+            "comfyui": exc.payload,
+        }
+        payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=400 if exc.status == 400 else 502)
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
-        return web.json_response(
-            {
-                "error": "comfyui_unavailable",
-                "message": str(exc),
-                "comfy_url": state.config.comfy_url,
-            },
-            status=502,
-        )
+        payload = {
+            "error": "comfyui_unavailable",
+            "message": str(exc),
+            "comfy_url": state.config.comfy_url,
+        }
+        payload.update(_record_failed_run(state, session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=502)
     except ValueError as exc:
-        return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
+        payload = {"error": "bad_request", "message": str(exc)}
+        payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=400)
     except Exception as exc:
-        return web.json_response({"error": "internal_error", "message": str(exc)}, status=500)
+        payload = {"error": "internal_error", "message": str(exc)}
+        payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=500)
 
 
 async def output_view_handler(request: web.Request) -> web.StreamResponse:
@@ -533,6 +605,35 @@ async def _read_json_body(request: web.Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Request body must be a JSON object.")
     return data
+
+
+def _serve_session(request: web.Request) -> ServeSession:
+    state = _state(request)
+    cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
+    session_id = cookie_value if cookie_value and _safe_token(cookie_value) == cookie_value else f"anon_{uuid.uuid4().hex}"
+    scope_key = SHARED_GALLERY_SCOPE if state.config.gallery == "shared" else session_id
+    return state.state_store.ensure_session(session_id, scope_key=scope_key)
+
+
+def _json_response_for_session(
+    payload: Mapping[str, Any],
+    session: ServeSession,
+    *,
+    status: int = 200,
+) -> web.Response:
+    response = web.json_response(payload, status=status)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        session.session_id,
+        httponly=True,
+        samesite="Lax",
+        max_age=60 * 60 * 24 * 365,
+    )
+    return response
+
+
+def _safe_token(value: str) -> str:
+    return "".join(char for char in value if char.isalnum() or char in {"-", "_"})
 
 
 async def _response_payload(response: aiohttp.ClientResponse) -> Any:
@@ -623,6 +724,7 @@ def _contract_payload(
 
 async def _run_contract(
     state: ServeState,
+    session: ServeSession,
     workflow_name: str,
     contract_name: str,
     body: dict[str, Any],
@@ -648,18 +750,37 @@ async def _run_contract(
         contract_name=contract_name,
     )
     if build_result.has_errors:
-        return {
+        payload: dict[str, Any] = {
             "status": "invalid_request",
             "issues": [asdict(issue) for issue in build_result.issues],
+            "message": "Contract inputs could not be applied to the workflow prompt.",
         }
+        error_record = _record_failed_run(state, session, workflow_name, contract_name, {"inputs": inputs}, payload)
+        payload.update(error_record)
+        return payload
 
     _stamp_output_cache_busters(build_result.prompt, build_result.outputs, uuid.uuid4().hex[:10])
     prompt_id = await state.client.submit_prompt(build_result.prompt)
+    run_id = f"run_{uuid.uuid4().hex}"
     response: dict[str, Any] = {
         "status": "submitted",
+        "run_id": run_id,
         "prompt_id": prompt_id,
         "issues": [asdict(issue) for issue in build_result.issues],
     }
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run_id,
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="submitted",
+            prompt_id=prompt_id,
+            inputs=_display_inputs(inputs),
+            raw_result=dict(response),
+        )
+    )
     if not wait:
         return response
 
@@ -675,7 +796,183 @@ async def _run_contract(
             "outputs": [_contract_output_payload(output) for output in outputs],
         }
     )
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run_id,
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="completed",
+            prompt_id=prompt_id,
+            inputs=_display_inputs(inputs),
+            raw_result=dict(response),
+        )
+    )
+    gallery_items = _gallery_items_for_outputs(
+        run_id=run_id,
+        session=session,
+        workflow_name=workflow_name,
+        contract_name=contract_name,
+        inputs=inputs,
+        response=response,
+    )
+    state.state_store.record_gallery_items(gallery_items)
+    response["gallery_items"] = [item.to_public_dict() for item in gallery_items]
     return response
+
+
+def _record_failed_run(
+    state: ServeState,
+    session: ServeSession,
+    workflow_name: str,
+    contract_name: str,
+    body: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = f"run_{uuid.uuid4().hex}"
+    created_at = utc_now()
+    inputs = _extract_run_inputs(body)
+    message = str(payload.get("message") or payload.get("error") or "Generation failed")
+    raw_result = dict(payload)
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run_id,
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="error",
+            inputs=_display_inputs(inputs),
+            raw_result=raw_result,
+            error=message,
+        )
+    )
+    gallery_item = ServeGalleryItem(
+        item_id=f"gallery_{uuid.uuid4().hex}",
+        run_id=run_id,
+        session_id=session.session_id,
+        scope_key=session.scope_key,
+        workflow=workflow_name,
+        contract=contract_name,
+        status="error",
+        output_type="image",
+        inputs=_display_inputs(inputs),
+        width=_dimension_from_inputs(inputs, "width", 1024),
+        height=_dimension_from_inputs(inputs, "height", _dimension_from_inputs(inputs, "width", 1024)),
+        raw_result=raw_result,
+        error=message,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    state.state_store.record_gallery_items([gallery_item])
+    return {
+        "run_id": run_id,
+        "gallery_items": [gallery_item.to_public_dict()],
+    }
+
+
+def _gallery_items_for_outputs(
+    *,
+    run_id: str,
+    session: ServeSession,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+    response: dict[str, Any],
+) -> list[ServeGalleryItem]:
+    items: list[ServeGalleryItem] = []
+    display_inputs = _display_inputs(inputs)
+    width = _dimension_from_inputs(inputs, "width", 1024)
+    height = _dimension_from_inputs(inputs, "height", width)
+    prompt_id = str(response.get("prompt_id") or "")
+    created_at = utc_now()
+    raw_result = dict(response)
+    for output in response.get("outputs") or []:
+        if not isinstance(output, Mapping):
+            continue
+        output_name = str(output.get("name") or "output")
+        output_type = str(output.get("type") or "json").lower()
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping):
+                continue
+            artifact_payload = dict(artifact)
+            filename = artifact_payload.get("filename")
+            item_type = _output_kind(output_type, str(filename or ""))
+            items.append(
+                ServeGalleryItem(
+                    item_id=f"gallery_{uuid.uuid4().hex}",
+                    run_id=run_id,
+                    session_id=session.session_id,
+                    scope_key=session.scope_key,
+                    workflow=workflow_name,
+                    contract=contract_name,
+                    status="done",
+                    output_type=item_type,
+                    output_name=output_name,
+                    prompt_id=prompt_id or None,
+                    filename=str(filename) if filename else None,
+                    url=str(artifact_payload.get("url")) if artifact_payload.get("url") else None,
+                    width=width if item_type in {"image", "video"} else 1,
+                    height=height if item_type in {"image", "video"} else 1,
+                    inputs=display_inputs,
+                    artifact=artifact_payload,
+                    raw_result=raw_result,
+                    created_at=created_at,
+                    updated_at=created_at,
+                )
+            )
+    return items
+
+
+def _extract_run_inputs(body: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(body.get("inputs"), dict):
+        return dict(body["inputs"])
+    control_keys = {"wait", "timeout_seconds", "poll_interval_seconds"}
+    return {key: value for key, value in body.items() if key not in control_keys}
+
+
+def _display_inputs(inputs: Mapping[str, Any]) -> dict[str, Any]:
+    return {str(key): _display_value(value) for key, value in inputs.items()}
+
+
+def _display_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if value.get("kind") == "file_ref":
+            return {
+                key: value.get(key)
+                for key in ("kind", "ref", "filename", "mime_type", "size")
+                if key in value
+            }
+        return {str(key): _display_value(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_display_value(child) for child in value]
+    if isinstance(value, str) and value.startswith("data:"):
+        return f"{value[:48]}... [inline data omitted]"
+    return value
+
+
+def _dimension_from_inputs(inputs: Mapping[str, Any], key: str, fallback: int) -> int:
+    for candidate in (key, key.upper(), key[:1], key[:1].upper()):
+        try:
+            value = int(inputs.get(candidate, fallback))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return fallback
+
+
+def _output_kind(output_type: str, filename: str) -> str:
+    lowered = filename.lower()
+    if output_type == "video" or lowered.endswith((".mp4", ".webm", ".mov", ".mkv")):
+        return "video"
+    if output_type == "image" or lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")):
+        return "image"
+    return "json"
 
 
 async def _prepare_contract_inputs(

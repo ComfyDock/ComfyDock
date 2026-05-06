@@ -1,5 +1,17 @@
 import type { FileRef, ImageInputValue, UploadPrepareResponse } from "@/types";
 
+export class ApiError extends Error {
+  status: number;
+  data: unknown;
+
+  constructor(message: string, status: number, data: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
 export async function apiJson<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
@@ -10,7 +22,7 @@ export async function apiJson<T>(path: string, options?: RequestInit): Promise<T
         : typeof data?.error === "string"
           ? data.error
           : response.statusText;
-    throw new Error(message || "Request failed");
+    throw new ApiError(message || "Request failed", response.status, data);
   }
   return data as T;
 }

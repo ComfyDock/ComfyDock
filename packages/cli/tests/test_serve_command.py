@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,8 +18,16 @@ from comfygit_cli.serve_runtime import (
     _content_type_for_filename,
     _generated_upload_filename,
     _prepare_contract_inputs,
+    _record_failed_run,
     _stamp_output_cache_busters,
     create_app,
+)
+from comfygit_cli.serve_state import (
+    EphemeralServeStateStore,
+    ServeGalleryItem,
+    ServeRunRecord,
+    ServeSession,
+    SQLiteServeStateStore,
 )
 
 
@@ -32,7 +42,7 @@ async def _with_test_server(
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
-    sockets = site._server.sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
     port = sockets[0].getsockname()[1]
     return f"http://127.0.0.1:{port}", runner
 
@@ -42,7 +52,7 @@ async def _with_app_server(app: web.Application) -> tuple[str, web.AppRunner]:
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
-    sockets = site._server.sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
     port = sockets[0].getsockname()[1]
     return f"http://127.0.0.1:{port}", runner
 
@@ -57,6 +67,9 @@ def test_serve_parser_defaults() -> None:
     assert args.host == "127.0.0.1"
     assert args.port == 8190
     assert args.comfy_url == "http://127.0.0.1:8188"
+    assert args.state == "ephemeral"
+    assert args.gallery == "private"
+    assert args.state_db is None
 
 
 def test_serve_parser_accepts_runtime_options() -> None:
@@ -73,6 +86,12 @@ def test_serve_parser_accepts_runtime_options() -> None:
             "9000",
             "--comfy-url",
             "http://127.0.0.1:8189",
+            "--state",
+            "local",
+            "--gallery",
+            "shared",
+            "--state-db",
+            "/tmp/comfygit-serve.sqlite",
         ]
     )
 
@@ -80,6 +99,9 @@ def test_serve_parser_accepts_runtime_options() -> None:
     assert args.port == 9000
     assert args.comfy_url == "http://127.0.0.1:8189"
     assert args.max_request_mb == 256
+    assert args.state == "local"
+    assert args.gallery == "shared"
+    assert str(args.state_db) == "/tmp/comfygit-serve.sqlite"
 
 
 def test_serve_parser_accepts_max_request_size() -> None:
@@ -109,6 +131,8 @@ def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> 
     assert called_env is mock_env
     assert called_config.port == 9000
     assert called_config.max_request_bytes == 256 * 1024 * 1024
+    assert called_config.state == "ephemeral"
+    assert called_config.gallery == "private"
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
@@ -128,10 +152,42 @@ def test_serve_command_uses_configured_request_size(mock_serve, mock_workspace) 
     assert called_config.max_request_bytes == 512 * 1024 * 1024
 
 
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_configured_state_store(mock_serve, mock_workspace, tmp_path) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    db_path = tmp_path / "serve.sqlite"
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(
+        [
+            "-e",
+            "demo",
+            "serve",
+            "--state",
+            "local",
+            "--gallery",
+            "shared",
+            "--state-db",
+            str(db_path),
+        ]
+    )
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.state == "local"
+    assert called_config.gallery == "shared"
+    assert called_config.state_db == db_path
+
+
 @pytest.mark.asyncio
 async def test_serve_app_serves_contract_studio_root() -> None:
     state = MagicMock()
-    app = create_app(state)
+    app = create_app(cast(Any, state))
     base_url, runner = await _with_app_server(app)
     try:
         async with ClientSession() as session:
@@ -148,7 +204,7 @@ async def test_serve_app_serves_contract_studio_root() -> None:
 @pytest.mark.asyncio
 async def test_serve_app_suppresses_missing_favicon() -> None:
     state = MagicMock()
-    app = create_app(state)
+    app = create_app(cast(Any, state))
     base_url, runner = await _with_app_server(app)
     try:
         async with ClientSession() as session:
@@ -170,9 +226,150 @@ def test_serve_app_uses_configured_request_limit() -> None:
         )
     )
 
-    app = create_app(state)
+    app = create_app(cast(Any, state))
 
     assert app._client_max_size == 512 * 1024 * 1024  # noqa: SLF001 - aiohttp stores this setting privately.
+
+
+def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
+    db_path = tmp_path / "serve.sqlite"
+    store = SQLiteServeStateStore(db_path)
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "completed"},
+        )
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_1",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="done",
+                output_type="image",
+                output_name="save_image",
+                prompt_id="prompt_1",
+                filename="image.png",
+                url="/outputs/view?filename=image.png",
+                width=1024,
+                height=1024,
+                inputs={"prompt": "blue eyes"},
+                raw_result={"status": "completed"},
+            )
+        ]
+    )
+    store.close()
+
+    reopened = SQLiteServeStateStore(db_path)
+    try:
+        items = reopened.list_gallery_items("anon_1")
+
+        assert items == [
+            {
+                "id": "gallery_1",
+                "run_id": "run_1",
+                "contract": "z-image / default",
+                "contractWorkflow": "z-image",
+                "contractName": "default",
+                "status": "done",
+                "type": "image",
+                "inputs": {"prompt": "blue eyes"},
+                "createdAt": items[0]["createdAt"],
+                "promptId": "prompt_1",
+                "outputName": "save_image",
+                "filename": "image.png",
+                "url": "/outputs/view?filename=image.png",
+                "width": 1024,
+                "height": 1024,
+                "rawResult": {"status": "completed"},
+            }
+        ]
+        assert items[0]["createdAt"]
+    finally:
+        reopened.close()
+
+
+def test_failed_run_response_does_not_create_circular_raw_result() -> None:
+    store = EphemeralServeStateStore()
+    session = ServeSession(session_id="anon_1", scope_key="anon_1")
+    state = SimpleNamespace(state_store=store)
+    payload: dict[str, Any] = {
+        "error": "comfyui_rejected_request",
+        "message": "Prompt outputs failed validation",
+        "comfyui": {"node_errors": {"1": {"errors": [{"message": "Value not in list"}]}}},
+    }
+
+    payload.update(
+        _record_failed_run(
+            cast(Any, state),
+            session,
+            "z-image",
+            "default",
+            {"inputs": {"width": 1024, "height": 1024}},
+            payload,
+        )
+    )
+
+    encoded = json.dumps(payload)
+    assert "Prompt outputs failed validation" in encoded
+    assert "gallery_items" not in payload["gallery_items"][0]["rawResult"]
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_is_scoped_by_session_cookie() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_saved",
+                run_id="run_saved",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=512,
+                height=512,
+                inputs={},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                saved_payload = await response.json()
+
+        async with ClientSession() as session_client:
+            async with session_client.get(f"{base_url}/gallery") as response:
+                fresh_payload = await response.json()
+
+        assert saved_payload["items"][0]["id"] == "gallery_saved"
+        assert fresh_payload["items"] == []
+    finally:
+        await runner.cleanup()
 
 
 @pytest.mark.asyncio
@@ -251,7 +448,7 @@ async def test_upload_slot_writes_to_comfyui_input_dir(tmp_path) -> None:
         env=SimpleNamespace(comfyui_path=tmp_path / "ComfyUI"),
         uploads={},
     )
-    app = create_app(state)
+    app = create_app(cast(Any, state))
     base_url, runner = await _with_app_server(app)
     try:
         async with ClientSession() as session:
@@ -328,7 +525,7 @@ async def test_prepare_contract_inputs_resolves_file_refs() -> None:
     )
 
     prepared = await _prepare_contract_inputs(
-        state,
+        cast(Any, state),
         "demo",
         "default",
         {
@@ -368,7 +565,7 @@ async def test_prepare_contract_inputs_rejects_inline_image_bytes() -> None:
 
     with pytest.raises(ValueError, match="Upload the file first"):
         await _prepare_contract_inputs(
-            state,
+            cast(Any, state),
             "demo",
             "default",
             {"source_image": {"data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}},
