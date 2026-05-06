@@ -54,7 +54,7 @@ def build_contract_prompt(
             )
 
     for contract_input in contract.inputs:
-        node_id = str(contract_input.node_id)
+        node_id = _contract_input_api_node_id(contract_input)
         prompt_node = prompt.get(node_id)
 
         if prompt_node is None:
@@ -258,7 +258,11 @@ def _history_output_keys(output_type: str) -> tuple[str, ...]:
 
 
 def _contract_input_key(contract_input: WorkflowContractInput) -> str | None:
-    return contract_input.field_key
+    return contract_input.api_field_key or contract_input.field_key
+
+
+def _contract_input_api_node_id(contract_input: WorkflowContractInput) -> str:
+    return str(contract_input.api_node_id or contract_input.node_id)
 
 
 def _normalize_api_prompt_data(data: dict[str, Any]) -> ComfyUIPrompt:

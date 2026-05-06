@@ -70,6 +70,20 @@ contract with a missing referenced API prompt artifact as a blocking issue. A
 portable environment that advertises a runnable contract but lacks its
 `workflow_api/*.api.json` file is incomplete.
 
+### CGSERVE-CORE-02C [PLANNED]: Runtime patches concrete API bindings captured by Manager
+Validation: TEST
+
+Manager-authored inputs may store both UI/provenance bindings and concrete API
+prompt bindings. Runtime prompt preparation should patch `api_node_id` plus
+`api_field_key` when present, falling back to `node_id` plus `field_key` only
+for older or non-subgraph bindings.
+
+This is required for ComfyUI subgraph promoted widgets. The visible subgraph
+node selected by the user may not exist in the captured API prompt; the prompt
+contains scoped inner node IDs such as `170:151`. Manager is responsible for
+capturing that binding from the loaded frontend graph during contract save.
+Core must not infer scoped subgraph IDs heuristically from prompt contents.
+
 ### CGSERVE-CORE-02B [RETIRED]: Core performs UI-workflow-to-API-prompt conversion
 Validation: HUMAN_REVIEW
 
@@ -95,6 +109,12 @@ outputs and a ComfyUI history entry, then returns typed output results with
 artifact references. The current implementation handles local history artifact
 references such as image filenames, subfolders, and output types. Selector-slot
 filtering and richer history validation remain planned.
+
+The first supported authoring path should bind outputs to existing
+artifact-producing ComfyUI output nodes such as `SaveImage` or `PreviewImage`.
+Arbitrary graph slots and virtual subgraph output slots are not supported
+contract outputs until the runtime has an explicit sink-injection or artifact
+delivery model for intermediate graph values.
 
 ### CGSERVE-CORE-04 [PARTIAL]: Core validates contract artifacts before execution
 Validation: MIXED
@@ -130,6 +150,15 @@ output references. The adapter is implemented as an `aiohttp` runtime in the
 CLI package so it can grow into static UI serving, progress streams, websocket
 bridging, and output delivery without moving transport concerns into core. This
 adapter does not launch ComfyUI.
+
+For `image` contract inputs backed by ComfyUI `LoadImage`, `cg serve` accepts a
+data URL or `{ data_url, filename, mime_type }` payload, uploads it to ComfyUI's
+image upload endpoint as an input file, then patches the captured API prompt
+with the returned filename before submitting the prompt. Plain string values are
+still treated as already-accessible ComfyUI input filenames. Because this first
+Studio upload path sends image bytes inline in JSON, the serve adapter must
+accept large contract request bodies and expose a request-size cap for local
+operators.
 
 This adapter should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.

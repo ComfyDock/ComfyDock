@@ -640,6 +640,90 @@ textarea::placeholder {
   color: hsl(var(--muted-foreground) / 0.6);
 }
 
+.image-input-control {
+  display: grid;
+  gap: 10px;
+}
+
+.image-upload-button {
+  min-height: 42px;
+  width: 100%;
+  border: 1px dashed hsl(var(--border-strong));
+  background: hsl(var(--input));
+  color: hsl(var(--foreground));
+  border-radius: var(--radius);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out);
+}
+
+.image-upload-button:hover {
+  border-color: hsl(var(--ring));
+  background: hsl(var(--accent));
+}
+
+.image-upload-button input {
+  display: none;
+}
+
+.image-input-preview {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--input));
+  border-radius: var(--radius);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.image-input-preview img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 2px);
+  background: hsl(var(--muted));
+}
+
+.image-input-preview div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.image-input-preview strong {
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-input-preview button {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.image-input-preview button:hover {
+  color: hsl(var(--foreground));
+}
+
+.image-input-empty {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
 .fluid-select-trigger {
   min-width: 0 !important;
   width: 100%;

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -20,6 +22,8 @@ from comfygit_core.services.workflow_execution import (
     extract_contract_outputs,
 )
 
+DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024
+
 
 @dataclass(frozen=True)
 class ServeConfig:
@@ -28,6 +32,7 @@ class ServeConfig:
     host: str
     port: int
     comfy_url: str
+    max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
 
 
 class ComfyUIClient:
@@ -56,6 +61,26 @@ class ComfyUIClient:
         if not prompt_id:
             raise RuntimeError(f"ComfyUI did not return a prompt_id: {payload}")
         return str(prompt_id)
+
+    async def upload_image(
+        self,
+        *,
+        body: bytes,
+        filename: str,
+        content_type: str,
+    ) -> str:
+        form = aiohttp.FormData()
+        form.add_field("image", body, filename=filename, content_type=content_type)
+        form.add_field("type", "input")
+        form.add_field("overwrite", "true")
+        payload = await self._request_json(
+            "POST",
+            "/upload/image",
+            data=form,
+        )
+        name = str(payload.get("name") or payload.get("filename") or filename)
+        subfolder = str(payload.get("subfolder") or "").strip("/")
+        return f"{subfolder}/{name}" if subfolder else name
 
     async def get_history(self, prompt_id: str) -> dict[str, Any] | None:
         payload = await self._request_json("GET", f"/history/{prompt_id}")
@@ -106,6 +131,7 @@ class ComfyUIClient:
         path: str,
         *,
         json_data: dict[str, Any] | None = None,
+        data: aiohttp.FormData | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
@@ -116,6 +142,7 @@ class ComfyUIClient:
                 method,
                 url,
                 json_data=json_data,
+                data=data,
                 timeout=request_timeout,
             )
         async with aiohttp.ClientSession() as session:
@@ -124,6 +151,7 @@ class ComfyUIClient:
                 method,
                 url,
                 json_data=json_data,
+                data=data,
                 timeout=request_timeout,
             )
 
@@ -134,9 +162,16 @@ class ComfyUIClient:
         url: str,
         *,
         json_data: dict[str, Any] | None,
+        data: aiohttp.FormData | None,
         timeout: aiohttp.ClientTimeout,
     ) -> dict[str, Any]:
-        async with session.request(method, url, json=json_data, timeout=timeout) as response:
+        async with session.request(
+            method,
+            url,
+            json=json_data,
+            data=data,
+            timeout=timeout,
+        ) as response:
             response.raise_for_status()
             payload = await response.json()
         return payload if isinstance(payload, dict) else {}
@@ -204,13 +239,14 @@ async def _serve_environment_async(env: Environment, config: ServeConfig) -> Non
 def create_app(state: ServeState) -> web.Application:
     """Create the aiohttp application for a ComfyGit serve runtime."""
 
-    app = web.Application()
+    app = web.Application(client_max_size=_max_request_bytes(state))
     app[SERVE_STATE_KEY] = state
     static_dir = _studio_static_dir()
     app[STUDIO_STATIC_DIR_KEY] = static_dir
     app.router.add_get("/", studio_index_handler)
     if (static_dir / "assets").exists():
         app.router.add_static("/assets/", static_dir / "assets", append_version=True)
+    app.router.add_get("/favicon.ico", favicon_handler)
     app.router.add_get("/health", health_handler)
     app.router.add_get("/contracts", contracts_handler)
     app.router.add_get("/contracts/{workflow}/{contract}", single_contract_handler)
@@ -218,6 +254,11 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
     return app
+
+
+def _max_request_bytes(state: ServeState) -> int:
+    value = getattr(getattr(state, "config", None), "max_request_bytes", DEFAULT_MAX_REQUEST_BYTES)
+    return value if isinstance(value, int) and value > 0 else DEFAULT_MAX_REQUEST_BYTES
 
 
 def _state(request: web.Request) -> ServeState:
@@ -242,6 +283,10 @@ async def studio_index_handler(request: web.Request) -> web.Response:
         ),
         content_type="text/html",
     )
+
+
+async def favicon_handler(_request: web.Request) -> web.Response:
+    return web.Response(status=204)
 
 
 async def health_handler(request: web.Request) -> web.Response:
@@ -286,6 +331,19 @@ async def run_contract_handler(request: web.Request) -> web.Response:
         )
         status = 400 if payload.get("status") == "invalid_request" else 200
         return web.json_response(payload, status=status)
+    except web.HTTPRequestEntityTooLarge:
+        state = _state(request)
+        max_mib = _max_request_bytes(state) // (1024 * 1024)
+        return web.json_response(
+            {
+                "error": "request_too_large",
+                "message": (
+                    f"Request body is too large. This cg serve instance accepts "
+                    f"contract requests up to {max_mib} MiB."
+                ),
+            },
+            status=413,
+        )
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
         return web.json_response(
@@ -411,6 +469,7 @@ async def _run_contract(
     poll_interval_seconds = float(body.get("poll_interval_seconds", 1))
 
     manifest = state.manifest_snapshot()
+    inputs = await _prepare_contract_inputs(state, workflow_name, contract_name, inputs)
     build_result = build_manifest_contract_prompt(
         manifest,
         state.env.cec_path,
@@ -447,6 +506,114 @@ async def _run_contract(
         }
     )
     return response
+
+
+@dataclass(frozen=True)
+class ImageUploadRequest:
+    body: bytes
+    filename: str
+    content_type: str
+
+
+async def _prepare_contract_inputs(
+    state: ServeState,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+) -> dict[str, Any]:
+    """Upload binary image inputs before building the ComfyUI prompt."""
+
+    manifest = state.manifest_snapshot()
+    workflow = manifest.workflows.get(workflow_name)
+    execution_contract = getattr(workflow, "execution_contract", None) if workflow else None
+    contract = execution_contract.contracts.get(contract_name) if execution_contract else None
+    if contract is None:
+        return inputs
+
+    prepared = dict(inputs)
+    for contract_input in contract.inputs:
+        if str(contract_input.type).lower() != "image":
+            continue
+        if contract_input.name not in prepared:
+            continue
+        upload = _image_upload_request_from_value(prepared[contract_input.name])
+        if upload is None:
+            continue
+        prepared[contract_input.name] = await state.client.upload_image(
+            body=upload.body,
+            filename=upload.filename,
+            content_type=upload.content_type,
+        )
+    return prepared
+
+
+def _image_upload_request_from_value(value: Any) -> ImageUploadRequest | None:
+    if isinstance(value, str):
+        if not value.startswith("data:image/"):
+            return None
+        body, content_type = _decode_data_url(value)
+        return ImageUploadRequest(
+            body=body,
+            filename=_generated_upload_filename(content_type),
+            content_type=content_type,
+        )
+
+    if not isinstance(value, Mapping):
+        return None
+
+    data_url = value.get("data_url")
+    if isinstance(data_url, str) and data_url.startswith("data:image/"):
+        body, content_type = _decode_data_url(data_url)
+        return ImageUploadRequest(
+            body=body,
+            filename=_safe_upload_filename(value.get("filename"), content_type),
+            content_type=content_type,
+        )
+
+    raw_base64 = value.get("base64") or value.get("data")
+    if not isinstance(raw_base64, str):
+        return None
+    content_type = str(value.get("mime_type") or value.get("content_type") or "image/png")
+    return ImageUploadRequest(
+        body=_decode_base64(raw_base64),
+        filename=_safe_upload_filename(value.get("filename"), content_type),
+        content_type=content_type,
+    )
+
+
+def _decode_data_url(value: str) -> tuple[bytes, str]:
+    header, separator, data = value.partition(",")
+    if separator != "," or ";base64" not in header:
+        raise ValueError("Image data URLs must be base64 encoded.")
+    content_type = header.removeprefix("data:").split(";", 1)[0] or "image/png"
+    return _decode_base64(data), content_type
+
+
+def _decode_base64(value: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except binascii.Error as exc:
+        raise ValueError("Image input contains invalid base64 data.") from exc
+
+
+def _safe_upload_filename(value: Any, content_type: str) -> str:
+    raw = str(value or "").strip().replace("\\", "/").split("/")[-1]
+    safe = "".join(char for char in raw if char.isalnum() or char in {"-", "_", "."})
+    if safe and "." in safe:
+        return safe
+    return _generated_upload_filename(content_type, stem=safe or None)
+
+
+def _generated_upload_filename(content_type: str, stem: str | None = None) -> str:
+    extension = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+    }.get(content_type.lower(), ".png")
+    return f"{stem or f'comfygit-upload-{uuid.uuid4().hex}'}{extension}"
 
 
 def _stamp_output_cache_busters(

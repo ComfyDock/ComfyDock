@@ -1018,6 +1018,7 @@ packages = []
             host=args.host,
             port=args.port,
             comfy_url=args.comfy_url,
+            max_request_bytes=max(1, args.max_request_mb) * 1024 * 1024,
         )
         try:
             serve_environment(env, config)

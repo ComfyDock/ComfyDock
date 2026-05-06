@@ -640,6 +640,12 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         default="http://127.0.0.1:8188",
         help="Running ComfyUI API URL (default: http://127.0.0.1:8188)",
     )
+    serve_parser.add_argument(
+        "--max-request-mb",
+        type=int,
+        default=256,
+        help="Maximum contract request body size in MiB (default: 256)",
+    )
     serve_parser.set_defaults(func=env_cmds.serve)
 
     # status - Show environment status

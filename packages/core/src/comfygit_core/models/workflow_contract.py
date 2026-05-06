@@ -162,6 +162,8 @@ class WorkflowContractInput:
     display_name: str | None = None
     widget_idx: int | None = None
     field_key: str | None = None
+    api_node_id: ContractNodeId | None = None
+    api_field_key: str | None = None
     default: ContractValue = None
     min: ContractNumericBound | None = None
     max: ContractNumericBound | None = None
@@ -195,6 +197,8 @@ class WorkflowContractInput:
             "display_name": self.display_name,
             "widget_idx": self.widget_idx,
             "field_key": self.field_key,
+            "api_node_id": self.api_node_id,
+            "api_field_key": self.api_field_key,
             "default": _toml_safe_value(self.default),
             "min": _toml_safe_value(self.min),
             "max": _toml_safe_value(self.max),
@@ -212,6 +216,8 @@ class WorkflowContractInput:
             "display_name": self.display_name,
             "widget_idx": self.widget_idx,
             "field_key": self.field_key,
+            "api_node_id": self.api_node_id,
+            "api_field_key": self.api_field_key,
             "default": self.default,
             "min": self.min,
             "max": self.max,
@@ -237,6 +243,8 @@ class WorkflowContractInput:
             display_name=_as_str(data.get("display_name")),
             widget_idx=_as_int(widget_idx),
             field_key=_as_str(data.get("field_key")),
+            api_node_id=data.get("api_node_id"),
+            api_field_key=_as_str(data.get("api_field_key")),
             default=_normalize_contract_default(data.get("default"), str(data["type"])),
             min=_as_number(data.get("min")),
             max=_as_number(data.get("max")),

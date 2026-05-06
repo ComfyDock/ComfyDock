@@ -121,6 +121,59 @@ def test_build_contract_prompt_applies_values_by_api_input_key() -> None:
     assert [item.name for item in result.applied_inputs] == ["seed", "steps", "cfg", "prompt"]
 
 
+def test_build_contract_prompt_uses_concrete_api_binding_for_subgraph_input() -> None:
+    api_prompt = {
+        "170:151": {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {"prompt": "old prompt"},
+        },
+        "170:169": {
+            "class_type": "KSampler",
+            "inputs": {"seed": 4},
+        },
+    }
+    contract = NamedWorkflowContract(
+        inputs=[
+            WorkflowContractInput(
+                name="prompt",
+                type="string",
+                node_id="170",
+                widget_idx=0,
+                field_key="prompt",
+                api_node_id="170:151",
+                api_field_key="prompt",
+                required=True,
+            ),
+            WorkflowContractInput(
+                name="seed",
+                type="integer",
+                node_id="170",
+                widget_idx=6,
+                field_key="seed",
+                api_node_id="170:169",
+                api_field_key="seed",
+                required=True,
+                default=4,
+            ),
+        ]
+    )
+
+    result = build_contract_prompt(
+        "subgraph",
+        api_prompt,
+        contract,
+        {"prompt": "new prompt", "seed": 123},
+    )
+
+    assert result.is_ready
+    assert result.prompt["170:151"]["inputs"]["prompt"] == "new prompt"
+    assert result.prompt["170:169"]["inputs"]["seed"] == 123
+    assert [(item.name, item.node_id, item.input_key) for item in result.applied_inputs] == [
+        ("prompt", "170:151", "prompt"),
+        ("seed", "170:169", "seed"),
+    ]
+
+
 def test_build_contract_prompt_reports_missing_required_input_without_default() -> None:
     result = build_contract_prompt("simple", _txt2img_api_prompt(), _contract(), {})
 

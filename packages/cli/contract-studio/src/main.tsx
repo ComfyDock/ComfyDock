@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MasonryPhotoAlbum } from "react-photo-album";
 import "react-photo-album/masonry.css";
-import { ChevronDown, ChevronLeft, ChevronRight, Copy, Download, RotateCcw, Trash2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Copy, Download, ImagePlus, RotateCcw, Trash2, Wand2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Media, NumberPicker, StudioSelect, Tip } from "@/app/components";
 import { ShapeProvider } from "@/lib/shape-context";
@@ -109,6 +109,12 @@ type GalleryPhoto = {
   item: GalleryItem;
 };
 
+type ImageInputValue = {
+  data_url: string;
+  filename: string;
+  mime_type: string;
+};
+
 const inputDefaults = (contract: ContractSummary): Record<string, unknown> => {
   const values: Record<string, unknown> = {};
   for (const input of contract.inputs) {
@@ -116,6 +122,8 @@ const inputDefaults = (contract: ContractSummary): Record<string, unknown> => {
       values[input.name] = input.default;
     } else if (input.type === "boolean") {
       values[input.name] = false;
+    } else if (input.type === "image") {
+      values[input.name] = null;
     } else {
       values[input.name] = "";
     }
@@ -226,6 +234,33 @@ function valueForSubmit(input: ContractInput, value: unknown) {
     return Number.isFinite(parsed) ? parsed : value;
   }
   return value;
+}
+
+function readImageInputFile(file: File): Promise<ImageInputValue> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("Failed to read image file"));
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      resolve({
+        data_url: dataUrl,
+        filename: file.name || "image.png",
+        mime_type: file.type || "image/png",
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function imageInputValue(value: unknown): ImageInputValue | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<ImageInputValue>;
+  if (typeof candidate.data_url !== "string" || typeof candidate.filename !== "string") return null;
+  return {
+    data_url: candidate.data_url,
+    filename: candidate.filename,
+    mime_type: candidate.mime_type || "image/png",
+  };
 }
 
 function App() {
@@ -564,6 +599,52 @@ function ContractInputControl({
     return (
       <Field label={label} meta={required}>
         <StudioSelect value={String(value ?? "")} onChange={onChange} options={input.enum_values} />
+      </Field>
+    );
+  }
+
+  if (input.type === "image") {
+    const imageValue = imageInputValue(value);
+    return (
+      <Field
+        label={label}
+        meta={
+          <>
+            {required} · IMAGE
+          </>
+        }
+      >
+        <div className="image-input-control">
+          <label className="image-upload-button" htmlFor={id}>
+            <ImagePlus size={16} />
+            <span>{imageValue ? "Change image" : "Choose image"}</span>
+            <input
+              id={id}
+              type="file"
+              accept="image/*"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                readImageInputFile(file).then(onChange).catch((error) => {
+                  console.error("[ComfyGit Studio] Failed to read image input", error);
+                });
+              }}
+            />
+          </label>
+          {imageValue ? (
+            <div className="image-input-preview">
+              <img src={imageValue.data_url} alt="" />
+              <div>
+                <strong>{imageValue.filename}</strong>
+                <button type="button" onClick={() => onChange(null)}>
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="image-input-empty">Upload an image for this workflow input.</p>
+          )}
+        </div>
       </Field>
     );
   }
