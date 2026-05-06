@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Wand2 } from "lucide-react";
 import { Field, StudioSelect } from "@/app/components";
 import { ContractInputControl } from "@/components/ContractInputControl";
@@ -83,7 +83,7 @@ export function App() {
     }
   }
 
-  async function runSelected() {
+  const runSelected = useCallback(async () => {
     if (!selected || busy) return;
     setBusy(true);
     setIssues([]);
@@ -157,7 +157,19 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [busy, inputs, selected]);
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.repeat || event.isComposing) return;
+      if (!event.ctrlKey || event.key !== "Enter") return;
+      event.preventDefault();
+      void runSelected();
+    }
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [runSelected]);
 
   async function copyGalleryItem(item: GalleryItem) {
     if (!item.url) {
