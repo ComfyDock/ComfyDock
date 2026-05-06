@@ -13,7 +13,6 @@ from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.serve_runtime import (
     ComfyUIClient,
     ServeConfig,
-    _image_upload_request_from_value,
     _prepare_contract_inputs,
     _stamp_output_cache_busters,
     create_app,
@@ -191,41 +190,6 @@ async def test_comfyui_client_submit_prompt_returns_prompt_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_comfyui_client_upload_image_returns_prompt_filename() -> None:
-    async def handler(request: web.Request) -> web.Response:
-        reader = await request.multipart()
-        image_part = await reader.next()
-        assert image_part is not None
-        assert image_part.name == "image"
-        assert image_part.filename == "source.png"
-        assert await image_part.read() == b"image-bytes"
-
-        type_part = await reader.next()
-        assert type_part is not None
-        assert type_part.name == "type"
-        assert await type_part.text() == "input"
-
-        overwrite_part = await reader.next()
-        assert overwrite_part is not None
-        assert overwrite_part.name == "overwrite"
-        assert await overwrite_part.text() == "true"
-
-        return web.json_response({"name": "source.png", "subfolder": "contract", "type": "input"})
-
-    base_url, runner = await _with_test_server(handler, "POST", "/upload/image")
-    try:
-        client = ComfyUIClient(base_url)
-
-        assert await client.upload_image(
-            body=b"image-bytes",
-            filename="source.png",
-            content_type="image/png",
-        ) == "contract/source.png"
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.asyncio
 async def test_comfyui_client_unwraps_prompt_history() -> None:
     history_payload = {
         "abc123": {
@@ -273,43 +237,66 @@ def test_stamp_output_cache_busters_updates_save_image_prefix() -> None:
     assert "filename_prefix" not in prompt["9"]["inputs"]
 
 
-def test_image_upload_request_decodes_data_url() -> None:
-    upload = _image_upload_request_from_value(
-        {
-            "data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
-            "filename": "folder/source.png",
-        }
+@pytest.mark.asyncio
+async def test_upload_slot_writes_to_comfyui_input_dir(tmp_path) -> None:
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            max_request_bytes=1024,
+        ),
+        env=SimpleNamespace(comfyui_path=tmp_path / "ComfyUI"),
+        uploads={},
     )
+    app = create_app(state)
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.post(
+                f"{base_url}/uploads/prepare",
+                json={"filename": "folder/source.png", "mime_type": "image/png", "size": 11},
+            ) as response:
+                prepared = await response.json()
 
-    assert upload is not None
-    assert upload.body == b"image-bytes"
-    assert upload.filename == "source.png"
-    assert upload.content_type == "image/png"
+            assert response.status == 200
+            assert prepared["file_ref"]["kind"] == "file_ref"
+            assert prepared["file_ref"]["filename"] == "source.png"
+            assert not str(prepared["file_ref"]["ref"]).endswith("source.png")
 
+            async with session.put(
+                f"{base_url}{prepared['upload_url']}",
+                data=b"image-bytes",
+                headers={"content-type": "image/png"},
+            ) as response:
+                uploaded = await response.json()
 
-def test_image_upload_request_leaves_existing_filename_values_alone() -> None:
-    assert _image_upload_request_from_value("already-uploaded.png") is None
+            assert response.status == 200
+            assert uploaded["status"] == "ready"
+
+            async with session.get(
+                f"{base_url}/uploads/{prepared['upload_id']}/status",
+            ) as response:
+                status = await response.json()
+
+        assert response.status == 200
+        assert status["status"] == "ready"
+        record = state.uploads[prepared["upload_id"]]
+        assert record.path == tmp_path / "ComfyUI" / "input" / record.comfyui_filename
+        assert record.path.read_bytes() == b"image-bytes"
+    finally:
+        await runner.cleanup()
 
 
 @pytest.mark.asyncio
-async def test_prepare_contract_inputs_uploads_image_payloads() -> None:
-    class FakeClient:
-        def __init__(self) -> None:
-            self.uploads: list[dict[str, object]] = []
-
-        async def upload_image(self, *, body: bytes, filename: str, content_type: str) -> str:
-            self.uploads.append(
-                {
-                    "body": body,
-                    "filename": filename,
-                    "content_type": content_type,
-                }
-            )
-            return "contract/source.png"
-
-    client = FakeClient()
+async def test_prepare_contract_inputs_resolves_file_refs() -> None:
     state = SimpleNamespace(
-        client=client,
+        uploads={
+            "upload_abc123": SimpleNamespace(
+                status="ready",
+                comfyui_filename="upload_abc123_source.png",
+            )
+        },
         manifest_snapshot=lambda: SimpleNamespace(
             workflows={
                 "demo": SimpleNamespace(
@@ -334,7 +321,8 @@ async def test_prepare_contract_inputs_uploads_image_payloads() -> None:
         "default",
         {
             "source_image": {
-                "data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                "kind": "file_ref",
+                "ref": "upload_abc123",
                 "filename": "source.png",
             },
             "prompt": "keep this",
@@ -342,13 +330,34 @@ async def test_prepare_contract_inputs_uploads_image_payloads() -> None:
     )
 
     assert prepared == {
-        "source_image": "contract/source.png",
+        "source_image": "upload_abc123_source.png",
         "prompt": "keep this",
     }
-    assert client.uploads == [
-        {
-            "body": b"image-bytes",
-            "filename": "source.png",
-            "content_type": "image/png",
-        }
-    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_contract_inputs_rejects_inline_image_bytes() -> None:
+    state = SimpleNamespace(
+        uploads={},
+        manifest_snapshot=lambda: SimpleNamespace(
+            workflows={
+                "demo": SimpleNamespace(
+                    execution_contract=SimpleNamespace(
+                        contracts={
+                            "default": SimpleNamespace(
+                                inputs=[SimpleNamespace(name="source_image", type="image")]
+                            )
+                        }
+                    )
+                )
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Upload the file first"):
+        await _prepare_contract_inputs(
+            state,
+            "demo",
+            "default",
+            {"source_image": {"data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}},
+        )

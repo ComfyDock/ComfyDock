@@ -111,12 +111,13 @@ execution should consume Manager-captured API prompt artifacts.
 Validation: STATIC
 
 Core should not own HTTP routing, websocket proxying, ComfyUI process
-supervision, deployment provider APIs, run persistence, auth, or object storage
-delivery. Those responsibilities belong to caller packages such as manager,
-CLI/serve, deploy, or external runtime adapters. Core should expose
-deterministic library functions and typed results that those packages can adapt
-to their transports. Browser UI assets for `cg serve` are also adapter-owned;
-core must not depend on React, Vite, `aiohttp`, or any hosted studio runtime.
+supervision, deployment provider APIs, run persistence, session persistence,
+auth, file upload transport, or object storage delivery. Those responsibilities
+belong to caller packages such as manager, CLI/serve, deploy, or external
+runtime adapters. Core should expose deterministic library functions and typed
+results that those packages can adapt to their transports. Browser UI assets
+for `cg serve` are also adapter-owned; core must not depend on React, Vite,
+`aiohttp`, SQLite runtime state, or any hosted studio runtime.
 
 ### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over stored contract semantics
 Validation: MIXED
@@ -124,12 +125,19 @@ Validation: MIXED
 A future ComfyGit serve runtime should expose contract-shaped workflow endpoints
 for a ComfyGit environment by loading manifest state, captured API prompt
 artifacts, calling core contract execution services, and communicating with a
-local ComfyUI server. The serve runtime may provide HTTP endpoints, progress
-streams, output retrieval, static browser UI assets, and storage adapters, but
-it must not redefine the manifest or contract semantics. The CLI serve adapter
-may depend on concrete runtime tooling such as `aiohttp` for HTTP and
-React/Vite for packaged browser assets; core must not depend on or expose those
-transport or presentation stacks.
+local ComfyUI server or another serve-owned execution adapter. The serve
+runtime may provide HTTP endpoints, progress streams, upload-slot endpoints,
+output retrieval, static browser UI assets, state/session adapters, storage
+adapters, and `RunExecutor` strategies, but it must not redefine the manifest
+or contract semantics. The CLI serve adapter may depend on concrete runtime
+tooling such as `aiohttp` for HTTP, SQLite for local serve state, and React/Vite
+for packaged browser assets; core must not depend on or expose those transport,
+persistence, execution-host, or presentation stacks.
+
+Direct local ComfyUI execution, local proxy execution, remote proxy execution,
+and serverless-provider execution are serve/deployment adapter choices. Core
+should remain limited to preparing contract prompts and interpreting typed
+execution results in a transport-agnostic way.
 
 ### CGCORE-EXEC-04 [PARTIAL]: API prompts are captured execution artifacts
 Validation: TEST

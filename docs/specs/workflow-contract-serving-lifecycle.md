@@ -151,14 +151,16 @@ CLI package so it can grow into static UI serving, progress streams, websocket
 bridging, and output delivery without moving transport concerns into core. This
 adapter does not launch ComfyUI.
 
-For `image` contract inputs backed by ComfyUI `LoadImage`, `cg serve` accepts a
-data URL or `{ data_url, filename, mime_type }` payload, uploads it to ComfyUI's
-image upload endpoint as an input file, then patches the captured API prompt
-with the returned filename before submitting the prompt. Plain string values are
-still treated as already-accessible ComfyUI input filenames. Because this first
-Studio upload path sends image bytes inline in JSON, the serve adapter must
-accept large contract request bodies and expose a request-size cap for local
-operators.
+For `image` contract inputs backed by ComfyUI `LoadImage`, Studio uploads file
+bytes to the serve upload endpoint first, receives an opaque `file_ref`, and
+submits that ref in the contract run request. The run handler resolves the ref
+to the ComfyUI-accessible input filename before patching the captured API
+prompt. Plain string values are still treated as already-accessible ComfyUI
+input filenames for callers that deliberately manage their own input files.
+
+Inline base64/data URL uploads are retired from the Studio execution path.
+Contract run requests should stay small JSON control-plane messages; callers
+with binary media must upload first and submit an upload reference.
 
 This adapter should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.
@@ -226,6 +228,226 @@ ComfyGit serve endpoint. ComfyUI may run locally inside the same container or
 runtime, but callers should not need direct access to the ComfyUI UI/API to
 execute a declared contract.
 
+### CGSERVE-RUN-05 [PLANNED]: Contract execution is selected through a serve-owned executor strategy
+Validation: MIXED
+
+`cg serve` should treat contract execution as a serve-owned strategy boundary.
+The HTTP API, hosted Studio, sessions, run records, upload refs, output refs,
+and gallery state belong to the serve process. The actual execution path should
+be selected by configuration through a conceptual `RunExecutor` interface
+rather than being hard-coded into request handlers.
+
+The first executor should remain a direct local ComfyUI executor because that
+matches the current `cg run` and local development model:
+
+```text
+browser or API client
+  -> cg serve
+      -> LocalComfyExecutor
+          -> local ComfyUI HTTP API
+```
+
+This executor may resolve local upload refs into ComfyUI input filenames,
+submit prompts to the configured ComfyUI URL, poll or stream progress, and map
+ComfyUI history/output data back into contract-shaped results. This is an
+implementation detail of the local executor; the public serve API should expose
+file refs, run refs, artifact refs, and contract result objects rather than
+local filesystem paths or raw ComfyUI assumptions.
+
+### CGSERVE-RUN-06 [PLANNED]: Proxy execution is an optional future executor mode
+Validation: HUMAN_REVIEW
+
+Future serve deployments may execute contracts through a Comfy runtime proxy
+instead of talking to ComfyUI directly. In that shape, the executor remains
+inside the `cg serve` process as a strategy object, while the proxy is a
+separate process that runs near ComfyUI and manages runtime-local data staging:
+
+```text
+browser or API client
+  -> always-on cg serve
+      -> ProxyComfyExecutor
+          -> local or remote Comfy runtime proxy
+              -> ComfyUI
+```
+
+For serverless GPU deployments, `cg serve` can run on a cheap always-on host
+while the proxy and ComfyUI run inside or beside the ephemeral GPU worker. The
+proxy should stage input refs into the form ComfyUI expects, submit prompts,
+collect outputs, upload or register output artifacts, report progress and final
+status, and then allow the worker to shut down. The proxy is not the public
+contract API; it is an execution adapter behind `cg serve`.
+
+Local proxy mode may be introduced later, for example through a `cg run` option
+or a dedicated proxy command, but it is not required for the first direct local
+executor slice.
+
+## Runtime State And Gallery Persistence
+
+### CGSERVE-STATE-01 [PLANNED]: Serve state is adapter-owned runtime state
+Validation: MIXED
+
+`cg serve` may persist runtime state such as sessions, runs, gallery items,
+upload refs, output artifact refs, progress snapshots, and contract snapshots.
+This state is not portable environment source truth and must not be written into
+the committed manifest or treated as part of reproducible environment metadata.
+
+Core owns contract interpretation and prompt/output semantics. Serve owns the
+runtime state adapter that records what happened while users interact with a
+served environment.
+
+### CGSERVE-STATE-02 [PLANNED]: Local SQLite is the default durable state adapter
+Validation: TEST
+
+The first durable serve implementation should use SQLite as the local state
+adapter so a LAN or developer-machine Studio can survive browser refreshes and
+`cg serve` restarts without requiring an external service.
+
+The default database location should live under workspace/runtime metadata,
+for example:
+
+```text
+<workspace>/.metadata/serve/serve.sqlite
+```
+
+The SQLite state store should be optional. `cg serve` should keep an ephemeral
+mode for demos and tests where run/gallery state is held in memory and discarded
+on process exit.
+
+### CGSERVE-STATE-03 [PLANNED]: Gallery history is user/session scoped by policy
+Validation: MIXED
+
+Studio gallery history should be persisted independently from any single
+contract view. If a user runs multiple workflow contracts, successful outputs
+should appear in that user's unified gallery unless the serve policy says the
+gallery is shared.
+
+The first useful modes should be explicit:
+
+```text
+--state ephemeral
+--state local
+--gallery private
+--gallery shared
+```
+
+`private` may initially mean an anonymous browser session cookie. `shared` means
+all Studio clients see the same gallery for the served environment. Later auth
+adapters may bind gallery state to authenticated user IDs.
+
+### CGSERVE-STATE-04 [PLANNED]: Serve state records stable artifact references, not large blobs
+Validation: TEST
+
+Persisted run and gallery records should store metadata and references, not
+inline media bytes. A gallery item should record enough information to render
+and debug the generation without embedding upload or output payloads directly in
+the database row.
+
+Useful first fields include workflow name, contract name, submitted display
+inputs, prompt id, run status, created/updated timestamps, declared output name,
+artifact refs, local or signed artifact URLs, and a contract/API-prompt
+snapshot identifier when available.
+
+### CGSERVE-STATE-05 [DEFERRED]: Remote state and auth are adapter concerns
+Validation: MIXED
+
+Future deployments may replace local SQLite with a remote state adapter such as
+Postgres/Supabase and may replace anonymous sessions with shared-token, OIDC,
+reverse-proxy, or application-specific auth. Those adapters should use the same
+conceptual serve interfaces as the local implementation:
+
+```text
+StateStore
+StorageStore
+AuthProvider
+RunExecutor
+```
+
+The open-source local serve path should remain usable without a remote database
+or auth provider, while leaving a clean extension point for users who want to
+turn a served Studio into a multi-user or SaaS-style application.
+
+## Input Transfer
+
+### CGSERVE-IN-01 [PARTIAL]: Large contract inputs use upload references instead of inline bytes
+Validation: MIXED
+
+Contract run payloads should remain small JSON control-plane requests. Large
+binary or media inputs such as images, audio, video, masks, and archives should
+be uploaded before the run request and referenced by opaque file refs in the
+contract input payload.
+
+The preferred run input shape is an adapter-owned reference, not a local path or
+base64 blob:
+
+```json
+{
+  "kind": "file_ref",
+  "ref": "upload_abc123",
+  "filename": "input.png",
+  "mime_type": "image/png"
+}
+```
+
+The current Studio image path uses this shape and no longer sends base64/data
+URL image payloads inside contract run JSON. This remains partial because audio,
+video, masks, archives, and non-Studio clients still need broader typed upload
+coverage and compatibility tests.
+
+### CGSERVE-IN-02 [PARTIAL]: Serve owns an upload-slot endpoint
+Validation: TEST
+
+`cg serve` should expose an upload-slot flow before contract execution. A
+client asks for an upload slot, uploads bytes to the returned URL, then submits
+the returned file reference in the contract run request.
+
+The first local implementation may use serve-managed URLs:
+
+```text
+POST /uploads/prepare
+PUT  /uploads/{upload_id}?token=...
+GET  /uploads/{upload_id}/status
+```
+
+The prepare response should include an opaque upload id/ref, upload URL, HTTP
+method, required headers if any, expiry, accepted content constraints, and the
+intended destination class such as `input`.
+
+The first implementation exposes `POST /uploads/prepare`,
+`PUT /uploads/{upload_id}?token=...`, and
+`GET /uploads/{upload_id}/status`. It returns a `file_ref` for the contract run
+payload and keeps local paths server-side.
+
+### CGSERVE-IN-03 [PARTIAL]: Local disk is the first upload storage adapter
+Validation: TEST
+
+The first storage adapter should write uploads into the active environment's
+ComfyUI input directory, which may itself be a symlink to the ComfyGit workspace
+input area. The browser must not receive or submit trusted local filesystem
+paths. It should only receive opaque upload refs and display-safe filenames.
+
+The local adapter should generate safe filenames, reject path traversal, enforce
+per-input size and MIME/extension limits, and return the ComfyUI-accessible
+input filename needed to patch the captured API prompt.
+
+The current adapter writes into the active environment's `ComfyUI/input`
+directory using generated upload-prefixed filenames and enforces the configured
+serve request-size limit. MIME/extension policy remains permissive until the
+contract input schema exposes richer per-input media constraints.
+
+### CGSERVE-IN-04 [DEFERRED]: Remote object storage is an upload adapter concern
+Validation: MIXED
+
+Future serve deployments may map upload refs to S3, R2, or another object
+storage backend using presigned URLs. In that mode, serve is responsible for
+resolving a file ref into the local file or URL form ComfyUI needs before
+queueing the prompt. That may require downloading a remote object into the
+ComfyUI input directory or teaching a deployment-specific runtime how to stage
+inputs.
+
+Object storage provider selection, presigned URL details, retention policy,
+multi-user isolation, and remote cache cleanup belong to serve/deployment
+adapters, not to core prompt-patching semantics.
+
 ## Output Delivery
 
 ### CGSERVE-OUT-01 [PLANNED]: Local output refs are the first output delivery mode
@@ -241,3 +463,8 @@ Validation: MIXED
 S3/R2/provider bucket uploads, signed URLs, retention policy, and large artifact
 delivery should be handled by serve/deployment adapters. Core may define output
 metadata types, but it should not depend on a specific storage provider.
+
+Serve should eventually treat outputs symmetrically with inputs: ComfyUI writes
+local output artifacts, serve turns those into scoped artifact refs or signed
+download URLs, and the hosted Studio consumes those refs rather than assuming
+direct filesystem or raw ComfyUI output access.

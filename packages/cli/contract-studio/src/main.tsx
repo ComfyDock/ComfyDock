@@ -110,9 +110,29 @@ type GalleryPhoto = {
 };
 
 type ImageInputValue = {
-  data_url: string;
+  file: File;
+  preview_url: string;
   filename: string;
   mime_type: string;
+  size: number;
+};
+
+type FileRef = {
+  kind: "file_ref";
+  ref: string;
+  filename: string;
+  mime_type: string;
+  size?: number;
+};
+
+type UploadPrepareResponse = {
+  kind: "upload_slot";
+  upload_id: string;
+  ref: string;
+  upload_url: string;
+  method: "PUT";
+  headers?: Record<string, string>;
+  file_ref: FileRef;
 };
 
 const inputDefaults = (contract: ContractSummary): Record<string, unknown> => {
@@ -175,8 +195,45 @@ function formatGeneratedAt(value: string) {
   }).format(date);
 }
 
+const LARGE_STRING_LIMIT = 800;
+const DATA_URL_PREFIX_PATTERN = /^data:[^,]*;base64,/i;
+
+function abbreviatedMiddle(value: string, head = 96, tail = 48) {
+  if (value.length <= head + tail + 16) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function displayString(value: string) {
+  if (DATA_URL_PREFIX_PATTERN.test(value)) {
+    const separatorIndex = value.indexOf(",");
+    const prefix = value.slice(0, separatorIndex + 1);
+    const payload = value.slice(separatorIndex + 1);
+    return `${prefix}${abbreviatedMiddle(payload, 48, 32)} [base64 omitted, ${payload.length.toLocaleString()} chars]`;
+  }
+  if (value.length > LARGE_STRING_LIMIT) {
+    return `${abbreviatedMiddle(value, 240, 120)} [truncated, ${value.length.toLocaleString()} chars]`;
+  }
+  return value;
+}
+
+function valueForDisplay(value: unknown): unknown {
+  if (typeof value === "string") return displayString(value);
+  if (Array.isArray(value)) return value.map((item) => valueForDisplay(item));
+  if (!value || typeof value !== "object") return value;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    result[key] = valueForDisplay(child);
+  }
+  return result;
+}
+
 function jsonBlock(value: unknown) {
-  return JSON.stringify(value ?? {}, null, 2);
+  return JSON.stringify(valueForDisplay(value ?? {}), null, 2);
+}
+
+function displayInputsForGallery(inputs: Record<string, unknown>): Record<string, unknown> {
+  return valueForDisplay(inputs) as Record<string, unknown>;
 }
 
 function galleryPhoto(item: GalleryItem): GalleryPhoto {
@@ -236,31 +293,72 @@ function valueForSubmit(input: ContractInput, value: unknown) {
   return value;
 }
 
-function readImageInputFile(file: File): Promise<ImageInputValue> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error || new Error("Failed to read image file"));
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === "string" ? reader.result : "";
-      resolve({
-        data_url: dataUrl,
-        filename: file.name || "image.png",
-        mime_type: file.type || "image/png",
-      });
-    };
-    reader.readAsDataURL(file);
-  });
+function imageInputFromFile(file: File): ImageInputValue {
+  return {
+    file,
+    preview_url: URL.createObjectURL(file),
+    filename: file.name || "image.png",
+    mime_type: file.type || "image/png",
+    size: file.size,
+  };
 }
 
 function imageInputValue(value: unknown): ImageInputValue | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<ImageInputValue>;
-  if (typeof candidate.data_url !== "string" || typeof candidate.filename !== "string") return null;
+  if (!(candidate.file instanceof File) || typeof candidate.preview_url !== "string" || typeof candidate.filename !== "string") return null;
   return {
-    data_url: candidate.data_url,
+    file: candidate.file,
+    preview_url: candidate.preview_url,
     filename: candidate.filename,
     mime_type: candidate.mime_type || "image/png",
+    size: candidate.size || candidate.file.size,
   };
+}
+
+async function uploadInputFile(value: ImageInputValue): Promise<FileRef> {
+  const slot = await apiJson<UploadPrepareResponse>("/uploads/prepare", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      filename: value.filename,
+      mime_type: value.mime_type,
+      size: value.size,
+    }),
+  });
+  const response = await fetch(slot.upload_url, {
+    method: slot.method || "PUT",
+    headers: slot.headers || { "content-type": value.mime_type },
+    body: value.file,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      typeof data?.message === "string"
+        ? data.message
+        : typeof data?.error === "string"
+          ? data.error
+          : response.statusText;
+    throw new Error(message || "Upload failed");
+  }
+  return (data.file_ref || slot.file_ref) as FileRef;
+}
+
+async function prepareSubmitInputs(
+  contract: ContractSummary,
+  values: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const submitInputs: Record<string, unknown> = {};
+  for (const input of contract.inputs) {
+    const value = valueForSubmit(input, values[input.name]);
+    if (input.type === "image") {
+      const imageValue = imageInputValue(value);
+      submitInputs[input.name] = imageValue ? await uploadInputFile(imageValue) : value;
+    } else {
+      submitInputs[input.name] = value;
+    }
+  }
+  return submitInputs;
 }
 
 function App() {
@@ -322,11 +420,18 @@ function App() {
     setBusy(true);
     setIssues([]);
     setRawResult(null);
-    setStatus("Submitting");
-    const submitInputs: Record<string, unknown> = {};
-    for (const input of selected.inputs) {
-      submitInputs[input.name] = valueForSubmit(input, inputs[input.name]);
+    setStatus("Uploading inputs");
+    let submitInputs: Record<string, unknown>;
+    try {
+      submitInputs = await prepareSubmitInputs(selected, inputs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Input upload failed";
+      setStatus(message);
+      setBusy(false);
+      return;
     }
+    setStatus("Submitting");
+    const displayInputs = displayInputsForGallery(submitInputs);
     const dimensions = imageDimensions(submitInputs);
     const pendingId = `pending-${selected.workflow}-${selected.contract}-${Date.now()}`;
     setGallery((current) => [
@@ -339,7 +444,7 @@ function App() {
         status: "pending",
         width: dimensions.width,
         height: dimensions.height,
-        inputs: submitInputs,
+        inputs: displayInputs,
         createdAt: new Date().toISOString(),
       },
       ...current,
@@ -374,7 +479,7 @@ function App() {
             status: "done",
             width: type === "image" || type === "video" ? dimensions.width : 1,
             height: type === "image" || type === "video" ? dimensions.height : 1,
-            inputs: submitInputs,
+            inputs: displayInputs,
             rawResult: result,
             createdAt: new Date().toISOString(),
           });
@@ -399,7 +504,7 @@ function App() {
 
   async function copyGalleryItem(item: GalleryItem) {
     if (!item.url) {
-      await copyText(JSON.stringify(item.artifact?.raw || item.artifact || item.inputs || {}, null, 2));
+      await copyText(jsonBlock(item.artifact?.raw || item.artifact || item.inputs || {}));
       return;
     }
     if (item.type !== "image") {
@@ -625,15 +730,13 @@ function ContractInputControl({
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 if (!file) return;
-                readImageInputFile(file).then(onChange).catch((error) => {
-                  console.error("[ComfyGit Studio] Failed to read image input", error);
-                });
+                onChange(imageInputFromFile(file));
               }}
             />
           </label>
           {imageValue ? (
             <div className="image-input-preview">
-              <img src={imageValue.data_url} alt="" />
+              <img src={imageValue.preview_url} alt="" />
               <div>
                 <strong>{imageValue.filename}</strong>
                 <button type="button" onClick={() => onChange(null)}>

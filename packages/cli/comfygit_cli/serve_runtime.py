@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
+import secrets
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -23,6 +22,7 @@ from comfygit_core.services.workflow_execution import (
 )
 
 DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024
+UPLOAD_TOKEN_BYTES = 32
 
 
 @dataclass(frozen=True)
@@ -61,26 +61,6 @@ class ComfyUIClient:
         if not prompt_id:
             raise RuntimeError(f"ComfyUI did not return a prompt_id: {payload}")
         return str(prompt_id)
-
-    async def upload_image(
-        self,
-        *,
-        body: bytes,
-        filename: str,
-        content_type: str,
-    ) -> str:
-        form = aiohttp.FormData()
-        form.add_field("image", body, filename=filename, content_type=content_type)
-        form.add_field("type", "input")
-        form.add_field("overwrite", "true")
-        payload = await self._request_json(
-            "POST",
-            "/upload/image",
-            data=form,
-        )
-        name = str(payload.get("name") or payload.get("filename") or filename)
-        subfolder = str(payload.get("subfolder") or "").strip("/")
-        return f"{subfolder}/{name}" if subfolder else name
 
     async def get_history(self, prompt_id: str) -> dict[str, Any] | None:
         payload = await self._request_json("GET", f"/history/{prompt_id}")
@@ -192,6 +172,29 @@ class ComfyUIClient:
         return body, content_type, disposition
 
 
+@dataclass
+class UploadRecord:
+    upload_id: str
+    token: str
+    filename: str
+    content_type: str
+    size: int | None
+    path: Path
+    comfyui_filename: str
+    status: str = "pending"
+
+    def public_ref(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "kind": "file_ref",
+            "ref": self.upload_id,
+            "filename": self.filename,
+            "mime_type": self.content_type,
+        }
+        if self.size is not None:
+            payload["size"] = self.size
+        return payload
+
+
 class ServeState:
     """Shared state for request handlers."""
 
@@ -204,6 +207,7 @@ class ServeState:
         self.env = env
         self.config = config
         self.client = ComfyUIClient(config.comfy_url, session=session)
+        self.uploads: dict[str, UploadRecord] = {}
 
     def manifest_snapshot(self):
         return self.env.get_manifest_snapshot()
@@ -250,6 +254,9 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/health", health_handler)
     app.router.add_get("/contracts", contracts_handler)
     app.router.add_get("/contracts/{workflow}/{contract}", single_contract_handler)
+    app.router.add_post("/uploads/prepare", upload_prepare_handler)
+    app.router.add_put("/uploads/{upload_id}", upload_put_handler)
+    app.router.add_get("/uploads/{upload_id}/status", upload_status_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -319,6 +326,76 @@ async def single_contract_handler(request: web.Request) -> web.Response:
         return web.json_response(payload)
     except ValueError as exc:
         return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
+
+
+async def upload_prepare_handler(request: web.Request) -> web.Response:
+    try:
+        body = await _read_json_body(request)
+        if not isinstance(body, Mapping):
+            raise ValueError("Upload prepare body must be a JSON object.")
+        record = _prepare_upload_slot(_state(request), body)
+        return web.json_response(
+            {
+                "kind": "upload_slot",
+                "upload_id": record.upload_id,
+                "ref": record.upload_id,
+                "upload_url": f"/uploads/{record.upload_id}?token={record.token}",
+                "method": "PUT",
+                "headers": {"content-type": record.content_type},
+                "destination": "input",
+                "max_size": _max_request_bytes(_state(request)),
+                "file_ref": record.public_ref(),
+            }
+        )
+    except ValueError as exc:
+        return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
+
+
+async def upload_put_handler(request: web.Request) -> web.Response:
+    state = _state(request)
+    upload_id = request.match_info["upload_id"]
+    record = state.uploads.get(upload_id)
+    if record is None:
+        return web.json_response({"error": "not_found", "message": "Unknown upload id."}, status=404)
+    if not secrets.compare_digest(request.query.get("token", ""), record.token):
+        return web.json_response({"error": "forbidden", "message": "Upload token is invalid."}, status=403)
+
+    content_length = request.content_length
+    max_bytes = _max_request_bytes(state)
+    if content_length is not None and content_length > max_bytes:
+        return _upload_too_large_response(max_bytes)
+
+    record.path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = record.path.with_name(f".{record.path.name}.tmp")
+    bytes_written = 0
+    try:
+        with temp_path.open("wb") as handle:
+            try:
+                async for chunk in request.content.iter_chunked(1024 * 1024):
+                    bytes_written += len(chunk)
+                    if bytes_written > max_bytes:
+                        handle.close()
+                        temp_path.unlink(missing_ok=True)
+                        return _upload_too_large_response(max_bytes)
+                    handle.write(chunk)
+            except web.HTTPRequestEntityTooLarge:
+                handle.close()
+                temp_path.unlink(missing_ok=True)
+                return _upload_too_large_response(max_bytes)
+        temp_path.replace(record.path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+    record.size = bytes_written
+    record.status = "ready"
+    return web.json_response({"status": "ready", "file_ref": record.public_ref()})
+
+
+async def upload_status_handler(request: web.Request) -> web.Response:
+    record = _state(request).uploads.get(request.match_info["upload_id"])
+    if record is None:
+        return web.json_response({"error": "not_found", "message": "Unknown upload id."}, status=404)
+    return web.json_response({"status": record.status, "file_ref": record.public_ref()})
 
 
 async def run_contract_handler(request: web.Request) -> web.Response:
@@ -508,20 +585,13 @@ async def _run_contract(
     return response
 
 
-@dataclass(frozen=True)
-class ImageUploadRequest:
-    body: bytes
-    filename: str
-    content_type: str
-
-
 async def _prepare_contract_inputs(
     state: ServeState,
     workflow_name: str,
     contract_name: str,
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
-    """Upload binary image inputs before building the ComfyUI prompt."""
+    """Resolve uploaded media refs before building the ComfyUI prompt."""
 
     manifest = state.manifest_snapshot()
     workflow = manifest.workflows.get(workflow_name)
@@ -536,72 +606,74 @@ async def _prepare_contract_inputs(
             continue
         if contract_input.name not in prepared:
             continue
-        upload = _image_upload_request_from_value(prepared[contract_input.name])
-        if upload is None:
-            continue
-        prepared[contract_input.name] = await state.client.upload_image(
-            body=upload.body,
-            filename=upload.filename,
-            content_type=upload.content_type,
+        prepared[contract_input.name] = _resolve_upload_ref(
+            state,
+            prepared[contract_input.name],
+            input_name=contract_input.name,
         )
     return prepared
 
 
-def _image_upload_request_from_value(value: Any) -> ImageUploadRequest | None:
+def _prepare_upload_slot(state: ServeState, body: Mapping[str, Any]) -> UploadRecord:
+    filename = _safe_upload_filename(body.get("filename"), body.get("mime_type") or body.get("content_type"))
+    content_type = str(body.get("mime_type") or body.get("content_type") or _content_type_for_filename(filename))
+    size = _optional_positive_int(body.get("size"))
+    max_bytes = _max_request_bytes(state)
+    if size is not None and size > max_bytes:
+        raise ValueError(f"Upload is too large. This cg serve instance accepts files up to {max_bytes} bytes.")
+
+    upload_id = f"upload_{uuid.uuid4().hex}"
+    stored_filename = f"{upload_id}_{filename}"
+    input_dir = _comfyui_input_dir(state.env)
+    record = UploadRecord(
+        upload_id=upload_id,
+        token=secrets.token_urlsafe(UPLOAD_TOKEN_BYTES),
+        filename=filename,
+        content_type=content_type,
+        size=size,
+        path=input_dir / stored_filename,
+        comfyui_filename=stored_filename,
+    )
+    state.uploads[upload_id] = record
+    return record
+
+
+def _resolve_upload_ref(state: ServeState, value: Any, *, input_name: str) -> Any:
     if isinstance(value, str):
-        if not value.startswith("data:image/"):
-            return None
-        body, content_type = _decode_data_url(value)
-        return ImageUploadRequest(
-            body=body,
-            filename=_generated_upload_filename(content_type),
-            content_type=content_type,
-        )
+        if value.startswith("data:"):
+            raise ValueError(
+                f"Input '{input_name}' uses an inline data URL. Upload the file first and submit a file_ref."
+            )
+        return value
 
     if not isinstance(value, Mapping):
-        return None
+        return value
 
-    data_url = value.get("data_url")
-    if isinstance(data_url, str) and data_url.startswith("data:image/"):
-        body, content_type = _decode_data_url(data_url)
-        return ImageUploadRequest(
-            body=body,
-            filename=_safe_upload_filename(value.get("filename"), content_type),
-            content_type=content_type,
+    if value.get("kind") == "file_ref":
+        upload_id = value.get("ref") or value.get("upload_id")
+        if not isinstance(upload_id, str) or not upload_id:
+            raise ValueError(f"Input '{input_name}' file_ref is missing a ref.")
+        record = state.uploads.get(upload_id)
+        if record is None:
+            raise ValueError(f"Input '{input_name}' references an unknown upload.")
+        if record.status != "ready":
+            raise ValueError(f"Input '{input_name}' references an upload that is not ready.")
+        return record.comfyui_filename
+
+    if any(key in value for key in ("data_url", "base64", "data")):
+        raise ValueError(
+            f"Input '{input_name}' uses inline file bytes. Upload the file first and submit a file_ref."
         )
 
-    raw_base64 = value.get("base64") or value.get("data")
-    if not isinstance(raw_base64, str):
-        return None
-    content_type = str(value.get("mime_type") or value.get("content_type") or "image/png")
-    return ImageUploadRequest(
-        body=_decode_base64(raw_base64),
-        filename=_safe_upload_filename(value.get("filename"), content_type),
-        content_type=content_type,
-    )
+    return value
 
 
-def _decode_data_url(value: str) -> tuple[bytes, str]:
-    header, separator, data = value.partition(",")
-    if separator != "," or ";base64" not in header:
-        raise ValueError("Image data URLs must be base64 encoded.")
-    content_type = header.removeprefix("data:").split(";", 1)[0] or "image/png"
-    return _decode_base64(data), content_type
-
-
-def _decode_base64(value: str) -> bytes:
-    try:
-        return base64.b64decode(value, validate=True)
-    except binascii.Error as exc:
-        raise ValueError("Image input contains invalid base64 data.") from exc
-
-
-def _safe_upload_filename(value: Any, content_type: str) -> str:
+def _safe_upload_filename(value: Any, content_type: Any = None) -> str:
     raw = str(value or "").strip().replace("\\", "/").split("/")[-1]
-    safe = "".join(char for char in raw if char.isalnum() or char in {"-", "_", "."})
-    if safe and "." in safe:
+    safe = "".join(char for char in raw if char.isalnum() or char in {"-", "_", "."}).strip(" .")
+    if safe and "." in safe and any(char.isalnum() for char in safe):
         return safe
-    return _generated_upload_filename(content_type, stem=safe or None)
+    return _generated_upload_filename(str(content_type or ""), stem=safe or None)
 
 
 def _generated_upload_filename(content_type: str, stem: str | None = None) -> str:
@@ -614,6 +686,49 @@ def _generated_upload_filename(content_type: str, stem: str | None = None) -> st
         "image/bmp": ".bmp",
     }.get(content_type.lower(), ".png")
     return f"{stem or f'comfygit-upload-{uuid.uuid4().hex}'}{extension}"
+
+
+def _content_type_for_filename(filename: str) -> str:
+    extension = Path(filename).suffix.lower()
+    return {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+    }.get(extension, "application/octet-stream")
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _comfyui_input_dir(env: Environment) -> Path:
+    comfyui_path = Path(getattr(env, "comfyui_path", Path(getattr(env, "path", ".")) / "ComfyUI"))
+    return comfyui_path / "input"
+
+
+def _upload_too_large_response(max_bytes: int) -> web.Response:
+    max_mib = max_bytes // (1024 * 1024)
+    return web.json_response(
+        {
+            "error": "request_too_large",
+            "message": f"Upload is too large. This cg serve instance accepts uploads up to {max_mib} MiB.",
+        },
+        status=413,
+    )
 
 
 def _stamp_output_cache_busters(
