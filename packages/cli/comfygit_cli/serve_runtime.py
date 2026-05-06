@@ -23,6 +23,36 @@ from comfygit_core.services.workflow_execution import (
 
 DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024
 UPLOAD_TOKEN_BYTES = 32
+DEFAULT_UPLOAD_CONTENT_TYPE = "application/octet-stream"
+DEFAULT_UPLOAD_EXTENSION = ".bin"
+
+UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("image/jpeg", (".jpg", ".jpeg")),
+    ("image/png", (".png",)),
+    ("image/webp", (".webp",)),
+    ("image/gif", (".gif",)),
+    ("image/bmp", (".bmp",)),
+    ("video/mp4", (".mp4",)),
+    ("video/webm", (".webm",)),
+    ("video/quicktime", (".mov",)),
+    ("audio/wav", (".wav",)),
+    ("audio/mpeg", (".mp3",)),
+)
+UPLOAD_MIME_TYPE_BY_EXTENSION = {
+    extension: mime_type for mime_type, extensions in UPLOAD_FILE_TYPES for extension in extensions
+}
+UPLOAD_EXTENSION_BY_MIME_TYPE = {
+    mime_type: extensions[0] for mime_type, extensions in UPLOAD_FILE_TYPES
+}
+UPLOAD_MIME_TYPE_ALIASES = {
+    "image/jpg": "image/jpeg",
+    "audio/mp3": "audio/mpeg",
+    "audio/x-wav": "audio/wav",
+}
+
+
+class ComfyGitServeTimeoutError(Exception):
+    """Raised when a submitted ComfyUI prompt does not finish in time."""
 
 
 @dataclass(frozen=True)
@@ -103,7 +133,7 @@ class ComfyUIClient:
             if history:
                 return history
             await asyncio.sleep(poll_interval_seconds)
-        raise TimeoutError(f"Timed out waiting for ComfyUI prompt {prompt_id}")
+        raise ComfyGitServeTimeoutError(f"Timed out waiting for ComfyUI prompt {prompt_id}")
 
     async def _request_json(
         self,
@@ -276,7 +306,7 @@ def _studio_static_dir() -> Path:
     return Path(str(resources.files("comfygit_cli").joinpath("contract_studio_static")))
 
 
-async def studio_index_handler(request: web.Request) -> web.Response:
+async def studio_index_handler(request: web.Request) -> web.StreamResponse:
     static_dir = request.app[STUDIO_STATIC_DIR_KEY]
     index_path = static_dir / "index.html"
     if index_path.exists():
@@ -421,6 +451,8 @@ async def run_contract_handler(request: web.Request) -> web.Response:
             },
             status=413,
         )
+    except ComfyGitServeTimeoutError as exc:
+        return web.json_response({"error": "timeout", "message": str(exc)}, status=504)
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
         return web.json_response(
@@ -431,8 +463,6 @@ async def run_contract_handler(request: web.Request) -> web.Response:
             },
             status=502,
         )
-    except TimeoutError as exc:
-        return web.json_response({"error": "timeout", "message": str(exc)}, status=504)
     except ValueError as exc:
         return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
     except Exception as exc:
@@ -615,8 +645,9 @@ async def _prepare_contract_inputs(
 
 
 def _prepare_upload_slot(state: ServeState, body: Mapping[str, Any]) -> UploadRecord:
-    filename = _safe_upload_filename(body.get("filename"), body.get("mime_type") or body.get("content_type"))
-    content_type = str(body.get("mime_type") or body.get("content_type") or _content_type_for_filename(filename))
+    requested_content_type = _canonical_content_type(body.get("mime_type") or body.get("content_type"))
+    filename = _safe_upload_filename(body.get("filename"), requested_content_type)
+    content_type = requested_content_type or _content_type_for_filename(filename)
     size = _optional_positive_int(body.get("size"))
     max_bytes = _max_request_bytes(state)
     if size is not None and size > max_bytes:
@@ -677,32 +708,25 @@ def _safe_upload_filename(value: Any, content_type: Any = None) -> str:
 
 
 def _generated_upload_filename(content_type: str, stem: str | None = None) -> str:
-    extension = {
-        "image/jpeg": ".jpg",
-        "image/jpg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "image/bmp": ".bmp",
-    }.get(content_type.lower(), ".png")
+    extension = _extension_for_content_type(content_type)
     return f"{stem or f'comfygit-upload-{uuid.uuid4().hex}'}{extension}"
 
 
 def _content_type_for_filename(filename: str) -> str:
     extension = Path(filename).suffix.lower()
-    return {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-        ".bmp": "image/bmp",
-        ".mp4": "video/mp4",
-        ".webm": "video/webm",
-        ".mov": "video/quicktime",
-        ".wav": "audio/wav",
-        ".mp3": "audio/mpeg",
-    }.get(extension, "application/octet-stream")
+    return UPLOAD_MIME_TYPE_BY_EXTENSION.get(extension, DEFAULT_UPLOAD_CONTENT_TYPE)
+
+
+def _extension_for_content_type(content_type: str) -> str:
+    return UPLOAD_EXTENSION_BY_MIME_TYPE.get(
+        _canonical_content_type(content_type),
+        DEFAULT_UPLOAD_EXTENSION,
+    )
+
+
+def _canonical_content_type(value: Any) -> str:
+    content_type = str(value or "").split(";", 1)[0].strip().lower()
+    return UPLOAD_MIME_TYPE_ALIASES.get(content_type, content_type)
 
 
 def _optional_positive_int(value: Any) -> int | None:

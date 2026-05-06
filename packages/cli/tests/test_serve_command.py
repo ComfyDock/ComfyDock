@@ -13,6 +13,8 @@ from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.serve_runtime import (
     ComfyUIClient,
     ServeConfig,
+    _content_type_for_filename,
+    _generated_upload_filename,
     _prepare_contract_inputs,
     _stamp_output_cache_busters,
     create_app,
@@ -286,6 +288,16 @@ async def test_upload_slot_writes_to_comfyui_input_dir(tmp_path) -> None:
         assert record.path.read_bytes() == b"image-bytes"
     finally:
         await runner.cleanup()
+
+
+def test_upload_filename_and_mime_helpers_share_media_type_map() -> None:
+    assert _content_type_for_filename("clip.mp4") == "video/mp4"
+    assert _content_type_for_filename("sound.wav") == "audio/wav"
+    assert _content_type_for_filename("photo.jpeg") == "image/jpeg"
+
+    assert _generated_upload_filename("video/mp4", stem="clip") == "clip.mp4"
+    assert _generated_upload_filename("audio/x-wav", stem="sound") == "sound.wav"
+    assert _generated_upload_filename("image/jpg", stem="photo") == "photo.jpg"
 
 
 @pytest.mark.asyncio

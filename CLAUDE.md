@@ -183,6 +183,19 @@ Type validation for new/changed core library boundaries:
 uv run ty check <changed-core-files>
 ```
 
+Pylance-style validation for new/changed Python files:
+
+```bash
+uv run pyright <changed-python-files>
+```
+
+If `pyright` is not installed in the current uv environment, use the Node
+distribution against the repo venv so imports resolve like the local CLI does:
+
+```bash
+npx --yes pyright --pythonpath .venv/bin/python <changed-python-files>
+```
+
 Start with targeted files rather than forcing whole-repo type strictness at
 once. Expand coverage when the touched areas are clean.
 
@@ -197,3 +210,7 @@ workspace script (`dev/scripts/validation-workspace.sh`).
 - Add enough tests to protect the main path and important edge cases; do not add
   large test matrices for low-risk changes.
 - Keep all packages cross-platform where practical: Linux, macOS, and Windows.
+- Prefer file-level constants for shared lookup tables, MIME/extension maps,
+  protocol strings, limits, and other values likely to expand or change. Avoid
+  duplicating inline dictionaries or magic literals across helper functions when
+  a single top-level constant would make future changes safer.
