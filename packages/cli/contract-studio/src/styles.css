@@ -118,8 +118,9 @@ select:focus-visible {
   height: 100vh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  overflow: auto;
-  padding: 18px;
+  gap: 18px;
+  overflow: hidden;
+  padding: 18px 0 18px 18px;
   background:
     linear-gradient(180deg, hsl(var(--foreground) / 0.035), transparent 220px),
     hsl(var(--background));
@@ -143,7 +144,45 @@ select:focus-visible {
 }
 
 .top-bar {
-  margin-bottom: 18px;
+  min-height: 46px;
+  padding-right: 18px;
+}
+
+.gallery-scroll {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.42) hsl(var(--muted) / 0.22);
+  scrollbar-width: thin;
+  padding-right: 7px;
+}
+
+.gallery-scroll::-webkit-scrollbar {
+  width: 12px;
+}
+
+.gallery-scroll::-webkit-scrollbar-track {
+  border-radius: var(--radius);
+  background: hsl(var(--muted) / 0.22);
+}
+
+.gallery-scroll::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.48);
+  background-clip: content-box;
+}
+
+.gallery-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.62);
+  background-clip: content-box;
+}
+
+.gallery-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .eyebrow {
@@ -1362,6 +1401,10 @@ textarea::placeholder {
   .gallery-stage {
     min-height: 58vh;
     height: auto;
+    overflow: visible;
+  }
+
+  .gallery-scroll {
     overflow: visible;
   }
 

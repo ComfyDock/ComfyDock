@@ -222,29 +222,31 @@ export function App() {
           </div>
         </header>
 
-        {visibleGallery.length ? (
-          <section className="gallery" aria-label="Generated outputs" style={{ "--gallery-columns": galleryColumnCount } as React.CSSProperties}>
-            {galleryColumns.map((column, columnIndex) => (
-              <div className="gallery-column" key={`gallery-column-${columnIndex}`}>
-                {column.map((item) => (
-                  <GalleryTile
-                    key={item.id}
-                    item={item}
-                    fill
-                    now={now}
-                    onOpen={setActiveId}
-                    onCopy={copyGalleryItem}
-                    onDelete={deleteGalleryItem}
-                  />
-                ))}
-              </div>
-            ))}
-          </section>
-        ) : (
-          <div className="empty-stage">
-            <p>Run a contract to collect outputs here.</p>
-          </div>
-        )}
+        <div className="gallery-scroll">
+          {visibleGallery.length ? (
+            <section className="gallery" aria-label="Generated outputs" style={{ "--gallery-columns": galleryColumnCount } as React.CSSProperties}>
+              {galleryColumns.map((column, columnIndex) => (
+                <div className="gallery-column" key={`gallery-column-${columnIndex}`}>
+                  {column.map((item) => (
+                    <GalleryTile
+                      key={item.id}
+                      item={item}
+                      fill
+                      now={now}
+                      onOpen={setActiveId}
+                      onCopy={copyGalleryItem}
+                      onDelete={deleteGalleryItem}
+                    />
+                  ))}
+                </div>
+              ))}
+            </section>
+          ) : (
+            <div className="empty-stage">
+              <p>Run a contract to collect outputs here.</p>
+            </div>
+          )}
+        </div>
       </section>
 
       <aside className="control-panel">
