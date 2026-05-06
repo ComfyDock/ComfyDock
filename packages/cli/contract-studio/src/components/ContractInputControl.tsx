@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ImagePlus } from "lucide-react";
 import { Field, NumberPicker, StudioSelect } from "@/app/components";
 import { compactType, labelFor } from "@/lib/format";
@@ -13,9 +14,15 @@ export function ContractInputControl({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const [draggingImage, setDraggingImage] = useState(false);
   const id = `input-${input.name}`;
   const label = labelFor(input);
   const required = input.required ? "required" : "optional";
+
+  function selectImageFile(file: File | undefined) {
+    if (!file || !file.type.startsWith("image/")) return;
+    onChange(imageInputFromFile(file));
+  }
 
   if (input.type === "boolean") {
     return (
@@ -54,17 +61,38 @@ export function ContractInputControl({
         }
       >
         <div className="image-input-control">
-          <label className="image-upload-button" htmlFor={id}>
+          <label
+            className={`image-upload-button${draggingImage ? " is-dragging" : ""}`}
+            htmlFor={id}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDraggingImage(true);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDraggingImage(true);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDraggingImage(false);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDraggingImage(false);
+              selectImageFile(event.dataTransfer.files?.[0]);
+            }}
+          >
             <ImagePlus size={16} />
-            <span>{imageValue ? "Change image" : "Choose image"}</span>
+            <span>{imageValue ? "Change or drop image" : "Choose or drop image"}</span>
             <input
               id={id}
               type="file"
               accept="image/*"
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                onChange(imageInputFromFile(file));
+                selectImageFile(event.target.files?.[0]);
+                event.target.value = "";
               }}
             />
           </label>

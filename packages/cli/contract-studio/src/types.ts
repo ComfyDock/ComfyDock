@@ -50,6 +50,8 @@ export type OutputArtifact = {
   subfolder?: string;
   type?: string;
   url?: string;
+  width?: number;
+  height?: number;
   raw?: unknown;
 };
 

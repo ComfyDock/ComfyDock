@@ -665,9 +665,14 @@ textarea::placeholder {
   transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out);
 }
 
-.image-upload-button:hover {
+.image-upload-button:hover,
+.image-upload-button.is-dragging {
   border-color: hsl(var(--ring));
   background: hsl(var(--accent));
+}
+
+.image-upload-button.is-dragging {
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.16);
 }
 
 .image-upload-button input {

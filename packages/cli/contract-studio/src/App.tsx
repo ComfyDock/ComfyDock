@@ -10,7 +10,6 @@ import { copyText } from "@/lib/clipboard";
 import {
   contractTitle,
   displayInputsForGallery,
-  imageDimensions,
   jsonBlock,
   outputKind,
 } from "@/lib/format";
@@ -100,7 +99,6 @@ export function App() {
     }
     setStatus("Submitting");
     const displayInputs = displayInputsForGallery(submitInputs);
-    const dimensions = imageDimensions(submitInputs);
     const pendingId = `pending-${selected.workflow}-${selected.contract}-${Date.now()}`;
     setGallery((current) => [
       {
@@ -110,8 +108,8 @@ export function App() {
         contractName: selected.contract,
         type: "image",
         status: "pending",
-        width: dimensions.width,
-        height: dimensions.height,
+        width: 1,
+        height: 1,
         inputs: displayInputs,
         createdAt: new Date().toISOString(),
       },
@@ -130,7 +128,7 @@ export function App() {
       setIssues(result.issues || []);
       const nextItems = result.gallery_items?.length
         ? normalizeGalleryItems(result.gallery_items)
-        : galleryItemsFromOutputs(result, selected, dimensions, displayInputs);
+        : galleryItemsFromOutputs(result, selected, displayInputs);
       if (nextItems.length) {
         setGallery((current) => [...nextItems, ...current.filter((item) => item.id !== pendingId)]);
       } else {
@@ -349,7 +347,6 @@ function distributeGalleryColumns(items: GalleryItem[], columnCount: number) {
 function galleryItemsFromOutputs(
   result: RunResponse,
   selected: NonNullable<ContractsResponse["contracts"][number]>,
-  dimensions: { width: number; height: number },
   displayInputs: Record<string, unknown>,
 ) {
   const nextItems: GalleryItem[] = [];
@@ -369,8 +366,8 @@ function galleryItemsFromOutputs(
         type,
         url: artifact.url,
         status: "done",
-        width: type === "image" || type === "video" ? dimensions.width : 1,
-        height: type === "image" || type === "video" ? dimensions.height : 1,
+        width: type === "image" || type === "video" ? Math.max(1, Number(artifact.width || 1)) : 1,
+        height: type === "image" || type === "video" ? Math.max(1, Number(artifact.height || 1)) : 1,
         inputs: displayInputs,
         rawResult: result,
         createdAt: new Date().toISOString(),

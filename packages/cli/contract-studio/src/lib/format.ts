@@ -80,15 +80,6 @@ export function galleryPhoto(item: GalleryItem): GalleryPhoto {
   };
 }
 
-export function imageDimensions(inputs: Record<string, unknown>) {
-  const width = Number(inputs.width ?? inputs.W ?? inputs.w ?? 1024);
-  const height = Number(inputs.height ?? inputs.H ?? inputs.h ?? width);
-  return {
-    width: Number.isFinite(width) && width > 0 ? width : 1024,
-    height: Number.isFinite(height) && height > 0 ? height : 1024,
-  };
-}
-
 export function outputKind(output: RunOutput, artifact: OutputArtifact): GalleryItem["type"] {
   const filename = String(artifact.filename || "").toLowerCase();
   const type = String(output.type || artifact.type || "").toLowerCase();

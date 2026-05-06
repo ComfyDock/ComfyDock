@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import struct
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -790,10 +791,12 @@ async def _run_contract(
         poll_interval_seconds=poll_interval_seconds,
     )
     outputs = extract_contract_outputs(build_result.outputs, history)
+    output_payloads = [_contract_output_payload(output) for output in outputs]
+    await _attach_artifact_dimensions(state.client, output_payloads)
     response.update(
         {
             "status": "completed",
-            "outputs": [_contract_output_payload(output) for output in outputs],
+            "outputs": output_payloads,
         }
     )
     state.state_store.record_run(
@@ -858,8 +861,8 @@ def _record_failed_run(
         status="error",
         output_type="image",
         inputs=_display_inputs(inputs),
-        width=_dimension_from_inputs(inputs, "width", 1024),
-        height=_dimension_from_inputs(inputs, "height", _dimension_from_inputs(inputs, "width", 1024)),
+        width=1,
+        height=1,
         raw_result=raw_result,
         error=message,
         created_at=created_at,
@@ -883,8 +886,6 @@ def _gallery_items_for_outputs(
 ) -> list[ServeGalleryItem]:
     items: list[ServeGalleryItem] = []
     display_inputs = _display_inputs(inputs)
-    width = _dimension_from_inputs(inputs, "width", 1024)
-    height = _dimension_from_inputs(inputs, "height", width)
     prompt_id = str(response.get("prompt_id") or "")
     created_at = utc_now()
     raw_result = dict(response)
@@ -902,6 +903,7 @@ def _gallery_items_for_outputs(
             artifact_payload = dict(artifact)
             filename = artifact_payload.get("filename")
             item_type = _output_kind(output_type, str(filename or ""))
+            width, height = _artifact_dimensions(artifact_payload)
             items.append(
                 ServeGalleryItem(
                     item_id=f"gallery_{uuid.uuid4().hex}",
@@ -953,17 +955,6 @@ def _display_value(value: Any) -> Any:
     if isinstance(value, str) and value.startswith("data:"):
         return f"{value[:48]}... [inline data omitted]"
     return value
-
-
-def _dimension_from_inputs(inputs: Mapping[str, Any], key: str, fallback: int) -> int:
-    for candidate in (key, key.upper(), key[:1], key[:1].upper()):
-        try:
-            value = int(inputs.get(candidate, fallback))
-        except (TypeError, ValueError):
-            continue
-        if value > 0:
-            return value
-    return fallback
 
 
 def _output_kind(output_type: str, filename: str) -> str:
@@ -1158,12 +1149,123 @@ def _contract_output_payload(output: Any) -> dict[str, Any]:
     return payload
 
 
+async def _attach_artifact_dimensions(client: ComfyUIClient, outputs: list[dict[str, Any]]) -> None:
+    for output in outputs:
+        output_type = str(output.get("type") or "").lower()
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                continue
+            filename = str(artifact.get("filename") or "")
+            if _output_kind(output_type, filename) != "image":
+                continue
+            if _artifact_dimensions(artifact) != (1, 1):
+                continue
+            try:
+                body, _, _ = await client.fetch_output(_artifact_view_params(artifact))
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+                continue
+            dimensions = _image_dimensions_from_bytes(body)
+            if dimensions is None:
+                continue
+            artifact["width"], artifact["height"] = dimensions
+
+
+def _artifact_dimensions(artifact: Mapping[str, Any]) -> tuple[int, int]:
+    width = _positive_int(artifact.get("width"))
+    height = _positive_int(artifact.get("height"))
+    if width is None or height is None:
+        return (1, 1)
+    return (width, height)
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _image_dimensions_from_bytes(body: bytes) -> tuple[int, int] | None:
+    if body.startswith(b"\x89PNG\r\n\x1a\n") and len(body) >= 24:
+        width, height = struct.unpack(">II", body[16:24])
+        return (width, height) if width > 0 and height > 0 else None
+
+    if body.startswith((b"GIF87a", b"GIF89a")) and len(body) >= 10:
+        width, height = struct.unpack("<HH", body[6:10])
+        return (width, height) if width > 0 and height > 0 else None
+
+    if body.startswith(b"BM") and len(body) >= 26:
+        width = abs(struct.unpack("<i", body[18:22])[0])
+        height = abs(struct.unpack("<i", body[22:26])[0])
+        return (width, height) if width > 0 and height > 0 else None
+
+    if body.startswith(b"\xff\xd8"):
+        return _jpeg_dimensions_from_bytes(body)
+
+    if len(body) >= 30 and body.startswith(b"RIFF") and body[8:12] == b"WEBP":
+        return _webp_dimensions_from_bytes(body)
+
+    return None
+
+
+def _jpeg_dimensions_from_bytes(body: bytes) -> tuple[int, int] | None:
+    index = 2
+    while index + 9 < len(body):
+        if body[index] != 0xFF:
+            index += 1
+            continue
+        while index < len(body) and body[index] == 0xFF:
+            index += 1
+        if index >= len(body):
+            return None
+        marker = body[index]
+        index += 1
+        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+            continue
+        if index + 2 > len(body):
+            return None
+        segment_length = struct.unpack(">H", body[index : index + 2])[0]
+        if segment_length < 2 or index + segment_length > len(body):
+            return None
+        if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+            if segment_length < 7:
+                return None
+            height, width = struct.unpack(">HH", body[index + 3 : index + 7])
+            return (width, height) if width > 0 and height > 0 else None
+        index += segment_length
+    return None
+
+
+def _webp_dimensions_from_bytes(body: bytes) -> tuple[int, int] | None:
+    chunk_type = body[12:16]
+    if chunk_type == b"VP8X" and len(body) >= 30:
+        width = 1 + int.from_bytes(body[24:27], "little")
+        height = 1 + int.from_bytes(body[27:30], "little")
+        return (width, height) if width > 0 and height > 0 else None
+    if chunk_type == b"VP8 " and len(body) >= 30:
+        width = struct.unpack("<H", body[26:28])[0] & 0x3FFF
+        height = struct.unpack("<H", body[28:30])[0] & 0x3FFF
+        return (width, height) if width > 0 and height > 0 else None
+    if chunk_type == b"VP8L" and len(body) >= 25:
+        b0, b1, b2, b3 = body[21:25]
+        width = 1 + (((b1 & 0x3F) << 8) | b0)
+        height = 1 + (((b3 & 0x0F) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6))
+        return (width, height) if width > 0 and height > 0 else None
+    return None
+
+
 def _artifact_view_url(artifact: Mapping[str, Any]) -> str:
-    query = urlencode(
-        {
-            "filename": str(artifact.get("filename") or ""),
-            "subfolder": str(artifact.get("subfolder") or ""),
-            "type": str(artifact.get("type") or "output"),
-        }
-    )
+    query = urlencode(_artifact_view_params(artifact))
     return f"/outputs/view?{query}"
+
+
+def _artifact_view_params(artifact: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "filename": str(artifact.get("filename") or ""),
+        "subfolder": str(artifact.get("subfolder") or ""),
+        "type": str(artifact.get("type") or "output"),
+    }

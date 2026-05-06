@@ -15,8 +15,11 @@ from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.serve_runtime import (
     ComfyUIClient,
     ServeConfig,
+    _attach_artifact_dimensions,
     _content_type_for_filename,
+    _gallery_items_for_outputs,
     _generated_upload_filename,
+    _image_dimensions_from_bytes,
     _prepare_contract_inputs,
     _record_failed_run,
     _stamp_output_cache_busters,
@@ -325,6 +328,69 @@ def test_failed_run_response_does_not_create_circular_raw_result() -> None:
     encoded = json.dumps(payload)
     assert "Prompt outputs failed validation" in encoded
     assert "gallery_items" not in payload["gallery_items"][0]["rawResult"]
+    assert payload["gallery_items"][0]["width"] == 1
+    assert payload["gallery_items"][0]["height"] == 1
+
+
+def test_gallery_items_use_artifact_dimensions_not_inputs() -> None:
+    session = ServeSession(session_id="anon_1", scope_key="anon_1")
+    items = _gallery_items_for_outputs(
+        run_id="run_1",
+        session=session,
+        workflow_name="z-image",
+        contract_name="default",
+        inputs={"width": 2048, "height": 2048},
+        response={
+            "prompt_id": "prompt_1",
+            "outputs": [
+                {
+                    "name": "save_image",
+                    "type": "image",
+                    "artifacts": [
+                        {
+                            "filename": "image.png",
+                            "url": "/outputs/view?filename=image.png",
+                            "width": 640,
+                            "height": 360,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0].width == 640
+    assert items[0].height == 360
+
+
+def test_image_dimensions_from_png_bytes() -> None:
+    png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (320).to_bytes(4, "big") + (240).to_bytes(4, "big")
+
+    assert _image_dimensions_from_bytes(png_header) == (320, 240)
+
+
+@pytest.mark.asyncio
+async def test_attach_artifact_dimensions_fetches_image_size() -> None:
+    png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (111).to_bytes(4, "big") + (222).to_bytes(4, "big")
+
+    class FakeClient:
+        async def fetch_output(self, params: dict[str, str]) -> tuple[bytes, str, None]:
+            assert params == {"filename": "image.png", "subfolder": "", "type": "output"}
+            return png_header, "image/png", None
+
+    outputs: list[dict[str, Any]] = [
+        {
+            "name": "save_image",
+            "type": "image",
+            "artifacts": [{"filename": "image.png", "subfolder": "", "type": "output"}],
+        }
+    ]
+
+    await _attach_artifact_dimensions(cast(Any, FakeClient()), outputs)
+
+    assert outputs[0]["artifacts"][0]["width"] == 111
+    assert outputs[0]["artifacts"][0]["height"] == 222
 
 
 @pytest.mark.asyncio

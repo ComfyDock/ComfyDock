@@ -469,12 +469,25 @@ adapters, not to core prompt-patching semantics.
 
 ## Output Delivery
 
-### CGSERVE-OUT-01 [PLANNED]: Local output refs are the first output delivery mode
+### CGSERVE-OUT-01 [PARTIAL]: Local output refs are the first output delivery mode
 Validation: TEST
 
 The first serve implementation may return structured local ComfyUI output
 references and metadata. This is enough for local Docker and development
 validation without introducing external storage policy too early.
+
+The serve adapter should normalize artifact presentation metadata as part of
+output delivery. For image outputs, this includes recording the real artifact
+width and height after the output exists. Studio and API clients should not
+infer final output dimensions from contract input field names such as `width`
+or `height`; pending outputs may use a neutral square placeholder until
+artifact metadata is available.
+
+Current implementation: local output URLs are returned through `/outputs/view`
+and gallery rows persist local output references. Image artifact dimensions are
+resolved by the serve adapter from the generated artifact bytes and stored with
+gallery rows so refreshed Studio sessions can render the masonry grid without
+client-side probing.
 
 ### CGSERVE-OUT-02 [DEFERRED]: Object storage delivery is an adapter concern
 Validation: MIXED
