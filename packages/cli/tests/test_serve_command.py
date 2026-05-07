@@ -19,6 +19,7 @@ from comfygit_cli.serve_executor import (
     _attach_artifact_dimensions,
     _image_dimensions_from_bytes,
     _stamp_output_cache_busters,
+    _video_dimensions_from_ffprobe_json,
 )
 from comfygit_cli.serve_runtime import (
     ServeConfig,
@@ -372,6 +373,12 @@ def test_image_dimensions_from_png_bytes() -> None:
     png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (320).to_bytes(4, "big") + (240).to_bytes(4, "big")
 
     assert _image_dimensions_from_bytes(png_header) == (320, 240)
+
+
+def test_video_dimensions_from_ffprobe_json() -> None:
+    payload = b'{"streams":[{"width":768,"height":512}]}'
+
+    assert _video_dimensions_from_ffprobe_json(payload) == (768, 512)
 
 
 @pytest.mark.asyncio

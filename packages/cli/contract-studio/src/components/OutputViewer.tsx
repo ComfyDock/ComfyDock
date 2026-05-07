@@ -27,6 +27,7 @@ export function OutputViewer({
   const dragRef = useRef<{ id: number; x: number; y: number; panX: number; panY: number; moved: boolean } | null>(null);
   const dragEndRef = useRef(0);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const isZoomable = item.type === "image";
 
   useEffect(() => {
     setZoom(1);
@@ -41,15 +42,17 @@ export function OutputViewer({
       if (event.key === "ArrowLeft") onMove(-1);
       if (event.key === "ArrowRight") onMove(1);
       if (event.key === "Delete" || event.key === "Backspace") onDelete(item);
+      if (!isZoomable) return;
       if (event.key === "+" || event.key === "=") zoomViewer(zoom + 0.25);
       if (event.key === "-") zoomViewer(zoom - 0.25);
       if (event.key === "0") resetViewer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [item, onClose, onDelete, onMove, zoom]);
+  }, [isZoomable, item, onClose, onDelete, onMove, zoom]);
 
   useEffect(() => {
+    if (!isZoomable) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -62,7 +65,7 @@ export function OutputViewer({
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
-  }, [pan.x, pan.y, zoom]);
+  }, [isZoomable, pan.x, pan.y, zoom]);
 
   function resetViewer() {
     setZoom(1);
@@ -70,6 +73,7 @@ export function OutputViewer({
   }
 
   function zoomViewer(nextZoom: number, anchor?: { x: number; y: number; element: HTMLElement }) {
+    if (!isZoomable) return;
     const clamped = Math.max(0.5, Math.min(6, Number(nextZoom.toFixed(2))));
     if (anchor && clamped > 1) {
       const rect = anchor.element.getBoundingClientRect();
@@ -102,7 +106,7 @@ export function OutputViewer({
   }
 
   function startViewerDrag(event: React.PointerEvent<HTMLDivElement>) {
-    if (zoom <= 1) return;
+    if (!isZoomable || zoom <= 1) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -147,7 +151,7 @@ export function OutputViewer({
         <div className="viewer-stage">
           <div
             ref={canvasRef}
-            className={cn("viewer-canvas", zoom > 1 && "is-zoomed", isDragging && "is-dragging")}
+            className={cn("viewer-canvas", !isZoomable && "is-interactive-media", zoom > 1 && "is-zoomed", isDragging && "is-dragging")}
             style={{ "--zoom": zoom, "--pan-x": `${pan.x}px`, "--pan-y": `${pan.y}px` } as CSSProperties}
             onPointerDown={startViewerDrag}
             onPointerMove={dragViewer}
@@ -156,6 +160,7 @@ export function OutputViewer({
             onDragStart={(event) => event.preventDefault()}
             onClick={clickViewer}
             onDoubleClick={(event) => {
+              if (!isZoomable) return;
               event.stopPropagation();
               zoomViewer(zoom > 1 ? 1 : 2.5, { x: event.clientX, y: event.clientY, element: event.currentTarget });
             }}
@@ -218,23 +223,27 @@ export function OutputViewer({
             </>
           ) : null}
           <div className="viewer-dock" onClick={(event) => event.stopPropagation()}>
-            <Tip content="Zoom out">
-              <button className="icon-button" type="button" aria-label="Zoom out" onClick={() => zoomViewer(zoom - 0.25)} disabled={zoom <= 0.5}>
-                <ZoomOut size={15} />
-              </button>
-            </Tip>
-            <Tip content="Reset zoom">
-              <button className="text-button viewer-zoom" type="button" aria-label="Reset zoom" onClick={resetViewer}>
-                {zoom !== 1 ? <RotateCcw size={13} /> : null}
-                {Math.round(zoom * 100)}%
-              </button>
-            </Tip>
-            <Tip content="Zoom in">
-              <button className="icon-button" type="button" aria-label="Zoom in" onClick={() => zoomViewer(zoom + 0.25)} disabled={zoom >= 6}>
-                <ZoomIn size={15} />
-              </button>
-            </Tip>
-            <span className="viewer-divider" />
+            {isZoomable ? (
+              <>
+                <Tip content="Zoom out">
+                  <button className="icon-button" type="button" aria-label="Zoom out" onClick={() => zoomViewer(zoom - 0.25)} disabled={zoom <= 0.5}>
+                    <ZoomOut size={15} />
+                  </button>
+                </Tip>
+                <Tip content="Reset zoom">
+                  <button className="text-button viewer-zoom" type="button" aria-label="Reset zoom" onClick={resetViewer}>
+                    {zoom !== 1 ? <RotateCcw size={13} /> : null}
+                    {Math.round(zoom * 100)}%
+                  </button>
+                </Tip>
+                <Tip content="Zoom in">
+                  <button className="icon-button" type="button" aria-label="Zoom in" onClick={() => zoomViewer(zoom + 0.25)} disabled={zoom >= 6}>
+                    <ZoomIn size={15} />
+                  </button>
+                </Tip>
+                <span className="viewer-divider" />
+              </>
+            ) : null}
             <Tip content={item.type === "image" ? "Copy image" : "Copy output link"}>
               <button className="icon-button" type="button" aria-label="Copy output" onClick={() => void onCopy(item)}>
                 <Copy size={15} />

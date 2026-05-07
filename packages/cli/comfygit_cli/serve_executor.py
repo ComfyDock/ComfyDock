@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import struct
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -111,6 +112,9 @@ class ComfyUIClient:
                 params=params,
                 timeout=request_timeout,
             )
+
+    def output_view_url(self, params: Mapping[str, str]) -> str:
+        return f"{self.base_url}/view?{urlencode(params)}"
 
     async def wait_for_history(
         self,
@@ -263,9 +267,12 @@ def _first_comfyui_node_error_detail(payload: Mapping[str, Any]) -> str:
 
 def output_kind(output_type: str, filename: str) -> str:
     lowered = filename.lower()
-    if output_type == "video" or lowered.endswith((".mp4", ".webm", ".mov", ".mkv")):
+    normalized_type = output_type.lower()
+    if normalized_type == "video" or lowered.endswith((".mp4", ".webm", ".mov", ".mkv")):
         return "video"
-    if output_type == "image" or lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")):
+    if normalized_type == "audio" or lowered.endswith((".wav", ".mp3", ".m4a", ".flac", ".ogg")):
+        return "audio"
+    if normalized_type == "image" or lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")):
         return "image"
     return "json"
 
@@ -323,18 +330,81 @@ async def _attach_artifact_dimensions(client: ComfyUIClient, outputs: list[dict[
             if not isinstance(artifact, dict):
                 continue
             filename = str(artifact.get("filename") or "")
-            if output_kind(output_type, filename) != "image":
-                continue
+            kind = output_kind(output_type, filename)
             if artifact_dimensions(artifact) != (1, 1):
                 continue
-            try:
-                body, _, _ = await client.fetch_output(_artifact_view_params(artifact))
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            params = _artifact_view_params(artifact)
+            if kind == "image":
+                dimensions = await _image_dimensions_from_artifact(client, params)
+            elif kind == "video":
+                dimensions = await _video_dimensions_from_artifact(client, params)
+            else:
                 continue
-            dimensions = _image_dimensions_from_bytes(body)
             if dimensions is None:
                 continue
             artifact["width"], artifact["height"] = dimensions
+
+
+async def _image_dimensions_from_artifact(
+    client: ComfyUIClient,
+    params: Mapping[str, str],
+) -> tuple[int, int] | None:
+    try:
+        body, _, _ = await client.fetch_output(params)
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+        return None
+    return _image_dimensions_from_bytes(body)
+
+
+async def _video_dimensions_from_artifact(
+    client: ComfyUIClient,
+    params: Mapping[str, str],
+) -> tuple[int, int] | None:
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "json",
+            client.output_view_url(params),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+    try:
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+    except asyncio.TimeoutError:
+        process.kill()
+        await process.communicate()
+        return None
+    if process.returncode != 0:
+        return None
+    return _video_dimensions_from_ffprobe_json(stdout)
+
+
+def _video_dimensions_from_ffprobe_json(data: bytes) -> tuple[int, int] | None:
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    streams = payload.get("streams") if isinstance(payload, Mapping) else None
+    if not isinstance(streams, list) or not streams:
+        return None
+    stream = streams[0]
+    if not isinstance(stream, Mapping):
+        return None
+    width = _positive_int(stream.get("width"))
+    height = _positive_int(stream.get("height"))
+    if width is None or height is None:
+        return None
+    return (width, height)
 
 
 def artifact_dimensions(artifact: Mapping[str, Any]) -> tuple[int, int]:

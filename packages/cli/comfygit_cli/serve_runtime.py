@@ -43,6 +43,7 @@ DEFAULT_UPLOAD_CONTENT_TYPE = "application/octet-stream"
 DEFAULT_UPLOAD_EXTENSION = ".bin"
 SESSION_COOKIE_NAME = "comfygit_studio_session"
 SHARED_GALLERY_SCOPE = "shared"
+FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("image/jpeg", (".jpg", ".jpeg")),
@@ -723,6 +724,8 @@ def _gallery_items_for_outputs(
             filename = artifact_payload.get("filename")
             item_type = output_kind(output_type, str(filename or ""))
             width, height = artifact_dimensions(artifact_payload)
+            if item_type == "audio":
+                width, height = (4, 1)
             items.append(
                 ServeGalleryItem(
                     item_id=f"gallery_{uuid.uuid4().hex}",
@@ -737,8 +740,8 @@ def _gallery_items_for_outputs(
                     prompt_id=prompt_id or None,
                     filename=str(filename) if filename else None,
                     url=str(artifact_payload.get("url")) if artifact_payload.get("url") else None,
-                    width=width if item_type in {"image", "video"} else 1,
-                    height=height if item_type in {"image", "video"} else 1,
+                    width=width if item_type in {"image", "video", "audio"} else 1,
+                    height=height if item_type in {"image", "video", "audio"} else 1,
                     inputs=display_inputs,
                     artifact=artifact_payload,
                     raw_result=raw_result,
@@ -793,7 +796,7 @@ async def _prepare_contract_inputs(
 
     prepared = dict(inputs)
     for contract_input in contract.inputs:
-        if str(contract_input.type).lower() != "image":
+        if str(contract_input.type).lower() not in FILE_UPLOAD_CONTRACT_INPUT_TYPES:
             continue
         if contract_input.name not in prepared:
             continue

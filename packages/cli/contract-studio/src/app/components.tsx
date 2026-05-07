@@ -73,6 +73,22 @@ export function Media({
     );
   }
 
+  if (item.type === "audio") {
+    return (
+      <div className="media-fallback media-audio">
+        <audio
+          className={cn(!loaded && "media-loading")}
+          src={item.url}
+          controls
+          preload="metadata"
+          onCanPlay={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+        />
+        <span>{item.filename || item.outputName || "Audio output"}</span>
+      </div>
+    );
+  }
+
   if (item.type === "image") {
     return (
       <img

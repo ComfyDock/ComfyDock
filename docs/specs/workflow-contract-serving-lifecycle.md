@@ -151,12 +151,13 @@ CLI package so it can grow into static UI serving, progress streams, websocket
 bridging, and output delivery without moving transport concerns into core. This
 adapter does not launch ComfyUI.
 
-For `image` contract inputs backed by ComfyUI `LoadImage`, Studio uploads file
-bytes to the serve upload endpoint first, receives an opaque `file_ref`, and
-submits that ref in the contract run request. The run handler resolves the ref
-to the ComfyUI-accessible input filename before patching the captured API
-prompt. Plain string values are still treated as already-accessible ComfyUI
-input filenames for callers that deliberately manage their own input files.
+For media/file contract inputs backed by ComfyUI loader nodes, Studio uploads
+file bytes to the serve upload endpoint first, receives an opaque `file_ref`,
+and submits that ref in the contract run request. The run handler resolves refs
+for `image`, `audio`, `video`, and `file` contract inputs to the
+ComfyUI-accessible input filename before patching the captured API prompt. Plain
+string values are still treated as already-accessible ComfyUI input filenames
+for callers that deliberately manage their own input files.
 
 Inline base64/data URL uploads are retired from the Studio execution path.
 Contract run requests should stay small JSON control-plane messages; callers
@@ -415,10 +416,11 @@ base64 blob:
 }
 ```
 
-The current Studio image path uses this shape and no longer sends base64/data
-URL image payloads inside contract run JSON. This remains partial because audio,
-video, masks, archives, and non-Studio clients still need broader typed upload
-coverage and compatibility tests.
+The current Studio media path uses this shape for `image`, `audio`, `video`, and
+generic `file` inputs and no longer sends base64/data URL payloads inside
+contract run JSON. This remains partial because masks, archives, richer
+per-input constraints, and non-Studio client compatibility tests still need
+broader typed upload coverage.
 
 ### CGSERVE-IN-02 [PARTIAL]: Serve owns an upload-slot endpoint
 Validation: TEST
@@ -492,10 +494,15 @@ or `height`; pending outputs may use a neutral square placeholder until
 artifact metadata is available.
 
 Current implementation: local output URLs are returned through `/outputs/view`
-and gallery rows persist local output references. Image artifact dimensions are
-resolved by the serve adapter from the generated artifact bytes and stored with
-gallery rows so refreshed Studio sessions can render the masonry grid without
-client-side probing.
+and gallery rows persist local output references. Image and video outputs are
+rendered as media in Studio, audio outputs render with an audio player, and
+unknown output shapes fall back to structured output display. Image artifact
+dimensions are resolved by the serve adapter from the generated artifact bytes
+and video artifact dimensions are resolved by the serve adapter from generated
+video metadata when local runtime tooling such as `ffprobe` is available. Those
+dimensions are stored with gallery rows so refreshed Studio sessions can render
+the masonry grid without client-side probing. If metadata probing is unavailable,
+serve keeps the neutral 1:1 fallback rather than failing the generation.
 
 ### CGSERVE-OUT-02 [DEFERRED]: Object storage delivery is an adapter concern
 Validation: MIXED

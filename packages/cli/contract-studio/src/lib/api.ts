@@ -1,4 +1,4 @@
-import type { FileRef, ImageInputValue, UploadPrepareResponse } from "@/types";
+import type { FileInputValue, FileRef, UploadPrepareResponse } from "@/types";
 
 export class ApiError extends Error {
   status: number;
@@ -27,7 +27,7 @@ export async function apiJson<T>(path: string, options?: RequestInit): Promise<T
   return data as T;
 }
 
-export async function uploadInputFile(value: ImageInputValue): Promise<FileRef> {
+export async function uploadInputFile(value: FileInputValue): Promise<FileRef> {
   const slot = await apiJson<UploadPrepareResponse>("/uploads/prepare", {
     method: "POST",
     headers: { "content-type": "application/json" },

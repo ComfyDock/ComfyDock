@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { ImagePlus } from "lucide-react";
+import { FileAudio, FileUp, FileVideo, ImagePlus } from "lucide-react";
 import { Field, NumberPicker, StudioSelect } from "@/app/components";
 import { compactType, labelFor } from "@/lib/format";
-import { imageInputFromFile, imageInputValue } from "@/lib/inputs";
-import type { ContractInput } from "@/types";
+import { fileInputFromFile, fileInputValue, isFileUploadInput } from "@/lib/inputs";
+import type { ContractInput, FileInputValue } from "@/types";
 
 export function ContractInputControl({
   input,
@@ -14,14 +14,14 @@ export function ContractInputControl({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const [draggingImage, setDraggingImage] = useState(false);
+  const [draggingFile, setDraggingFile] = useState(false);
   const id = `input-${input.name}`;
   const label = labelFor(input);
   const required = input.required ? "required" : "optional";
 
-  function selectImageFile(file: File | undefined) {
-    if (!file || !file.type.startsWith("image/")) return;
-    onChange(imageInputFromFile(file));
+  function selectInputFile(file: File | undefined) {
+    if (!file || !fileMatchesInputType(file, input.type)) return;
+    onChange(fileInputFromFile(file));
   }
 
   if (input.type === "boolean") {
@@ -49,65 +49,67 @@ export function ContractInputControl({
     );
   }
 
-  if (input.type === "image") {
-    const imageValue = imageInputValue(value);
+  if (isFileUploadInput(input)) {
+    const fileValue = fileInputValue(value);
+    const uploadType = uploadLabel(input.type);
+    const UploadIcon = uploadIcon(input.type);
     return (
       <Field
         label={label}
         meta={
           <>
-            {required} · IMAGE
+            {required} · {uploadType.toUpperCase()}
           </>
         }
       >
-        <div className="image-input-control">
+        <div className="file-input-control">
           <label
-            className={`image-upload-button${draggingImage ? " is-dragging" : ""}`}
+            className={`file-upload-button${draggingFile ? " is-dragging" : ""}`}
             htmlFor={id}
             onDragEnter={(event) => {
               event.preventDefault();
-              setDraggingImage(true);
+              setDraggingFile(true);
             }}
             onDragOver={(event) => {
               event.preventDefault();
               event.dataTransfer.dropEffect = "copy";
-              setDraggingImage(true);
+              setDraggingFile(true);
             }}
             onDragLeave={(event) => {
               if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                setDraggingImage(false);
+                setDraggingFile(false);
               }
             }}
             onDrop={(event) => {
               event.preventDefault();
-              setDraggingImage(false);
-              selectImageFile(event.dataTransfer.files?.[0]);
+              setDraggingFile(false);
+              selectInputFile(event.dataTransfer.files?.[0]);
             }}
           >
-            <ImagePlus size={16} />
-            <span>{imageValue ? "Change or drop image" : "Choose or drop image"}</span>
+            <UploadIcon size={16} />
+            <span>{fileValue ? `Change or drop ${uploadType}` : `Choose or drop ${uploadType}`}</span>
             <input
               id={id}
               type="file"
-              accept="image/*"
+              accept={acceptForInputType(input.type)}
               onChange={(event) => {
-                selectImageFile(event.target.files?.[0]);
+                selectInputFile(event.target.files?.[0]);
                 event.target.value = "";
               }}
             />
           </label>
-          {imageValue ? (
-            <div className="image-input-preview">
-              <img src={imageValue.preview_url} alt="" />
+          {fileValue ? (
+            <div className="file-input-preview">
+              <FilePreview value={fileValue} type={input.type} />
               <div>
-                <strong>{imageValue.filename}</strong>
+                <strong>{fileValue.filename}</strong>
                 <button type="button" onClick={() => onChange(null)}>
                   Remove
                 </button>
               </div>
             </div>
           ) : (
-            <p className="image-input-empty">Upload an image for this workflow input.</p>
+            <p className="file-input-empty">Upload a {uploadType} for this workflow input.</p>
           )}
         </div>
       </Field>
@@ -154,5 +156,50 @@ export function ContractInputControl({
         <input id={id} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
       )}
     </Field>
+  );
+}
+
+function fileMatchesInputType(file: File, type: string) {
+  if (type === "image") return file.type.startsWith("image/");
+  if (type === "audio") return file.type.startsWith("audio/");
+  if (type === "video") return file.type.startsWith("video/");
+  return true;
+}
+
+function acceptForInputType(type: string) {
+  if (type === "image") return "image/*";
+  if (type === "audio") return "audio/*";
+  if (type === "video") return "video/*";
+  return undefined;
+}
+
+function uploadLabel(type: string) {
+  if (type === "image") return "image";
+  if (type === "audio") return "audio";
+  if (type === "video") return "video";
+  return "file";
+}
+
+function uploadIcon(type: string) {
+  if (type === "image") return ImagePlus;
+  if (type === "audio") return FileAudio;
+  if (type === "video") return FileVideo;
+  return FileUp;
+}
+
+function FilePreview({ value, type }: { value: FileInputValue; type: string }) {
+  if (type === "image") {
+    return <img src={value.preview_url} alt="" />;
+  }
+  if (type === "audio") {
+    return <audio src={value.preview_url} controls preload="metadata" />;
+  }
+  if (type === "video") {
+    return <video src={value.preview_url} controls preload="metadata" />;
+  }
+  return (
+    <span className="file-input-preview-icon">
+      <FileUp size={18} />
+    </span>
   );
 }

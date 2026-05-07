@@ -1,5 +1,7 @@
 import { uploadInputFile } from "@/lib/api";
-import type { ContractInput, ContractSummary, ImageInputValue } from "@/types";
+import type { ContractInput, ContractSummary, FileInputValue } from "@/types";
+
+export const FILE_UPLOAD_INPUT_TYPES = new Set(["image", "audio", "video", "file"]);
 
 export const inputDefaults = (contract: ContractSummary): Record<string, unknown> => {
   const values: Record<string, unknown> = {};
@@ -8,7 +10,7 @@ export const inputDefaults = (contract: ContractSummary): Record<string, unknown
       values[input.name] = input.default;
     } else if (input.type === "boolean") {
       values[input.name] = false;
-    } else if (input.type === "image") {
+    } else if (isFileUploadInput(input)) {
       values[input.name] = null;
     } else {
       values[input.name] = "";
@@ -29,25 +31,29 @@ export function valueForSubmit(input: ContractInput, value: unknown) {
   return value;
 }
 
-export function imageInputFromFile(file: File): ImageInputValue {
+export function isFileUploadInput(input: ContractInput) {
+  return FILE_UPLOAD_INPUT_TYPES.has(input.type);
+}
+
+export function fileInputFromFile(file: File): FileInputValue {
   return {
     file,
     preview_url: URL.createObjectURL(file),
-    filename: file.name || "image.png",
-    mime_type: file.type || "image/png",
+    filename: file.name || "upload.bin",
+    mime_type: file.type || "application/octet-stream",
     size: file.size,
   };
 }
 
-export function imageInputValue(value: unknown): ImageInputValue | null {
+export function fileInputValue(value: unknown): FileInputValue | null {
   if (!value || typeof value !== "object") return null;
-  const candidate = value as Partial<ImageInputValue>;
+  const candidate = value as Partial<FileInputValue>;
   if (!(candidate.file instanceof File) || typeof candidate.preview_url !== "string" || typeof candidate.filename !== "string") return null;
   return {
     file: candidate.file,
     preview_url: candidate.preview_url,
     filename: candidate.filename,
-    mime_type: candidate.mime_type || "image/png",
+    mime_type: candidate.mime_type || candidate.file.type || "application/octet-stream",
     size: candidate.size || candidate.file.size,
   };
 }
@@ -59,9 +65,9 @@ export async function prepareSubmitInputs(
   const submitInputs: Record<string, unknown> = {};
   for (const input of contract.inputs) {
     const value = valueForSubmit(input, values[input.name]);
-    if (input.type === "image") {
-      const imageValue = imageInputValue(value);
-      submitInputs[input.name] = imageValue ? await uploadInputFile(imageValue) : value;
+    if (isFileUploadInput(input)) {
+      const fileValue = fileInputValue(value);
+      submitInputs[input.name] = fileValue ? await uploadInputFile(fileValue) : value;
     } else {
       submitInputs[input.name] = value;
     }

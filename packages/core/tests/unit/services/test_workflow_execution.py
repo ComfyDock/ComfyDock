@@ -325,3 +325,38 @@ def test_extract_contract_outputs_from_comfyui_history() -> None:
     assert outputs[0].name == "image"
     assert outputs[0].node_id == "9"
     assert outputs[0].artifacts[0].filename == "ComfyGit_00001_.png"
+
+
+def test_extract_video_contract_outputs_from_comfyui_images_history_key() -> None:
+    contract = NamedWorkflowContract(
+        outputs=[
+            WorkflowContractOutput(
+                name="save_video",
+                type="video",
+                node_id="341",
+                selector="primary",
+            )
+        ]
+    )
+    history_entry = {
+        "outputs": {
+            "341": {
+                "images": [
+                    {
+                        "filename": "LTX_2.3_ia2v_00005_.mp4",
+                        "subfolder": "video",
+                        "type": "output",
+                    }
+                ],
+                "animated": [True],
+            }
+        }
+    }
+
+    outputs = extract_contract_outputs(contract.outputs, history_entry)
+
+    assert len(outputs) == 1
+    assert outputs[0].name == "save_video"
+    assert outputs[0].type == "video"
+    assert outputs[0].artifacts[0].filename == "LTX_2.3_ia2v_00005_.mp4"
+    assert outputs[0].artifacts[0].subfolder == "video"

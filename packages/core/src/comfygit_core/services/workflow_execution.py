@@ -249,7 +249,7 @@ def _history_output_keys(output_type: str) -> tuple[str, ...]:
     if normalized_type == "image":
         return ("images",)
     if normalized_type == "video":
-        return ("videos", "gifs")
+        return ("videos", "gifs", "images")
     if normalized_type == "audio":
         return ("audio", "audios")
     if normalized_type == "file":

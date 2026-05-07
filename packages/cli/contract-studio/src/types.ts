@@ -83,7 +83,7 @@ export type GalleryItem = {
   artifact?: OutputArtifact;
   filename?: string;
   outputName?: string;
-  type: "image" | "video" | "json";
+  type: "image" | "video" | "audio" | "json";
   url?: string;
   status: "pending" | "done" | "error";
   width: number;
@@ -113,7 +113,7 @@ export type GalleryPhoto = {
   item: GalleryItem;
 };
 
-export type ImageInputValue = {
+export type FileInputValue = {
   file: File;
   preview_url: string;
   filename: string;

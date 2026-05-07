@@ -84,6 +84,7 @@ export function outputKind(output: RunOutput, artifact: OutputArtifact): Gallery
   const filename = String(artifact.filename || "").toLowerCase();
   const type = String(output.type || artifact.type || "").toLowerCase();
   if (type === "video" || /\.(mp4|webm|mov|mkv)$/.test(filename)) return "video";
+  if (type === "audio" || /\.(wav|mp3|m4a|flac|ogg)$/.test(filename)) return "audio";
   if (type === "image" || /\.(png|jpe?g|webp|gif|bmp)$/.test(filename)) return "image";
   return "json";
 }
