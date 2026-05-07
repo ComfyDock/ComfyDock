@@ -39,6 +39,11 @@ export function App() {
   const galleryScrollRef = useRef<HTMLDivElement | null>(null);
   const galleryMetrics = useGalleryMetrics(galleryScrollRef);
 
+  const loadGallery = useCallback(async () => {
+    const nextGallery = await apiJson<GalleryResponse>("/gallery");
+    setGallery(normalizeGalleryItems(nextGallery.items || []));
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, []);
@@ -49,6 +54,15 @@ export function App() {
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [gallery]);
+
+  useEffect(() => {
+    const hasPending = gallery.some((item) => item.status === "pending");
+    if (!hasPending) return;
+    const interval = window.setInterval(() => {
+      void loadGallery();
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [gallery, loadGallery]);
 
   const contracts = contractsData?.contracts || [];
   const selected = useMemo(
@@ -65,22 +79,21 @@ export function App() {
     setRawResult(null);
   }, [selected?.workflow, selected?.contract]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setStatus("Loading contracts");
     try {
       const [nextContracts, nextHealth] = await Promise.all([
         apiJson<ContractsResponse>("/contracts"),
         apiJson<HealthResponse>("/health"),
       ]);
-      const nextGallery = await apiJson<GalleryResponse>("/gallery");
       setContractsData(nextContracts);
       setHealth(nextHealth);
-      setGallery(normalizeGalleryItems(nextGallery.items || []));
+      await loadGallery();
       setStatus("Ready");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not load contracts");
     }
-  }
+  }, [loadGallery]);
 
   const runSelected = useCallback(async () => {
     if (!selected || busy) return;
@@ -121,7 +134,7 @@ export function App() {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ inputs: submitInputs, wait: true }),
+          body: JSON.stringify({ inputs: submitInputs }),
         },
       );
       setRawResult(result);
@@ -169,7 +182,7 @@ export function App() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [runSelected]);
 
-  async function copyGalleryItem(item: GalleryItem) {
+  const copyGalleryItem = useCallback(async (item: GalleryItem) => {
     if (!item.url) {
       await copyText(jsonBlock(item.artifact?.raw || item.artifact || item.inputs || {}));
       return;
@@ -186,9 +199,9 @@ export function App() {
     } catch {
       await copyText(new URL(item.url, window.location.href).href);
     }
-  }
+  }, []);
 
-  function deleteGalleryItem(item: GalleryItem) {
+  const deleteGalleryItem = useCallback((item: GalleryItem) => {
     setGallery((current) => current.filter((candidate) => candidate.id !== item.id));
     setActiveId((current) => (current === item.id ? null : current));
     if (!item.id.startsWith("pending-")) {
@@ -196,9 +209,9 @@ export function App() {
         void refresh();
       });
     }
-  }
+  }, [refresh]);
 
-  const visibleGallery = gallery.filter((item) => item.status !== "error" || item.error);
+  const visibleGallery = useMemo(() => gallery.filter((item) => item.status !== "error" || item.error), [gallery]);
   const galleryLayout = useMemo(() => layoutGalleryItems(visibleGallery, galleryMetrics), [galleryMetrics, visibleGallery]);
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
@@ -376,8 +389,10 @@ function layoutGalleryItems(items: GalleryItem[], metrics: GalleryMetrics) {
 }
 
 const GALLERY_GAP_PX = 7;
+const AUDIO_TILE_HEIGHT_PX = 76;
 
 function tileHeightForWidth(item: GalleryItem, width: number) {
+  if (item.type === "audio") return AUDIO_TILE_HEIGHT_PX;
   const ratio = Math.max(0.1, Number(item.height || 1)) / Math.max(0.1, Number(item.width || 1));
   return Math.max(90, width * ratio);
 }

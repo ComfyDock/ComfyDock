@@ -1,11 +1,11 @@
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import { Copy, Download, Trash2 } from "lucide-react";
 import { Media, Tip } from "@/app/components";
 import { formatElapsed, titleFromOutput } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { GalleryItem } from "@/types";
 
-export function GalleryTile({
+export const GalleryTile = memo(function GalleryTile({
   item,
   width,
   height,
@@ -27,7 +27,7 @@ export function GalleryTile({
   const ratio = `${item.width || 1} / ${item.height || 1}`;
   return (
     <button
-      className={cn("tile", item.status)}
+      className={cn("tile", `type-${item.type}`, item.status)}
       style={
         {
           width: fill ? "100%" : width,
@@ -100,4 +100,4 @@ export function GalleryTile({
       ) : null}
     </button>
   );
-}
+});

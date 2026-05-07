@@ -57,6 +57,17 @@ class RunExecutor(Protocol):
         """Execute a contract prompt and return normalized output payloads."""
         ...
 
+    async def complete_submitted(
+        self,
+        prompt_id: str,
+        outputs: tuple[Any, ...],
+        *,
+        timeout_seconds: float,
+        poll_interval_seconds: float,
+    ) -> RunExecutionResult:
+        """Wait for a previously submitted prompt and normalize its outputs."""
+        ...
+
 
 class ComfyUIClient:
     """Small async HTTP client for the ComfyUI API used by `cg serve`."""
@@ -213,13 +224,28 @@ class LocalComfyExecutor:
         if not request.wait:
             return RunExecutionResult(status="submitted", prompt_id=prompt_id)
 
-        history = await self._client.wait_for_history(
+        return await self.complete_submitted(
             prompt_id,
+            request.outputs,
             timeout_seconds=request.timeout_seconds,
             poll_interval_seconds=request.poll_interval_seconds,
         )
-        outputs = extract_contract_outputs(request.outputs, history)
-        output_payloads = [_contract_output_payload(output) for output in outputs]
+
+    async def complete_submitted(
+        self,
+        prompt_id: str,
+        outputs: tuple[Any, ...],
+        *,
+        timeout_seconds: float,
+        poll_interval_seconds: float,
+    ) -> RunExecutionResult:
+        history = await self._client.wait_for_history(
+            prompt_id,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        extracted_outputs = extract_contract_outputs(outputs, history)
+        output_payloads = [_contract_output_payload(output) for output in extracted_outputs]
         await _attach_artifact_dimensions(self._client, output_payloads)
         return RunExecutionResult(status="completed", prompt_id=prompt_id, outputs=output_payloads)
 

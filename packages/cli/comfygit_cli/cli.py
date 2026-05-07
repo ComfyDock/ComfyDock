@@ -647,6 +647,12 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Maximum contract request body size in MiB (default: 256)",
     )
     serve_parser.add_argument(
+        "--run-timeout-seconds",
+        type=float,
+        default=12 * 60 * 60,
+        help="Maximum background run wait time in seconds (default: 43200)",
+    )
+    serve_parser.add_argument(
         "--state",
         choices=["ephemeral", "local"],
         default="ephemeral",

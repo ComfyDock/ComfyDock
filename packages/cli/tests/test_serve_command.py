@@ -75,6 +75,7 @@ def test_serve_parser_defaults() -> None:
     assert args.host == "127.0.0.1"
     assert args.port == 8190
     assert args.comfy_url == "http://127.0.0.1:8188"
+    assert args.run_timeout_seconds == 12 * 60 * 60
     assert args.state == "ephemeral"
     assert args.gallery == "private"
     assert args.state_db is None
@@ -96,6 +97,8 @@ def test_serve_parser_accepts_runtime_options() -> None:
             "http://127.0.0.1:8189",
             "--state",
             "local",
+            "--run-timeout-seconds",
+            "900",
             "--gallery",
             "shared",
             "--state-db",
@@ -107,6 +110,7 @@ def test_serve_parser_accepts_runtime_options() -> None:
     assert args.port == 9000
     assert args.comfy_url == "http://127.0.0.1:8189"
     assert args.max_request_mb == 256
+    assert args.run_timeout_seconds == 900
     assert args.state == "local"
     assert args.gallery == "shared"
     assert str(args.state_db) == "/tmp/comfygit-serve.sqlite"
@@ -139,6 +143,7 @@ def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> 
     assert called_env is mock_env
     assert called_config.port == 9000
     assert called_config.max_request_bytes == 256 * 1024 * 1024
+    assert called_config.run_timeout_seconds == 12 * 60 * 60
     assert called_config.state == "ephemeral"
     assert called_config.gallery == "private"
 
@@ -158,6 +163,23 @@ def test_serve_command_uses_configured_request_size(mock_serve, mock_workspace) 
 
     called_config = mock_serve.call_args.args[1]
     assert called_config.max_request_bytes == 512 * 1024 * 1024
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_configured_run_timeout(mock_serve, mock_workspace) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(["-e", "demo", "serve", "--run-timeout-seconds", "7200"])
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.run_timeout_seconds == 7200
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
@@ -309,6 +331,42 @@ def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
         reopened.close()
 
 
+def test_state_store_lists_active_runs(tmp_path) -> None:
+    db_path = tmp_path / "serve.sqlite"
+    store = SQLiteServeStateStore(db_path)
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_submitted",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="submitted",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_done",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_2",
+            inputs={"prompt": "green eyes"},
+        )
+    )
+
+    active = store.list_runs("anon_1", statuses={"submitted", "running"})
+
+    assert [run["run_id"] for run in active] == ["run_submitted"]
+    assert active[0]["status"] == "submitted"
+    store.close()
+
+
 def test_failed_run_response_does_not_create_circular_raw_result() -> None:
     store = EphemeralServeStateStore()
     session = ServeSession(session_id="anon_1", scope_key="anon_1")
@@ -445,6 +503,151 @@ async def test_serve_gallery_is_scoped_by_session_cookie() -> None:
 
         assert saved_payload["items"][0]["id"] == "gallery_saved"
         assert fresh_payload["items"] == []
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_accepts_explicit_session_header() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_header", scope_key="anon_header")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_header",
+                run_id="run_saved",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                headers={"X-ComfyGit-Studio-Session": "anon_header"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["items"][0]["id"] == "gallery_header"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_prefers_existing_cookie_session_over_header() -> None:
+    store = EphemeralServeStateStore()
+    cookie_session = store.ensure_session("anon_cookie", scope_key="anon_cookie")
+    header_session = store.ensure_session("anon_header", scope_key="anon_header")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_cookie",
+                run_id="run_cookie",
+                session_id=cookie_session.session_id,
+                scope_key=cookie_session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            ),
+            ServeGalleryItem(
+                item_id="gallery_header",
+                run_id="run_header",
+                session_id=header_session.session_id,
+                scope_key=header_session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            ),
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                headers={"X-ComfyGit-Studio-Session": "anon_header"},
+                cookies={"comfygit_studio_session": "anon_cookie"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert [item["id"] for item in payload["items"]] == ["gallery_cookie"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_runs_endpoint_lists_active_runs_for_session() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_active",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_active",
+            inputs={},
+        )
+    )
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_done",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_done",
+            inputs={},
+        )
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/runs?active=true",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert [run["run_id"] for run in payload["runs"]] == ["run_active"]
     finally:
         await runner.cleanup()
 

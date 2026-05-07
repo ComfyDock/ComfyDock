@@ -263,6 +263,84 @@ refs, run records, gallery state, and output delivery remain owned by the serve
 runtime. Executor selection is not yet exposed as a user-facing configuration
 surface, and proxy execution is not implemented.
 
+### CGSERVE-RUN-05A [PLANNED]: Contract runs should be asynchronous by default
+Validation: MIXED
+
+The public contract run API should treat submission and completion as separate
+phases. A default Studio or API run request should validate inputs, build the
+captured API prompt, submit it to the selected executor, record a serve-owned
+run row after the executor returns a `prompt_id` or equivalent provider run
+identifier, and then return a `run_id` quickly instead of holding the HTTP
+request open until ComfyUI history is complete.
+
+The synchronous wait path may remain as an explicit compatibility mode for API
+callers that pass `wait: true`, but it should not be the Studio default. Long
+image, video, and audio runs should not depend on a hidden request timeout to
+eventually appear in the gallery. Timeouts in the async path should describe
+watcher, cleanup, or provider-lifetime policy rather than whether a browser
+request stayed open long enough.
+
+### CGSERVE-RUN-05B [PLANNED]: Runs should expose recoverable output slots
+Validation: MIXED
+
+A run may produce zero, one, or many artifacts across one or more declared
+contract outputs. Serve should model the pending UI as output slots associated
+with a run, not as a single pending gallery item per run. On submission, serve
+should derive expected slots from the contract output declarations and return
+enough slot metadata for Studio to render pending cards immediately.
+
+Each output slot should have a stable `slot_id`, `run_id`, declared output name,
+media type when known, status, presentation metadata fallback, and timestamps.
+When execution completes, a slot may resolve to no gallery items, one gallery
+item, or multiple gallery items if a single output node produced multiple
+artifacts. Gallery items should retain `run_id`, `slot_id`, declared output
+name, and artifact index so refresh/recovery, deletion, details panels, and
+future sharing policy can reason about multi-output runs without guessing from
+filenames.
+
+### CGSERVE-RUN-05C [PLANNED]: Studio should recover active runs after refresh
+Validation: MIXED
+
+Studio should be able to reconstruct in-progress generations after a browser
+refresh by asking serve for active runs and their output slots. In local durable
+state mode, those active run and slot records should survive browser refreshes
+and `cg serve` restarts. On serve restart, the local executor should perform a
+best-effort recovery pass by checking ComfyUI history for active prompt IDs and
+recording completed outputs or failed runs when enough information is
+available.
+
+In ephemeral mode, active runs may remain recoverable only while the same
+`cg serve` process is alive. Browser localStorage may remember anonymous session
+identity or UI preferences, but it must not be the source of truth for run
+completion, output extraction, cancellation, or gallery records.
+
+### CGSERVE-RUN-05D [PLANNED]: Serve should stream run lifecycle events
+Validation: MIXED
+
+Serve should expose a run event stream for Studio and API clients. The first
+useful transport may be Server-Sent Events because it fits browser clients and
+one-way progress updates, while future deployments may add websocket or proxy
+bridging when richer bidirectional behavior is needed.
+
+Useful event types include `run_started`, `run_progress`,
+`run_output_completed`, `run_completed`, `run_failed`, and `run_cancelled`.
+Progress may initially be coarse status text or elapsed time while the local
+executor polls ComfyUI history. Later, the local or proxy executor may bridge
+ComfyUI websocket progress into the same serve event shape.
+
+### CGSERVE-RUN-05E [PLANNED]: Serve should own cancellation semantics
+Validation: MIXED
+
+Studio should allow users to cancel in-progress runs from pending output cards
+or a run details surface. The public cancellation shape should be run-scoped,
+for example `POST /runs/{run_id}/cancel`, even if the first local executor maps
+that to ComfyUI's global interrupt behavior.
+
+The first local implementation may document that cancellation interrupts the
+active ComfyUI execution for the served instance and is therefore best suited to
+single-user local Studio sessions. Shared or multi-user deployments must make
+cancellation ownership and blast radius explicit before exposing it broadly.
+
 ### CGSERVE-RUN-06 [PLANNED]: Proxy execution is an optional future executor mode
 Validation: HUMAN_REVIEW
 

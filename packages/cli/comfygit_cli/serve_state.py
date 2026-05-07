@@ -42,6 +42,27 @@ class ServeRunRecord:
     created_at: str = ""
     updated_at: str = ""
 
+    def to_public_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "run_id": self.run_id,
+            "session_id": self.session_id,
+            "workflow": self.workflow,
+            "contract": self.contract,
+            "status": self.status,
+            "inputs": self.inputs,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+        optional = {
+            "prompt_id": self.prompt_id,
+            "raw_result": self.raw_result,
+            "error": self.error,
+        }
+        for key, value in optional.items():
+            if value is not None:
+                payload[key] = value
+        return payload
+
 
 @dataclass(frozen=True)
 class ServeGalleryItem:
@@ -109,6 +130,9 @@ class ServeStateStore:
     def record_run(self, run: ServeRunRecord) -> None:
         raise NotImplementedError
 
+    def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         raise NotImplementedError
 
@@ -134,6 +158,13 @@ class EphemeralServeStateStore(ServeStateStore):
 
     def record_run(self, run: ServeRunRecord) -> None:
         self.runs[run.run_id] = _with_run_timestamps(run)
+
+    def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
+        runs = [run for run in self.runs.values() if run.scope_key == scope_key]
+        if statuses is not None:
+            runs = [run for run in runs if run.status in statuses]
+        runs.sort(key=lambda run: run.created_at, reverse=True)
+        return [run.to_public_dict() for run in runs]
 
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         for item in items:
@@ -197,6 +228,7 @@ class SQLiteServeStateStore(ServeStateStore):
                     status = excluded.status,
                     prompt_id = excluded.prompt_id,
                     raw_result_json = excluded.raw_result_json,
+                    inputs_json = excluded.inputs_json,
                     error = excluded.error,
                     updated_at = excluded.updated_at
                 """,
@@ -215,6 +247,24 @@ class SQLiteServeStateStore(ServeStateStore):
                     run.updated_at,
                 ),
             )
+
+    def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
+        params: list[Any] = [scope_key]
+        status_clause = ""
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            status_clause = f" AND status IN ({placeholders})"
+            params.extend(sorted(statuses))
+        rows = self.connection.execute(
+            f"""
+            SELECT *
+            FROM runs
+            WHERE scope_key = ?{status_clause}
+            ORDER BY created_at DESC, run_id DESC
+            """,
+            params,
+        ).fetchall()
+        return [_run_from_row(row).to_public_dict() for row in rows]
 
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         with self.connection:
@@ -364,6 +414,9 @@ class SQLiteServeStateStore(ServeStateStore):
             self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_created ON gallery_items(scope_key, created_at DESC)"
             )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_scope_status_created ON runs(scope_key, status, created_at DESC)"
+            )
 
 
 def _with_run_timestamps(run: ServeRunRecord) -> ServeRunRecord:
@@ -430,6 +483,23 @@ def _gallery_item_from_row(row: sqlite3.Row) -> ServeGalleryItem:
         height=row["height"],
         inputs=_loads(row["inputs_json"], {}),
         artifact=_loads(row["artifact_json"], None),
+        raw_result=_loads(row["raw_result_json"], None),
+        error=row["error"],
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
+def _run_from_row(row: sqlite3.Row) -> ServeRunRecord:
+    return ServeRunRecord(
+        run_id=str(row["run_id"]),
+        session_id=str(row["session_id"]),
+        scope_key=str(row["scope_key"]),
+        workflow=str(row["workflow"]),
+        contract=str(row["contract"]),
+        status=str(row["status"]),
+        prompt_id=row["prompt_id"],
+        inputs=_loads(row["inputs_json"], {}),
         raw_result=_loads(row["raw_result_json"], None),
         error=row["error"],
         created_at=str(row["created_at"]),

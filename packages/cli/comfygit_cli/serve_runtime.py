@@ -38,10 +38,12 @@ from .serve_state import (
 )
 
 DEFAULT_MAX_REQUEST_BYTES = 256 * 1024 * 1024
+DEFAULT_RUN_TIMEOUT_SECONDS = 12 * 60 * 60
 UPLOAD_TOKEN_BYTES = 32
 DEFAULT_UPLOAD_CONTENT_TYPE = "application/octet-stream"
 DEFAULT_UPLOAD_EXTENSION = ".bin"
 SESSION_COOKIE_NAME = "comfygit_studio_session"
+SESSION_HEADER_NAME = "X-ComfyGit-Studio-Session"
 SHARED_GALLERY_SCOPE = "shared"
 FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 
@@ -78,6 +80,7 @@ class ServeConfig:
     port: int
     comfy_url: str
     max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES
+    run_timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS
     state: str = "ephemeral"
     gallery: str = "private"
     state_db: Path | None = None
@@ -122,6 +125,7 @@ class ServeState:
         self.executor: RunExecutor = LocalComfyExecutor(self.client)
         self.uploads: dict[str, UploadRecord] = {}
         self.state_store = state_store or _create_state_store(env, config)
+        self.background_tasks: set[asyncio.Task[Any]] = set()
 
     def manifest_snapshot(self):
         return self.env.get_manifest_snapshot()
@@ -177,6 +181,7 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/uploads/{upload_id}/status", upload_status_handler)
     app.router.add_get("/gallery", gallery_handler)
     app.router.add_delete("/gallery/{item_id}", gallery_delete_handler)
+    app.router.add_get("/runs", runs_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -358,6 +363,19 @@ async def gallery_delete_handler(request: web.Request) -> web.Response:
     return _json_response_for_session({"deleted": deleted}, session, status=status)
 
 
+async def runs_handler(request: web.Request) -> web.Response:
+    session = _serve_session(request)
+    statuses = None
+    if request.query.get("active") == "true":
+        statuses = {"submitted", "running"}
+    payload = {
+        "state": _state(request).config.state,
+        "session_id": session.session_id,
+        "runs": _state(request).state_store.list_runs(session.scope_key, statuses=statuses),
+    }
+    return _json_response_for_session(payload, session)
+
+
 async def run_contract_handler(request: web.Request) -> web.Response:
     body: dict[str, Any] = {}
     session = _serve_session(request)
@@ -465,8 +483,9 @@ async def _read_json_body(request: web.Request) -> dict[str, Any]:
 
 def _serve_session(request: web.Request) -> ServeSession:
     state = _state(request)
+    header_value = request.headers.get(SESSION_HEADER_NAME)
     cookie_value = request.cookies.get(SESSION_COOKIE_NAME)
-    session_id = cookie_value if cookie_value and _safe_token(cookie_value) == cookie_value else f"anon_{uuid.uuid4().hex}"
+    session_id = _session_id_from_value(cookie_value) or _session_id_from_value(header_value) or f"anon_{uuid.uuid4().hex}"
     scope_key = SHARED_GALLERY_SCOPE if state.config.gallery == "shared" else session_id
     return state.state_store.ensure_session(session_id, scope_key=scope_key)
 
@@ -490,6 +509,12 @@ def _json_response_for_session(
 
 def _safe_token(value: str) -> str:
     return "".join(char for char in value if char.isalnum() or char in {"-", "_"})
+
+
+def _session_id_from_value(value: str | None) -> str | None:
+    if value and _safe_token(value) == value:
+        return value
+    return None
 
 
 def _contracts_payload(state: ServeState) -> dict[str, Any]:
@@ -551,8 +576,8 @@ async def _run_contract(
         inputs = {key: value for key, value in body.items() if key not in control_keys}
     if not isinstance(inputs, dict):
         raise ValueError("'inputs' must be a JSON object.")
-    wait = bool(body.get("wait", True))
-    timeout_seconds = float(body.get("timeout_seconds", 300))
+    wait = bool(body.get("wait", False))
+    timeout_seconds = float(body.get("timeout_seconds", state.config.run_timeout_seconds))
     poll_interval_seconds = float(body.get("poll_interval_seconds", 1))
 
     manifest = state.manifest_snapshot()
@@ -616,6 +641,37 @@ async def _run_contract(
         "issues": [asdict(issue) for issue in build_result.issues],
     }
     if execution.status != "completed":
+        pending_item = _pending_gallery_item_for_run(
+            run_id=run_id,
+            session=session,
+            workflow_name=workflow_name,
+            contract_name=contract_name,
+            inputs=inputs,
+            prompt_id=execution.prompt_id,
+            outputs=build_result.outputs,
+            response=response,
+        )
+        state.state_store.record_gallery_items([pending_item])
+        response["gallery_items"] = [pending_item.to_public_dict()]
+        task = asyncio.create_task(
+            _complete_submitted_run(
+                state,
+                session,
+                run_id=run_id,
+                workflow_name=workflow_name,
+                contract_name=contract_name,
+                inputs=inputs,
+                prompt_id=execution.prompt_id,
+                outputs=build_result.outputs,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                issues=[asdict(issue) for issue in build_result.issues],
+                pending_item_id=pending_item.item_id,
+                created_at=pending_item.created_at,
+            )
+        )
+        state.background_tasks.add(task)
+        task.add_done_callback(state.background_tasks.discard)
         return response
 
     response["outputs"] = execution.outputs
@@ -645,6 +701,231 @@ async def _run_contract(
     return response
 
 
+async def _complete_submitted_run(
+    state: ServeState,
+    session: ServeSession,
+    *,
+    run_id: str,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+    prompt_id: str,
+    outputs: tuple[Any, ...],
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+    issues: list[dict[str, Any]],
+    pending_item_id: str,
+    created_at: str,
+) -> None:
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run_id,
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="running",
+            prompt_id=prompt_id,
+            inputs=_display_inputs(inputs),
+            raw_result={"status": "running", "run_id": run_id, "prompt_id": prompt_id, "issues": issues},
+            created_at=created_at,
+        )
+    )
+    try:
+        execution = await state.executor.complete_submitted(
+            prompt_id,
+            outputs,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    except ComfyGitServeTimeoutError as exc:
+        payload = {"error": "timeout", "message": str(exc), "prompt_id": prompt_id}
+        _record_failed_run(
+            state,
+            session,
+            workflow_name,
+            contract_name,
+            {"inputs": inputs},
+            payload,
+            run_id=run_id,
+            prompt_id=prompt_id,
+            gallery_item_id=pending_item_id,
+            created_at=created_at,
+        )
+        return
+    except ComfyUIRequestError as exc:
+        payload = {
+            "error": "comfyui_rejected_request",
+            "message": str(exc),
+            "comfy_status": exc.status,
+            "comfy_url": exc.url,
+            "comfyui": exc.payload,
+            "prompt_id": prompt_id,
+        }
+        _record_failed_run(
+            state,
+            session,
+            workflow_name,
+            contract_name,
+            {"inputs": inputs},
+            payload,
+            run_id=run_id,
+            prompt_id=prompt_id,
+            gallery_item_id=pending_item_id,
+            created_at=created_at,
+        )
+        return
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        payload = {
+            "error": "comfyui_unavailable",
+            "message": str(exc),
+            "comfy_url": state.config.comfy_url,
+            "prompt_id": prompt_id,
+        }
+        _record_failed_run(
+            state,
+            session,
+            workflow_name,
+            contract_name,
+            {"inputs": inputs},
+            payload,
+            run_id=run_id,
+            prompt_id=prompt_id,
+            gallery_item_id=pending_item_id,
+            created_at=created_at,
+        )
+        return
+    except Exception as exc:
+        payload = {"error": "internal_error", "message": str(exc), "prompt_id": prompt_id}
+        _record_failed_run(
+            state,
+            session,
+            workflow_name,
+            contract_name,
+            {"inputs": inputs},
+            payload,
+            run_id=run_id,
+            prompt_id=prompt_id,
+            gallery_item_id=pending_item_id,
+            created_at=created_at,
+        )
+        return
+
+    response: dict[str, Any] = {
+        "status": "completed",
+        "run_id": run_id,
+        "prompt_id": execution.prompt_id,
+        "issues": issues,
+        "outputs": execution.outputs,
+    }
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run_id,
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="completed",
+            prompt_id=execution.prompt_id,
+            inputs=_display_inputs(inputs),
+            raw_result=dict(response),
+            created_at=created_at,
+        )
+    )
+    gallery_items = _gallery_items_for_outputs(
+        run_id=run_id,
+        session=session,
+        workflow_name=workflow_name,
+        contract_name=contract_name,
+        inputs=inputs,
+        response=response,
+        replace_first_item_id=pending_item_id,
+        created_at=created_at,
+    )
+    if not gallery_items:
+        gallery_items = [
+            _json_gallery_item_for_completed_run(
+                run_id=run_id,
+                session=session,
+                workflow_name=workflow_name,
+                contract_name=contract_name,
+                inputs=inputs,
+                response=response,
+                item_id=pending_item_id,
+                created_at=created_at,
+            )
+        ]
+    state.state_store.record_gallery_items(gallery_items)
+
+
+def _pending_gallery_item_for_run(
+    *,
+    run_id: str,
+    session: ServeSession,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+    prompt_id: str,
+    outputs: tuple[Any, ...],
+    response: dict[str, Any],
+) -> ServeGalleryItem:
+    first_output = outputs[0] if outputs else None
+    output_type = str(getattr(first_output, "type", "image") or "image").lower()
+    output_name = str(getattr(first_output, "name", "output") or "output")
+    item_type = output_type if output_type in {"image", "video", "audio"} else "image"
+    width, height = (4, 1) if item_type == "audio" else (1, 1)
+    created_at = utc_now()
+    return ServeGalleryItem(
+        item_id=f"gallery_{run_id}",
+        run_id=run_id,
+        session_id=session.session_id,
+        scope_key=session.scope_key,
+        workflow=workflow_name,
+        contract=contract_name,
+        status="pending",
+        output_type=item_type,
+        output_name=output_name,
+        prompt_id=prompt_id,
+        width=width,
+        height=height,
+        inputs=_display_inputs(inputs),
+        raw_result=dict(response),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _json_gallery_item_for_completed_run(
+    *,
+    run_id: str,
+    session: ServeSession,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+    response: dict[str, Any],
+    item_id: str,
+    created_at: str,
+) -> ServeGalleryItem:
+    return ServeGalleryItem(
+        item_id=item_id,
+        run_id=run_id,
+        session_id=session.session_id,
+        scope_key=session.scope_key,
+        workflow=workflow_name,
+        contract=contract_name,
+        status="done",
+        output_type="json",
+        output_name="result",
+        prompt_id=str(response.get("prompt_id") or "") or None,
+        width=1,
+        height=1,
+        inputs=_display_inputs(inputs),
+        raw_result=dict(response),
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
 def _record_failed_run(
     state: ServeState,
     session: ServeSession,
@@ -652,9 +933,14 @@ def _record_failed_run(
     contract_name: str,
     body: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    prompt_id: str | None = None,
+    gallery_item_id: str | None = None,
+    created_at: str | None = None,
 ) -> dict[str, Any]:
-    run_id = f"run_{uuid.uuid4().hex}"
-    created_at = utc_now()
+    run_id = run_id or f"run_{uuid.uuid4().hex}"
+    created_at = created_at or utc_now()
     inputs = _extract_run_inputs(body)
     message = str(payload.get("message") or payload.get("error") or "Generation failed")
     raw_result = dict(payload)
@@ -667,12 +953,14 @@ def _record_failed_run(
             contract=contract_name,
             status="error",
             inputs=_display_inputs(inputs),
+            prompt_id=prompt_id,
             raw_result=raw_result,
             error=message,
+            created_at=created_at,
         )
     )
     gallery_item = ServeGalleryItem(
-        item_id=f"gallery_{uuid.uuid4().hex}",
+        item_id=gallery_item_id or f"gallery_{uuid.uuid4().hex}",
         run_id=run_id,
         session_id=session.session_id,
         scope_key=session.scope_key,
@@ -681,6 +969,7 @@ def _record_failed_run(
         status="error",
         output_type="image",
         inputs=_display_inputs(inputs),
+        prompt_id=prompt_id,
         width=1,
         height=1,
         raw_result=raw_result,
@@ -703,11 +992,14 @@ def _gallery_items_for_outputs(
     contract_name: str,
     inputs: dict[str, Any],
     response: dict[str, Any],
+    replace_first_item_id: str | None = None,
+    created_at: str | None = None,
 ) -> list[ServeGalleryItem]:
     items: list[ServeGalleryItem] = []
     display_inputs = _display_inputs(inputs)
     prompt_id = str(response.get("prompt_id") or "")
-    created_at = utc_now()
+    created_at = created_at or utc_now()
+    artifact_index = 0
     raw_result = dict(response)
     for output in response.get("outputs") or []:
         if not isinstance(output, Mapping):
@@ -728,7 +1020,7 @@ def _gallery_items_for_outputs(
                 width, height = (4, 1)
             items.append(
                 ServeGalleryItem(
-                    item_id=f"gallery_{uuid.uuid4().hex}",
+                    item_id=replace_first_item_id if artifact_index == 0 and replace_first_item_id else f"gallery_{uuid.uuid4().hex}",
                     run_id=run_id,
                     session_id=session.session_id,
                     scope_key=session.scope_key,
@@ -749,6 +1041,7 @@ def _gallery_items_for_outputs(
                     updated_at=created_at,
                 )
             )
+            artifact_index += 1
     return items
 
 

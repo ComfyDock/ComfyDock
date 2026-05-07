@@ -1,5 +1,7 @@
 import type { FileInputValue, FileRef, UploadPrepareResponse } from "@/types";
 
+const SESSION_STORAGE_KEY = "comfygit_studio_session";
+
 export class ApiError extends Error {
   status: number;
   data: unknown;
@@ -13,7 +15,10 @@ export class ApiError extends Error {
 }
 
 export async function apiJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, options);
+  const response = await fetch(path, {
+    ...options,
+    headers: requestHeaders(options?.headers),
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message =
@@ -25,6 +30,38 @@ export async function apiJson<T>(path: string, options?: RequestInit): Promise<T
     throw new ApiError(message || "Request failed", response.status, data);
   }
   return data as T;
+}
+
+function requestHeaders(headers?: HeadersInit): Headers {
+  const next = new Headers(headers);
+  if (!next.has("x-comfygit-studio-session")) {
+    next.set("x-comfygit-studio-session", studioSessionId());
+  }
+  return next;
+}
+
+function studioSessionId(): string {
+  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (existing && /^[A-Za-z0-9_-]+$/.test(existing)) {
+    return existing;
+  }
+  const generated = `anon_${randomId()}`;
+  window.localStorage.setItem(SESSION_STORAGE_KEY, generated);
+  return generated;
+}
+
+function randomId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (typeof randomUUID === "function") {
+    return randomUUID.call(globalThis.crypto).replaceAll("-", "");
+  }
+  const bytes = new Uint8Array(16);
+  globalThis.crypto?.getRandomValues?.(bytes);
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (hex !== "0".repeat(32)) {
+    return hex;
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 }
 
 export async function uploadInputFile(value: FileInputValue): Promise<FileRef> {
