@@ -99,15 +99,7 @@ export function ContractInputControl({
             />
           </label>
           {fileValue ? (
-            <div className="file-input-preview">
-              <FilePreview value={fileValue} type={input.type} />
-              <div>
-                <strong>{fileValue.filename}</strong>
-                <button type="button" onClick={() => onChange(null)}>
-                  Remove
-                </button>
-              </div>
-            </div>
+            <FileInputPreview value={fileValue} type={input.type} onRemove={() => onChange(null)} />
           ) : (
             <p className="file-input-empty">Upload a {uploadType} for this workflow input.</p>
           )}
@@ -185,6 +177,42 @@ function uploadIcon(type: string) {
   if (type === "audio") return FileAudio;
   if (type === "video") return FileVideo;
   return FileUp;
+}
+
+function FileInputPreview({
+  value,
+  type,
+  onRemove,
+}: {
+  value: FileInputValue;
+  type: string;
+  onRemove: () => void;
+}) {
+  if (type === "audio") {
+    return (
+      <div className="file-input-preview is-audio">
+        <div className="file-input-preview-header">
+          <strong>{value.filename}</strong>
+          <button type="button" onClick={onRemove}>
+            Remove
+          </button>
+        </div>
+        <FilePreview value={value} type={type} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="file-input-preview">
+      <FilePreview value={value} type={type} />
+      <div>
+        <strong>{value.filename}</strong>
+        <button type="button" onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function FilePreview({ value, type }: { value: FileInputValue; type: string }) {

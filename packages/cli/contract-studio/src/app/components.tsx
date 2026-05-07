@@ -36,17 +36,41 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export function Media({
   item,
   muted = false,
+  autoPlay = false,
 }: {
   item: { url?: string; type?: string; filename?: string; outputName?: string; error?: string; artifact?: unknown };
   muted?: boolean;
+  autoPlay?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     setLoaded(false);
     setFailed(false);
   }, [item.url]);
+
+  useEffect(() => {
+    if (!autoPlay || !item.url || (item.type !== "video" && item.type !== "audio")) return;
+    const element = item.type === "video" ? videoRef.current : audioRef.current;
+    if (!element) return;
+
+    const playMedia = () => {
+      const playResult = element.play();
+      if (playResult) void playResult.catch(() => undefined);
+    };
+
+    element.currentTime = 0;
+    if (element.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      playMedia();
+      return;
+    }
+
+    element.addEventListener("canplay", playMedia, { once: true });
+    return () => element.removeEventListener("canplay", playMedia);
+  }, [autoPlay, item.type, item.url]);
 
   if (!item.url || failed) {
     return (
@@ -59,12 +83,13 @@ export function Media({
   if (item.type === "video") {
     return (
       <video
+        ref={videoRef}
         className={cn(!loaded && "media-loading")}
         src={item.url}
         controls={!muted}
         muted={muted}
         loop
-        autoPlay={muted}
+        autoPlay={autoPlay || muted}
         preload="metadata"
         draggable={false}
         onLoadedData={() => setLoaded(true)}
@@ -77,9 +102,11 @@ export function Media({
     return (
       <div className="media-fallback media-audio">
         <audio
+          ref={audioRef}
           className={cn(!loaded && "media-loading")}
           src={item.url}
           controls
+          autoPlay={autoPlay}
           preload="metadata"
           onCanPlay={() => setLoaded(true)}
           onError={() => setFailed(true)}

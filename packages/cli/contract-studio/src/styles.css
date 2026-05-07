@@ -776,6 +776,23 @@ textarea::placeholder {
   align-items: center;
 }
 
+.file-input-preview.is-audio {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.file-input-preview-header {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.file-input-preview-header button {
+  flex: 0 0 auto;
+}
+
 .file-input-preview img,
 .file-input-preview video {
   width: 72px;
@@ -786,8 +803,8 @@ textarea::placeholder {
 }
 
 .file-input-preview audio {
-  width: 72px;
-  height: 32px;
+  width: 100%;
+  height: 36px;
 }
 
 .file-input-preview-icon {
@@ -800,7 +817,7 @@ textarea::placeholder {
   place-items: center;
 }
 
-.file-input-preview div {
+.file-input-preview > div:not(.file-input-preview-header) {
   min-width: 0;
   display: grid;
   gap: 4px;

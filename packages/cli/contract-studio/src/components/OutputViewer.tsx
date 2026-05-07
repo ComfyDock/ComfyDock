@@ -165,7 +165,7 @@ export function OutputViewer({
               zoomViewer(zoom > 1 ? 1 : 2.5, { x: event.clientX, y: event.clientY, element: event.currentTarget });
             }}
           >
-            <Media item={item} />
+            <Media item={item} autoPlay={item.type === "video" || item.type === "audio"} />
           </div>
           <aside className="viewer-side" onClick={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className="viewer-side-head">
