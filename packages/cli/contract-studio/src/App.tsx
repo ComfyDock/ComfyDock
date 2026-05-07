@@ -18,6 +18,7 @@ import {
 } from "@/lib/format";
 import { inputDefaults, prepareSubmitInputs } from "@/lib/inputs";
 import type {
+  CancelRunResponse,
   ContractsResponse,
   GalleryDeleteResponse,
   GalleryItem,
@@ -44,6 +45,7 @@ export function App() {
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [galleryRenderCount, setGalleryRenderCount] = useState(GALLERY_INITIAL_BATCH);
   const galleryScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -71,6 +73,11 @@ export function App() {
     [contracts, selectedKey],
   );
   const activeKey = selected ? `${selected.workflow}:${selected.contract}` : "";
+  const cancellableRunId = useMemo(
+    () => gallery.find((item) => item.status === "pending" && item.run_id)?.run_id || null,
+    [gallery],
+  );
+  const generationInProgress = busy || Boolean(cancellableRunId);
 
   useEffect(() => {
     if (!selected) return;
@@ -97,7 +104,7 @@ export function App() {
   }, [loadGallery]);
 
   const runSelected = useCallback(async () => {
-    if (!selected || busy) return;
+    if (!selected || generationInProgress) return;
     setBusy(true);
     setIssues([]);
     setRawResult(null);
@@ -153,7 +160,7 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, [busy, inputs, loadGallery, selected]);
+  }, [generationInProgress, inputs, loadGallery, selected]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -196,7 +203,10 @@ export function App() {
     }
   }, [refresh]);
 
-  const visibleGallery = useMemo(() => gallery.filter((item) => item.status !== "error" || item.error), [gallery]);
+  const visibleGallery = useMemo(
+    () => gallery.filter((item) => item.status !== "cancelled" && (item.status !== "error" || item.error)),
+    [gallery],
+  );
   const renderedGallery = useMemo(() => visibleGallery.slice(0, galleryRenderCount), [galleryRenderCount, visibleGallery]);
   const renderedPhotos = useMemo(() => renderedGallery.map(galleryPhoto), [renderedGallery]);
   const hasMoreGallery = renderedGallery.length < visibleGallery.length;
@@ -224,6 +234,29 @@ export function App() {
     },
     [hasMoreGallery, loadMoreGalleryItems],
   );
+
+  const cancelActiveRun = useCallback(async () => {
+    if (!cancellableRunId || cancellingRunId) return;
+    setCancellingRunId(cancellableRunId);
+    setStatus("Cancelling");
+    try {
+      const result = await apiJson<CancelRunResponse>(`/runs/${encodeURIComponent(cancellableRunId)}/cancel`, {
+        method: "POST",
+      });
+      const nextItems = normalizeGalleryItems(result.gallery_items || []);
+      if (nextItems.length) {
+        setGallery((current) => mergeGalleryItems(nextItems, removeRunPendingItems(current, cancellableRunId)));
+      } else {
+        setGallery((current) => removeRunPendingItems(current, cancellableRunId));
+      }
+      setStatus("Cancelled");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not cancel generation");
+      await loadGallery();
+    } finally {
+      setCancellingRunId(null);
+    }
+  }, [cancellableRunId, cancellingRunId, loadGallery]);
 
   function moveActive(delta: number) {
     if (activeIndex < 0 || !visibleGallery.length) return;
@@ -296,7 +329,7 @@ export function App() {
             <Field label="Workflow contract">
               <StudioSelect
                 value={activeKey}
-                disabled={busy}
+                disabled={generationInProgress}
                 onChange={setSelectedKey}
                 options={contracts.map((contract) => {
                   const key = `${contract.workflow}:${contract.contract}`;
@@ -333,12 +366,24 @@ export function App() {
               type="button"
               className="generate-button"
               onClick={runSelected}
-              disabled={busy}
-              loading={busy}
+              disabled={generationInProgress}
+              loading={generationInProgress}
               leadingIcon={Wand2}
             >
-              {busy ? "Generating..." : "Generate"}
+              {generationInProgress ? "Generating..." : "Generate"}
             </Button>
+            {cancellableRunId ? (
+              <Button
+                type="button"
+                variant="tertiary"
+                className="cancel-generation-button"
+                onClick={cancelActiveRun}
+                disabled={Boolean(cancellingRunId)}
+                loading={cancellingRunId === cancellableRunId}
+              >
+                Cancel generation
+              </Button>
+            ) : null}
           </section>
         ) : (
           <section className="runner-card">
@@ -418,7 +463,7 @@ function galleryItemsFromSlots(
       promptId: slot.promptId,
       outputName: slot.outputName,
       type,
-      status: slot.status === "error" ? "error" : "pending",
+      status: galleryStatusForSlot(slot.status),
       width: type === "audio" ? 4 : Math.max(1, Number(slot.width || 1)),
       height: type === "audio" ? 1 : Math.max(1, Number(slot.height || 1)),
       inputs: displayInputs,
@@ -429,13 +474,20 @@ function galleryItemsFromSlots(
   });
 }
 
+function galleryStatusForSlot(status: RunOutputSlot["status"]): GalleryItem["status"] {
+  if (status === "done") return "done";
+  if (status === "error") return "error";
+  if (status === "cancelled") return "cancelled";
+  return "pending";
+}
+
 function mergeGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
   const nextIds = new Set(nextItems.map((item) => item.id));
   return [...nextItems, ...currentItems.filter((item) => !nextIds.has(item.id))];
 }
 
 function normalizeGalleryItems(items: GalleryItem[]) {
-  return items.map(normalizeGalleryItem);
+  return items.filter((item) => item.status !== "cancelled").map(normalizeGalleryItem);
 }
 
 function normalizeGalleryItem(item: GalleryItem) {
@@ -449,7 +501,7 @@ function normalizeGalleryItem(item: GalleryItem) {
 
 function reconcileGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
   const previousById = new Map(currentItems.map((item) => [item.id, item]));
-  const reconciled = nextItems.map((item) => {
+  const reconciled = nextItems.filter((item) => item.status !== "cancelled").map((item) => {
     const normalized = normalizeGalleryItem(item);
     const previous = previousById.get(normalized.id);
     return previous && galleryItemRenderSignature(previous) === galleryItemRenderSignature(normalized) ? previous : normalized;
@@ -459,6 +511,10 @@ function reconcileGalleryItems(nextItems: GalleryItem[], currentItems: GalleryIt
     return currentItems;
   }
   return reconciled;
+}
+
+function removeRunPendingItems(items: GalleryItem[], runId: string) {
+  return items.filter((item) => item.run_id !== runId || item.status !== "pending");
 }
 
 function galleryItemRenderSignature(item: GalleryItem) {

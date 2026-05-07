@@ -1068,6 +1068,22 @@ textarea::placeholder {
   box-shadow: var(--shadow-sm);
 }
 
+.cancel-generation-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 10px;
+  border-color: hsl(var(--destructive) / 0.42) !important;
+  color: hsl(var(--destructive-foreground)) !important;
+  background: hsl(var(--destructive) / 0.2) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+}
+
+.cancel-generation-button:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.3) !important;
+  border-color: hsl(var(--destructive) / 0.6) !important;
+}
+
 .raw-card {
   margin-top: 12px;
 }

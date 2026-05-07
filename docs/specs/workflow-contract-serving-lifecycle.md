@@ -306,8 +306,7 @@ serve-owned slot metadata instead of a single client-guessed placeholder.
 Completion updates each slot to `done`, `empty`, or `error` based on the
 normalized executor result. This is still partial because slots are not yet
 backed by a first-class event stream, artifact-index metadata is only implicit
-in generated gallery rows, and cancellation/progress semantics are still future
-slices.
+in generated gallery rows, and progress semantics are still future slices.
 
 ### CGSERVE-RUN-05C [PARTIAL]: Studio should recover active runs after refresh
 Validation: MIXED
@@ -331,8 +330,8 @@ best-effort completion watchers for active runs at startup and when gallery/run
 state is queried. In local persistent state mode, a restarted `cg serve` process
 can resume polling ComfyUI history by persisted `prompt_id` and update the
 stored run/gallery rows when the prompt completes or fails. Recovery still uses
-one pending gallery item per run; declared output slots, lifecycle events, and
-cancellation are separate planned slices.
+one pending gallery item per run; declared output slots and lifecycle events are
+separate planned slices.
 
 ### CGSERVE-RUN-05D [PLANNED]: Serve should stream run lifecycle events
 Validation: MIXED
@@ -348,18 +347,30 @@ Progress may initially be coarse status text or elapsed time while the local
 executor polls ComfyUI history. Later, the local or proxy executor may bridge
 ComfyUI websocket progress into the same serve event shape.
 
-### CGSERVE-RUN-05E [PLANNED]: Serve should own cancellation semantics
+### CGSERVE-RUN-05E [PARTIAL]: Serve should own cancellation semantics
 Validation: MIXED
 
-Studio should allow users to cancel in-progress runs from pending output cards
-or a run details surface. The public cancellation shape should be run-scoped,
-for example `POST /runs/{run_id}/cancel`, even if the first local executor maps
-that to ComfyUI's global interrupt behavior.
+Studio should allow users to cancel in-progress runs through a single run-level
+control near the Generate action, not through per-output pending tiles. The
+public cancellation shape should be run-scoped, for example
+`POST /runs/{run_id}/cancel`, even if the first local executor maps that to
+ComfyUI's global interrupt behavior.
 
 The first local implementation may document that cancellation interrupts the
 active ComfyUI execution for the served instance and is therefore best suited to
 single-user local Studio sessions. Shared or multi-user deployments must make
 cancellation ownership and blast radius explicit before exposing it broadly.
+
+Current implementation: serve exposes `POST /runs/{run_id}/cancel`, resolves
+the run through the caller's gallery/session scope, asks the local executor to
+delete the queued ComfyUI prompt and interrupt the matching prompt id, and marks
+the run and output slots as `cancelled` while removing pending gallery rows so
+the output grid returns to its pre-run state. Studio keeps Generate disabled and
+loading while a pending run exists, and exposes a single run-level cancel
+control under the Generate button once the run has a `run_id`. This is partial
+because cancellation is still polling-observed rather than event-streamed, the
+local executor relies on ComfyUI's prompt-id interrupt semantics, and shared
+multi-user cancellation policy is not yet configurable.
 
 ### CGSERVE-RUN-06 [PLANNED]: Proxy execution is an optional future executor mode
 Validation: HUMAN_REVIEW

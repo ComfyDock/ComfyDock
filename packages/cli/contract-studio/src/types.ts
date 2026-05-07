@@ -70,7 +70,7 @@ export type RunOutputSlot = {
   contractName?: string;
   outputName: string;
   type: "image" | "video" | "audio" | "json";
-  status: "pending" | "running" | "done" | "empty" | "error";
+  status: "pending" | "running" | "done" | "empty" | "error" | "cancelled";
   promptId?: string;
   width?: number;
   height?: number;
@@ -92,6 +92,16 @@ export type RunResponse = {
   message?: string;
 };
 
+export type CancelRunResponse = {
+  status: "cancelled";
+  run_id: string;
+  run?: Record<string, unknown> | null;
+  output_slots?: RunOutputSlot[];
+  gallery_items?: GalleryItem[];
+  error?: string;
+  message?: string;
+};
+
 export type GalleryItem = {
   id: string;
   run_id?: string;
@@ -106,7 +116,7 @@ export type GalleryItem = {
   outputName?: string;
   type: "image" | "video" | "audio" | "json";
   url?: string;
-  status: "pending" | "done" | "error";
+  status: "pending" | "done" | "error" | "cancelled";
   width: number;
   height: number;
   inputs?: Record<string, unknown>;

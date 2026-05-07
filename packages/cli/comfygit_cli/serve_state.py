@@ -186,6 +186,9 @@ class ServeStateStore:
     def list_active_runs(self, statuses: set[str]) -> list[ServeRunRecord]:
         raise NotImplementedError
 
+    def cancel_run(self, scope_key: str, run_id: str, *, raw_result: dict[str, Any], error: str) -> bool:
+        raise NotImplementedError
+
     def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
         raise NotImplementedError
 
@@ -239,6 +242,51 @@ class EphemeralServeStateStore(ServeStateStore):
         runs = [run for run in self.runs.values() if run.status in statuses]
         runs.sort(key=lambda run: run.created_at, reverse=True)
         return runs
+
+    def cancel_run(self, scope_key: str, run_id: str, *, raw_result: dict[str, Any], error: str) -> bool:
+        run = self.runs.get(run_id)
+        if run is None or run.scope_key != scope_key or run.status not in {"submitted", "running"}:
+            return False
+        self.runs[run_id] = _with_run_timestamps(
+            ServeRunRecord(
+                run_id=run.run_id,
+                session_id=run.session_id,
+                scope_key=run.scope_key,
+                workflow=run.workflow,
+                contract=run.contract,
+                status="cancelled",
+                inputs=run.inputs,
+                prompt_id=run.prompt_id,
+                raw_result=raw_result,
+                error=error,
+                created_at=run.created_at,
+            )
+        )
+        for slot_id, slot in list(self.output_slots.items()):
+            if slot.scope_key == scope_key and slot.run_id == run_id and slot.status in {"pending", "running"}:
+                self.output_slots[slot_id] = _with_output_slot_timestamps(
+                    ServeRunOutputSlot(
+                        slot_id=slot.slot_id,
+                        run_id=slot.run_id,
+                        session_id=slot.session_id,
+                        scope_key=slot.scope_key,
+                        workflow=slot.workflow,
+                        contract=slot.contract,
+                        output_name=slot.output_name,
+                        output_type=slot.output_type,
+                        status="cancelled",
+                        prompt_id=slot.prompt_id,
+                        width=slot.width,
+                        height=slot.height,
+                        error=error,
+                        raw_result=raw_result,
+                        created_at=slot.created_at,
+                    )
+                )
+        for item_id, item in list(self.gallery_items.items()):
+            if item.scope_key == scope_key and item.run_id == run_id and item.status == "pending":
+                del self.gallery_items[item_id]
+        return True
 
     def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
         for slot in slots:
@@ -388,6 +436,48 @@ class SQLiteServeStateStore(ServeStateStore):
             sorted(statuses),
         ).fetchall()
         return [_run_from_row(row) for row in rows]
+
+    def cancel_run(self, scope_key: str, run_id: str, *, raw_result: dict[str, Any], error: str) -> bool:
+        now = utc_now()
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                UPDATE runs
+                SET status = 'cancelled',
+                    raw_result_json = ?,
+                    error = ?,
+                    updated_at = ?
+                WHERE scope_key = ?
+                    AND run_id = ?
+                    AND status IN ('submitted', 'running')
+                """,
+                (_json(raw_result), error, now, scope_key, run_id),
+            )
+            if cursor.rowcount == 0:
+                return False
+            self.connection.execute(
+                """
+                UPDATE output_slots
+                SET status = 'cancelled',
+                    raw_result_json = ?,
+                    error = ?,
+                    updated_at = ?
+                WHERE scope_key = ?
+                    AND run_id = ?
+                    AND status IN ('pending', 'running')
+                """,
+                (_json(raw_result), error, now, scope_key, run_id),
+            )
+            self.connection.execute(
+                """
+                DELETE FROM gallery_items
+                WHERE scope_key = ?
+                    AND run_id = ?
+                    AND status = 'pending'
+                """,
+                (scope_key, run_id),
+            )
+        return True
 
     def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
         with self.connection:

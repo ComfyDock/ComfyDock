@@ -86,6 +86,10 @@ class RunExecutor(Protocol):
         """Wait for a previously submitted prompt and normalize its outputs."""
         ...
 
+    async def cancel(self, prompt_id: str) -> None:
+        """Request cancellation for a previously submitted prompt."""
+        ...
+
 
 class ComfyUIClient:
     """Small async HTTP client for the ComfyUI API used by `cg serve`."""
@@ -120,6 +124,12 @@ class ComfyUIClient:
             history = payload[prompt_id]
             return history if isinstance(history, dict) else None
         return payload if isinstance(payload, dict) and payload else None
+
+    async def delete_queued_prompt(self, prompt_id: str) -> None:
+        await self._request_json("POST", "/queue", json_data={"delete": [prompt_id]})
+
+    async def interrupt_prompt(self, prompt_id: str) -> None:
+        await self._request_json("POST", "/interrupt", json_data={"prompt_id": prompt_id})
 
     async def fetch_output(
         self,
@@ -282,6 +292,10 @@ class LocalComfyExecutor:
         output_payloads = [_contract_output_payload(output) for output in extracted_outputs]
         await _attach_artifact_dimensions(self._client, output_payloads)
         return RunExecutionResult(status="completed", prompt_id=prompt_id, outputs=output_payloads)
+
+    async def cancel(self, prompt_id: str) -> None:
+        await self._client.delete_queued_prompt(prompt_id)
+        await self._client.interrupt_prompt(prompt_id)
 
 
 async def _response_payload(response: aiohttp.ClientResponse) -> Any:

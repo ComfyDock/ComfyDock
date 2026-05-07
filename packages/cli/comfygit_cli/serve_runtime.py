@@ -48,6 +48,7 @@ SESSION_HEADER_NAME = "X-ComfyGit-Studio-Session"
 SHARED_GALLERY_SCOPE = "shared"
 FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 ACTIVE_RUN_STATUSES = {"submitted", "running"}
+TERMINAL_RUN_STATUSES = {"completed", "error", "failed", "cancelled"}
 OUTPUT_REQUEST_HEADERS = ("Range", "If-Range")
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -187,6 +188,7 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_delete("/gallery/{item_id}", gallery_delete_handler)
     app.router.add_get("/runs", runs_handler)
     app.router.add_get("/runs/{run_id}", single_run_handler)
+    app.router.add_post("/runs/{run_id}/cancel", cancel_run_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -534,6 +536,103 @@ async def single_run_handler(request: web.Request) -> web.Response:
         "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
     }
     return _json_response_for_session(payload, session)
+
+
+async def cancel_run_handler(request: web.Request) -> web.Response:
+    session = _serve_session(request)
+    state = _state(request)
+    run_id = request.match_info["run_id"]
+    run = state.state_store.get_run(session.scope_key, run_id)
+    if run is None:
+        return _json_response_for_session(
+            {"error": "not_found", "message": f"Run '{run_id}' was not found."},
+            session,
+            status=404,
+        )
+
+    run_status = str(run.get("status") or "")
+    if run_status == "cancelled":
+        return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session)
+    if run_status in TERMINAL_RUN_STATUSES:
+        return _json_response_for_session(
+            {
+                "error": "run_not_cancellable",
+                "message": f"Run '{run_id}' is already {run_status}.",
+                "run": run,
+            },
+            session,
+            status=409,
+        )
+
+    prompt_id = run.get("prompt_id")
+    if not isinstance(prompt_id, str) or not prompt_id:
+        return _json_response_for_session(
+            {
+                "error": "run_not_cancellable",
+                "message": f"Run '{run_id}' does not have a ComfyUI prompt id yet.",
+                "run": run,
+            },
+            session,
+            status=409,
+        )
+
+    try:
+        await state.executor.cancel(prompt_id)
+    except ComfyUIRequestError as exc:
+        return _json_response_for_session(
+            {
+                "error": "comfyui_rejected_cancel",
+                "message": str(exc),
+                "comfy_status": exc.status,
+                "comfy_url": exc.url,
+                "comfyui": exc.payload,
+            },
+            session,
+            status=400 if exc.status == 400 else 502,
+        )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return _json_response_for_session(
+            {
+                "error": "comfyui_unavailable",
+                "message": str(exc),
+                "comfy_url": state.config.comfy_url,
+            },
+            session,
+            status=502,
+        )
+    message = "Generation cancelled."
+    raw_result = {
+        "status": "cancelled",
+        "run_id": run_id,
+        "prompt_id": prompt_id,
+        "message": message,
+    }
+    if not state.state_store.cancel_run(session.scope_key, run_id, raw_result=raw_result, error=message):
+        return _json_response_for_session(
+            {
+                "error": "run_not_cancellable",
+                "message": f"Run '{run_id}' is no longer active.",
+                "run": state.state_store.get_run(session.scope_key, run_id),
+            },
+            session,
+            status=409,
+        )
+
+    task = state.active_run_tasks.pop(run_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+    return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session)
+
+
+def _cancelled_run_payload(state: ServeState, session: ServeSession, run_id: str) -> dict[str, Any]:
+    return {
+        "status": "cancelled",
+        "run_id": run_id,
+        "run": state.state_store.get_run(session.scope_key, run_id),
+        "output_slots": state.state_store.list_output_slots(session.scope_key, run_id),
+        "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
+    }
 
 
 async def run_contract_handler(request: web.Request) -> web.Response:

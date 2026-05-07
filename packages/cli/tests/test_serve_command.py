@@ -461,6 +461,73 @@ def test_state_store_lists_active_runs(tmp_path) -> None:
     store.close()
 
 
+def test_state_store_cancels_active_run() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_save_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_save_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_save_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    assert store.cancel_run(
+        "anon_1",
+        "run_cancel",
+        raw_result={"status": "cancelled", "run_id": "run_cancel"},
+        error="Generation cancelled.",
+    )
+
+    assert store.list_runs("anon_1")[0]["status"] == "cancelled"
+    assert store.list_active_runs({"submitted", "running"}) == []
+    assert store.list_output_slots("anon_1", "run_cancel")[0]["status"] == "cancelled"
+    assert store.list_gallery_items("anon_1") == []
+
+
 @pytest.mark.asyncio
 async def test_active_run_recovery_completes_persisted_run() -> None:
     store = EphemeralServeStateStore()
@@ -929,6 +996,125 @@ async def test_serve_single_run_endpoint_returns_slots_and_gallery_items() -> No
         assert payload["run"]["run_id"] == "run_1"
         assert payload["output_slots"][0]["slot_id"] == "slot_run_1_0_image"
         assert payload["gallery_items"][0]["slotId"] == "slot_run_1_0_image"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_cancel_run_endpoint_marks_pending_outputs_cancelled_and_removes_gallery_items() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    cancelled_prompts: list[str] = []
+
+    class FakeExecutor:
+        async def cancel(self, prompt_id: str) -> None:
+            cancelled_prompts.append(prompt_id)
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+        executor=FakeExecutor(),
+        active_run_tasks={},
+        background_tasks=set(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.post(
+                f"{base_url}/runs/run_cancel/cancel",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["status"] == "cancelled"
+        assert payload["run"]["status"] == "cancelled"
+        assert payload["output_slots"][0]["status"] == "cancelled"
+        assert payload["gallery_items"] == []
+        assert cancelled_prompts == ["prompt_cancel"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_cancel_deletes_queue_item_and_interrupts_prompt() -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        body = await request.json()
+        calls.append((request.path, body))
+        return web.json_response({})
+
+    app = web.Application()
+    app.router.add_post("/queue", handler)
+    app.router.add_post("/interrupt", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    base_url = f"http://127.0.0.1:{sockets[0].getsockname()[1]}"
+    try:
+        executor = LocalComfyExecutor(ComfyUIClient(base_url))
+
+        await executor.cancel("prompt_cancel")
+
+        assert calls == [
+            ("/queue", {"delete": ["prompt_cancel"]}),
+            ("/interrupt", {"prompt_id": "prompt_cancel"}),
+        ]
     finally:
         await runner.cleanup()
 

@@ -52,7 +52,7 @@ export const GalleryTile = memo(function GalleryTile({
         <Media item={item} muted />
       ) : (
         <div className="generating stopped">
-          <span>{item.error || "Generation failed"}</span>
+          <span>{item.error || (item.status === "cancelled" ? "Cancelled" : "Generation failed")}</span>
         </div>
       )}
       <span className="tile-caption">
