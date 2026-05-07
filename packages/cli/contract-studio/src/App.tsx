@@ -44,25 +44,17 @@ export function App() {
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
-  const [now, setNow] = useState(Date.now());
   const [galleryRenderCount, setGalleryRenderCount] = useState(GALLERY_INITIAL_BATCH);
   const galleryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadGallery = useCallback(async () => {
     const nextGallery = await apiJson<GalleryResponse>("/gallery");
-    setGallery(normalizeGalleryItems(nextGallery.items || []));
+    setGallery((current) => reconcileGalleryItems(nextGallery.items || [], current));
   }, []);
 
   useEffect(() => {
     void refresh();
   }, []);
-
-  useEffect(() => {
-    const hasPending = gallery.some((item) => item.status === "pending");
-    if (!hasPending) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [gallery]);
 
   useEffect(() => {
     const hasPending = gallery.some((item) => item.status === "pending");
@@ -267,7 +259,6 @@ export function App() {
                       item={photo.item}
                       width={width}
                       height={height}
-                      now={photo.item.status === "pending" ? now : 0}
                       onOpen={setActiveId}
                       onCopy={copyGalleryItem}
                       onDelete={deleteGalleryItem}
@@ -444,12 +435,51 @@ function mergeGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]
 }
 
 function normalizeGalleryItems(items: GalleryItem[]) {
-  return items.map((item) => ({
+  return items.map(normalizeGalleryItem);
+}
+
+function normalizeGalleryItem(item: GalleryItem) {
+  return {
     ...item,
     width: Math.max(1, Number(item.width || 1)),
     height: Math.max(1, Number(item.height || 1)),
     createdAt: item.createdAt || new Date().toISOString(),
-  }));
+  };
+}
+
+function reconcileGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
+  const previousById = new Map(currentItems.map((item) => [item.id, item]));
+  const reconciled = nextItems.map((item) => {
+    const normalized = normalizeGalleryItem(item);
+    const previous = previousById.get(normalized.id);
+    return previous && galleryItemRenderSignature(previous) === galleryItemRenderSignature(normalized) ? previous : normalized;
+  });
+
+  if (reconciled.length === currentItems.length && reconciled.every((item, index) => item === currentItems[index])) {
+    return currentItems;
+  }
+  return reconciled;
+}
+
+function galleryItemRenderSignature(item: GalleryItem) {
+  return [
+    item.id,
+    item.run_id || "",
+    item.slotId || "",
+    item.status,
+    item.type,
+    item.url || "",
+    item.filename || "",
+    item.outputName || "",
+    item.error || "",
+    item.width,
+    item.height,
+    item.createdAt,
+    item.contract,
+    item.contractWorkflow || "",
+    item.contractName || "",
+    item.promptId || "",
+  ].join("\u001f");
 }
 
 function runResponseFromUnknown(value: unknown): RunResponse | null {

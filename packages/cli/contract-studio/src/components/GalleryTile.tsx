@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, useEffect, useState, type CSSProperties } from "react";
 import { Copy, Download, Trash2 } from "lucide-react";
 import { Media, Tip } from "@/app/components";
 import { formatElapsed, titleFromOutput } from "@/lib/format";
@@ -10,7 +10,6 @@ export const GalleryTile = memo(function GalleryTile({
   width,
   height,
   fill,
-  now,
   onOpen,
   onCopy,
   onDelete,
@@ -19,7 +18,6 @@ export const GalleryTile = memo(function GalleryTile({
   width?: number;
   height?: number;
   fill?: boolean;
-  now: number;
   onOpen: (id: string) => void;
   onCopy: (item: GalleryItem) => void;
   onDelete: (item: GalleryItem) => void;
@@ -44,7 +42,7 @@ export const GalleryTile = memo(function GalleryTile({
           <div className="noise-layer" />
           <div className="generate-overlay">
             <span className="generate-step-label is-queued">Rendering</span>
-            <span className="generate-elapsed">{formatElapsed(now - Date.parse(item.createdAt))}</span>
+            <PendingElapsed createdAt={item.createdAt} />
           </div>
           <div className="generate-bar is-indeterminate">
             <div className="generate-bar-fill" />
@@ -101,3 +99,22 @@ export const GalleryTile = memo(function GalleryTile({
     </button>
   );
 });
+
+function PendingElapsed({ createdAt }: { createdAt: string }) {
+  const [elapsed, setElapsed] = useState(() => elapsedSince(createdAt));
+
+  useEffect(() => {
+    const update = () => setElapsed(elapsedSince(createdAt));
+    update();
+    const interval = window.setInterval(update, 1000);
+    return () => window.clearInterval(interval);
+  }, [createdAt]);
+
+  return <span className="generate-elapsed">{elapsed}</span>;
+}
+
+function elapsedSince(createdAt: string) {
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp)) return "0s";
+  return formatElapsed(Date.now() - timestamp);
+}
