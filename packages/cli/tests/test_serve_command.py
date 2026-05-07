@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
@@ -16,6 +17,7 @@ from comfygit_cli.serve_executor import (
     ComfyUIClient,
     LocalComfyExecutor,
     RunExecutionRequest,
+    RunExecutionResult,
     _attach_artifact_dimensions,
     _image_dimensions_from_bytes,
     _stamp_output_cache_busters,
@@ -26,6 +28,7 @@ from comfygit_cli.serve_runtime import (
     _content_type_for_filename,
     _gallery_items_for_outputs,
     _generated_upload_filename,
+    _ensure_active_run_recovery,
     _prepare_contract_inputs,
     _record_failed_run,
     create_app,
@@ -361,10 +364,112 @@ def test_state_store_lists_active_runs(tmp_path) -> None:
     )
 
     active = store.list_runs("anon_1", statuses={"submitted", "running"})
+    active_records = store.list_active_runs({"submitted", "running"})
 
     assert [run["run_id"] for run in active] == ["run_submitted"]
     assert active[0]["status"] == "submitted"
+    assert [run.run_id for run in active_records] == ["run_submitted"]
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_active_run_recovery_completes_persisted_run() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_recover",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_recover",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_run_recover",
+                run_id="run_recover",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="pending",
+                output_type="image",
+                prompt_id="prompt_recover",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            assert prompt_id == "prompt_recover"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {
+                                "filename": "recovered.png",
+                                "subfolder": "",
+                                "type": "output",
+                                "url": "/outputs/view?filename=recovered.png",
+                                "width": 512,
+                                "height": 512,
+                            }
+                        ],
+                    }
+                ],
+            )
+
+    contract = SimpleNamespace(outputs=[SimpleNamespace(name="save_image", type="image", node_id="8")])
+    manifest = SimpleNamespace(
+        workflows={
+            "z-image": SimpleNamespace(
+                execution_contract=SimpleNamespace(contracts={"default": contract})
+            )
+        }
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: manifest,
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+    assert list(state.active_run_tasks) == ["run_recover"]
+    await asyncio.gather(*state.background_tasks)
+
+    runs = store.list_runs("anon_1")
+    gallery = store.list_gallery_items("anon_1")
+    assert runs[0]["run_id"] == "run_recover"
+    assert runs[0]["status"] == "completed"
+    assert gallery[0]["id"] == "gallery_run_recover"
+    assert gallery[0]["status"] == "done"
+    assert gallery[0]["filename"] == "recovered.png"
 
 
 def test_failed_run_response_does_not_create_circular_raw_result() -> None:

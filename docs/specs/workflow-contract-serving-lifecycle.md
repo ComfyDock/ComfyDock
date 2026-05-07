@@ -298,7 +298,7 @@ name, and artifact index so refresh/recovery, deletion, details panels, and
 future sharing policy can reason about multi-output runs without guessing from
 filenames.
 
-### CGSERVE-RUN-05C [PLANNED]: Studio should recover active runs after refresh
+### CGSERVE-RUN-05C [PARTIAL]: Studio should recover active runs after refresh
 Validation: MIXED
 
 Studio should be able to reconstruct in-progress generations after a browser
@@ -313,6 +313,15 @@ In ephemeral mode, active runs may remain recoverable only while the same
 `cg serve` process is alive. Browser localStorage may remember anonymous session
 identity or UI preferences, but it must not be the source of truth for run
 completion, output extraction, cancellation, or gallery records.
+
+Current implementation: serve records submitted/running runs and pending gallery
+items, exposes active runs through `/runs?active=true`, and schedules
+best-effort completion watchers for active runs at startup and when gallery/run
+state is queried. In local persistent state mode, a restarted `cg serve` process
+can resume polling ComfyUI history by persisted `prompt_id` and update the
+stored run/gallery rows when the prompt completes or fails. Recovery still uses
+one pending gallery item per run; declared output slots, lifecycle events, and
+cancellation are separate planned slices.
 
 ### CGSERVE-RUN-05D [PLANNED]: Serve should stream run lifecycle events
 Validation: MIXED

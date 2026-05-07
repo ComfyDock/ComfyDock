@@ -133,6 +133,9 @@ class ServeStateStore:
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def list_active_runs(self, statuses: set[str]) -> list[ServeRunRecord]:
+        raise NotImplementedError
+
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         raise NotImplementedError
 
@@ -165,6 +168,11 @@ class EphemeralServeStateStore(ServeStateStore):
             runs = [run for run in runs if run.status in statuses]
         runs.sort(key=lambda run: run.created_at, reverse=True)
         return [run.to_public_dict() for run in runs]
+
+    def list_active_runs(self, statuses: set[str]) -> list[ServeRunRecord]:
+        runs = [run for run in self.runs.values() if run.status in statuses]
+        runs.sort(key=lambda run: run.created_at, reverse=True)
+        return runs
 
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         for item in items:
@@ -265,6 +273,21 @@ class SQLiteServeStateStore(ServeStateStore):
             params,
         ).fetchall()
         return [_run_from_row(row).to_public_dict() for row in rows]
+
+    def list_active_runs(self, statuses: set[str]) -> list[ServeRunRecord]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        rows = self.connection.execute(
+            f"""
+            SELECT *
+            FROM runs
+            WHERE status IN ({placeholders})
+            ORDER BY created_at DESC, run_id DESC
+            """,
+            sorted(statuses),
+        ).fetchall()
+        return [_run_from_row(row) for row in rows]
 
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         with self.connection:

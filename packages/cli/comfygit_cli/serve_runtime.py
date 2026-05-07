@@ -46,6 +46,7 @@ SESSION_COOKIE_NAME = "comfygit_studio_session"
 SESSION_HEADER_NAME = "X-ComfyGit-Studio-Session"
 SHARED_GALLERY_SCOPE = "shared"
 FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
+ACTIVE_RUN_STATUSES = {"submitted", "running"}
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("image/jpeg", (".jpg", ".jpeg")),
@@ -126,6 +127,7 @@ class ServeState:
         self.uploads: dict[str, UploadRecord] = {}
         self.state_store = state_store or _create_state_store(env, config)
         self.background_tasks: set[asyncio.Task[Any]] = set()
+        self.active_run_tasks: dict[str, asyncio.Task[Any]] = {}
 
     def manifest_snapshot(self):
         return self.env.get_manifest_snapshot()
@@ -185,7 +187,129 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
+    app.on_startup.append(_recover_active_runs_on_startup)
+    app.on_cleanup.append(_cleanup_background_tasks)
     return app
+
+
+async def _recover_active_runs_on_startup(app: web.Application) -> None:
+    await _ensure_active_run_recovery(app[SERVE_STATE_KEY])
+
+
+async def _cleanup_background_tasks(app: web.Application) -> None:
+    state = app[SERVE_STATE_KEY]
+    background_tasks = getattr(state, "background_tasks", None)
+    if not isinstance(background_tasks, set):
+        return
+    tasks = list(background_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    background_tasks.clear()
+    active_run_tasks = getattr(state, "active_run_tasks", None)
+    if isinstance(active_run_tasks, dict):
+        active_run_tasks.clear()
+
+
+async def _ensure_active_run_recovery(state: ServeState) -> None:
+    if not _state_supports_active_run_recovery(state):
+        return
+    for run in state.state_store.list_active_runs(ACTIVE_RUN_STATUSES):
+        if not run.prompt_id:
+            _record_recovery_failure(state, run, "Active run has no ComfyUI prompt id to recover.")
+            continue
+        task = state.active_run_tasks.get(run.run_id)
+        if task is not None and not task.done():
+            continue
+        outputs = _contract_outputs_for_run(state, run.workflow, run.contract)
+        if outputs is None:
+            _record_recovery_failure(
+                state,
+                run,
+                f"Cannot recover active run because contract '{run.workflow} / {run.contract}' no longer exists.",
+            )
+            continue
+        session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        task = asyncio.create_task(
+            _complete_submitted_run(
+                state,
+                session,
+                run_id=run.run_id,
+                workflow_name=run.workflow,
+                contract_name=run.contract,
+                inputs=run.inputs,
+                prompt_id=run.prompt_id,
+                outputs=outputs,
+                timeout_seconds=state.config.run_timeout_seconds,
+                poll_interval_seconds=1,
+                issues=_run_issues(run),
+                pending_item_id=f"gallery_{run.run_id}",
+                created_at=run.created_at,
+            )
+        )
+        _track_active_run_task(state, run.run_id, task)
+
+
+def _state_supports_active_run_recovery(state: Any) -> bool:
+    return (
+        isinstance(getattr(state, "active_run_tasks", None), dict)
+        and isinstance(getattr(state, "background_tasks", None), set)
+        and hasattr(state, "config")
+        and hasattr(state, "executor")
+        and hasattr(state, "state_store")
+        and callable(getattr(state, "manifest_snapshot", None))
+    )
+
+
+def _track_active_run_task(state: ServeState, run_id: str, task: asyncio.Task[Any]) -> None:
+    state.background_tasks.add(task)
+    state.active_run_tasks[run_id] = task
+
+    def discard(completed: asyncio.Task[Any]) -> None:
+        state.background_tasks.discard(completed)
+        if state.active_run_tasks.get(run_id) is completed:
+            state.active_run_tasks.pop(run_id, None)
+
+    task.add_done_callback(discard)
+
+
+def _contract_outputs_for_run(state: ServeState, workflow_name: str, contract_name: str) -> tuple[Any, ...] | None:
+    manifest = state.manifest_snapshot()
+    workflow = manifest.workflows.get(workflow_name)
+    execution_contract = getattr(workflow, "execution_contract", None) if workflow else None
+    contract = execution_contract.contracts.get(contract_name) if execution_contract else None
+    if contract is None:
+        return None
+    return tuple(contract.outputs)
+
+
+def _run_issues(run: ServeRunRecord) -> list[dict[str, Any]]:
+    raw_result = run.raw_result if isinstance(run.raw_result, Mapping) else {}
+    issues = raw_result.get("issues")
+    return [dict(issue) for issue in issues if isinstance(issue, Mapping)] if isinstance(issues, list) else []
+
+
+def _record_recovery_failure(state: ServeState, run: ServeRunRecord, message: str) -> None:
+    session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+    payload = {
+        "error": "recovery_failed",
+        "message": message,
+        "run_id": run.run_id,
+        "prompt_id": run.prompt_id,
+    }
+    _record_failed_run(
+        state,
+        session,
+        run.workflow,
+        run.contract,
+        {"inputs": run.inputs},
+        payload,
+        run_id=run.run_id,
+        prompt_id=run.prompt_id,
+        gallery_item_id=f"gallery_{run.run_id}",
+        created_at=run.created_at,
+    )
 
 
 def _max_request_bytes(state: ServeState) -> int:
@@ -343,6 +467,7 @@ async def upload_status_handler(request: web.Request) -> web.Response:
 
 
 async def gallery_handler(request: web.Request) -> web.Response:
+    await _ensure_active_run_recovery(_state(request))
     session = _serve_session(request)
     payload = {
         "state": _state(request).config.state,
@@ -364,10 +489,11 @@ async def gallery_delete_handler(request: web.Request) -> web.Response:
 
 
 async def runs_handler(request: web.Request) -> web.Response:
+    await _ensure_active_run_recovery(_state(request))
     session = _serve_session(request)
     statuses = None
     if request.query.get("active") == "true":
-        statuses = {"submitted", "running"}
+        statuses = ACTIVE_RUN_STATUSES
     payload = {
         "state": _state(request).config.state,
         "session_id": session.session_id,
@@ -670,8 +796,7 @@ async def _run_contract(
                 created_at=pending_item.created_at,
             )
         )
-        state.background_tasks.add(task)
-        task.add_done_callback(state.background_tasks.discard)
+        _track_active_run_task(state, run_id, task)
         return response
 
     response["outputs"] = execution.outputs
