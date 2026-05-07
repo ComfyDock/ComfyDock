@@ -37,6 +37,8 @@ export function App() {
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
   const [now, setNow] = useState(Date.now());
   const galleryStageRef = useRef<HTMLElement | null>(null);
+  const galleryColumnAssignmentsRef = useRef(new Map<string, number>());
+  const previousGalleryColumnCountRef = useRef(0);
   const galleryColumnCount = useGalleryColumnCount(galleryStageRef);
 
   useEffect(() => {
@@ -199,7 +201,16 @@ export function App() {
   }
 
   const visibleGallery = gallery.filter((item) => item.status !== "error" || item.error);
-  const galleryColumns = useMemo(() => distributeGalleryColumns(visibleGallery, galleryColumnCount), [galleryColumnCount, visibleGallery]);
+  const galleryColumns = useMemo(
+    () =>
+      distributeGalleryColumns(
+        visibleGallery,
+        galleryColumnCount,
+        galleryColumnAssignmentsRef.current,
+        previousGalleryColumnCountRef,
+      ),
+    [galleryColumnCount, visibleGallery],
+  );
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
 
@@ -338,12 +349,57 @@ export function App() {
   );
 }
 
-function distributeGalleryColumns(items: GalleryItem[], columnCount: number) {
-  const columns = Array.from({ length: Math.max(1, columnCount) }, () => [] as GalleryItem[]);
-  items.forEach((item, index) => {
-    columns[index % columns.length].push(item);
-  });
+function distributeGalleryColumns(
+  items: GalleryItem[],
+  columnCount: number,
+  assignments: Map<string, number>,
+  previousColumnCountRef: React.MutableRefObject<number>,
+) {
+  const count = Math.max(1, columnCount);
+  if (previousColumnCountRef.current !== count) {
+    assignments.clear();
+    previousColumnCountRef.current = count;
+  }
+
+  const visibleIds = new Set(items.map((item) => item.id));
+  for (const id of assignments.keys()) {
+    if (!visibleIds.has(id)) assignments.delete(id);
+  }
+
+  const columns = Array.from({ length: count }, () => [] as GalleryItem[]);
+  const columnHeights = Array.from({ length: count }, () => 0);
+
+  for (const item of items) {
+    const columnIndex = assignments.get(item.id);
+    if (columnIndex === undefined || columnIndex < 0 || columnIndex >= count) continue;
+    columnHeights[columnIndex] += galleryItemHeightWeight(item);
+  }
+
+  for (const item of items) {
+    if (assignments.has(item.id)) continue;
+    const columnIndex = shortestColumnIndex(columnHeights);
+    assignments.set(item.id, columnIndex);
+    columnHeights[columnIndex] += galleryItemHeightWeight(item);
+  }
+
+  for (const item of items) {
+    const columnIndex = assignments.get(item.id);
+    if (columnIndex === undefined || columnIndex < 0 || columnIndex >= count) continue;
+    columns[columnIndex].push(item);
+  }
   return columns;
+}
+
+function shortestColumnIndex(heights: number[]) {
+  let selected = 0;
+  for (let index = 1; index < heights.length; index += 1) {
+    if (heights[index] < heights[selected]) selected = index;
+  }
+  return selected;
+}
+
+function galleryItemHeightWeight(item: GalleryItem) {
+  return Math.max(0.1, Number(item.height || 1)) / Math.max(0.1, Number(item.width || 1));
 }
 
 function galleryItemsFromOutputs(

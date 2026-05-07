@@ -1140,6 +1140,28 @@ textarea::placeholder {
   max-height: calc(100vh - 132px);
 }
 
+.viewer-canvas .media-audio {
+  width: min(720px, 80vw);
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  box-shadow: 0 24px 90px rgb(0 0 0 / 0.32);
+}
+
+.viewer-canvas .media-audio audio {
+  min-height: 42px;
+}
+
+.viewer-canvas .media-audio span {
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .viewer-side {
   min-width: 0;
   min-height: 0;
