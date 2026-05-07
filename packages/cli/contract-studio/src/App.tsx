@@ -10,12 +10,17 @@ import { Button } from "@/components/ui/button";
 import { ApiError, apiJson } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import {
-  contractTitle,
-  displayInputsForGallery,
+  columnCountForWidth,
+  galleryItemsFromOutputs,
+  galleryItemsFromSlots,
   galleryPhoto,
-  jsonBlock,
-  outputKind,
-} from "@/lib/format";
+  mergeGalleryItems,
+  normalizeGalleryItems,
+  reconcileGalleryItems,
+  removeRunPendingItems,
+  visibleGalleryItems,
+} from "@/lib/gallery";
+import { contractTitle, displayInputsForGallery, jsonBlock } from "@/lib/format";
 import { inputDefaults, prepareSubmitInputs } from "@/lib/inputs";
 import type {
   CancelRunResponse,
@@ -25,7 +30,6 @@ import type {
   GalleryResponse,
   HealthResponse,
   RunIssue,
-  RunOutputSlot,
   RunResponse,
 } from "@/types";
 
@@ -203,10 +207,7 @@ export function App() {
     }
   }, [refresh]);
 
-  const visibleGallery = useMemo(
-    () => gallery.filter((item) => item.status !== "cancelled" && (item.status !== "error" || item.error)),
-    [gallery],
-  );
+  const visibleGallery = useMemo(() => visibleGalleryItems(gallery), [gallery]);
   const renderedGallery = useMemo(() => visibleGallery.slice(0, galleryRenderCount), [galleryRenderCount, visibleGallery]);
   const renderedPhotos = useMemo(() => renderedGallery.map(galleryPhoto), [renderedGallery]);
   const hasMoreGallery = renderedGallery.length < visibleGallery.length;
@@ -413,140 +414,7 @@ export function App() {
   );
 }
 
-function galleryItemsFromOutputs(
-  result: RunResponse,
-  selected: NonNullable<ContractsResponse["contracts"][number]>,
-  displayInputs: Record<string, unknown>,
-) {
-  const nextItems: GalleryItem[] = [];
-  for (const output of result.outputs || []) {
-    for (const artifact of output.artifacts || []) {
-      const type = outputKind(output, artifact);
-      nextItems.push({
-        id: `${result.prompt_id || Date.now()}-${output.name}-${artifact.filename || nextItems.length}`,
-        contract: contractTitle(selected),
-        contractWorkflow: selected.workflow,
-        contractName: selected.contract,
-        promptId: result.prompt_id,
-        output,
-        artifact,
-        filename: artifact.filename,
-        outputName: output.name,
-        type,
-        url: artifact.url,
-        status: "done",
-        width: type === "audio" ? 4 : type === "image" || type === "video" ? Math.max(1, Number(artifact.width || 1)) : 1,
-        height: type === "audio" ? 1 : type === "image" || type === "video" ? Math.max(1, Number(artifact.height || 1)) : 1,
-        inputs: displayInputs,
-        rawResult: result,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-  return nextItems;
-}
-
-function galleryItemsFromSlots(
-  slots: RunOutputSlot[],
-  selected: NonNullable<ContractsResponse["contracts"][number]>,
-  displayInputs: Record<string, unknown>,
-) {
-  return slots.map((slot) => {
-    const type = slot.type || "json";
-    return {
-      id: `gallery_${slot.slot_id}`,
-      run_id: slot.run_id,
-      slotId: slot.slot_id,
-      contract: contractTitle(selected),
-      contractWorkflow: selected.workflow,
-      contractName: selected.contract,
-      promptId: slot.promptId,
-      outputName: slot.outputName,
-      type,
-      status: galleryStatusForSlot(slot.status),
-      width: type === "audio" ? 4 : Math.max(1, Number(slot.width || 1)),
-      height: type === "audio" ? 1 : Math.max(1, Number(slot.height || 1)),
-      inputs: displayInputs,
-      rawResult: slot.rawResult,
-      error: slot.error,
-      createdAt: slot.createdAt || new Date().toISOString(),
-    } satisfies GalleryItem;
-  });
-}
-
-function galleryStatusForSlot(status: RunOutputSlot["status"]): GalleryItem["status"] {
-  if (status === "done") return "done";
-  if (status === "error") return "error";
-  if (status === "cancelled") return "cancelled";
-  return "pending";
-}
-
-function mergeGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
-  const nextIds = new Set(nextItems.map((item) => item.id));
-  return [...nextItems, ...currentItems.filter((item) => !nextIds.has(item.id))];
-}
-
-function normalizeGalleryItems(items: GalleryItem[]) {
-  return items.filter((item) => item.status !== "cancelled").map(normalizeGalleryItem);
-}
-
-function normalizeGalleryItem(item: GalleryItem) {
-  return {
-    ...item,
-    width: Math.max(1, Number(item.width || 1)),
-    height: Math.max(1, Number(item.height || 1)),
-    createdAt: item.createdAt || new Date().toISOString(),
-  };
-}
-
-function reconcileGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
-  const previousById = new Map(currentItems.map((item) => [item.id, item]));
-  const reconciled = nextItems.filter((item) => item.status !== "cancelled").map((item) => {
-    const normalized = normalizeGalleryItem(item);
-    const previous = previousById.get(normalized.id);
-    return previous && galleryItemRenderSignature(previous) === galleryItemRenderSignature(normalized) ? previous : normalized;
-  });
-
-  if (reconciled.length === currentItems.length && reconciled.every((item, index) => item === currentItems[index])) {
-    return currentItems;
-  }
-  return reconciled;
-}
-
-function removeRunPendingItems(items: GalleryItem[], runId: string) {
-  return items.filter((item) => item.run_id !== runId || item.status !== "pending");
-}
-
-function galleryItemRenderSignature(item: GalleryItem) {
-  return [
-    item.id,
-    item.run_id || "",
-    item.slotId || "",
-    item.status,
-    item.type,
-    item.url || "",
-    item.filename || "",
-    item.outputName || "",
-    item.error || "",
-    item.width,
-    item.height,
-    item.createdAt,
-    item.contract,
-    item.contractWorkflow || "",
-    item.contractName || "",
-    item.promptId || "",
-  ].join("\u001f");
-}
-
 function runResponseFromUnknown(value: unknown): RunResponse | null {
   if (!value || typeof value !== "object") return null;
   return value as RunResponse;
-}
-
-function columnCountForWidth(width: number) {
-  if (width < 620) return 2;
-  if (width < 980) return 3;
-  if (width < 1400) return 4;
-  if (width < 1900) return 5;
-  return 6;
 }

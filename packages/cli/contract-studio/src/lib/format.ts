@@ -1,4 +1,4 @@
-import type { ContractSummary, GalleryItem, GalleryPhoto, OutputArtifact, RunOutput } from "@/types";
+import type { ContractSummary, GalleryItem, OutputArtifact, RunOutput } from "@/types";
 
 const LARGE_STRING_LIMIT = 800;
 const DATA_URL_PREFIX_PATTERN = /^data:[^,]*;base64,/i;
@@ -68,16 +68,6 @@ export function jsonBlock(value: unknown) {
 
 export function displayInputsForGallery(inputs: Record<string, unknown>): Record<string, unknown> {
   return valueForDisplay(inputs) as Record<string, unknown>;
-}
-
-export function galleryPhoto(item: GalleryItem): GalleryPhoto {
-  return {
-    src: item.url || "",
-    width: Math.max(1, item.width || 1),
-    height: Math.max(1, item.height || 1),
-    key: item.id,
-    item,
-  };
 }
 
 export function outputKind(output: RunOutput, artifact: OutputArtifact): GalleryItem["type"] {
