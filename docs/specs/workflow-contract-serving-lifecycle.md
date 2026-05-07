@@ -383,8 +383,9 @@ Validation: HUMAN_REVIEW
 
 Future serve deployments may execute contracts through a Comfy runtime proxy
 instead of talking to ComfyUI directly. In that shape, the executor remains
-inside the `cg serve` process as a strategy object, while the proxy is a
-separate process that runs near ComfyUI and manages runtime-local data staging:
+inside the user-facing `cg serve` process as a strategy object, while the proxy
+is a separate process that runs near ComfyUI and manages runtime-local data
+staging:
 
 ```text
 browser or API client
@@ -396,14 +397,80 @@ browser or API client
 
 For serverless GPU deployments, `cg serve` can run on a cheap always-on host
 while the proxy and ComfyUI run inside or beside the ephemeral GPU worker. The
-proxy should stage input refs into the form ComfyUI expects, submit prompts,
-collect outputs, upload or register output artifacts, report progress and final
-status, and then allow the worker to shut down. The proxy is not the public
-contract API; it is an execution adapter behind `cg serve`.
+front-door `cg serve` remains the public contract API and Studio host. It owns
+contract discovery, sessions, SQLite/local state, gallery rows, run rows, upload
+refs, and local artifact refs. The runtime proxy should stage input refs into the
+form ComfyUI expects, submit prompts, collect outputs, expose artifact bytes,
+report progress and final status, and then allow the worker to shut down.
 
-Local proxy mode may be introduced later, for example through a `cg run` option
-or a dedicated proxy command, but it is not required for the first direct local
-executor slice.
+The first proxy experiment should use two `cg serve` roles rather than changing
+`cg run` semantics:
+
+```text
+# Front door on the user machine or cheap always-on host.
+cg serve --executor proxy --proxy-url <runtime-proxy-url> --proxy-token <token>
+
+# Runtime proxy beside ComfyUI in the GPU container.
+cg run --listen 0.0.0.0 --port 8188
+cg serve --role proxy --comfy-url http://127.0.0.1:8188 --proxy-token <token>
+```
+
+`cg run --with-proxy` or similar launch sugar may be added later, but the first
+implementation should keep ComfyUI launch and proxy serving independently
+testable.
+
+### CGSERVE-RUN-06A [PLANNED]: Runtime proxy mode is compute-only
+Validation: HUMAN_REVIEW
+
+Runtime proxy mode should not expose the public Studio surface, contract browser,
+gallery endpoints, local session state, or SQLite persistence. It should expose
+only internal execution endpoints needed by `ProxyComfyExecutor`, guarded by
+deployment authentication such as a bearer token in the first implementation.
+
+The minimal proxy API should be:
+
+```text
+GET  /proxy/health
+POST /proxy/runs
+GET  /proxy/runs/{run_id}
+POST /proxy/runs/{run_id}/cancel
+GET  /proxy/artifacts/{artifact_id}
+```
+
+The proxy may reuse local ComfyUI execution helpers internally, but its HTTP API
+is not ComfyUI's raw API and is not the user-facing ComfyGit contract API.
+
+### CGSERVE-RUN-06B [PLANNED]: Proxy executor preserves the public run model
+Validation: MIXED
+
+`ProxyComfyExecutor` should conform to the same `RunExecutor` boundary as
+`LocalComfyExecutor`. It should accept the prepared ComfyUI API prompt, declared
+contract outputs, cache token, timeout settings, and staged upload metadata from
+the front-door serve runtime. It should return the same normalized
+`RunExecutionResult` shape consumed by serve run records, output slots, gallery
+records, and Studio.
+
+Front-door serve should not persist remote provider-specific run shape directly
+as gallery truth. Provider ids, proxy ids, and remote artifact ids may be stored
+in `raw_result` for debugging, but public recovery and gallery behavior should
+continue to use serve-owned `run_id`, `slot_id`, and artifact refs.
+
+### CGSERVE-RUN-06C [PLANNED]: Local proxy mode is the first validation target
+Validation: TEST
+
+The first implementation should be testable without Modal, RunPod, S3, or R2 by
+running two local serve processes against one local ComfyUI:
+
+```text
+Studio/browser
+  -> front-door cg serve --executor proxy
+      -> local runtime cg serve --role proxy
+          -> local ComfyUI
+```
+
+This local proxy mode should validate the execution contract, staged uploads,
+remote artifact handoff, cancellation request shape, and error normalization
+before provider-specific serverless packaging is introduced.
 
 ## Runtime State And Gallery Persistence
 
@@ -592,6 +659,26 @@ Object storage provider selection, presigned URL details, retention policy,
 multi-user isolation, and remote cache cleanup belong to serve/deployment
 adapters, not to core prompt-patching semantics.
 
+### CGSERVE-IN-05 [PLANNED]: Proxy execution stages uploads without exposing local paths
+Validation: MIXED
+
+For proxy execution, front-door serve should continue to own browser upload
+slots. Studio and API clients upload files to front-door serve and submit opaque
+`file_ref` values. Front-door serve resolves those refs into server-side staged
+upload records and patches the ComfyUI prompt with the filename that should exist
+in the runtime proxy's ComfyUI input directory.
+
+The first proxy transport may send staged upload bytes from front-door serve to
+the runtime proxy as multipart data with the prepared run request. The runtime
+proxy should write those files into its local ComfyUI input directory under the
+requested generated filenames before submitting the prompt. Browser clients must
+not receive trusted local paths from either side of the proxy boundary.
+
+Object storage-backed input staging remains a later adapter: the same staged
+upload record may eventually point to an S3/R2/Modal object ref instead of local
+bytes, but the public contract run payload should remain based on opaque file
+refs.
+
 ## Output Delivery
 
 ### CGSERVE-OUT-01 [PARTIAL]: Local output refs are the first output delivery mode
@@ -630,3 +717,20 @@ Serve should eventually treat outputs symmetrically with inputs: ComfyUI writes
 local output artifacts, serve turns those into scoped artifact refs or signed
 download URLs, and the hosted Studio consumes those refs rather than assuming
 direct filesystem or raw ComfyUI output access.
+
+### CGSERVE-OUT-03 [PLANNED]: Proxy outputs are localized before gallery persistence
+Validation: MIXED
+
+When `ProxyComfyExecutor` completes a run, front-door serve should copy or stream
+the produced artifacts from the runtime proxy into front-door serve-owned output
+storage before recording durable gallery items. The first implementation may use
+a local artifact cache under serve metadata, for example
+`.metadata/serve/artifacts/<run_id>/...`, and then expose those cached artifacts
+through the existing front-door `/outputs/view` style delivery path or a
+serve-owned artifact-ref endpoint.
+
+This keeps Studio history usable after a serverless worker shuts down. Gallery
+rows should point at front-door serve-owned artifact refs, not directly at
+ephemeral proxy URLs. Runtime proxy artifact ids and remote URLs may be retained
+inside raw result metadata for debugging, but they should not be the primary
+persisted gallery source of truth.
