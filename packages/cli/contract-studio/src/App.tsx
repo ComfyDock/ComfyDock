@@ -21,6 +21,7 @@ import type {
   GalleryResponse,
   HealthResponse,
   RunIssue,
+  RunOutputSlot,
   RunResponse,
 } from "@/types";
 
@@ -112,22 +113,6 @@ export function App() {
     }
     setStatus("Submitting");
     const displayInputs = displayInputsForGallery(submitInputs);
-    const pendingId = `pending-${selected.workflow}-${selected.contract}-${Date.now()}`;
-    setGallery((current) => [
-      {
-        id: pendingId,
-        contract: contractTitle(selected),
-        contractWorkflow: selected.workflow,
-        contractName: selected.contract,
-        type: "image",
-        status: "pending",
-        width: 1,
-        height: 1,
-        inputs: displayInputs,
-        createdAt: new Date().toISOString(),
-      },
-      ...current,
-    ]);
     try {
       const result = await apiJson<RunResponse>(
         `/contracts/${encodeURIComponent(selected.workflow)}/${encodeURIComponent(selected.contract)}/run`,
@@ -141,11 +126,13 @@ export function App() {
       setIssues(result.issues || []);
       const nextItems = result.gallery_items?.length
         ? normalizeGalleryItems(result.gallery_items)
+        : result.output_slots?.length
+          ? galleryItemsFromSlots(result.output_slots, selected, displayInputs)
         : galleryItemsFromOutputs(result, selected, displayInputs);
       if (nextItems.length) {
-        setGallery((current) => [...nextItems, ...current.filter((item) => item.id !== pendingId)]);
+        setGallery((current) => mergeGalleryItems(nextItems, current));
       } else {
-        setGallery((current) => current.filter((item) => item.id !== pendingId));
+        void loadGallery();
       }
       setStatus(result.status === "completed" ? "Completed" : result.status);
     } catch (error) {
@@ -157,18 +144,16 @@ export function App() {
       if (errorData?.gallery_items?.length) {
         setRawResult(errorData);
         const errorItems = normalizeGalleryItems(errorData.gallery_items);
-        setGallery((current) => [...errorItems, ...current.filter((item) => item.id !== pendingId)]);
+        setGallery((current) => mergeGalleryItems(errorItems, current));
         setStatus(message);
         return;
       }
       setStatus(message);
-      setGallery((current) =>
-        current.map((item) => (item.id === pendingId ? { ...item, status: "error", error: message } : item)),
-      );
+      void loadGallery();
     } finally {
       setBusy(false);
     }
-  }, [busy, inputs, selected]);
+  }, [busy, inputs, loadGallery, selected]);
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -428,6 +413,39 @@ function galleryItemsFromOutputs(
     }
   }
   return nextItems;
+}
+
+function galleryItemsFromSlots(
+  slots: RunOutputSlot[],
+  selected: NonNullable<ContractsResponse["contracts"][number]>,
+  displayInputs: Record<string, unknown>,
+) {
+  return slots.map((slot) => {
+    const type = slot.type || "json";
+    return {
+      id: `gallery_${slot.slot_id}`,
+      run_id: slot.run_id,
+      slotId: slot.slot_id,
+      contract: contractTitle(selected),
+      contractWorkflow: selected.workflow,
+      contractName: selected.contract,
+      promptId: slot.promptId,
+      outputName: slot.outputName,
+      type,
+      status: slot.status === "error" ? "error" : "pending",
+      width: type === "audio" ? 4 : Math.max(1, Number(slot.width || 1)),
+      height: type === "audio" ? 1 : Math.max(1, Number(slot.height || 1)),
+      inputs: displayInputs,
+      rawResult: slot.rawResult,
+      error: slot.error,
+      createdAt: slot.createdAt || new Date().toISOString(),
+    } satisfies GalleryItem;
+  });
+}
+
+function mergeGalleryItems(nextItems: GalleryItem[], currentItems: GalleryItem[]) {
+  const nextIds = new Set(nextItems.map((item) => item.id));
+  return [...nextItems, ...currentItems.filter((item) => !nextIds.has(item.id))];
 }
 
 function normalizeGalleryItems(items: GalleryItem[]) {

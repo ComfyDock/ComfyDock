@@ -37,6 +37,7 @@ from comfygit_cli.serve_state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
     ServeRunRecord,
+    ServeRunOutputSlot,
     ServeSession,
     SQLiteServeStateStore,
 )
@@ -292,6 +293,7 @@ def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
                 contract="default",
                 status="done",
                 output_type="image",
+                slot_id="slot_run_1_0_image",
                 output_name="save_image",
                 prompt_id="prompt_1",
                 filename="image.png",
@@ -303,11 +305,31 @@ def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
             )
         ]
     )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="done",
+                prompt_id="prompt_1",
+                width=1024,
+                height=1024,
+                raw_result={"status": "completed"},
+            )
+        ]
+    )
     store.close()
 
     reopened = SQLiteServeStateStore(db_path)
     try:
         items = reopened.list_gallery_items("anon_1")
+        slots = reopened.list_output_slots("anon_1", "run_1")
 
         assert items == [
             {
@@ -320,10 +342,29 @@ def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
                 "type": "image",
                 "inputs": {"prompt": "blue eyes"},
                 "createdAt": items[0]["createdAt"],
+                "slotId": "slot_run_1_0_image",
                 "promptId": "prompt_1",
                 "outputName": "save_image",
                 "filename": "image.png",
                 "url": "/outputs/view?filename=image.png",
+                "width": 1024,
+                "height": 1024,
+                "rawResult": {"status": "completed"},
+            }
+        ]
+        assert slots == [
+            {
+                "slot_id": "slot_run_1_0_image",
+                "run_id": "run_1",
+                "contract": "z-image / default",
+                "contractWorkflow": "z-image",
+                "contractName": "default",
+                "outputName": "save_image",
+                "type": "image",
+                "status": "done",
+                "createdAt": slots[0]["createdAt"],
+                "updatedAt": slots[0]["updatedAt"],
+                "promptId": "prompt_1",
                 "width": 1024,
                 "height": 1024,
                 "rawResult": {"status": "completed"},
@@ -465,11 +506,15 @@ async def test_active_run_recovery_completes_persisted_run() -> None:
 
     runs = store.list_runs("anon_1")
     gallery = store.list_gallery_items("anon_1")
+    slots = store.list_output_slots("anon_1", "run_recover")
     assert runs[0]["run_id"] == "run_recover"
     assert runs[0]["status"] == "completed"
     assert gallery[0]["id"] == "gallery_run_recover"
     assert gallery[0]["status"] == "done"
+    assert gallery[0]["slotId"] == "slot_run_recover_0_save_image"
     assert gallery[0]["filename"] == "recovered.png"
+    assert slots[0]["slot_id"] == "slot_run_recover_0_save_image"
+    assert slots[0]["status"] == "done"
 
 
 def test_failed_run_response_does_not_create_circular_raw_result() -> None:
@@ -753,6 +798,84 @@ async def test_serve_runs_endpoint_lists_active_runs_for_session() -> None:
 
         assert response.status == 200
         assert [run["run_id"] for run in payload["runs"]] == ["run_active"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_single_run_endpoint_returns_slots_and_gallery_items() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="done",
+                prompt_id="prompt_1",
+                width=512,
+                height=512,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_run_1",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                slot_id="slot_run_1_0_image",
+                output_name="save_image",
+                prompt_id="prompt_1",
+                filename="image.png",
+                url="/outputs/view?filename=image.png",
+                width=512,
+                height=512,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/runs/run_1",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["run"]["run_id"] == "run_1"
+        assert payload["output_slots"][0]["slot_id"] == "slot_run_1_0_image"
+        assert payload["gallery_items"][0]["slotId"] == "slot_run_1_0_image"
     finally:
         await runner.cleanup()
 

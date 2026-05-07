@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-SERVE_STATE_SCHEMA_VERSION = 1
+SERVE_STATE_SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -65,6 +65,51 @@ class ServeRunRecord:
 
 
 @dataclass(frozen=True)
+class ServeRunOutputSlot:
+    slot_id: str
+    run_id: str
+    session_id: str
+    scope_key: str
+    workflow: str
+    contract: str
+    output_name: str
+    output_type: str
+    status: str
+    prompt_id: str | None = None
+    width: int | None = None
+    height: int | None = None
+    error: str | None = None
+    raw_result: dict[str, Any] | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_public_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "slot_id": self.slot_id,
+            "run_id": self.run_id,
+            "contract": f"{self.workflow} / {self.contract}",
+            "contractWorkflow": self.workflow,
+            "contractName": self.contract,
+            "outputName": self.output_name,
+            "type": self.output_type,
+            "status": self.status,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        }
+        optional = {
+            "promptId": self.prompt_id,
+            "width": self.width,
+            "height": self.height,
+            "error": self.error,
+            "rawResult": self.raw_result,
+        }
+        for key, value in optional.items():
+            if value is not None:
+                payload[key] = value
+        return payload
+
+
+@dataclass(frozen=True)
 class ServeGalleryItem:
     item_id: str
     run_id: str
@@ -75,6 +120,7 @@ class ServeGalleryItem:
     status: str
     output_type: str
     inputs: dict[str, Any]
+    slot_id: str | None = None
     output_name: str | None = None
     prompt_id: str | None = None
     filename: str | None = None
@@ -100,6 +146,7 @@ class ServeGalleryItem:
             "createdAt": self.created_at,
         }
         optional = {
+            "slotId": self.slot_id,
             "promptId": self.prompt_id,
             "outputName": self.output_name,
             "filename": self.filename,
@@ -130,16 +177,28 @@ class ServeStateStore:
     def record_run(self, run: ServeRunRecord) -> None:
         raise NotImplementedError
 
+    def get_run(self, scope_key: str, run_id: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def list_active_runs(self, statuses: set[str]) -> list[ServeRunRecord]:
         raise NotImplementedError
 
+    def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
+        raise NotImplementedError
+
+    def list_output_slots(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         raise NotImplementedError
 
     def list_gallery_items(self, scope_key: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     def delete_gallery_item(self, scope_key: str, item_id: str) -> bool:
@@ -152,6 +211,7 @@ class EphemeralServeStateStore(ServeStateStore):
     def __init__(self) -> None:
         self.sessions: dict[str, ServeSession] = {}
         self.runs: dict[str, ServeRunRecord] = {}
+        self.output_slots: dict[str, ServeRunOutputSlot] = {}
         self.gallery_items: dict[str, ServeGalleryItem] = {}
 
     def ensure_session(self, session_id: str, *, scope_key: str) -> ServeSession:
@@ -161,6 +221,12 @@ class EphemeralServeStateStore(ServeStateStore):
 
     def record_run(self, run: ServeRunRecord) -> None:
         self.runs[run.run_id] = _with_run_timestamps(run)
+
+    def get_run(self, scope_key: str, run_id: str) -> dict[str, Any] | None:
+        run = self.runs.get(run_id)
+        if run is None or run.scope_key != scope_key:
+            return None
+        return run.to_public_dict()
 
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         runs = [run for run in self.runs.values() if run.scope_key == scope_key]
@@ -174,6 +240,20 @@ class EphemeralServeStateStore(ServeStateStore):
         runs.sort(key=lambda run: run.created_at, reverse=True)
         return runs
 
+    def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
+        for slot in slots:
+            stamped = _with_output_slot_timestamps(slot)
+            self.output_slots[stamped.slot_id] = stamped
+
+    def list_output_slots(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
+        slots = [
+            slot
+            for slot in self.output_slots.values()
+            if slot.scope_key == scope_key and slot.run_id == run_id
+        ]
+        slots.sort(key=lambda slot: slot.created_at)
+        return [slot.to_public_dict() for slot in slots]
+
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         for item in items:
             stamped = _with_gallery_timestamps(item)
@@ -181,6 +261,15 @@ class EphemeralServeStateStore(ServeStateStore):
 
     def list_gallery_items(self, scope_key: str) -> list[dict[str, Any]]:
         items = [item for item in self.gallery_items.values() if item.scope_key == scope_key]
+        items.sort(key=lambda item: item.created_at, reverse=True)
+        return [item.to_public_dict() for item in items]
+
+    def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
+        items = [
+            item
+            for item in self.gallery_items.values()
+            if item.scope_key == scope_key and item.run_id == run_id
+        ]
         items.sort(key=lambda item: item.created_at, reverse=True)
         return [item.to_public_dict() for item in items]
 
@@ -256,6 +345,17 @@ class SQLiteServeStateStore(ServeStateStore):
                 ),
             )
 
+    def get_run(self, scope_key: str, run_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM runs
+            WHERE scope_key = ? AND run_id = ?
+            """,
+            (scope_key, run_id),
+        ).fetchone()
+        return _run_from_row(row).to_public_dict() if row else None
+
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         params: list[Any] = [scope_key]
         status_clause = ""
@@ -289,6 +389,59 @@ class SQLiteServeStateStore(ServeStateStore):
         ).fetchall()
         return [_run_from_row(row) for row in rows]
 
+    def record_output_slots(self, slots: list[ServeRunOutputSlot]) -> None:
+        with self.connection:
+            for slot in slots:
+                slot = _with_output_slot_timestamps(slot)
+                self.connection.execute(
+                    """
+                    INSERT INTO output_slots (
+                        slot_id, run_id, session_id, scope_key, workflow, contract,
+                        output_name, output_type, status, prompt_id, width, height,
+                        error, raw_result_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(slot_id) DO UPDATE SET
+                        status = excluded.status,
+                        prompt_id = excluded.prompt_id,
+                        width = excluded.width,
+                        height = excluded.height,
+                        error = excluded.error,
+                        raw_result_json = excluded.raw_result_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        slot.slot_id,
+                        slot.run_id,
+                        slot.session_id,
+                        slot.scope_key,
+                        slot.workflow,
+                        slot.contract,
+                        slot.output_name,
+                        slot.output_type,
+                        slot.status,
+                        slot.prompt_id,
+                        slot.width,
+                        slot.height,
+                        slot.error,
+                        _json(slot.raw_result),
+                        slot.created_at,
+                        slot.updated_at,
+                    ),
+                )
+
+    def list_output_slots(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM output_slots
+            WHERE scope_key = ? AND run_id = ?
+            ORDER BY created_at ASC, slot_id ASC
+            """,
+            (scope_key, run_id),
+        ).fetchall()
+        return [_output_slot_from_row(row).to_public_dict() for row in rows]
+
     def record_gallery_items(self, items: list[ServeGalleryItem]) -> None:
         with self.connection:
             for item in items:
@@ -297,14 +450,15 @@ class SQLiteServeStateStore(ServeStateStore):
                     """
                     INSERT INTO gallery_items (
                         item_id, run_id, session_id, scope_key, workflow, contract,
-                        status, output_type, output_name, prompt_id, filename, url,
+                        status, output_type, slot_id, output_name, prompt_id, filename, url,
                         width, height, inputs_json, artifact_json, raw_result_json,
                         error, created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(item_id) DO UPDATE SET
                         status = excluded.status,
                         output_type = excluded.output_type,
+                        slot_id = excluded.slot_id,
                         output_name = excluded.output_name,
                         prompt_id = excluded.prompt_id,
                         filename = excluded.filename,
@@ -326,6 +480,7 @@ class SQLiteServeStateStore(ServeStateStore):
                         item.contract,
                         item.status,
                         item.output_type,
+                        item.slot_id,
                         item.output_name,
                         item.prompt_id,
                         item.filename,
@@ -350,6 +505,18 @@ class SQLiteServeStateStore(ServeStateStore):
             ORDER BY created_at DESC, item_id DESC
             """,
             (scope_key,),
+        ).fetchall()
+        return [_gallery_item_from_row(row).to_public_dict() for row in rows]
+
+    def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM gallery_items
+            WHERE scope_key = ? AND run_id = ?
+            ORDER BY created_at DESC, item_id DESC
+            """,
+            (scope_key, run_id),
         ).fetchall()
         return [_gallery_item_from_row(row).to_public_dict() for row in rows]
 
@@ -419,6 +586,7 @@ class SQLiteServeStateStore(ServeStateStore):
                     contract TEXT NOT NULL,
                     status TEXT NOT NULL,
                     output_type TEXT NOT NULL,
+                    slot_id TEXT,
                     output_name TEXT,
                     prompt_id TEXT,
                     filename TEXT,
@@ -435,11 +603,46 @@ class SQLiteServeStateStore(ServeStateStore):
                 """
             )
             self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS output_slots (
+                    slot_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    scope_key TEXT NOT NULL,
+                    workflow TEXT NOT NULL,
+                    contract TEXT NOT NULL,
+                    output_name TEXT NOT NULL,
+                    output_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    prompt_id TEXT,
+                    width INTEGER,
+                    height INTEGER,
+                    error TEXT,
+                    raw_result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self._ensure_column("gallery_items", "slot_id", "TEXT")
+            self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_created ON gallery_items(scope_key, created_at DESC)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_run ON gallery_items(scope_key, run_id)"
             )
             self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_scope_status_created ON runs(scope_key, status, created_at DESC)"
             )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_output_slots_scope_run ON output_slots(scope_key, run_id)"
+            )
+
+    def _ensure_column(self, table_name: str, column_name: str, declaration: str) -> None:
+        rows = self.connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        if any(row["name"] == column_name for row in rows):
+            return
+        self.connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {declaration}")
 
 
 def _with_run_timestamps(run: ServeRunRecord) -> ServeRunRecord:
@@ -461,6 +664,29 @@ def _with_run_timestamps(run: ServeRunRecord) -> ServeRunRecord:
     )
 
 
+def _with_output_slot_timestamps(slot: ServeRunOutputSlot) -> ServeRunOutputSlot:
+    now = utc_now()
+    created_at = slot.created_at or now
+    return ServeRunOutputSlot(
+        slot_id=slot.slot_id,
+        run_id=slot.run_id,
+        session_id=slot.session_id,
+        scope_key=slot.scope_key,
+        workflow=slot.workflow,
+        contract=slot.contract,
+        output_name=slot.output_name,
+        output_type=slot.output_type,
+        status=slot.status,
+        prompt_id=slot.prompt_id,
+        width=slot.width,
+        height=slot.height,
+        error=slot.error,
+        raw_result=slot.raw_result,
+        created_at=created_at,
+        updated_at=slot.updated_at or now,
+    )
+
+
 def _with_gallery_timestamps(item: ServeGalleryItem) -> ServeGalleryItem:
     now = utc_now()
     created_at = item.created_at or now
@@ -474,6 +700,7 @@ def _with_gallery_timestamps(item: ServeGalleryItem) -> ServeGalleryItem:
         status=item.status,
         output_type=item.output_type,
         inputs=item.inputs,
+        slot_id=item.slot_id,
         output_name=item.output_name,
         prompt_id=item.prompt_id,
         filename=item.filename,
@@ -488,6 +715,27 @@ def _with_gallery_timestamps(item: ServeGalleryItem) -> ServeGalleryItem:
     )
 
 
+def _output_slot_from_row(row: sqlite3.Row) -> ServeRunOutputSlot:
+    return ServeRunOutputSlot(
+        slot_id=str(row["slot_id"]),
+        run_id=str(row["run_id"]),
+        session_id=str(row["session_id"]),
+        scope_key=str(row["scope_key"]),
+        workflow=str(row["workflow"]),
+        contract=str(row["contract"]),
+        output_name=str(row["output_name"]),
+        output_type=str(row["output_type"]),
+        status=str(row["status"]),
+        prompt_id=row["prompt_id"],
+        width=row["width"],
+        height=row["height"],
+        error=row["error"],
+        raw_result=_loads(row["raw_result_json"], None),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+    )
+
+
 def _gallery_item_from_row(row: sqlite3.Row) -> ServeGalleryItem:
     return ServeGalleryItem(
         item_id=str(row["item_id"]),
@@ -498,6 +746,7 @@ def _gallery_item_from_row(row: sqlite3.Row) -> ServeGalleryItem:
         contract=str(row["contract"]),
         status=str(row["status"]),
         output_type=str(row["output_type"]),
+        slot_id=_row_value(row, "slot_id"),
         output_name=row["output_name"],
         prompt_id=row["prompt_id"],
         filename=row["filename"],
@@ -543,3 +792,7 @@ def _loads(value: str | None, fallback: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return fallback
+
+
+def _row_value(row: sqlite3.Row, key: str) -> Any:
+    return row[key] if key in row.keys() else None

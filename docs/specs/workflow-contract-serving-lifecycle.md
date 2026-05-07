@@ -280,7 +280,7 @@ eventually appear in the gallery. Timeouts in the async path should describe
 watcher, cleanup, or provider-lifetime policy rather than whether a browser
 request stayed open long enough.
 
-### CGSERVE-RUN-05B [PLANNED]: Runs should expose recoverable output slots
+### CGSERVE-RUN-05B [PARTIAL]: Runs should expose recoverable output slots
 Validation: MIXED
 
 A run may produce zero, one, or many artifacts across one or more declared
@@ -297,6 +297,17 @@ artifacts. Gallery items should retain `run_id`, `slot_id`, declared output
 name, and artifact index so refresh/recovery, deletion, details panels, and
 future sharing policy can reason about multi-output runs without guessing from
 filenames.
+
+Current implementation: serve creates one deterministic output slot per
+declared contract output when a run is submitted, persists those slots in the
+serve state adapter, links gallery items with `slot_id`, and exposes run detail
+state through `GET /runs/{run_id}`. Pending Studio cards are now returned from
+serve-owned slot metadata instead of a single client-guessed placeholder.
+Completion updates each slot to `done`, `empty`, or `error` based on the
+normalized executor result. This is still partial because slots are not yet
+backed by a first-class event stream, artifact-index metadata is only implicit
+in generated gallery rows, and cancellation/progress semantics are still future
+slices.
 
 ### CGSERVE-RUN-05C [PARTIAL]: Studio should recover active runs after refresh
 Validation: MIXED

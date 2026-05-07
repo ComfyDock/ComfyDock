@@ -31,6 +31,7 @@ from .serve_state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
     ServeRunRecord,
+    ServeRunOutputSlot,
     ServeSession,
     ServeStateStore,
     SQLiteServeStateStore,
@@ -184,6 +185,7 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/gallery", gallery_handler)
     app.router.add_delete("/gallery/{item_id}", gallery_delete_handler)
     app.router.add_get("/runs", runs_handler)
+    app.router.add_get("/runs/{run_id}", single_run_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -231,6 +233,15 @@ async def _ensure_active_run_recovery(state: ServeState) -> None:
             )
             continue
         session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        output_slots = _output_slots_for_run(
+            run_id=run.run_id,
+            session=session,
+            workflow_name=run.workflow,
+            contract_name=run.contract,
+            outputs=outputs,
+            prompt_id=run.prompt_id,
+            inputs=run.inputs,
+        )
         task = asyncio.create_task(
             _complete_submitted_run(
                 state,
@@ -244,7 +255,7 @@ async def _ensure_active_run_recovery(state: ServeState) -> None:
                 timeout_seconds=state.config.run_timeout_seconds,
                 poll_interval_seconds=1,
                 issues=_run_issues(run),
-                pending_item_id=f"gallery_{run.run_id}",
+                output_slots=output_slots,
                 created_at=run.created_at,
             )
         )
@@ -498,6 +509,28 @@ async def runs_handler(request: web.Request) -> web.Response:
         "state": _state(request).config.state,
         "session_id": session.session_id,
         "runs": _state(request).state_store.list_runs(session.scope_key, statuses=statuses),
+    }
+    return _json_response_for_session(payload, session)
+
+
+async def single_run_handler(request: web.Request) -> web.Response:
+    await _ensure_active_run_recovery(_state(request))
+    session = _serve_session(request)
+    state = _state(request)
+    run_id = request.match_info["run_id"]
+    run = state.state_store.get_run(session.scope_key, run_id)
+    if run is None:
+        return _json_response_for_session(
+            {"error": "not_found", "message": f"Run '{run_id}' was not found."},
+            session,
+            status=404,
+        )
+    payload = {
+        "state": state.config.state,
+        "session_id": session.session_id,
+        "run": run,
+        "output_slots": state.state_store.list_output_slots(session.scope_key, run_id),
+        "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
     }
     return _json_response_for_session(payload, session)
 
@@ -766,19 +799,25 @@ async def _run_contract(
         "prompt_id": execution.prompt_id,
         "issues": [asdict(issue) for issue in build_result.issues],
     }
+    output_slots = _output_slots_for_run(
+        run_id=run_id,
+        session=session,
+        workflow_name=workflow_name,
+        contract_name=contract_name,
+        outputs=build_result.outputs,
+        prompt_id=execution.prompt_id,
+        inputs=inputs,
+    )
     if execution.status != "completed":
-        pending_item = _pending_gallery_item_for_run(
-            run_id=run_id,
-            session=session,
-            workflow_name=workflow_name,
-            contract_name=contract_name,
+        pending_items = _pending_gallery_items_for_slots(
+            output_slots,
             inputs=inputs,
-            prompt_id=execution.prompt_id,
-            outputs=build_result.outputs,
             response=response,
         )
-        state.state_store.record_gallery_items([pending_item])
-        response["gallery_items"] = [pending_item.to_public_dict()]
+        state.state_store.record_output_slots(output_slots)
+        state.state_store.record_gallery_items(pending_items)
+        response["output_slots"] = [slot.to_public_dict() for slot in output_slots]
+        response["gallery_items"] = [item.to_public_dict() for item in pending_items]
         task = asyncio.create_task(
             _complete_submitted_run(
                 state,
@@ -792,8 +831,8 @@ async def _run_contract(
                 timeout_seconds=timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
                 issues=[asdict(issue) for issue in build_result.issues],
-                pending_item_id=pending_item.item_id,
-                created_at=pending_item.created_at,
+                output_slots=output_slots,
+                created_at=output_slots[0].created_at if output_slots else utc_now(),
             )
         )
         _track_active_run_task(state, run_id, task)
@@ -813,6 +852,8 @@ async def _run_contract(
             raw_result=dict(response),
         )
     )
+    resolved_slots = _resolved_output_slots_for_response(output_slots, response)
+    state.state_store.record_output_slots(resolved_slots)
     gallery_items = _gallery_items_for_outputs(
         run_id=run_id,
         session=session,
@@ -820,8 +861,18 @@ async def _run_contract(
         contract_name=contract_name,
         inputs=inputs,
         response=response,
+        output_slots=resolved_slots,
+    )
+    gallery_items.extend(
+        _empty_gallery_items_for_slots(
+            resolved_slots,
+            existing_items=gallery_items,
+            inputs=inputs,
+            response=response,
+        )
     )
     state.state_store.record_gallery_items(gallery_items)
+    response["output_slots"] = [slot.to_public_dict() for slot in resolved_slots]
     response["gallery_items"] = [item.to_public_dict() for item in gallery_items]
     return response
 
@@ -839,9 +890,14 @@ async def _complete_submitted_run(
     timeout_seconds: float,
     poll_interval_seconds: float,
     issues: list[dict[str, Any]],
-    pending_item_id: str,
+    output_slots: list[ServeRunOutputSlot],
     created_at: str,
 ) -> None:
+    running_slots = [
+        _copy_output_slot(slot, status="running", prompt_id=prompt_id, raw_result={"status": "running", "run_id": run_id, "prompt_id": prompt_id})
+        for slot in output_slots
+    ]
+    state.state_store.record_output_slots(running_slots)
     state.state_store.record_run(
         ServeRunRecord(
             run_id=run_id,
@@ -874,7 +930,7 @@ async def _complete_submitted_run(
             payload,
             run_id=run_id,
             prompt_id=prompt_id,
-            gallery_item_id=pending_item_id,
+            output_slots=output_slots,
             created_at=created_at,
         )
         return
@@ -896,7 +952,7 @@ async def _complete_submitted_run(
             payload,
             run_id=run_id,
             prompt_id=prompt_id,
-            gallery_item_id=pending_item_id,
+            output_slots=output_slots,
             created_at=created_at,
         )
         return
@@ -916,7 +972,7 @@ async def _complete_submitted_run(
             payload,
             run_id=run_id,
             prompt_id=prompt_id,
-            gallery_item_id=pending_item_id,
+            output_slots=output_slots,
             created_at=created_at,
         )
         return
@@ -931,7 +987,7 @@ async def _complete_submitted_run(
             payload,
             run_id=run_id,
             prompt_id=prompt_id,
-            gallery_item_id=pending_item_id,
+            output_slots=output_slots,
             created_at=created_at,
         )
         return
@@ -957,6 +1013,8 @@ async def _complete_submitted_run(
             created_at=created_at,
         )
     )
+    resolved_slots = _resolved_output_slots_for_response(output_slots, response)
+    state.state_store.record_output_slots(resolved_slots)
     gallery_items = _gallery_items_for_outputs(
         run_id=run_id,
         session=session,
@@ -964,8 +1022,16 @@ async def _complete_submitted_run(
         contract_name=contract_name,
         inputs=inputs,
         response=response,
-        replace_first_item_id=pending_item_id,
+        output_slots=resolved_slots,
         created_at=created_at,
+    )
+    gallery_items.extend(
+        _empty_gallery_items_for_slots(
+            resolved_slots,
+            existing_items=gallery_items,
+            inputs=inputs,
+            response=response,
+        )
     )
     if not gallery_items:
         gallery_items = [
@@ -976,48 +1042,171 @@ async def _complete_submitted_run(
                 contract_name=contract_name,
                 inputs=inputs,
                 response=response,
-                item_id=pending_item_id,
+                item_id=_gallery_item_id_for_slot(resolved_slots[0]) if resolved_slots else f"gallery_{run_id}",
+                slot_id=resolved_slots[0].slot_id if resolved_slots else None,
                 created_at=created_at,
             )
         ]
     state.state_store.record_gallery_items(gallery_items)
 
-
-def _pending_gallery_item_for_run(
+def _output_slots_for_run(
     *,
     run_id: str,
     session: ServeSession,
     workflow_name: str,
     contract_name: str,
-    inputs: dict[str, Any],
-    prompt_id: str,
     outputs: tuple[Any, ...],
-    response: dict[str, Any],
-) -> ServeGalleryItem:
-    first_output = outputs[0] if outputs else None
-    output_type = str(getattr(first_output, "type", "image") or "image").lower()
-    output_name = str(getattr(first_output, "name", "output") or "output")
-    item_type = output_type if output_type in {"image", "video", "audio"} else "image"
-    width, height = (4, 1) if item_type == "audio" else (1, 1)
+    prompt_id: str | None,
+    inputs: dict[str, Any],
+) -> list[ServeRunOutputSlot]:
     created_at = utc_now()
-    return ServeGalleryItem(
-        item_id=f"gallery_{run_id}",
-        run_id=run_id,
-        session_id=session.session_id,
-        scope_key=session.scope_key,
-        workflow=workflow_name,
-        contract=contract_name,
-        status="pending",
-        output_type=item_type,
-        output_name=output_name,
-        prompt_id=prompt_id,
-        width=width,
-        height=height,
-        inputs=_display_inputs(inputs),
-        raw_result=dict(response),
-        created_at=created_at,
-        updated_at=created_at,
+    slots: list[ServeRunOutputSlot] = []
+    declared_outputs = outputs or (None,)
+    for index, output in enumerate(declared_outputs):
+        output_name = str(getattr(output, "name", "result") or "result")
+        output_type = _slot_output_type(str(getattr(output, "type", "json") or "json"))
+        width, height = _fallback_dimensions_for_type(output_type)
+        slots.append(
+            ServeRunOutputSlot(
+                slot_id=_slot_id(run_id, index, output_name),
+                run_id=run_id,
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow=workflow_name,
+                contract=contract_name,
+                output_name=output_name,
+                output_type=output_type,
+                status="pending",
+                prompt_id=prompt_id,
+                width=width,
+                height=height,
+                raw_result={"status": "pending", "run_id": run_id, "prompt_id": prompt_id, "inputs": _display_inputs(inputs)},
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        )
+    return slots
+
+
+def _pending_gallery_items_for_slots(
+    slots: list[ServeRunOutputSlot],
+    *,
+    inputs: dict[str, Any],
+    response: dict[str, Any],
+) -> list[ServeGalleryItem]:
+    display_inputs = _display_inputs(inputs)
+    return [
+        ServeGalleryItem(
+            item_id=_gallery_item_id_for_slot(slot),
+            run_id=slot.run_id,
+            session_id=slot.session_id,
+            scope_key=slot.scope_key,
+            workflow=slot.workflow,
+            contract=slot.contract,
+            status="pending",
+            output_type=slot.output_type,
+            slot_id=slot.slot_id,
+            output_name=slot.output_name,
+            prompt_id=slot.prompt_id,
+            width=slot.width,
+            height=slot.height,
+            inputs=display_inputs,
+            raw_result=dict(response),
+            created_at=slot.created_at,
+            updated_at=slot.created_at,
+        )
+        for slot in slots
+    ]
+
+
+def _resolved_output_slots_for_response(
+    slots: list[ServeRunOutputSlot],
+    response: dict[str, Any],
+) -> list[ServeRunOutputSlot]:
+    response_outputs = [output for output in response.get("outputs") or [] if isinstance(output, Mapping)]
+    resolved: list[ServeRunOutputSlot] = []
+    for index, slot in enumerate(slots):
+        output = response_outputs[index] if index < len(response_outputs) else None
+        artifacts = output.get("artifacts") if isinstance(output, Mapping) else None
+        artifact_list = artifacts if isinstance(artifacts, list) else []
+        output_type = _slot_output_type(str(output.get("type") or slot.output_type)) if isinstance(output, Mapping) else slot.output_type
+        width, height = slot.width, slot.height
+        if artifact_list:
+            first_artifact = artifact_list[0]
+            if isinstance(first_artifact, Mapping):
+                item_type = output_kind(output_type, str(first_artifact.get("filename") or ""))
+                width, height = _gallery_dimensions_for_artifact(item_type, first_artifact)
+                output_type = item_type
+        resolved.append(
+            _copy_output_slot(
+                slot,
+                status="done" if artifact_list else "empty",
+                output_type=output_type,
+                prompt_id=str(response.get("prompt_id") or "") or slot.prompt_id,
+                width=width,
+                height=height,
+                raw_result=dict(response),
+            )
+        )
+    return resolved
+
+
+def _copy_output_slot(
+    slot: ServeRunOutputSlot,
+    *,
+    status: str,
+    output_type: str | None = None,
+    prompt_id: str | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    error: str | None = None,
+    raw_result: dict[str, Any] | None = None,
+) -> ServeRunOutputSlot:
+    return ServeRunOutputSlot(
+        slot_id=slot.slot_id,
+        run_id=slot.run_id,
+        session_id=slot.session_id,
+        scope_key=slot.scope_key,
+        workflow=slot.workflow,
+        contract=slot.contract,
+        output_name=slot.output_name,
+        output_type=output_type or slot.output_type,
+        status=status,
+        prompt_id=prompt_id or slot.prompt_id,
+        width=width if width is not None else slot.width,
+        height=height if height is not None else slot.height,
+        error=error,
+        raw_result=raw_result,
+        created_at=slot.created_at,
     )
+
+
+def _slot_id(run_id: str, index: int, output_name: str) -> str:
+    safe_name = _safe_token(output_name) or "output"
+    return f"slot_{run_id}_{index}_{safe_name}"
+
+
+def _gallery_item_id_for_slot(slot: ServeRunOutputSlot) -> str:
+    if slot.slot_id.startswith(f"slot_{slot.run_id}_0_"):
+        return f"gallery_{slot.run_id}"
+    return f"gallery_{slot.slot_id}"
+
+
+def _slot_output_type(output_type: str) -> str:
+    normalized = output_type.lower()
+    return normalized if normalized in {"image", "video", "audio", "json"} else "json"
+
+
+def _fallback_dimensions_for_type(output_type: str) -> tuple[int, int]:
+    return (4, 1) if output_type == "audio" else (1, 1)
+
+
+def _gallery_dimensions_for_artifact(item_type: str, artifact: Mapping[str, Any]) -> tuple[int, int]:
+    if item_type == "audio":
+        return (4, 1)
+    if item_type in {"image", "video"}:
+        return artifact_dimensions(artifact)
+    return (1, 1)
 
 
 def _json_gallery_item_for_completed_run(
@@ -1029,6 +1218,7 @@ def _json_gallery_item_for_completed_run(
     inputs: dict[str, Any],
     response: dict[str, Any],
     item_id: str,
+    slot_id: str | None,
     created_at: str,
 ) -> ServeGalleryItem:
     return ServeGalleryItem(
@@ -1040,6 +1230,7 @@ def _json_gallery_item_for_completed_run(
         contract=contract_name,
         status="done",
         output_type="json",
+        slot_id=slot_id,
         output_name="result",
         prompt_id=str(response.get("prompt_id") or "") or None,
         width=1,
@@ -1062,6 +1253,7 @@ def _record_failed_run(
     run_id: str | None = None,
     prompt_id: str | None = None,
     gallery_item_id: str | None = None,
+    output_slots: list[ServeRunOutputSlot] | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
     run_id = run_id or f"run_{uuid.uuid4().hex}"
@@ -1084,29 +1276,114 @@ def _record_failed_run(
             created_at=created_at,
         )
     )
-    gallery_item = ServeGalleryItem(
-        item_id=gallery_item_id or f"gallery_{uuid.uuid4().hex}",
-        run_id=run_id,
-        session_id=session.session_id,
-        scope_key=session.scope_key,
-        workflow=workflow_name,
-        contract=contract_name,
-        status="error",
-        output_type="image",
-        inputs=_display_inputs(inputs),
-        prompt_id=prompt_id,
-        width=1,
-        height=1,
-        raw_result=raw_result,
-        error=message,
-        created_at=created_at,
-        updated_at=created_at,
-    )
-    state.state_store.record_gallery_items([gallery_item])
+    slots = output_slots or []
+    errored_slots: list[ServeRunOutputSlot] = []
+    if slots:
+        errored_slots = [
+            _copy_output_slot(slot, status="error", prompt_id=prompt_id, error=message, raw_result=raw_result)
+            for slot in slots
+        ]
+        state.state_store.record_output_slots(errored_slots)
+        gallery_items = _error_gallery_items_for_slots(
+            errored_slots,
+            inputs=inputs,
+            raw_result=raw_result,
+            message=message,
+        )
+    else:
+        gallery_items = [
+            ServeGalleryItem(
+                item_id=gallery_item_id or f"gallery_{uuid.uuid4().hex}",
+                run_id=run_id,
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow=workflow_name,
+                contract=contract_name,
+                status="error",
+                output_type="image",
+                inputs=_display_inputs(inputs),
+                prompt_id=prompt_id,
+                width=1,
+                height=1,
+                raw_result=raw_result,
+                error=message,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+        ]
+    state.state_store.record_gallery_items(gallery_items)
     return {
         "run_id": run_id,
-        "gallery_items": [gallery_item.to_public_dict()],
+        "output_slots": [slot.to_public_dict() for slot in errored_slots],
+        "gallery_items": [item.to_public_dict() for item in gallery_items],
     }
+
+
+def _error_gallery_items_for_slots(
+    slots: list[ServeRunOutputSlot],
+    *,
+    inputs: dict[str, Any],
+    raw_result: dict[str, Any],
+    message: str,
+) -> list[ServeGalleryItem]:
+    display_inputs = _display_inputs(inputs)
+    return [
+        ServeGalleryItem(
+            item_id=_gallery_item_id_for_slot(slot),
+            run_id=slot.run_id,
+            session_id=slot.session_id,
+            scope_key=slot.scope_key,
+            workflow=slot.workflow,
+            contract=slot.contract,
+            status="error",
+            output_type=slot.output_type if slot.output_type in {"image", "video", "audio", "json"} else "image",
+            slot_id=slot.slot_id,
+            output_name=slot.output_name,
+            inputs=display_inputs,
+            prompt_id=slot.prompt_id,
+            width=slot.width,
+            height=slot.height,
+            raw_result=raw_result,
+            error=message,
+            created_at=slot.created_at,
+            updated_at=slot.created_at,
+        )
+        for slot in slots
+    ]
+
+
+def _empty_gallery_items_for_slots(
+    slots: list[ServeRunOutputSlot],
+    *,
+    existing_items: list[ServeGalleryItem],
+    inputs: dict[str, Any],
+    response: dict[str, Any],
+) -> list[ServeGalleryItem]:
+    existing_slot_ids = {item.slot_id for item in existing_items if item.slot_id}
+    display_inputs = _display_inputs(inputs)
+    return [
+        ServeGalleryItem(
+            item_id=_gallery_item_id_for_slot(slot),
+            run_id=slot.run_id,
+            session_id=slot.session_id,
+            scope_key=slot.scope_key,
+            workflow=slot.workflow,
+            contract=slot.contract,
+            status="done",
+            output_type="json",
+            slot_id=slot.slot_id,
+            output_name=slot.output_name,
+            inputs=display_inputs,
+            prompt_id=slot.prompt_id,
+            width=1,
+            height=1,
+            raw_result=dict(response),
+            created_at=slot.created_at,
+            updated_at=slot.created_at,
+        )
+        for slot in slots
+        if slot.status == "empty" and slot.slot_id not in existing_slot_ids
+    ]
 
 
 def _gallery_items_for_outputs(
@@ -1117,35 +1394,35 @@ def _gallery_items_for_outputs(
     contract_name: str,
     inputs: dict[str, Any],
     response: dict[str, Any],
-    replace_first_item_id: str | None = None,
+    output_slots: list[ServeRunOutputSlot] | None = None,
     created_at: str | None = None,
 ) -> list[ServeGalleryItem]:
     items: list[ServeGalleryItem] = []
     display_inputs = _display_inputs(inputs)
     prompt_id = str(response.get("prompt_id") or "")
     created_at = created_at or utc_now()
-    artifact_index = 0
     raw_result = dict(response)
-    for output in response.get("outputs") or []:
+    slots = output_slots or []
+    for output_index, output in enumerate(response.get("outputs") or []):
         if not isinstance(output, Mapping):
             continue
+        slot = slots[output_index] if output_index < len(slots) else None
         output_name = str(output.get("name") or "output")
         output_type = str(output.get("type") or "json").lower()
         artifacts = output.get("artifacts")
         if not isinstance(artifacts, list):
             continue
-        for artifact in artifacts:
+        for artifact_index, artifact in enumerate(artifacts):
             if not isinstance(artifact, Mapping):
                 continue
             artifact_payload = dict(artifact)
             filename = artifact_payload.get("filename")
             item_type = output_kind(output_type, str(filename or ""))
-            width, height = artifact_dimensions(artifact_payload)
-            if item_type == "audio":
-                width, height = (4, 1)
+            width, height = _gallery_dimensions_for_artifact(item_type, artifact_payload)
+            item_id = _gallery_item_id_for_slot(slot) if slot and artifact_index == 0 else f"gallery_{uuid.uuid4().hex}"
             items.append(
                 ServeGalleryItem(
-                    item_id=replace_first_item_id if artifact_index == 0 and replace_first_item_id else f"gallery_{uuid.uuid4().hex}",
+                    item_id=item_id,
                     run_id=run_id,
                     session_id=session.session_id,
                     scope_key=session.scope_key,
@@ -1153,6 +1430,7 @@ def _gallery_items_for_outputs(
                     contract=contract_name,
                     status="done",
                     output_type=item_type,
+                    slot_id=slot.slot_id if slot else None,
                     output_name=output_name,
                     prompt_id=prompt_id or None,
                     filename=str(filename) if filename else None,
@@ -1166,7 +1444,6 @@ def _gallery_items_for_outputs(
                     updated_at=created_at,
                 )
             )
-            artifact_index += 1
     return items
 
 

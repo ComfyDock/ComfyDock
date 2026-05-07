@@ -62,12 +62,31 @@ export type RunOutput = {
   artifacts: OutputArtifact[];
 };
 
+export type RunOutputSlot = {
+  slot_id: string;
+  run_id: string;
+  contract?: string;
+  contractWorkflow?: string;
+  contractName?: string;
+  outputName: string;
+  type: "image" | "video" | "audio" | "json";
+  status: "pending" | "running" | "done" | "empty" | "error";
+  promptId?: string;
+  width?: number;
+  height?: number;
+  error?: string;
+  rawResult?: RunResponse;
+  createdAt: string;
+  updatedAt?: string;
+};
+
 export type RunResponse = {
   status: string;
   run_id?: string;
   prompt_id?: string;
   issues?: RunIssue[];
   outputs?: RunOutput[];
+  output_slots?: RunOutputSlot[];
   gallery_items?: GalleryItem[];
   error?: string;
   message?: string;
@@ -75,10 +94,12 @@ export type RunResponse = {
 
 export type GalleryItem = {
   id: string;
+  run_id?: string;
   contract: string;
   contractWorkflow?: string;
   contractName?: string;
   promptId?: string;
+  slotId?: string;
   output?: RunOutput;
   artifact?: OutputArtifact;
   filename?: string;
