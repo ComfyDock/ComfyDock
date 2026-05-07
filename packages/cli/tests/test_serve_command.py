@@ -18,6 +18,7 @@ from comfygit_cli.serve_executor import (
     LocalComfyExecutor,
     RunExecutionRequest,
     RunExecutionResult,
+    ServeOutputResponse,
     _attach_artifact_dimensions,
     _image_dimensions_from_bytes,
     _stamp_output_cache_busters,
@@ -246,6 +247,53 @@ async def test_serve_app_suppresses_missing_favicon() -> None:
                 await response.read()
 
         assert response.status == 204
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_output_view_proxies_byte_range_headers() -> None:
+    class FakeClient:
+        async def fetch_output(
+            self,
+            params: dict[str, str],
+            request_headers: dict[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params == {"filename": "video.mp4", "subfolder": "video", "type": "output"}
+            assert request_headers == {"Range": "bytes=0-1023", "If-Range": '"etag-1"'}
+            return ServeOutputResponse(
+                body=b"partial",
+                content_type="video/mp4",
+                disposition='filename="video.mp4"',
+                status=206,
+                headers={
+                    "accept-ranges": "bytes",
+                    "content-range": "bytes 0-6/100",
+                    "etag": '"etag-1"',
+                    "last-modified": "Thu, 07 May 2026 00:00:00 GMT",
+                },
+            )
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        client=FakeClient(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.get(
+                f"{base_url}/outputs/view?filename=video.mp4&subfolder=video&type=output",
+                headers={"Range": "bytes=0-1023", "If-Range": '"etag-1"'},
+            ) as response:
+                body = await response.read()
+
+        assert response.status == 206
+        assert response.headers["Content-Type"] == "video/mp4"
+        assert response.headers["Content-Range"] == "bytes 0-6/100"
+        assert response.headers["Accept-Ranges"] == "bytes"
+        assert response.headers["ETag"] == '"etag-1"'
+        assert body == b"partial"
     finally:
         await runner.cleanup()
 
@@ -594,9 +642,14 @@ async def test_attach_artifact_dimensions_fetches_image_size() -> None:
     png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (111).to_bytes(4, "big") + (222).to_bytes(4, "big")
 
     class FakeClient:
-        async def fetch_output(self, params: dict[str, str]) -> tuple[bytes, str, None]:
+        async def fetch_output(
+            self,
+            params: dict[str, str],
+            request_headers: dict[str, str] | None = None,
+        ) -> ServeOutputResponse:
             assert params == {"filename": "image.png", "subfolder": "", "type": "output"}
-            return png_header, "image/png", None
+            assert request_headers is None
+            return ServeOutputResponse(body=png_header, content_type="image/png")
 
     outputs: list[dict[str, Any]] = [
         {

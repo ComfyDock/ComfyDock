@@ -48,6 +48,7 @@ SESSION_HEADER_NAME = "X-ComfyGit-Studio-Session"
 SHARED_GALLERY_SCOPE = "shared"
 FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 ACTIVE_RUN_STATUSES = {"submitted", "running"}
+OUTPUT_REQUEST_HEADERS = ("Range", "If-Range")
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("image/jpeg", (".jpg", ".jpeg")),
@@ -609,7 +610,10 @@ async def output_view_handler(request: web.Request) -> web.StreamResponse:
         "type": request.query.get("type", "output"),
     }
     try:
-        body, content_type, disposition = await _state(request).client.fetch_output(params)
+        output_response = await _state(request).client.fetch_output(
+            params,
+            request_headers=_output_request_headers(request),
+        )
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
         return web.json_response(
@@ -620,10 +624,19 @@ async def output_view_handler(request: web.Request) -> web.StreamResponse:
             },
             status=502,
         )
-    headers = {"Content-Type": content_type}
-    if disposition:
-        headers["Content-Disposition"] = disposition
-    return web.Response(body=body, headers=headers)
+    headers = {"Content-Type": output_response.content_type}
+    if output_response.disposition:
+        headers["Content-Disposition"] = output_response.disposition
+    headers.update(output_response.headers)
+    return web.Response(body=output_response.body, status=output_response.status, headers=headers)
+
+
+def _output_request_headers(request: web.Request) -> dict[str, str]:
+    return {
+        header_name: request.headers[header_name]
+        for header_name in OUTPUT_REQUEST_HEADERS
+        if header_name in request.headers
+    }
 
 
 async def _read_json_body(request: web.Request) -> dict[str, Any]:

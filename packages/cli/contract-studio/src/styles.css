@@ -264,18 +264,43 @@ h2 {
 }
 
 .gallery {
-  position: relative;
   display: block;
   min-height: 0;
+  padding-bottom: 120px;
   line-height: 0;
 }
 
-.gallery-tile-frame {
-  position: absolute;
-  top: 0;
-  left: 0;
-  will-change: transform;
-  transition: transform 260ms var(--ease-out);
+.react-photo-album {
+  width: 100%;
+}
+
+.react-photo-album--track {
+  align-items: flex-start;
+}
+
+.gallery-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(240px, calc(100vw - 32px));
+  min-height: 40px;
+  margin: 18px auto 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 220ms var(--spring);
+}
+
+.gallery-load-more:hover {
+  border-color: hsl(var(--border-strong));
+  background: hsl(var(--accent));
+  transform: translateY(-1px);
 }
 
 .tile {

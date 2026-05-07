@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { MasonryPhotoAlbum } from "react-photo-album";
+import "react-photo-album/masonry.css";
 import { Wand2 } from "lucide-react";
 import { Field, StudioSelect } from "@/app/components";
 import { ContractInputControl } from "@/components/ContractInputControl";
@@ -10,6 +12,7 @@ import { copyText } from "@/lib/clipboard";
 import {
   contractTitle,
   displayInputsForGallery,
+  galleryPhoto,
   jsonBlock,
   outputKind,
 } from "@/lib/format";
@@ -25,6 +28,11 @@ import type {
   RunResponse,
 } from "@/types";
 
+const GALLERY_INITIAL_BATCH = 72;
+const GALLERY_BATCH_SIZE = 48;
+const GALLERY_SPACING_PX = 7;
+const GALLERY_LOAD_MORE_THRESHOLD_PX = 900;
+
 export function App() {
   const [contractsData, setContractsData] = useState<ContractsResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -37,8 +45,8 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [galleryRenderCount, setGalleryRenderCount] = useState(GALLERY_INITIAL_BATCH);
   const galleryScrollRef = useRef<HTMLDivElement | null>(null);
-  const galleryMetrics = useGalleryMetrics(galleryScrollRef);
 
   const loadGallery = useCallback(async () => {
     const nextGallery = await apiJson<GalleryResponse>("/gallery");
@@ -197,9 +205,33 @@ export function App() {
   }, [refresh]);
 
   const visibleGallery = useMemo(() => gallery.filter((item) => item.status !== "error" || item.error), [gallery]);
-  const galleryLayout = useMemo(() => layoutGalleryItems(visibleGallery, galleryMetrics), [galleryMetrics, visibleGallery]);
+  const renderedGallery = useMemo(() => visibleGallery.slice(0, galleryRenderCount), [galleryRenderCount, visibleGallery]);
+  const renderedPhotos = useMemo(() => renderedGallery.map(galleryPhoto), [renderedGallery]);
+  const hasMoreGallery = renderedGallery.length < visibleGallery.length;
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
+
+  useEffect(() => {
+    setGalleryRenderCount((current) =>
+      Math.min(Math.max(GALLERY_INITIAL_BATCH, current), Math.max(GALLERY_INITIAL_BATCH, visibleGallery.length)),
+    );
+  }, [visibleGallery.length]);
+
+  const loadMoreGalleryItems = useCallback(() => {
+    setGalleryRenderCount((current) => Math.min(current + GALLERY_BATCH_SIZE, visibleGallery.length));
+  }, [visibleGallery.length]);
+
+  const onGalleryScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      if (!hasMoreGallery) return;
+      const target = event.currentTarget;
+      const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+      if (remaining < GALLERY_LOAD_MORE_THRESHOLD_PX) {
+        loadMoreGalleryItems();
+      }
+    },
+    [hasMoreGallery, loadMoreGalleryItems],
+  );
 
   function moveActive(delta: number) {
     if (activeIndex < 0 || !visibleGallery.length) return;
@@ -220,31 +252,34 @@ export function App() {
           </div>
         </header>
 
-        <div ref={galleryScrollRef} className="gallery-scroll">
+        <div ref={galleryScrollRef} className="gallery-scroll" onScroll={onGalleryScroll}>
           {visibleGallery.length ? (
-            <section className="gallery" aria-label="Generated outputs" style={{ height: galleryLayout.height }}>
-              {galleryLayout.tiles.map((tile) => (
-                <div
-                  className="gallery-tile-frame"
-                  key={tile.item.id}
-                  style={
-                    {
-                      width: tile.width,
-                      height: tile.height,
-                      transform: `translate3d(${tile.x}px, ${tile.y}px, 0)`,
-                    } as CSSProperties
-                  }
-                >
-                  <GalleryTile
-                    item={tile.item}
-                    fill
-                    now={now}
-                    onOpen={setActiveId}
-                    onCopy={copyGalleryItem}
-                    onDelete={deleteGalleryItem}
-                  />
-                </div>
-              ))}
+            <section className="gallery" aria-label="Generated outputs">
+              <MasonryPhotoAlbum
+                photos={renderedPhotos}
+                spacing={GALLERY_SPACING_PX}
+                padding={0}
+                columns={columnCountForWidth}
+                render={{
+                  photo: (_, { photo, width, height }) => (
+                    <GalleryTile
+                      key={photo.item.id}
+                      item={photo.item}
+                      width={width}
+                      height={height}
+                      now={photo.item.status === "pending" ? now : 0}
+                      onOpen={setActiveId}
+                      onCopy={copyGalleryItem}
+                      onDelete={deleteGalleryItem}
+                    />
+                  ),
+                }}
+              />
+              {hasMoreGallery ? (
+                <button className="gallery-load-more" type="button" onClick={loadMoreGalleryItems}>
+                  Load more
+                </button>
+              ) : null}
             </section>
           ) : (
             <div className="empty-stage">
@@ -342,46 +377,6 @@ export function App() {
   );
 }
 
-type GalleryMetrics = {
-  width: number;
-  columnCount: number;
-};
-
-function layoutGalleryItems(items: GalleryItem[], metrics: GalleryMetrics) {
-  const gap = GALLERY_GAP_PX;
-  const columnCount = Math.max(1, metrics.columnCount);
-  const availableWidth = Math.max(280, metrics.width);
-  const columnWidth = Math.max(120, (availableWidth - gap * (columnCount - 1)) / columnCount);
-  const columnHeights = Array.from({ length: columnCount }, () => 0);
-  const tiles = items.map((item, index) => {
-    const columnIndex = index % columnCount;
-    const x = columnIndex * (columnWidth + gap);
-    const y = columnHeights[columnIndex];
-    const height = tileHeightForWidth(item, columnWidth);
-    columnHeights[columnIndex] += height + gap;
-    return {
-      item,
-      x,
-      y,
-      width: columnWidth,
-      height,
-    };
-  });
-  return {
-    tiles,
-    height: Math.max(0, ...columnHeights) + 120,
-  };
-}
-
-const GALLERY_GAP_PX = 7;
-const AUDIO_TILE_HEIGHT_PX = 76;
-
-function tileHeightForWidth(item: GalleryItem, width: number) {
-  if (item.type === "audio") return AUDIO_TILE_HEIGHT_PX;
-  const ratio = Math.max(0.1, Number(item.height || 1)) / Math.max(0.1, Number(item.width || 1));
-  return Math.max(90, width * ratio);
-}
-
 function galleryItemsFromOutputs(
   result: RunResponse,
   selected: NonNullable<ContractsResponse["contracts"][number]>,
@@ -461,29 +456,6 @@ function runResponseFromUnknown(value: unknown): RunResponse | null {
   if (!value || typeof value !== "object") return null;
   return value as RunResponse;
 }
-
-function useGalleryMetrics(stageRef: React.RefObject<HTMLElement | null>) {
-  const [metrics, setMetrics] = useState<GalleryMetrics>({ width: 1600, columnCount: 6 });
-
-  useEffect(() => {
-    const target = stageRef.current;
-    if (!target) return;
-
-    const update = () => {
-      const width = Math.max(0, target.clientWidth - GALLERY_SCROLLBAR_GUTTER_PX);
-      setMetrics({ width, columnCount: columnCountForWidth(width) });
-    };
-    update();
-
-    const observer = new ResizeObserver(update);
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [stageRef]);
-
-  return metrics;
-}
-
-const GALLERY_SCROLLBAR_GUTTER_PX = 19;
 
 function columnCountForWidth(width: number) {
   if (width < 620) return 2;

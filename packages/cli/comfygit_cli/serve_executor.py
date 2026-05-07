@@ -13,6 +13,13 @@ from urllib.parse import urlencode
 import aiohttp
 from comfygit_core.services.workflow_execution import extract_contract_outputs
 
+OUTPUT_RESPONSE_HEADERS = (
+    "accept-ranges",
+    "content-range",
+    "etag",
+    "last-modified",
+)
+
 
 class ComfyGitServeTimeoutError(Exception):
     """Raised when a submitted ComfyUI prompt does not finish in time."""
@@ -48,6 +55,17 @@ class RunExecutionResult:
     status: str
     prompt_id: str
     outputs: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ServeOutputResponse:
+    """Raw ComfyUI output response data proxied through `cg serve`."""
+
+    body: bytes
+    content_type: str
+    disposition: str | None = None
+    status: int = 200
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class RunExecutor(Protocol):
@@ -106,7 +124,8 @@ class ComfyUIClient:
     async def fetch_output(
         self,
         params: Mapping[str, str],
-    ) -> tuple[bytes, str, str | None]:
+        request_headers: Mapping[str, str] | None = None,
+    ) -> ServeOutputResponse:
         url = f"{self.base_url}/view"
         request_timeout = aiohttp.ClientTimeout(total=self.timeout)
         if self._session is not None:
@@ -114,6 +133,7 @@ class ComfyUIClient:
                 self._session,
                 url,
                 params=params,
+                request_headers=request_headers,
                 timeout=request_timeout,
             )
         async with aiohttp.ClientSession() as session:
@@ -121,6 +141,7 @@ class ComfyUIClient:
                 session,
                 url,
                 params=params,
+                request_headers=request_headers,
                 timeout=request_timeout,
             )
 
@@ -200,14 +221,27 @@ class ComfyUIClient:
         url: str,
         *,
         params: Mapping[str, str],
+        request_headers: Mapping[str, str] | None,
         timeout: aiohttp.ClientTimeout,
-    ) -> tuple[bytes, str, str | None]:
-        async with session.get(url, params=params, timeout=timeout) as response:
+    ) -> ServeOutputResponse:
+        async with session.get(url, params=params, headers=request_headers, timeout=timeout) as response:
             response.raise_for_status()
             body = await response.read()
             content_type = response.headers.get("content-type") or "application/octet-stream"
             disposition = response.headers.get("content-disposition")
-        return body, content_type, disposition
+            headers = {
+                name: response.headers[name]
+                for name in OUTPUT_RESPONSE_HEADERS
+                if name in response.headers
+            }
+            status = response.status
+        return ServeOutputResponse(
+            body=body,
+            content_type=content_type,
+            disposition=disposition,
+            status=status,
+            headers=headers,
+        )
 
 
 class LocalComfyExecutor:
@@ -376,10 +410,10 @@ async def _image_dimensions_from_artifact(
     params: Mapping[str, str],
 ) -> tuple[int, int] | None:
     try:
-        body, _, _ = await client.fetch_output(params)
+        response = await client.fetch_output(params)
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
         return None
-    return _image_dimensions_from_bytes(body)
+    return _image_dimensions_from_bytes(response.body)
 
 
 async def _video_dimensions_from_artifact(
