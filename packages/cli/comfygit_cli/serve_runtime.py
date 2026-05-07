@@ -18,6 +18,7 @@ from comfygit_core.models.workflow_contract import NamedWorkflowContract
 from comfygit_core.services.workflow_execution import build_manifest_contract_prompt
 
 from .serve_executor import (
+    ComfyUIExecutionError,
     ComfyGitServeTimeoutError,
     ComfyUIClient,
     ComfyUIRequestError,
@@ -677,6 +678,15 @@ async def run_contract_handler(request: web.Request) -> web.Response:
         }
         payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
         return _json_response_for_session(payload, session, status=400 if exc.status == 400 else 502)
+    except ComfyUIExecutionError as exc:
+        payload = {
+            "error": "comfyui_execution_failed",
+            "message": str(exc),
+            "prompt_id": exc.prompt_id,
+            "comfyui": exc.payload,
+        }
+        payload.update(_record_failed_run(_state(request), session, request.match_info["workflow"], request.match_info["contract"], body, payload))
+        return _json_response_for_session(payload, session, status=500)
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
         payload = {
@@ -1054,6 +1064,26 @@ async def _complete_submitted_run(
             "comfy_url": exc.url,
             "comfyui": exc.payload,
             "prompt_id": prompt_id,
+        }
+        _record_failed_run(
+            state,
+            session,
+            workflow_name,
+            contract_name,
+            {"inputs": inputs},
+            payload,
+            run_id=run_id,
+            prompt_id=prompt_id,
+            output_slots=output_slots,
+            created_at=created_at,
+        )
+        return
+    except ComfyUIExecutionError as exc:
+        payload = {
+            "error": "comfyui_execution_failed",
+            "message": str(exc),
+            "prompt_id": exc.prompt_id,
+            "comfyui": exc.payload,
         }
         _record_failed_run(
             state,

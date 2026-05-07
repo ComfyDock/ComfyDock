@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
@@ -19,6 +20,7 @@ OUTPUT_RESPONSE_HEADERS = (
     "etag",
     "last-modified",
 )
+COMFYUI_CLIENT_ID_PREFIX = "comfygit-serve"
 
 
 class ComfyGitServeTimeoutError(Exception):
@@ -33,6 +35,16 @@ class ComfyUIRequestError(Exception):
         self.url = url
         self.payload = payload
         super().__init__(_comfyui_error_message(payload) or f"ComfyUI returned HTTP {status}")
+
+
+class ComfyUIExecutionError(Exception):
+    """Raised when ComfyUI accepts a prompt but history reports execution failure."""
+
+    def __init__(self, prompt_id: str, history: Mapping[str, Any], message: str) -> None:
+        self.prompt_id = prompt_id
+        self.history = history
+        self.payload = _comfyui_history_error_payload(prompt_id, history, message)
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -111,7 +123,7 @@ class ComfyUIClient:
         payload = await self._request_json(
             "POST",
             "/prompt",
-            json_data={"prompt": prompt},
+            json_data={"prompt": prompt, "client_id": _new_comfyui_client_id()},
         )
         prompt_id = payload.get("prompt_id")
         if not prompt_id:
@@ -288,6 +300,9 @@ class LocalComfyExecutor:
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
         )
+        error_message = _comfyui_history_error_message(history)
+        if error_message:
+            raise ComfyUIExecutionError(prompt_id, history, error_message)
         extracted_outputs = extract_contract_outputs(outputs, history)
         output_payloads = [_contract_output_payload(output) for output in extracted_outputs]
         await _attach_artifact_dimensions(self._client, output_payloads)
@@ -296,6 +311,10 @@ class LocalComfyExecutor:
     async def cancel(self, prompt_id: str) -> None:
         await self._client.delete_queued_prompt(prompt_id)
         await self._client.interrupt_prompt(prompt_id)
+
+
+def _new_comfyui_client_id() -> str:
+    return f"{COMFYUI_CLIENT_ID_PREFIX}-{uuid.uuid4().hex}"
 
 
 async def _response_payload(response: aiohttp.ClientResponse) -> Any:
@@ -337,6 +356,58 @@ def _first_comfyui_node_error_detail(payload: Mapping[str, Any]) -> str:
             if detail:
                 return str(detail)
     return ""
+
+
+def _comfyui_history_error_message(history: Mapping[str, Any]) -> str:
+    status = history.get("status")
+    if not isinstance(status, Mapping):
+        return ""
+    status_str = str(status.get("status_str") or "").lower()
+    execution_error = _first_execution_error(status)
+    if status_str in {"error", "failed"} or execution_error:
+        return execution_error or str(status.get("status_str") or "ComfyUI execution failed")
+    return ""
+
+
+def _first_execution_error(status: Mapping[str, Any]) -> str:
+    messages = status.get("messages")
+    if not isinstance(messages, list):
+        return ""
+    for message in messages:
+        if not isinstance(message, list | tuple) or len(message) < 2:
+            continue
+        event_type, event_payload = message[0], message[1]
+        if event_type != "execution_error" or not isinstance(event_payload, Mapping):
+            continue
+        error_text = str(event_payload.get("exception_message") or event_payload.get("message") or "").strip()
+        if not error_text:
+            error_text = str(event_payload.get("exception_type") or "ComfyUI execution failed")
+        node_type = event_payload.get("node_type")
+        node_id = event_payload.get("node_id")
+        if node_type and node_id:
+            return f"{node_type} node {node_id} failed: {error_text}"
+        if node_type:
+            return f"{node_type} failed: {error_text}"
+        return error_text
+    return ""
+
+
+def _comfyui_history_error_payload(
+    prompt_id: str,
+    history: Mapping[str, Any],
+    message: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "prompt_id": prompt_id,
+        "message": message,
+    }
+    status = history.get("status")
+    if isinstance(status, Mapping):
+        payload["status"] = status
+    outputs = history.get("outputs")
+    if isinstance(outputs, Mapping):
+        payload["outputs"] = outputs
+    return payload
 
 
 def output_kind(output_type: str, filename: str) -> str:

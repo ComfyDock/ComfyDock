@@ -14,6 +14,7 @@ from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.serve_executor import (
+    ComfyUIExecutionError,
     ComfyUIClient,
     LocalComfyExecutor,
     RunExecutionRequest,
@@ -632,6 +633,85 @@ async def test_active_run_recovery_completes_persisted_run() -> None:
     assert slots[0]["status"] == "done"
 
 
+@pytest.mark.asyncio
+async def test_active_run_recovery_records_comfyui_execution_error() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_error",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="video",
+            contract="default",
+            status="running",
+            prompt_id="prompt_error",
+            inputs={"prompt": "animate"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+
+    history = {
+        "status": {
+            "status_str": "error",
+            "completed": False,
+            "messages": [
+                [
+                    "execution_error",
+                    {
+                        "prompt_id": "prompt_error",
+                        "node_id": "13",
+                        "node_type": "SamplerCustomAdvanced",
+                        "exception_message": "'NoneType' object has no attribute 'encode'",
+                    },
+                ]
+            ],
+        },
+        "outputs": {},
+    }
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            raise ComfyUIExecutionError(prompt_id, history, "SamplerCustomAdvanced node 13 failed")
+
+    contract = SimpleNamespace(outputs=[SimpleNamespace(name="video_combine", type="video", node_id="43")])
+    manifest = SimpleNamespace(
+        workflows={
+            "video": SimpleNamespace(
+                execution_contract=SimpleNamespace(contracts={"default": contract})
+            )
+        }
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: manifest,
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+    await asyncio.gather(*state.background_tasks)
+
+    runs = store.list_runs("anon_1")
+    gallery = store.list_gallery_items("anon_1")
+    slots = store.list_output_slots("anon_1", "run_error")
+    assert runs[0]["status"] == "error"
+    assert runs[0]["error"] == "SamplerCustomAdvanced node 13 failed"
+    assert gallery[0]["status"] == "error"
+    assert gallery[0]["slotId"] == "slot_run_error_0_video_combine"
+    assert slots[0]["status"] == "error"
+    assert slots[0]["error"] == "SamplerCustomAdvanced node 13 failed"
+
+
 def test_failed_run_response_does_not_create_circular_raw_result() -> None:
     store = EphemeralServeStateStore()
     session = ServeSession(session_id="anon_1", scope_key="anon_1")
@@ -1123,7 +1203,8 @@ async def test_local_comfy_executor_cancel_deletes_queue_item_and_interrupts_pro
 async def test_comfyui_client_submit_prompt_returns_prompt_id() -> None:
     async def handler(request: web.Request) -> web.Response:
         body = await request.json()
-        assert body == {"prompt": {"1": {"class_type": "Test", "inputs": {}}}}
+        assert body["prompt"] == {"1": {"class_type": "Test", "inputs": {}}}
+        assert body["client_id"].startswith("comfygit-serve-")
         return web.json_response({"prompt_id": "abc123"})
 
     base_url, runner = await _with_test_server(handler, "POST", "/prompt")
@@ -1217,6 +1298,50 @@ async def test_local_comfy_executor_submits_and_records_submitted_callback() -> 
     assert result.prompt_id == "prompt_123"
     assert result.outputs == []
     assert submitted == ["prompt_123"]
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_rejects_error_history() -> None:
+    class FakeClient:
+        async def wait_for_history(
+            self,
+            prompt_id: str,
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> dict[str, Any]:
+            return {
+                "status": {
+                    "status_str": "error",
+                    "completed": False,
+                    "messages": [
+                        [
+                            "execution_error",
+                            {
+                                "prompt_id": prompt_id,
+                                "node_id": "13",
+                                "node_type": "SamplerCustomAdvanced",
+                                "exception_message": "'NoneType' object has no attribute 'encode'\n",
+                            },
+                        ]
+                    ],
+                },
+                "outputs": {},
+            }
+
+    executor = LocalComfyExecutor(cast(Any, FakeClient()))
+
+    with pytest.raises(ComfyUIExecutionError) as error_info:
+        await executor.complete_submitted(
+            "prompt_error",
+            (SimpleNamespace(name="video_combine", type="video", node_id="43", selector="primary"),),
+            timeout_seconds=300,
+            poll_interval_seconds=1,
+        )
+
+    assert str(error_info.value) == "SamplerCustomAdvanced node 13 failed: 'NoneType' object has no attribute 'encode'"
+    assert error_info.value.prompt_id == "prompt_error"
+    assert error_info.value.payload["status"]["status_str"] == "error"
 
 
 @pytest.mark.asyncio

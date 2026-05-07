@@ -257,8 +257,11 @@ local filesystem paths or raw ComfyUI assumptions.
 
 Current implementation: `cg serve` has a serve-owned `RunExecutor` seam and a
 `LocalComfyExecutor` that submits prepared contract prompts to the configured
-ComfyUI HTTP API, waits for history when requested, and normalizes ComfyUI
-outputs back into contract output payloads. Request routing, sessions, upload
+ComfyUI HTTP API with a generated ComfyUI `client_id`, waits for history when
+requested, and normalizes ComfyUI outputs back into contract output payloads.
+The generated `client_id` keeps ComfyUI's execution context populated for
+progress and preview-aware nodes even when the run is initiated by the headless
+serve API instead of the ComfyUI frontend. Request routing, sessions, upload
 refs, run records, gallery state, and output delivery remain owned by the serve
 runtime. Executor selection is not yet exposed as a user-facing configuration
 surface, and proxy execution is not implemented.
@@ -304,9 +307,12 @@ serve state adapter, links gallery items with `slot_id`, and exposes run detail
 state through `GET /runs/{run_id}`. Pending Studio cards are now returned from
 serve-owned slot metadata instead of a single client-guessed placeholder.
 Completion updates each slot to `done`, `empty`, or `error` based on the
-normalized executor result. This is still partial because slots are not yet
-backed by a first-class event stream, artifact-index metadata is only implicit
-in generated gallery rows, and progress semantics are still future slices.
+normalized executor result. If ComfyUI returns a history entry whose status
+reports execution failure, the local executor must treat the run as failed
+rather than as a completed run with empty artifacts. This is still partial
+because slots are not yet backed by a first-class event stream, artifact-index
+metadata is only implicit in generated gallery rows, and progress semantics are
+still future slices.
 
 ### CGSERVE-RUN-05C [PARTIAL]: Studio should recover active runs after refresh
 Validation: MIXED
