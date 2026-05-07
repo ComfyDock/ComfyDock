@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Wand2 } from "lucide-react";
 import { Field, StudioSelect } from "@/app/components";
 import { ContractInputControl } from "@/components/ContractInputControl";
@@ -36,10 +36,8 @@ export function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
   const [now, setNow] = useState(Date.now());
-  const galleryStageRef = useRef<HTMLElement | null>(null);
-  const galleryColumnAssignmentsRef = useRef(new Map<string, number>());
-  const previousGalleryColumnCountRef = useRef(0);
-  const galleryColumnCount = useGalleryColumnCount(galleryStageRef);
+  const galleryScrollRef = useRef<HTMLDivElement | null>(null);
+  const galleryMetrics = useGalleryMetrics(galleryScrollRef);
 
   useEffect(() => {
     void refresh();
@@ -201,16 +199,7 @@ export function App() {
   }
 
   const visibleGallery = gallery.filter((item) => item.status !== "error" || item.error);
-  const galleryColumns = useMemo(
-    () =>
-      distributeGalleryColumns(
-        visibleGallery,
-        galleryColumnCount,
-        galleryColumnAssignmentsRef.current,
-        previousGalleryColumnCountRef,
-      ),
-    [galleryColumnCount, visibleGallery],
-  );
+  const galleryLayout = useMemo(() => layoutGalleryItems(visibleGallery, galleryMetrics), [galleryMetrics, visibleGallery]);
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
 
@@ -222,7 +211,7 @@ export function App() {
 
   return (
     <main className="studio-shell">
-      <section ref={galleryStageRef} className="gallery-stage" aria-label="Outputs">
+      <section className="gallery-stage" aria-label="Outputs">
         <header className="top-bar">
           <div>
             <p className="eyebrow">ComfyGit Studio</p>
@@ -233,22 +222,29 @@ export function App() {
           </div>
         </header>
 
-        <div className="gallery-scroll">
+        <div ref={galleryScrollRef} className="gallery-scroll">
           {visibleGallery.length ? (
-            <section className="gallery" aria-label="Generated outputs" style={{ "--gallery-columns": galleryColumnCount } as React.CSSProperties}>
-              {galleryColumns.map((column, columnIndex) => (
-                <div className="gallery-column" key={`gallery-column-${columnIndex}`}>
-                  {column.map((item) => (
-                    <GalleryTile
-                      key={item.id}
-                      item={item}
-                      fill
-                      now={now}
-                      onOpen={setActiveId}
-                      onCopy={copyGalleryItem}
-                      onDelete={deleteGalleryItem}
-                    />
-                  ))}
+            <section className="gallery" aria-label="Generated outputs" style={{ height: galleryLayout.height }}>
+              {galleryLayout.tiles.map((tile) => (
+                <div
+                  className="gallery-tile-frame"
+                  key={tile.item.id}
+                  style={
+                    {
+                      width: tile.width,
+                      height: tile.height,
+                      transform: `translate3d(${tile.x}px, ${tile.y}px, 0)`,
+                    } as CSSProperties
+                  }
+                >
+                  <GalleryTile
+                    item={tile.item}
+                    fill
+                    now={now}
+                    onOpen={setActiveId}
+                    onCopy={copyGalleryItem}
+                    onDelete={deleteGalleryItem}
+                  />
                 </div>
               ))}
             </section>
@@ -284,13 +280,12 @@ export function App() {
                 })}
               />
             </Field>
+            {selected?.description ? <p className="description">{selected.description}</p> : null}
           </section>
         ) : null}
 
         {selected ? (
           <section className="runner-card">
-            {selected.description ? <p className="description">{selected.description}</p> : null}
-
             <div className="input-stack">
               {selected.inputs.map((input) => (
                 <ContractInputControl
@@ -349,57 +344,42 @@ export function App() {
   );
 }
 
-function distributeGalleryColumns(
-  items: GalleryItem[],
-  columnCount: number,
-  assignments: Map<string, number>,
-  previousColumnCountRef: React.MutableRefObject<number>,
-) {
-  const count = Math.max(1, columnCount);
-  if (previousColumnCountRef.current !== count) {
-    assignments.clear();
-    previousColumnCountRef.current = count;
-  }
+type GalleryMetrics = {
+  width: number;
+  columnCount: number;
+};
 
-  const visibleIds = new Set(items.map((item) => item.id));
-  for (const id of assignments.keys()) {
-    if (!visibleIds.has(id)) assignments.delete(id);
-  }
-
-  const columns = Array.from({ length: count }, () => [] as GalleryItem[]);
-  const columnHeights = Array.from({ length: count }, () => 0);
-
-  for (const item of items) {
-    const columnIndex = assignments.get(item.id);
-    if (columnIndex === undefined || columnIndex < 0 || columnIndex >= count) continue;
-    columnHeights[columnIndex] += galleryItemHeightWeight(item);
-  }
-
-  for (const item of items) {
-    if (assignments.has(item.id)) continue;
-    const columnIndex = shortestColumnIndex(columnHeights);
-    assignments.set(item.id, columnIndex);
-    columnHeights[columnIndex] += galleryItemHeightWeight(item);
-  }
-
-  for (const item of items) {
-    const columnIndex = assignments.get(item.id);
-    if (columnIndex === undefined || columnIndex < 0 || columnIndex >= count) continue;
-    columns[columnIndex].push(item);
-  }
-  return columns;
+function layoutGalleryItems(items: GalleryItem[], metrics: GalleryMetrics) {
+  const gap = GALLERY_GAP_PX;
+  const columnCount = Math.max(1, metrics.columnCount);
+  const availableWidth = Math.max(280, metrics.width);
+  const columnWidth = Math.max(120, (availableWidth - gap * (columnCount - 1)) / columnCount);
+  const columnHeights = Array.from({ length: columnCount }, () => 0);
+  const tiles = items.map((item, index) => {
+    const columnIndex = index % columnCount;
+    const x = columnIndex * (columnWidth + gap);
+    const y = columnHeights[columnIndex];
+    const height = tileHeightForWidth(item, columnWidth);
+    columnHeights[columnIndex] += height + gap;
+    return {
+      item,
+      x,
+      y,
+      width: columnWidth,
+      height,
+    };
+  });
+  return {
+    tiles,
+    height: Math.max(0, ...columnHeights) + 120,
+  };
 }
 
-function shortestColumnIndex(heights: number[]) {
-  let selected = 0;
-  for (let index = 1; index < heights.length; index += 1) {
-    if (heights[index] < heights[selected]) selected = index;
-  }
-  return selected;
-}
+const GALLERY_GAP_PX = 7;
 
-function galleryItemHeightWeight(item: GalleryItem) {
-  return Math.max(0.1, Number(item.height || 1)) / Math.max(0.1, Number(item.width || 1));
+function tileHeightForWidth(item: GalleryItem, width: number) {
+  const ratio = Math.max(0.1, Number(item.height || 1)) / Math.max(0.1, Number(item.width || 1));
+  return Math.max(90, width * ratio);
 }
 
 function galleryItemsFromOutputs(
@@ -449,14 +429,17 @@ function runResponseFromUnknown(value: unknown): RunResponse | null {
   return value as RunResponse;
 }
 
-function useGalleryColumnCount(stageRef: React.RefObject<HTMLElement | null>) {
-  const [count, setCount] = useState(6);
+function useGalleryMetrics(stageRef: React.RefObject<HTMLElement | null>) {
+  const [metrics, setMetrics] = useState<GalleryMetrics>({ width: 1600, columnCount: 6 });
 
   useEffect(() => {
     const target = stageRef.current;
     if (!target) return;
 
-    const update = () => setCount(columnCountForWidth(target.clientWidth));
+    const update = () => {
+      const width = Math.max(0, target.clientWidth - GALLERY_SCROLLBAR_GUTTER_PX);
+      setMetrics({ width, columnCount: columnCountForWidth(width) });
+    };
     update();
 
     const observer = new ResizeObserver(update);
@@ -464,8 +447,10 @@ function useGalleryColumnCount(stageRef: React.RefObject<HTMLElement | null>) {
     return () => observer.disconnect();
   }, [stageRef]);
 
-  return count;
+  return metrics;
 }
+
+const GALLERY_SCROLLBAR_GUTTER_PX = 19;
 
 function columnCountForWidth(width: number) {
   if (width < 620) return 2;

@@ -264,20 +264,18 @@ h2 {
 }
 
 .gallery {
-  display: grid;
-  grid-template-columns: repeat(var(--gallery-columns, 6), minmax(0, 1fr));
-  align-items: start;
-  gap: 7px;
+  position: relative;
+  display: block;
   min-height: 0;
-  padding-bottom: 120px;
   line-height: 0;
 }
 
-.gallery-column {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 7px;
+.gallery-tile-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+  transition: transform 260ms var(--ease-out);
 }
 
 .tile {
@@ -621,10 +619,6 @@ h2 {
   display: grid;
   gap: 12px;
   margin-top: 0;
-}
-
-.description + .input-stack {
-  margin-top: 16px;
 }
 
 .field {
