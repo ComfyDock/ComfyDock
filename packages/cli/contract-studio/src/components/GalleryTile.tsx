@@ -1,5 +1,5 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { Copy, Download, Trash2 } from "lucide-react";
+import { memo, useEffect, useState, type CSSProperties } from "react";
+import { Copy, Download, Play, Trash2 } from "lucide-react";
 import { Media, Tip } from "@/app/components";
 import { formatElapsed, titleFromOutput } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -23,14 +23,16 @@ export const GalleryTile = memo(function GalleryTile({
   onDelete: (item: GalleryItem) => void;
 }) {
   const ratio = `${item.width || 1} / ${item.height || 1}`;
-  const tileRef = useRef<HTMLButtonElement | null>(null);
-  const shouldObservePlayback = item.status === "done" && item.type === "video";
-  const isVisible = useTileVisibility(tileRef, shouldObservePlayback);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const isVideo = item.status === "done" && item.type === "video";
+
+  useEffect(() => {
+    setIsPreviewing(false);
+  }, [item.id]);
 
   return (
     <button
-      ref={tileRef}
-      className={cn("tile", `type-${item.type}`, item.status)}
+      className={cn("tile", `type-${item.type}`, item.status, isVideo && "has-play-preview", isPreviewing && "is-previewing")}
       style={
         {
           width: fill ? "100%" : width,
@@ -41,6 +43,10 @@ export const GalleryTile = memo(function GalleryTile({
       }
       type="button"
       onClick={() => item.status !== "pending" && onOpen(item.id)}
+      onMouseEnter={() => isVideo && setIsPreviewing(true)}
+      onMouseLeave={() => isVideo && setIsPreviewing(false)}
+      onFocus={() => isVideo && setIsPreviewing(true)}
+      onBlur={() => isVideo && setIsPreviewing(false)}
     >
       {item.status === "pending" ? (
         <div className="generating">
@@ -57,7 +63,7 @@ export const GalleryTile = memo(function GalleryTile({
         <Media
           item={item}
           muted
-          autoPlay={item.type === "video" ? isVisible : false}
+          autoPlay={isVideo ? isPreviewing : false}
           pauseWhenNotAutoPlaying={item.type === "video"}
           resetOnAutoPlay={false}
         />
@@ -66,6 +72,11 @@ export const GalleryTile = memo(function GalleryTile({
           <span>{item.error || (item.status === "cancelled" ? "Cancelled" : "Generation failed")}</span>
         </div>
       )}
+      {isVideo ? (
+        <span className="tile-play-glyph" aria-hidden="true">
+          <Play size={20} fill="currentColor" />
+        </span>
+      ) : null}
       <span className="tile-caption">
         <strong>{titleFromOutput(item.outputName || item.filename || item.contract)}</strong>
         <em>{item.filename || item.contract}</em>
@@ -110,43 +121,6 @@ export const GalleryTile = memo(function GalleryTile({
     </button>
   );
 });
-
-function useTileVisibility(ref: RefObject<Element | null>, enabled: boolean) {
-  const [isVisible, setIsVisible] = useState(() => !enabled);
-
-  useEffect(() => {
-    if (!enabled) {
-      setIsVisible(false);
-      return;
-    }
-
-    const element = ref.current;
-    if (!element) {
-      setIsVisible(false);
-      return;
-    }
-
-    if (!("IntersectionObserver" in window)) {
-      setIsVisible(true);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsVisible(entry.isIntersecting && entry.intersectionRatio >= 0.25);
-      },
-      {
-        root: null,
-        rootMargin: "120px 0px",
-        threshold: [0, 0.25],
-      },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [enabled, ref]);
-
-  return isVisible;
-}
 
 function PendingElapsed({ createdAt }: { createdAt: string }) {
   const [elapsed, setElapsed] = useState(() => elapsedSince(createdAt));

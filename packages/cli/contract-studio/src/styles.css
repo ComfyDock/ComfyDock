@@ -461,6 +461,36 @@ h2 {
   transition: opacity 180ms var(--ease-out);
 }
 
+.tile-play-glyph {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.58);
+  color: #fff;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: opacity 160ms var(--ease-out), transform 220ms var(--spring);
+}
+
+.tile-play-glyph svg {
+  margin-left: 2px;
+}
+
+@media (hover: hover) {
+  .tile.has-play-preview:hover .tile-play-glyph,
+  .tile.has-play-preview:focus-visible .tile-play-glyph,
+  .tile.has-play-preview.is-previewing .tile-play-glyph {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.92);
+  }
+}
+
 .tile-hover-actions .tile-icon,
 .tile-hover-actions .tile-delete {
   display: grid;
