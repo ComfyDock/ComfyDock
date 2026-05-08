@@ -175,5 +175,4 @@ class TestUvFactoryExternalCache:
         )
 
         assert uv_cache == external_cache
-        # Python install dir should still be workspace-local
-        assert uv_python == workspace_path / "uv" / "python"
+        assert uv_python == external_cache / "python"

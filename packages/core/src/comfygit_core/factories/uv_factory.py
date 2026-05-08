@@ -68,6 +68,11 @@ def get_uv_cache_paths(
         uv_cache_path = external_uv_cache
     else:
         uv_cache_path = workspace_path / "uv_cache"
-    # Python installs always stay workspace-local for isolation
-    uv_python_path = workspace_path / "uv" / "python"
+    # Keep uv's cache and managed Python installs on the same filesystem. Some
+    # remote volume providers support normal file writes but reject uv's temp
+    # file operations for cache/python installs.
+    if external_uv_cache:
+        uv_python_path = external_uv_cache / "python"
+    else:
+        uv_python_path = workspace_path / "uv" / "python"
     return uv_cache_path, uv_python_path
