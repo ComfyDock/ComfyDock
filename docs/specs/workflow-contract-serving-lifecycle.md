@@ -400,8 +400,10 @@ while the proxy and ComfyUI run inside or beside the ephemeral GPU worker. The
 front-door `cg serve` remains the public contract API and Studio host. It owns
 contract discovery, sessions, SQLite/local state, gallery rows, run rows, upload
 refs, and local artifact refs. The runtime proxy should stage input refs into the
-form ComfyUI expects, submit prompts, collect outputs, expose artifact bytes,
-report progress and final status, and then allow the worker to shut down.
+form ComfyUI expects, submit prompts, collect outputs, and report progress and
+final status back to the front door. The long-term proxy runtime should be a
+worker that can shut down after the front door has received the terminal result
+and persisted the artifacts or artifact refs.
 
 The first proxy experiment should use two `cg serve` roles rather than changing
 `cg run` semantics:
@@ -497,6 +499,99 @@ with a front-door serve process on `8791`, a runtime proxy serve process on
 This local proxy mode should validate the execution contract, staged uploads,
 remote artifact handoff, cancellation request shape, and error normalization
 before provider-specific serverless packaging is introduced.
+
+### CGSERVE-RUN-06D [PARTIAL]: Proxy health exposes environment refs without enforcement
+Validation: MIXED
+
+Front-door serve and runtime proxy serve should make their environment identity
+visible in health responses before enforcing any deployment compatibility rule.
+The first visibility layer should report enough metadata for operators and
+future CI/CD checks to compare whether the front door and proxy are serving the
+same contract surface, such as environment name, `.cec` git commit when
+available, dirty-state visibility when available, and a digest of the served
+contract inputs.
+
+This layer must not reject generation requests. It is a diagnostic signal for
+humans, Studio, and future deployment automation. Enforcement, blocking UI
+states, and provider-specific rollout policy belong to later slices after the
+health shape is stable.
+
+Current implementation: public `/health` returns a local `environment_ref`.
+When configured with `--executor proxy`, public `/health` also includes the
+proxy runtime health payload and a nullable `proxy_environment_ref_match`
+boolean based on the reported contract digest. Runtime `/proxy/health` returns
+its own `environment_ref`. A missing or mismatched ref is visible but does not
+block proxy execution.
+
+### CGSERVE-RUN-06E [PLANNED]: Front-door serve is the proxy coordinator
+Validation: MIXED
+
+For remote or serverless proxy execution, front-door serve should be the durable
+run coordinator. It should create and own the public `run_id`, output slots,
+session-scoped gallery rows, upload refs, artifact refs, and terminal run state.
+The runtime proxy or provider worker should not write directly to the
+front-door state store or become the durable source of truth for Studio/API
+history.
+
+The runtime proxy worker may own temporary provider ids, local ComfyUI prompt
+ids, staged input paths, process-local task handles, and runtime-local output
+paths while a job is executing. Those values may be returned as debug metadata,
+but they should be treated as ephemeral worker state. Once the worker reports a
+terminal result to the front door and the front door persists that result, the
+worker may shut down without breaking gallery recovery.
+
+Current implementation: front-door serve already owns public run rows,
+output-slot rows, gallery rows, sessions, browser uploads, and localized
+artifacts. The current proxy runtime still stores proxy run status and proxy
+artifact ids in process memory while the front door polls it, so the callback
+coordinator protocol remains planned.
+
+### CGSERVE-RUN-06F [PLANNED]: Proxy workers report status through authenticated callbacks
+Validation: MIXED
+
+The serverless-ready proxy protocol should allow the front door to submit a
+prepared run to a worker with a callback URL, front-door `run_id`, declared
+outputs, staged input refs or bytes, and a scoped callback token. The worker
+should use that callback channel to report meaningful lifecycle updates such as
+accepted, running, heartbeat/progress, completed, failed, and cancelled.
+
+The terminal callback should be idempotent from the front-door perspective.
+Duplicate terminal callbacks for the same `run_id` should not create duplicate
+gallery items or output slots. A callback that fails authentication should be
+rejected without mutating run state.
+
+Progress and heartbeat callbacks are advisory. They improve observability and
+allow the front door to mark stale workers as failed, but they are not portable
+manifest truth and must not replace the final terminal callback.
+
+Current implementation: proxy execution uses front-door polling against
+`GET /proxy/runs/{prompt_id}`. Authenticated worker-to-front-door callbacks,
+heartbeat handling, and terminal callback idempotency are planned.
+
+### CGSERVE-RUN-06G [PLANNED]: Worker completion uploads artifacts to the front door first
+Validation: MIXED
+
+The first serverless worker completion path should let the runtime proxy upload
+generated artifact bytes directly to the front door as part of, or immediately
+before, the terminal completion callback. This mirrors browser input upload
+semantics: untrusted clients and remote workers pass bytes or opaque refs to the
+front door, and the front door stores artifacts under its own serve-owned
+storage before recording durable gallery state.
+
+The terminal payload should carry normalized output metadata, declared output
+names/selectors, artifact content type, filename, dimensions when available, and
+enough raw provider/ComfyUI metadata for debugging. The front door should be the
+only component that decides the final public artifact URL or gallery record.
+
+Remote object storage remains a later adapter. A future worker may upload to
+S3, R2, Modal volume/object storage, or another storage backend and report
+scoped artifact refs instead of uploading bytes directly to the front door, but
+the public Studio/API model should stay front-door-owned.
+
+Current implementation: the front door downloads completed artifacts from the
+runtime proxy's `/proxy/artifacts/{artifact_id}` endpoint after polling reports
+completion. Worker-pushed artifact upload and object-storage artifact refs are
+planned.
 
 ## Runtime State And Gallery Persistence
 
@@ -773,3 +868,10 @@ downloads those artifacts on completion, stores them under
 `.metadata/serve/artifacts/<prompt_id>/...`, rewrites artifact URLs to
 front-door `/outputs/view?serve_artifact=...`, and persists those localized refs
 in run, output-slot, and gallery records.
+
+Future direction: serverless workers should be able to push completed artifact
+bytes directly to authenticated front-door callback/upload endpoints instead of
+requiring the front door to fetch from a still-running proxy process. Object
+storage-backed workers may later return scoped storage refs, but durable gallery
+state should continue to point at front-door-owned refs after the front door has
+accepted and persisted the artifact metadata.

@@ -17,6 +17,9 @@ used by the same front-door Studio/API surface that already works locally.
 - CGSERVE-RUN-06A
 - CGSERVE-RUN-06B
 - CGSERVE-RUN-06C
+- CGSERVE-RUN-06E
+- CGSERVE-RUN-06F
+- CGSERVE-RUN-06G
 - CGSERVE-IN-05
 - CGSERVE-OUT-03
 
@@ -36,6 +39,20 @@ used by the same front-door Studio/API surface that already works locally.
   - The front door can submit a contract run to the proxy, poll completion,
     stream the produced artifact back, persist run/gallery/output-slot records,
     and serve the localized artifact after completion.
+  - A decoupled local validation has run with the corpus front door using its
+    own workspace while a separate materialized runtime container handled
+    compute through the proxy API.
+
+Current gap:
+
+- The runtime proxy still keeps proxy run status and proxy artifact ids in
+  process memory while the front door polls it.
+- If a serverless worker exits before the front door has observed completion and
+  localized artifacts, the front door cannot currently reconstruct the handoff
+  from durable worker state.
+- The desired next protocol is callback-based: the front door coordinates and
+  persists run state, while the worker reports status and pushes completed
+  artifacts back to authenticated front-door endpoints.
 
 ## Developer Lifecycle To Prove
 
@@ -133,10 +150,11 @@ The target runtime shape is:
 browser or API client
   -> front-door cg serve + Studio + local state
       -> ProxyComfyExecutor
-          -> Modal runtime proxy
+          -> Modal runtime worker/proxy
               -> ComfyUI
                   -> generated artifacts
-          <- proxy artifact bytes
+          -> authenticated front-door callback
+              -> artifact upload or artifact refs
       -> localized artifact cache + SQLite run/gallery state
 ```
 
@@ -145,13 +163,24 @@ The expected behavior is:
 - The front door owns contracts, sessions, run ids, output slots, gallery rows,
   uploaded file refs, and localized artifact refs.
 - The Modal runtime owns only compute, runtime-local input staging, ComfyUI
-  submission, status, cancellation, and temporary artifact exposure.
-- When a run completes, the front door copies image/video/audio artifacts from
-  Modal before recording durable gallery output.
-- After localization, the Modal worker can shut down without breaking Studio
-  history.
-- If Modal dies before localization, the front door should mark the run failed
-  or retry in a later implementation; completed localized outputs remain safe.
+  submission, best-effort cancellation, temporary progress state, and temporary
+  output files while a job is running.
+- The front door submits a prepared run with a `run_id`, callback URL, callback
+  token, declared outputs, and staged input bytes or refs.
+- The Modal worker reports lifecycle updates through authenticated callbacks.
+  Heartbeats/progress are advisory; the terminal callback is authoritative for
+  completion/failure.
+- In the first serverless-ready shape, the Modal worker uploads completed
+  image/video/audio artifact bytes directly to the front door before or during
+  the terminal callback. The front door stores those bytes in serve-owned
+  artifact storage and then records durable gallery output.
+- After the terminal callback has been accepted, the Modal worker can shut down
+  without breaking Studio history.
+- If Modal dies before a terminal callback, the front door should mark the run
+  stale/failed or retry in a later implementation; completed localized outputs
+  remain safe.
+- Future object-storage adapters may let Modal upload artifacts to S3/R2/Modal
+  storage and callback with scoped refs instead of pushing bytes directly.
 
 ## Reference Commands
 
@@ -238,11 +267,12 @@ cg -e <authoring-env> serve \
   and custom-node compiled dependencies must stay compatible.
 - Some custom nodes may write outputs in unexpected places or require additional
   runtime-local files.
-- Modal endpoint lifetime must cover prompt submission, status polling,
-  cancellation, and artifact fetch.
+- Modal endpoint lifetime must cover prompt submission and the terminal
+  callback/artifact upload. It should not need to remain alive for later gallery
+  reads after the front door accepts completed artifacts.
 - Shared bearer-token auth is sufficient for the prototype but not a final
   multi-user deployment auth model.
-- If remote execution dies before artifact localization, the front door does not
+- If remote execution dies before the terminal callback, the front door does not
   yet have durable remote recovery semantics.
 
 ## Non-Goals
@@ -258,10 +288,14 @@ cg -e <authoring-env> serve \
 ## Likely Implementation Follow-Ups
 
 - Add a repeatable local two-container proxy smoke script.
+- Add front-door callback endpoints for worker lifecycle updates and terminal
+  artifact upload.
+- Update the proxy executor/runtime protocol to submit callback URLs and scoped
+  callback tokens to workers.
 - Add a Modal staging script that materializes an environment into a named
   volume.
 - Add a Modal runtime proxy example that boots ComfyUI and `cg serve --role
-  proxy`.
+  proxy` in worker-callback mode.
 - Add stronger proxy auth and deployment token handling.
 - Add remote-run failure and retry semantics after the basic Modal loop works.
 - Add event streaming for progress once the run/proxy lifecycle is stable.
