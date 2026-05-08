@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type CSSProperties } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { Copy, Download, Trash2 } from "lucide-react";
 import { Media, Tip } from "@/app/components";
 import { formatElapsed, titleFromOutput } from "@/lib/format";
@@ -23,8 +23,13 @@ export const GalleryTile = memo(function GalleryTile({
   onDelete: (item: GalleryItem) => void;
 }) {
   const ratio = `${item.width || 1} / ${item.height || 1}`;
+  const tileRef = useRef<HTMLButtonElement | null>(null);
+  const shouldObservePlayback = item.status === "done" && item.type === "video";
+  const isVisible = useTileVisibility(tileRef, shouldObservePlayback);
+
   return (
     <button
+      ref={tileRef}
       className={cn("tile", `type-${item.type}`, item.status)}
       style={
         {
@@ -49,7 +54,13 @@ export const GalleryTile = memo(function GalleryTile({
           </div>
         </div>
       ) : item.status === "done" ? (
-        <Media item={item} muted />
+        <Media
+          item={item}
+          muted
+          autoPlay={item.type === "video" ? isVisible : false}
+          pauseWhenNotAutoPlaying={item.type === "video"}
+          resetOnAutoPlay={false}
+        />
       ) : (
         <div className="generating stopped">
           <span>{item.error || (item.status === "cancelled" ? "Cancelled" : "Generation failed")}</span>
@@ -99,6 +110,43 @@ export const GalleryTile = memo(function GalleryTile({
     </button>
   );
 });
+
+function useTileVisibility(ref: RefObject<Element | null>, enabled: boolean) {
+  const [isVisible, setIsVisible] = useState(() => !enabled);
+
+  useEffect(() => {
+    if (!enabled) {
+      setIsVisible(false);
+      return;
+    }
+
+    const element = ref.current;
+    if (!element) {
+      setIsVisible(false);
+      return;
+    }
+
+    if (!("IntersectionObserver" in window)) {
+      setIsVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVisible(entry.isIntersecting && entry.intersectionRatio >= 0.25);
+      },
+      {
+        root: null,
+        rootMargin: "120px 0px",
+        threshold: [0, 0.25],
+      },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [enabled, ref]);
+
+  return isVisible;
+}
 
 function PendingElapsed({ createdAt }: { createdAt: string }) {
   const [elapsed, setElapsed] = useState(() => elapsedSince(createdAt));

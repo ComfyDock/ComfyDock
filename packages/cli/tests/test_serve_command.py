@@ -1555,6 +1555,58 @@ async def test_local_comfy_executor_submits_and_records_submitted_callback() -> 
 
 
 @pytest.mark.asyncio
+async def test_local_comfy_executor_localizes_temp_artifacts(tmp_path) -> None:
+    class FakeClient:
+        async def wait_for_history(
+            self,
+            prompt_id: str,
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> dict[str, Any]:
+            assert prompt_id == "prompt_audio"
+            assert timeout_seconds == 300
+            assert poll_interval_seconds == 1
+            return {
+                "outputs": {
+                    "3": {
+                        "audio": [
+                            {
+                                "filename": "ComfyUI_temp_audio_00001_.flac",
+                                "subfolder": "",
+                                "type": "temp",
+                            }
+                        ]
+                    }
+                }
+            }
+
+        async def fetch_output(self, params: Mapping[str, str]) -> ServeOutputResponse:
+            assert params == {
+                "filename": "ComfyUI_temp_audio_00001_.flac",
+                "subfolder": "",
+                "type": "temp",
+            }
+            return ServeOutputResponse(body=b"flac-bytes", content_type="audio/flac")
+
+    artifact_dir = tmp_path / "artifacts"
+    executor = LocalComfyExecutor(cast(Any, FakeClient()), artifact_dir=artifact_dir)
+
+    result = await executor.complete_submitted(
+        "prompt_audio",
+        (SimpleNamespace(name="save_audio_flac", type="audio", node_id="3", selector="primary"),),
+        timeout_seconds=300,
+        poll_interval_seconds=1,
+    )
+
+    artifact = result.outputs[0]["artifacts"][0]
+    assert artifact["serve_artifact"] == "prompt_audio/ComfyUI_temp_audio_00001_.flac"
+    assert artifact["url"] == "/outputs/view?serve_artifact=prompt_audio/ComfyUI_temp_audio_00001_.flac"
+    assert artifact["content_type"] == "audio/flac"
+    assert (artifact_dir / "prompt_audio" / "ComfyUI_temp_audio_00001_.flac").read_bytes() == b"flac-bytes"
+
+
+@pytest.mark.asyncio
 async def test_local_comfy_executor_rejects_error_history() -> None:
     class FakeClient:
         async def wait_for_history(

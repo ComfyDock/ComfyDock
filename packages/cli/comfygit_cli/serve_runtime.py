@@ -168,7 +168,7 @@ class ServeState:
                 artifact_dir=self.artifact_dir,
             )
         else:
-            self.executor = LocalComfyExecutor(self.client)
+            self.executor = LocalComfyExecutor(self.client, artifact_dir=self.artifact_dir)
         self.uploads: dict[str, UploadRecord] = {}
         self.proxy_runs: dict[str, ProxyRuntimeRun] = {}
         self.proxy_artifacts: dict[str, ProxyArtifactRef] = {}
@@ -968,6 +968,26 @@ async def output_view_handler(request: web.Request) -> web.StreamResponse:
         output_response = await _state(request).client.fetch_output(
             params,
             request_headers=_output_request_headers(request),
+        )
+    except aiohttp.ClientResponseError as exc:
+        if exc.status == 404:
+            return web.json_response(
+                {
+                    "error": "output_not_found",
+                    "message": "ComfyUI no longer has this output artifact.",
+                    "filename": filename,
+                    "type": params["type"],
+                },
+                status=404,
+            )
+        state = _state(request)
+        return web.json_response(
+            {
+                "error": "comfyui_unavailable",
+                "message": str(exc),
+                "comfy_url": state.config.comfy_url,
+            },
+            status=502,
         )
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)

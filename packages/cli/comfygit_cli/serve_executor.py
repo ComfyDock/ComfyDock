@@ -286,8 +286,9 @@ class ComfyUIClient:
 class LocalComfyExecutor:
     """Run contract prompts against the configured local ComfyUI HTTP API."""
 
-    def __init__(self, client: ComfyUIClient) -> None:
+    def __init__(self, client: ComfyUIClient, *, artifact_dir: Path | None = None) -> None:
         self._client = client
+        self._artifact_dir = artifact_dir
 
     async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
         _stamp_output_cache_busters(request.prompt, request.outputs, request.cache_token)
@@ -323,6 +324,14 @@ class LocalComfyExecutor:
         extracted_outputs = extract_contract_outputs(outputs, history)
         output_payloads = [_contract_output_payload(output) for output in extracted_outputs]
         await _attach_artifact_dimensions(self._client, output_payloads)
+        if self._artifact_dir is not None:
+            await _localize_client_outputs(
+                self._client,
+                prompt_id,
+                output_payloads,
+                self._artifact_dir,
+                temp_only=True,
+            )
         return RunExecutionResult(status="completed", prompt_id=prompt_id, outputs=output_payloads)
 
     async def cancel(self, prompt_id: str) -> None:
@@ -536,26 +545,10 @@ class ProxyComfyExecutor:
                     artifact.get("filename"),
                     fallback=f"artifact_{output_index}_{artifact_index}{_extension_for_content_type(response.content_type)}",
                 )
-                ref = await self._write_local_artifact(prompt_id, filename, response.body)
+                ref = _write_local_artifact(self._artifact_dir, prompt_id, filename, response.body)
                 artifact["serve_artifact"] = ref
                 artifact["url"] = f"/outputs/view?serve_artifact={quote(ref, safe='/')}"
                 artifact["content_type"] = response.content_type
-
-    async def _write_local_artifact(self, prompt_id: str, filename: str, body: bytes) -> str:
-        safe_prompt_id = _safe_artifact_path_segment(prompt_id) or f"prompt_{uuid.uuid4().hex}"
-        safe_filename = _safe_artifact_filename(filename)
-        target_dir = self._artifact_dir / safe_prompt_id
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / safe_filename
-        if target_path.exists():
-            stem = target_path.stem
-            suffix = target_path.suffix
-            target_path = target_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
-            safe_filename = target_path.name
-        temp_path = target_path.with_name(f".{target_path.name}.tmp")
-        temp_path.write_bytes(body)
-        temp_path.replace(target_path)
-        return f"{safe_prompt_id}/{safe_filename}"
 
     def _headers(self) -> dict[str, str]:
         if not self._token:
@@ -756,6 +749,39 @@ async def _attach_artifact_dimensions(client: ComfyUIClient, outputs: list[dict[
             artifact["width"], artifact["height"] = dimensions
 
 
+async def _localize_client_outputs(
+    client: ComfyUIClient,
+    prompt_id: str,
+    outputs: list[dict[str, Any]],
+    artifact_dir: Path,
+    *,
+    temp_only: bool,
+) -> None:
+    for output_index, output in enumerate(outputs):
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        for artifact_index, artifact in enumerate(artifacts):
+            if not isinstance(artifact, dict):
+                continue
+            if artifact.get("serve_artifact"):
+                continue
+            if temp_only and str(artifact.get("type") or "").lower() != "temp":
+                continue
+            try:
+                response = await client.fetch_output(_artifact_view_params(artifact))
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+                continue
+            filename = _safe_artifact_filename(
+                artifact.get("filename"),
+                fallback=f"artifact_{output_index}_{artifact_index}{_extension_for_content_type(response.content_type)}",
+            )
+            ref = _write_local_artifact(artifact_dir, prompt_id, filename, response.body)
+            artifact["serve_artifact"] = ref
+            artifact["url"] = f"/outputs/view?serve_artifact={quote(ref, safe='/')}"
+            artifact["content_type"] = response.content_type
+
+
 async def _image_dimensions_from_artifact(
     client: ComfyUIClient,
     params: Mapping[str, str],
@@ -937,6 +963,23 @@ def _safe_artifact_filename(value: Any, *, fallback: str = "artifact.bin") -> st
 
 def _safe_artifact_path_segment(value: Any) -> str:
     return "".join(char for char in str(value or "") if char.isalnum() or char in {"-", "_"})
+
+
+def _write_local_artifact(artifact_dir: Path, prompt_id: str, filename: str, body: bytes) -> str:
+    safe_prompt_id = _safe_artifact_path_segment(prompt_id) or f"prompt_{uuid.uuid4().hex}"
+    safe_filename = _safe_artifact_filename(filename)
+    target_dir = artifact_dir / safe_prompt_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / safe_filename
+    if target_path.exists():
+        stem = target_path.stem
+        suffix = target_path.suffix
+        target_path = target_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+        safe_filename = target_path.name
+    temp_path = target_path.with_name(f".{target_path.name}.tmp")
+    temp_path.write_bytes(body)
+    temp_path.replace(target_path)
+    return f"{safe_prompt_id}/{safe_filename}"
 
 
 def _extension_for_content_type(content_type: str) -> str:

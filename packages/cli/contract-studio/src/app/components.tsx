@@ -37,10 +37,14 @@ export function Media({
   item,
   muted = false,
   autoPlay = false,
+  pauseWhenNotAutoPlaying = false,
+  resetOnAutoPlay = true,
 }: {
   item: { url?: string; type?: string; filename?: string; outputName?: string; error?: string; artifact?: unknown };
   muted?: boolean;
   autoPlay?: boolean;
+  pauseWhenNotAutoPlaying?: boolean;
+  resetOnAutoPlay?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -53,16 +57,21 @@ export function Media({
   }, [item.url]);
 
   useEffect(() => {
-    if (!autoPlay || !item.url || (item.type !== "video" && item.type !== "audio")) return;
+    if (!item.url || (item.type !== "video" && item.type !== "audio")) return;
     const element = item.type === "video" ? videoRef.current : audioRef.current;
     if (!element) return;
+
+    if (!autoPlay) {
+      if (pauseWhenNotAutoPlaying) element.pause();
+      return;
+    }
 
     const playMedia = () => {
       const playResult = element.play();
       if (playResult) void playResult.catch(() => undefined);
     };
 
-    element.currentTime = 0;
+    if (resetOnAutoPlay) element.currentTime = 0;
     if (element.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
       playMedia();
       return;
@@ -70,7 +79,7 @@ export function Media({
 
     element.addEventListener("canplay", playMedia, { once: true });
     return () => element.removeEventListener("canplay", playMedia);
-  }, [autoPlay, item.type, item.url]);
+  }, [autoPlay, item.type, item.url, pauseWhenNotAutoPlaying, resetOnAutoPlay]);
 
   if (!item.url || failed) {
     return (
@@ -89,7 +98,8 @@ export function Media({
         controls={!muted}
         muted={muted}
         loop
-        autoPlay={autoPlay || muted}
+        autoPlay={autoPlay}
+        playsInline
         preload="metadata"
         draggable={false}
         onLoadedData={() => setLoaded(true)}
