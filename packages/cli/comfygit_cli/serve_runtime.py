@@ -8,11 +8,12 @@ import json
 import secrets
 import subprocess
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from aiohttp import web
@@ -31,6 +32,8 @@ from .serve_executor import (
     RunExecutionRequest,
     RunExecutor,
     StagedUpload,
+    _safe_artifact_filename,
+    _write_local_artifact,
     artifact_dimensions,
     output_kind,
     workflow_contract_output_from_payload,
@@ -103,6 +106,8 @@ class ServeConfig:
     executor: str = "local"
     proxy_url: str | None = None
     proxy_token: str | None = None
+    callback_url: str | None = None
+    callback_token: str | None = None
     artifact_dir: Path | None = None
 
 
@@ -142,11 +147,27 @@ class ProxyRuntimeRun:
     outputs: tuple[Any, ...]
     raw_result: dict[str, Any]
     error: str | None = None
+    callback: ProxyCallbackTarget | None = None
 
 
 @dataclass(frozen=True)
 class ProxyArtifactRef:
     params: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ProxyCallbackTarget:
+    run_id: str
+    url: str
+    token: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkerCallbackUpload:
+    field_name: str
+    filename: str
+    content_type: str
+    body: bytes
 
 
 class ServeState:
@@ -213,6 +234,8 @@ async def _serve_environment_async(env: Environment, config: ServeConfig) -> Non
                 print(f"ComfyUI API target: {config.comfy_url}")
                 if config.executor == "proxy":
                     print(f"Proxy runtime target: {config.proxy_url}")
+                    if config.callback_url:
+                        print(f"Worker callback base URL: {config.callback_url}")
                 print(f"Serve state: {config.state} ({'persistent' if state.state_store.persistent else 'ephemeral'})")
             print("Press Ctrl+C to stop.")
             try:
@@ -245,6 +268,7 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/runs", runs_handler)
     app.router.add_get("/runs/{run_id}", single_run_handler)
     app.router.add_post("/runs/{run_id}/cancel", cancel_run_handler)
+    app.router.add_post("/worker-callback/runs/{run_id}", worker_callback_handler)
     app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
@@ -620,6 +644,7 @@ async def proxy_run_create_handler(request: web.Request) -> web.Response:
         timeout_seconds = float(payload.get("timeout_seconds", state.config.run_timeout_seconds))
         poll_interval_seconds = float(payload.get("poll_interval_seconds", 1))
         cache_token = str(payload.get("cache_token") or uuid.uuid4().hex[:10])
+        callback = _proxy_callback_target(payload.get("callback"))
 
         async def record_submitted(prompt_id: str) -> None:
             state.proxy_runs[prompt_id] = ProxyRuntimeRun(
@@ -627,6 +652,7 @@ async def proxy_run_create_handler(request: web.Request) -> web.Response:
                 status="submitted",
                 outputs=outputs,
                 raw_result={"status": "submitted", "prompt_id": prompt_id},
+                callback=callback,
             )
 
         execution = await state.executor.execute(
@@ -647,6 +673,7 @@ async def proxy_run_create_handler(request: web.Request) -> web.Response:
                 outputs,
                 timeout_seconds=timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
+                callback=callback,
             )
         )
         _track_proxy_task(state, task)
@@ -963,6 +990,105 @@ async def cancel_run_handler(request: web.Request) -> web.Response:
     return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session)
 
 
+async def worker_callback_handler(request: web.Request) -> web.Response:
+    auth_response = _worker_callback_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    state = _state(request)
+    route_run_id = request.match_info["run_id"]
+    try:
+        payload, uploads = await _read_worker_callback_request(request)
+    except ValueError as exc:
+        return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
+
+    payload_run_id = payload.get("run_id")
+    if payload_run_id is not None and payload_run_id != route_run_id:
+        return web.json_response(
+            {"error": "bad_request", "message": "Callback run_id does not match route run_id."},
+            status=400,
+        )
+    run = state.state_store.get_run_record(route_run_id)
+    if run is None:
+        return web.json_response({"error": "not_found", "message": "Unknown coordinator run."}, status=404)
+
+    status = str(payload.get("status") or "").lower()
+    if run.status in TERMINAL_RUN_STATUSES and status in TERMINAL_RUN_STATUSES:
+        session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        return web.json_response({"status": run.status, "duplicate": True, **_callback_run_snapshot(state, session, run.run_id)})
+    if status == "running":
+        slots = _output_slots_for_callback_run(state, run)
+        _record_worker_running_callback(state, run, payload, slots)
+        session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        return web.json_response({"status": "running", **_callback_run_snapshot(state, session, run.run_id)})
+    if status == "completed":
+        outputs = payload.get("outputs")
+        if not isinstance(outputs, list):
+            return web.json_response(
+                {"error": "bad_request", "message": "Completed callback payload must include outputs."},
+                status=400,
+            )
+        slots = _output_slots_for_callback_run(state, run)
+        output_payloads = _localize_worker_callback_outputs(
+            state,
+            str(payload.get("prompt_id") or run.prompt_id or run.run_id),
+            [dict(output) for output in outputs if isinstance(output, Mapping)],
+            uploads,
+        )
+        response = {
+            "status": "completed",
+            "run_id": run.run_id,
+            "prompt_id": str(payload.get("prompt_id") or run.prompt_id or ""),
+            "issues": payload.get("issues") if isinstance(payload.get("issues"), list) else [],
+            "outputs": output_payloads,
+        }
+        session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        _record_completed_run_response(
+            state,
+            session,
+            workflow_name=run.workflow,
+            contract_name=run.contract,
+            inputs=run.inputs,
+            response=response,
+            output_slots=slots,
+            created_at=run.created_at,
+        )
+        return web.json_response({"status": "completed", **_callback_run_snapshot(state, session, run.run_id)})
+
+    if status in {"error", "failed", "timeout", "cancelled"}:
+        slots = _output_slots_for_callback_run(state, run)
+        error_payload = dict(payload)
+        error_payload.setdefault("status", "error" if status != "cancelled" else "cancelled")
+        error_payload.setdefault("run_id", run.run_id)
+        error_payload.setdefault("prompt_id", run.prompt_id)
+        if status == "cancelled":
+            state.state_store.cancel_run(
+                run.scope_key,
+                run.run_id,
+                raw_result=error_payload,
+                error=str(error_payload.get("message") or "Generation cancelled."),
+            )
+        else:
+            _record_failed_run(
+                state,
+                ServeSession(session_id=run.session_id, scope_key=run.scope_key),
+                run.workflow,
+                run.contract,
+                {"inputs": run.inputs},
+                error_payload,
+                run_id=run.run_id,
+                prompt_id=str(error_payload.get("prompt_id") or run.prompt_id or "") or None,
+                output_slots=slots,
+                created_at=run.created_at,
+            )
+        session = ServeSession(session_id=run.session_id, scope_key=run.scope_key)
+        return web.json_response({"status": error_payload["status"], **_callback_run_snapshot(state, session, run.run_id)})
+
+    return web.json_response(
+        {"error": "bad_request", "message": "Callback status must be running, completed, error, failed, timeout, or cancelled."},
+        status=400,
+    )
+
+
 def _cancelled_run_payload(state: ServeState, session: ServeSession, run_id: str) -> dict[str, Any]:
     return {
         "status": "cancelled",
@@ -971,6 +1097,172 @@ def _cancelled_run_payload(state: ServeState, session: ServeSession, run_id: str
         "output_slots": state.state_store.list_output_slots(session.scope_key, run_id),
         "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
     }
+
+
+def _worker_callback_url(state: ServeState, run_id: str, *, wait: bool) -> str | None:
+    if wait or state.config.executor != "proxy":
+        return None
+    base_url = getattr(state.config, "callback_url", None)
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/worker-callback/runs/{run_id}"
+
+
+def _callback_auth_token(state: ServeState) -> str | None:
+    token = getattr(state.config, "callback_token", None) or getattr(state.config, "proxy_token", None)
+    return str(token) if token else None
+
+
+def _worker_callback_auth_response(request: web.Request) -> web.Response | None:
+    token = _callback_auth_token(_state(request))
+    if not token:
+        return None
+    expected = f"Bearer {token}"
+    received = request.headers.get(PROXY_AUTH_HEADER, "")
+    if secrets.compare_digest(received, expected):
+        return None
+    return web.json_response({"error": "forbidden", "message": "Worker callback token is invalid."}, status=403)
+
+
+async def _read_worker_callback_request(
+    request: web.Request,
+) -> tuple[dict[str, Any], dict[str, WorkerCallbackUpload]]:
+    if not request.content_type.lower().startswith("multipart/"):
+        return await _read_json_body(request), {}
+
+    reader = await request.multipart()
+    payload: dict[str, Any] | None = None
+    uploads: dict[str, WorkerCallbackUpload] = {}
+    while raw_part := await reader.next():
+        if not isinstance(raw_part, aiohttp.BodyPartReader):
+            raise ValueError("Nested multipart callback uploads are not supported.")
+        part = raw_part
+        if part.name == "payload":
+            try:
+                payload_data = json.loads(await part.text())
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid callback payload JSON: {exc}") from exc
+            if not isinstance(payload_data, dict):
+                raise ValueError("Callback payload must be a JSON object.")
+            payload = payload_data
+            continue
+        field_name = str(part.name or "")
+        if not field_name:
+            raise ValueError("Callback upload part is missing a field name.")
+        uploads[field_name] = WorkerCallbackUpload(
+            field_name=field_name,
+            filename=_safe_artifact_filename(part.filename, fallback=f"{field_name}.bin"),
+            content_type=part.headers.get("Content-Type") or DEFAULT_UPLOAD_CONTENT_TYPE,
+            body=await part.read(),
+        )
+
+    if payload is None:
+        raise ValueError("Worker callback request is missing a payload field.")
+    return payload, uploads
+
+
+def _callback_run_snapshot(state: ServeState, session: ServeSession, run_id: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "run": state.state_store.get_run(session.scope_key, run_id),
+        "output_slots": state.state_store.list_output_slots(session.scope_key, run_id),
+        "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
+    }
+
+
+def _output_slots_for_callback_run(state: ServeState, run: ServeRunRecord) -> list[ServeRunOutputSlot]:
+    slots = [_output_slot_from_public_dict(run, slot) for slot in state.state_store.list_output_slots(run.scope_key, run.run_id)]
+    if slots:
+        return slots
+    outputs = _contract_outputs_for_run(state, run.workflow, run.contract) or ()
+    return _output_slots_for_run(
+        run_id=run.run_id,
+        session=ServeSession(session_id=run.session_id, scope_key=run.scope_key),
+        workflow_name=run.workflow,
+        contract_name=run.contract,
+        outputs=outputs,
+        prompt_id=run.prompt_id,
+        inputs=run.inputs,
+    )
+
+
+def _output_slot_from_public_dict(run: ServeRunRecord, payload: Mapping[str, Any]) -> ServeRunOutputSlot:
+    raw_result = payload.get("rawResult")
+    return ServeRunOutputSlot(
+        slot_id=str(payload.get("slot_id") or payload.get("slotId") or f"slot_{run.run_id}_0_result"),
+        run_id=run.run_id,
+        session_id=run.session_id,
+        scope_key=run.scope_key,
+        workflow=run.workflow,
+        contract=run.contract,
+        output_name=str(payload.get("outputName") or "result"),
+        output_type=_slot_output_type(str(payload.get("type") or "json")),
+        status=str(payload.get("status") or "pending"),
+        prompt_id=str(payload.get("promptId") or run.prompt_id or "") or None,
+        width=_optional_positive_int(payload.get("width")),
+        height=_optional_positive_int(payload.get("height")),
+        error=str(payload.get("error")) if payload.get("error") is not None else None,
+        raw_result={str(key): value for key, value in raw_result.items()} if isinstance(raw_result, Mapping) else None,
+        created_at=str(payload.get("createdAt") or run.created_at),
+        updated_at=str(payload.get("updatedAt") or run.updated_at),
+    )
+
+
+def _record_worker_running_callback(
+    state: ServeState,
+    run: ServeRunRecord,
+    payload: Mapping[str, Any],
+    slots: list[ServeRunOutputSlot],
+) -> None:
+    prompt_id = str(payload.get("prompt_id") or run.prompt_id or "") or None
+    raw_result = {"status": "running", "run_id": run.run_id, **dict(payload)}
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=run.run_id,
+            session_id=run.session_id,
+            scope_key=run.scope_key,
+            workflow=run.workflow,
+            contract=run.contract,
+            status="running",
+            inputs=run.inputs,
+            prompt_id=prompt_id,
+            raw_result=raw_result,
+            created_at=run.created_at,
+        )
+    )
+    state.state_store.record_output_slots(
+        [_copy_output_slot(slot, status="running", prompt_id=prompt_id, raw_result=raw_result) for slot in slots]
+    )
+
+
+def _localize_worker_callback_outputs(
+    state: ServeState,
+    prompt_id: str,
+    outputs: list[dict[str, Any]],
+    uploads: Mapping[str, WorkerCallbackUpload],
+) -> list[dict[str, Any]]:
+    output_payloads = [dict(output) for output in outputs]
+    for output_index, output in enumerate(output_payloads):
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        for artifact_index, artifact in enumerate(artifacts):
+            if not isinstance(artifact, dict):
+                continue
+            field_name = str(artifact.get("upload_field") or f"artifact_{output_index}_{artifact_index}")
+            upload = uploads.get(field_name)
+            if upload is None:
+                continue
+            filename = _safe_artifact_filename(
+                artifact.get("filename") or upload.filename,
+                fallback=upload.filename,
+            )
+            ref = _write_local_artifact(state.artifact_dir, prompt_id, filename, upload.body)
+            artifact["serve_artifact"] = ref
+            artifact["url"] = f"/outputs/view?serve_artifact={quote(ref, safe='/')}"
+            artifact["content_type"] = upload.content_type
+            artifact.pop("upload_field", None)
+    return output_payloads
 
 
 async def run_contract_handler(request: web.Request) -> web.Response:
@@ -1233,6 +1525,23 @@ def _track_proxy_task(state: ServeState, task: asyncio.Task[Any]) -> None:
     task.add_done_callback(state.background_tasks.discard)
 
 
+def _proxy_callback_target(value: Any) -> ProxyCallbackTarget | None:
+    if not isinstance(value, Mapping):
+        return None
+    run_id = value.get("run_id")
+    url = value.get("url")
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("Proxy callback payload is missing a run_id.")
+    if not isinstance(url, str) or not url:
+        raise ValueError("Proxy callback payload is missing a url.")
+    token = value.get("token")
+    return ProxyCallbackTarget(
+        run_id=run_id,
+        url=url,
+        token=str(token) if token else None,
+    )
+
+
 async def _complete_proxy_runtime_run(
     state: ServeState,
     prompt_id: str,
@@ -1240,12 +1549,14 @@ async def _complete_proxy_runtime_run(
     *,
     timeout_seconds: float,
     poll_interval_seconds: float,
+    callback: ProxyCallbackTarget | None = None,
 ) -> None:
     record = state.proxy_runs.get(prompt_id)
     if record is None:
         return
     record.status = "running"
     record.raw_result = {"status": "running", "prompt_id": prompt_id}
+    await _post_worker_status_callback(callback, {"status": "running", "run_id": callback.run_id, "prompt_id": prompt_id} if callback else {})
     try:
         execution = await state.executor.complete_submitted(
             prompt_id,
@@ -1254,45 +1565,46 @@ async def _complete_proxy_runtime_run(
             poll_interval_seconds=poll_interval_seconds,
         )
     except ComfyGitServeTimeoutError as exc:
-        _record_proxy_run_error(record, {"error": "timeout", "message": str(exc), "prompt_id": prompt_id})
+        payload = {"error": "timeout", "message": str(exc), "prompt_id": prompt_id}
+        _record_proxy_run_error(record, payload)
+        await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
     except ComfyUIRequestError as exc:
-        _record_proxy_run_error(
-            record,
-            {
-                "error": "comfyui_rejected_request",
-                "message": str(exc),
-                "comfy_status": exc.status,
-                "comfy_url": exc.url,
-                "comfyui": exc.payload,
-                "prompt_id": prompt_id,
-            },
-        )
+        payload = {
+            "error": "comfyui_rejected_request",
+            "message": str(exc),
+            "comfy_status": exc.status,
+            "comfy_url": exc.url,
+            "comfyui": exc.payload,
+            "prompt_id": prompt_id,
+        }
+        _record_proxy_run_error(record, payload)
+        await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
     except ComfyUIExecutionError as exc:
-        _record_proxy_run_error(
-            record,
-            {
-                "error": "comfyui_execution_failed",
-                "message": str(exc),
-                "prompt_id": exc.prompt_id,
-                "comfyui": exc.payload,
-            },
-        )
+        payload = {
+            "error": "comfyui_execution_failed",
+            "message": str(exc),
+            "prompt_id": exc.prompt_id,
+            "comfyui": exc.payload,
+        }
+        _record_proxy_run_error(record, payload)
+        await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-        _record_proxy_run_error(
-            record,
-            {
-                "error": "comfyui_unavailable",
-                "message": str(exc),
-                "comfy_url": state.config.comfy_url,
-                "prompt_id": prompt_id,
-            },
-        )
+        payload = {
+            "error": "comfyui_unavailable",
+            "message": str(exc),
+            "comfy_url": state.config.comfy_url,
+            "prompt_id": prompt_id,
+        }
+        _record_proxy_run_error(record, payload)
+        await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
     except Exception as exc:
-        _record_proxy_run_error(record, {"error": "internal_error", "message": str(exc), "prompt_id": prompt_id})
+        payload = {"error": "internal_error", "message": str(exc), "prompt_id": prompt_id}
+        _record_proxy_run_error(record, payload)
+        await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
 
     output_payloads = _register_proxy_artifacts(state, execution.outputs)
@@ -1302,6 +1614,133 @@ async def _complete_proxy_runtime_run(
         "prompt_id": execution.prompt_id,
         "outputs": output_payloads,
     }
+    if callback is not None:
+        try:
+            callback_outputs, uploads = await _worker_callback_outputs_and_uploads(state, execution.outputs)
+            await _post_worker_completion_callback(
+                callback,
+                {
+                    "status": "completed",
+                    "run_id": callback.run_id,
+                    "prompt_id": execution.prompt_id,
+                    "outputs": callback_outputs,
+                },
+                uploads,
+            )
+        except Exception as exc:
+            _record_proxy_run_error(
+                record,
+                {
+                    "error": "callback_failed",
+                    "message": str(exc),
+                    "prompt_id": execution.prompt_id,
+                },
+            )
+
+
+async def _post_worker_status_callback(callback: ProxyCallbackTarget | None, payload: Mapping[str, Any]) -> None:
+    if callback is None:
+        return
+    await _post_worker_callback_request(callback, json_payload=dict(payload))
+
+
+async def _post_worker_completion_callback(
+    callback: ProxyCallbackTarget,
+    payload: Mapping[str, Any],
+    uploads: list[WorkerCallbackUpload],
+) -> None:
+    headers = _worker_callback_headers(callback)
+    if not uploads:
+        await _post_worker_callback_request(callback, json_payload=dict(payload))
+        return
+
+    def build_form() -> aiohttp.FormData:
+        form = aiohttp.FormData()
+        form.add_field("payload", json.dumps(dict(payload)), content_type="application/json")
+        for upload in uploads:
+            form.add_field(
+                upload.field_name,
+                upload.body,
+                filename=upload.filename,
+                content_type=upload.content_type,
+            )
+        return form
+
+    await _post_worker_callback_request(callback, data_factory=build_form, headers=headers, timeout_seconds=120)
+
+
+async def _post_worker_callback_request(
+    callback: ProxyCallbackTarget,
+    *,
+    json_payload: dict[str, Any] | None = None,
+    data_factory: Callable[[], aiohttp.FormData] | None = None,
+    headers: Mapping[str, str] | None = None,
+    timeout_seconds: float = 30,
+) -> None:
+    request_headers = dict(headers or _worker_callback_headers(callback))
+    for attempt in range(20):
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                callback.url,
+                json=json_payload,
+                data=data_factory() if data_factory is not None else None,
+                headers=request_headers,
+                timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+            ) as response:
+                if response.status not in {404, 409} or attempt == 19:
+                    response.raise_for_status()
+                    return
+        await asyncio.sleep(0.25)
+
+
+def _worker_callback_headers(callback: ProxyCallbackTarget) -> dict[str, str]:
+    if not callback.token:
+        return {}
+    return {PROXY_AUTH_HEADER: f"Bearer {callback.token}"}
+
+
+async def _worker_callback_outputs_and_uploads(
+    state: ServeState,
+    outputs: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[WorkerCallbackUpload]]:
+    output_payloads = [dict(output) for output in outputs]
+    uploads: list[WorkerCallbackUpload] = []
+    for output_index, output in enumerate(output_payloads):
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        output_type = str(output.get("type") or "output")
+        for artifact_index, artifact in enumerate(artifacts):
+            if not isinstance(artifact, dict):
+                continue
+            filename = str(artifact.get("filename") or "")
+            if not filename:
+                continue
+            response = await state.client.fetch_output(
+                {
+                    "filename": filename,
+                    "subfolder": str(artifact.get("subfolder") or ""),
+                    "type": str(artifact.get("type") or "output"),
+                },
+                request_headers={},
+            )
+            field_name = f"artifact_{output_index}_{artifact_index}"
+            safe_filename = _safe_artifact_filename(
+                filename,
+                fallback=f"{field_name}{_extension_for_content_type(response.content_type)}",
+            )
+            artifact["upload_field"] = field_name
+            artifact["content_type"] = response.content_type
+            artifact["kind"] = output_kind(output_type, safe_filename)
+            uploads.append(
+                WorkerCallbackUpload(
+                    field_name=field_name,
+                    filename=safe_filename,
+                    content_type=response.content_type,
+                    body=response.body,
+                )
+            )
+    return output_payloads, uploads
 
 
 def _record_proxy_run_error(record: ProxyRuntimeRun, payload: dict[str, Any]) -> None:
@@ -1472,6 +1911,8 @@ async def _run_contract(
         return payload
 
     run_id = f"run_{uuid.uuid4().hex}"
+    callback_url = _worker_callback_url(state, run_id, wait=wait)
+    callback_token = _callback_auth_token(state) if callback_url else None
 
     async def record_submitted(prompt_id: str) -> None:
         response = {
@@ -1504,6 +1945,9 @@ async def _run_contract(
             cache_token=uuid.uuid4().hex[:10],
             on_submitted=record_submitted,
             staged_uploads=prepared_contract.staged_uploads,
+            callback_run_id=run_id if callback_url else None,
+            callback_url=callback_url,
+            callback_token=callback_token,
         )
     )
 
@@ -1523,6 +1967,12 @@ async def _run_contract(
         inputs=inputs,
     )
     if execution.status != "completed":
+        if callback_url:
+            existing_run = state.state_store.get_run_record(run_id)
+            if existing_run is not None and existing_run.status != "submitted":
+                snapshot = _callback_run_snapshot(state, session, run_id)
+                snapshot["status"] = existing_run.status
+                return snapshot
         pending_items = _pending_gallery_items_for_slots(
             output_slots,
             inputs=inputs,
@@ -1532,6 +1982,8 @@ async def _run_contract(
         state.state_store.record_gallery_items(pending_items)
         response["output_slots"] = [slot.to_public_dict() for slot in output_slots]
         response["gallery_items"] = [item.to_public_dict() for item in pending_items]
+        if callback_url:
+            return response
         task = asyncio.create_task(
             _complete_submitted_run(
                 state,
@@ -1782,6 +2234,70 @@ async def _complete_submitted_run(
             )
         ]
     state.state_store.record_gallery_items(gallery_items)
+
+
+def _record_completed_run_response(
+    state: ServeState,
+    session: ServeSession,
+    *,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+    response: dict[str, Any],
+    output_slots: list[ServeRunOutputSlot],
+    created_at: str,
+) -> None:
+    prompt_id = str(response.get("prompt_id") or "") or None
+    state.state_store.record_run(
+        ServeRunRecord(
+            run_id=str(response.get("run_id") or ""),
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow=workflow_name,
+            contract=contract_name,
+            status="completed",
+            prompt_id=prompt_id,
+            inputs=_display_inputs(inputs),
+            raw_result=dict(response),
+            created_at=created_at,
+        )
+    )
+    resolved_slots = _resolved_output_slots_for_response(output_slots, response)
+    state.state_store.record_output_slots(resolved_slots)
+    gallery_items = _gallery_items_for_outputs(
+        run_id=str(response.get("run_id") or ""),
+        session=session,
+        workflow_name=workflow_name,
+        contract_name=contract_name,
+        inputs=inputs,
+        response=response,
+        output_slots=resolved_slots,
+        created_at=created_at,
+    )
+    gallery_items.extend(
+        _empty_gallery_items_for_slots(
+            resolved_slots,
+            existing_items=gallery_items,
+            inputs=inputs,
+            response=response,
+        )
+    )
+    if not gallery_items:
+        gallery_items = [
+            _json_gallery_item_for_completed_run(
+                run_id=str(response.get("run_id") or ""),
+                session=session,
+                workflow_name=workflow_name,
+                contract_name=contract_name,
+                inputs=inputs,
+                response=response,
+                item_id=_gallery_item_id_for_slot(resolved_slots[0]) if resolved_slots else f"gallery_{response.get('run_id')}",
+                slot_id=resolved_slots[0].slot_id if resolved_slots else None,
+                created_at=created_at,
+            )
+        ]
+    state.state_store.record_gallery_items(gallery_items)
+
 
 def _output_slots_for_run(
     *,

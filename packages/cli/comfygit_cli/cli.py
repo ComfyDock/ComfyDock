@@ -661,6 +661,14 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Bearer token shared by proxy front door and proxy runtime",
     )
     serve_parser.add_argument(
+        "--callback-url",
+        help="Browser/coordinator-reachable base URL that proxy workers call back after async runs",
+    )
+    serve_parser.add_argument(
+        "--callback-token",
+        help="Bearer token accepted by the front door worker-callback endpoint (defaults to --proxy-token)",
+    )
+    serve_parser.add_argument(
         "--artifact-dir",
         type=Path,
         help="Directory for localized proxy artifacts (default: <workspace>/.metadata/serve/artifacts)",

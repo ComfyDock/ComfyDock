@@ -75,6 +75,9 @@ class RunExecutionRequest:
     cache_token: str
     on_submitted: Callable[[str], Awaitable[None]] | None = None
     staged_uploads: tuple[StagedUpload, ...] = ()
+    callback_run_id: str | None = None
+    callback_url: str | None = None
+    callback_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +372,14 @@ class ProxyComfyExecutor:
             "cache_token": request.cache_token,
             "uploads": [_staged_upload_payload(upload, index) for index, upload in enumerate(request.staged_uploads)],
         }
+        if request.callback_run_id and request.callback_url:
+            callback_payload: dict[str, Any] = {
+                "run_id": request.callback_run_id,
+                "url": request.callback_url,
+            }
+            if request.callback_token:
+                callback_payload["token"] = request.callback_token
+            payload["callback"] = callback_payload
         response = await self._post_run(payload, request.staged_uploads)
         prompt_id = str(response.get("prompt_id") or "")
         if not prompt_id:

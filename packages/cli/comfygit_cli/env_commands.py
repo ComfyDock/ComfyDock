@@ -1027,6 +1027,8 @@ packages = []
             executor=args.executor,
             proxy_url=args.proxy_url,
             proxy_token=args.proxy_token,
+            callback_url=args.callback_url,
+            callback_token=args.callback_token,
             artifact_dir=args.artifact_dir,
         )
         try:

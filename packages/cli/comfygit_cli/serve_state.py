@@ -180,6 +180,9 @@ class ServeStateStore:
     def get_run(self, scope_key: str, run_id: str) -> dict[str, Any] | None:
         raise NotImplementedError
 
+    def get_run_record(self, run_id: str) -> ServeRunRecord | None:
+        raise NotImplementedError
+
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -230,6 +233,9 @@ class EphemeralServeStateStore(ServeStateStore):
         if run is None or run.scope_key != scope_key:
             return None
         return run.to_public_dict()
+
+    def get_run_record(self, run_id: str) -> ServeRunRecord | None:
+        return self.runs.get(run_id)
 
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         runs = [run for run in self.runs.values() if run.scope_key == scope_key]
@@ -403,6 +409,17 @@ class SQLiteServeStateStore(ServeStateStore):
             (scope_key, run_id),
         ).fetchone()
         return _run_from_row(row).to_public_dict() if row else None
+
+    def get_run_record(self, run_id: str) -> ServeRunRecord | None:
+        row = self.connection.execute(
+            """
+            SELECT *
+            FROM runs
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        return _run_from_row(row) if row else None
 
     def list_runs(self, scope_key: str, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         params: list[Any] = [scope_key]

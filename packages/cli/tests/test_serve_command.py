@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import aiohttp
 import pytest
 from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
@@ -101,6 +102,8 @@ def test_serve_parser_defaults() -> None:
     assert args.executor == "local"
     assert args.proxy_url is None
     assert args.proxy_token is None
+    assert args.callback_url is None
+    assert args.callback_token is None
     assert args.artifact_dir is None
 
 
@@ -134,6 +137,10 @@ def test_serve_parser_accepts_runtime_options() -> None:
             "http://127.0.0.1:9001",
             "--proxy-token",
             "secret-token",
+            "--callback-url",
+            "http://frontdoor.local:8791",
+            "--callback-token",
+            "callback-token",
             "--artifact-dir",
             "/tmp/comfygit-artifacts",
         ]
@@ -151,6 +158,8 @@ def test_serve_parser_accepts_runtime_options() -> None:
     assert args.executor == "proxy"
     assert args.proxy_url == "http://127.0.0.1:9001"
     assert args.proxy_token == "secret-token"
+    assert args.callback_url == "http://frontdoor.local:8791"
+    assert args.callback_token == "callback-token"
     assert str(args.artifact_dir) == "/tmp/comfygit-artifacts"
 
 
@@ -275,6 +284,10 @@ def test_serve_command_uses_proxy_executor_config(mock_serve, mock_workspace, tm
             "http://127.0.0.1:9001",
             "--proxy-token",
             "secret-token",
+            "--callback-url",
+            "http://frontdoor.local:8791",
+            "--callback-token",
+            "callback-token",
             "--artifact-dir",
             str(artifact_dir),
         ]
@@ -286,6 +299,8 @@ def test_serve_command_uses_proxy_executor_config(mock_serve, mock_workspace, tm
     assert called_config.executor == "proxy"
     assert called_config.proxy_url == "http://127.0.0.1:9001"
     assert called_config.proxy_token == "secret-token"
+    assert called_config.callback_url == "http://frontdoor.local:8791"
+    assert called_config.callback_token == "callback-token"
     assert called_config.artifact_dir == artifact_dir
 
 
@@ -315,11 +330,16 @@ async def test_proxy_comfy_executor_submits_upload_and_localizes_artifact(tmp_pa
         assert request.headers["Authorization"] == "Bearer secret-token"
         reader = await request.multipart()
         payload_part = await reader.next()
-        assert payload_part is not None
+        assert isinstance(payload_part, aiohttp.BodyPartReader)
         payload = json.loads(await payload_part.text())
         assert payload["uploads"][0]["comfyui_filename"] == "upload_source.png"
+        assert payload["callback"] == {
+            "run_id": "run_1",
+            "url": "http://frontdoor.local/worker-callback/runs/run_1",
+            "token": "callback-token",
+        }
         file_part = await reader.next()
-        assert file_part is not None
+        assert isinstance(file_part, aiohttp.BodyPartReader)
         assert file_part.name == "file_0"
         assert await file_part.read() == b"upload-bytes"
         return web.json_response({"status": "submitted", "prompt_id": "prompt_1"})
@@ -375,6 +395,9 @@ async def test_proxy_comfy_executor_submits_upload_and_localizes_artifact(tmp_pa
                     timeout_seconds=5,
                     poll_interval_seconds=0.01,
                     cache_token="cache1",
+                    callback_run_id="run_1",
+                    callback_url="http://frontdoor.local/worker-callback/runs/run_1",
+                    callback_token="callback-token",
                     staged_uploads=(
                         StagedUpload(
                             input_name="image",
@@ -481,6 +504,7 @@ async def test_proxy_runtime_app_submits_and_exposes_artifact(tmp_path) -> None:
             ) as response:
                 submitted = await response.json()
 
+            completed: dict[str, Any] = {}
             for _ in range(20):
                 async with session.get(f"{base_url}/proxy/runs/prompt_1") as response:
                     completed = await response.json()
@@ -496,6 +520,233 @@ async def test_proxy_runtime_app_submits_and_exposes_artifact(tmp_path) -> None:
         assert completed["status"] == "completed"
         assert completed["outputs"][0]["artifacts"][0]["url"] == f"/proxy/artifacts/{artifact_id}"
         assert artifact_body == b"artifact-bytes"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_runtime_app_pushes_callback_artifacts(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+        async def fetch_output(
+            self,
+            params: Mapping[str, str],
+            request_headers: Mapping[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params["filename"] == "out.png"
+            assert request_headers == {}
+            return ServeOutputResponse(body=b"artifact-bytes", content_type="image/png")
+
+    class FakeExecutor:
+        async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
+            assert request.wait is False
+            if request.on_submitted is not None:
+                await request.on_submitted("prompt_1")
+            return RunExecutionResult(status="submitted", prompt_id="prompt_1")
+
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            del timeout_seconds, poll_interval_seconds
+            assert prompt_id == "prompt_1"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {"filename": "out.png", "subfolder": "", "type": "output", "width": 32, "height": 16}
+                        ],
+                    }
+                ],
+            )
+
+        async def cancel(self, prompt_id: str) -> None:
+            raise AssertionError(f"Unexpected cancel for {prompt_id}")
+
+    callbacks: list[dict[str, Any]] = []
+    callback_files: dict[str, bytes] = {}
+
+    async def callback_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer callback-token"
+        if request.content_type.lower().startswith("multipart/"):
+            reader = await request.multipart()
+            payload_part = await reader.next()
+            assert isinstance(payload_part, aiohttp.BodyPartReader)
+            payload = json.loads(await payload_part.text())
+            callbacks.append(payload)
+            while part := await reader.next():
+                assert isinstance(part, aiohttp.BodyPartReader)
+                callback_files[str(part.name)] = await part.read()
+        else:
+            callbacks.append(await request.json())
+        return web.json_response({"ok": True})
+
+    callback_app = web.Application()
+    callback_app.router.add_post("/worker-callback/runs/{run_id}", callback_handler)
+    callback_base_url, callback_runner = await _with_app_server(callback_app)
+
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        executor=FakeExecutor(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.post(
+                f"{base_url}/proxy/runs",
+                json={
+                    "prompt": {"8": {"class_type": "SaveImage", "inputs": {}}},
+                    "outputs": [
+                        {"name": "save_image", "type": "image", "node_id": "8", "selector": "primary"}
+                    ],
+                    "timeout_seconds": 5,
+                    "poll_interval_seconds": 0.01,
+                    "callback": {
+                        "run_id": "run_1",
+                        "url": f"{callback_base_url}/worker-callback/runs/run_1",
+                        "token": "callback-token",
+                    },
+                },
+            ) as response:
+                submitted = await response.json()
+
+            for _ in range(20):
+                if any(callback.get("status") == "completed" for callback in callbacks):
+                    break
+                await asyncio.sleep(0.01)
+
+        completed = next(callback for callback in callbacks if callback.get("status") == "completed")
+        artifact = completed["outputs"][0]["artifacts"][0]
+        assert submitted == {"status": "submitted", "prompt_id": "prompt_1"}
+        assert any(callback.get("status") == "running" for callback in callbacks)
+        assert completed["run_id"] == "run_1"
+        assert artifact["upload_field"] == "artifact_0_0"
+        assert artifact["content_type"] == "image/png"
+        assert callback_files == {"artifact_0_0": b"artifact-bytes"}
+    finally:
+        await runner.cleanup()
+        await callback_runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_worker_callback_endpoint_records_uploaded_artifact(tmp_path) -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_save_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_1",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            executor="proxy",
+            proxy_token="secret-token",
+        ),
+        state_store=store,
+        artifact_dir=tmp_path / "artifacts",
+        background_tasks=set(),
+        active_run_tasks={},
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        form = aiohttp.FormData()
+        form.add_field(
+            "payload",
+            json.dumps(
+                {
+                    "status": "completed",
+                    "run_id": "run_1",
+                    "prompt_id": "prompt_1",
+                    "outputs": [
+                        {
+                            "name": "save_image",
+                            "type": "image",
+                            "node_id": "8",
+                            "selector": "primary",
+                            "artifacts": [
+                                {
+                                    "filename": "out.png",
+                                    "subfolder": "",
+                                    "type": "output",
+                                    "upload_field": "artifact_0_0",
+                                    "width": 32,
+                                    "height": 16,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        form.add_field("artifact_0_0", b"artifact-bytes", filename="out.png", content_type="image/png")
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session_client:
+            async with session_client.post(f"{base_url}/worker-callback/runs/run_1", data=form) as response:
+                payload = await response.json()
+
+        artifact = payload["gallery_items"][0]["artifact"]
+        assert response.status == 200
+        assert payload["status"] == "completed"
+        assert payload["run"]["status"] == "completed"
+        assert payload["output_slots"][0]["status"] == "done"
+        assert payload["gallery_items"][0]["status"] == "done"
+        assert artifact["serve_artifact"] == "prompt_1/out.png"
+        assert artifact["url"] == "/outputs/view?serve_artifact=prompt_1/out.png"
+        assert (tmp_path / "artifacts" / "prompt_1" / "out.png").read_bytes() == b"artifact-bytes"
     finally:
         await runner.cleanup()
 

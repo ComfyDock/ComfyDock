@@ -523,7 +523,7 @@ boolean based on the reported contract digest. Runtime `/proxy/health` returns
 its own `environment_ref`. A missing or mismatched ref is visible but does not
 block proxy execution.
 
-### CGSERVE-RUN-06E [PLANNED]: Front-door serve is the proxy coordinator
+### CGSERVE-RUN-06E [PARTIAL]: Front-door serve is the proxy coordinator
 Validation: MIXED
 
 For remote or serverless proxy execution, front-door serve should be the durable
@@ -540,13 +540,15 @@ but they should be treated as ephemeral worker state. Once the worker reports a
 terminal result to the front door and the front door persists that result, the
 worker may shut down without breaking gallery recovery.
 
-Current implementation: front-door serve already owns public run rows,
-output-slot rows, gallery rows, sessions, browser uploads, and localized
-artifacts. The current proxy runtime still stores proxy run status and proxy
-artifact ids in process memory while the front door polls it, so the callback
-coordinator protocol remains planned.
+Current implementation: front-door serve owns public run rows, output-slot rows,
+gallery rows, sessions, browser uploads, and localized artifacts. In callback
+mode it submits public `run_id` plus a callback URL/token to the runtime proxy,
+accepts worker lifecycle callbacks, and records terminal state in the
+front-door state store. The older polling protocol remains available as a
+fallback, so runtime proxy status and proxy artifact ids may still exist as
+process-local debug/fallback state.
 
-### CGSERVE-RUN-06F [PLANNED]: Proxy workers report status through authenticated callbacks
+### CGSERVE-RUN-06F [PARTIAL]: Proxy workers report status through authenticated callbacks
 Validation: MIXED
 
 The serverless-ready proxy protocol should allow the front door to submit a
@@ -564,11 +566,15 @@ Progress and heartbeat callbacks are advisory. They improve observability and
 allow the front door to mark stale workers as failed, but they are not portable
 manifest truth and must not replace the final terminal callback.
 
-Current implementation: proxy execution uses front-door polling against
-`GET /proxy/runs/{prompt_id}`. Authenticated worker-to-front-door callbacks,
-heartbeat handling, and terminal callback idempotency are planned.
+Current implementation: front-door serve can pass a callback URL, public
+`run_id`, declared outputs, staged input bytes, and scoped callback token to
+`cg serve --role proxy`. The runtime proxy posts authenticated `running`,
+`completed`, `error`, `failed`, `timeout`, or `cancelled` callbacks to the
+front door. Terminal callbacks are idempotent for durable run/gallery rows:
+duplicates do not create duplicate output slots or gallery items. Fine-grained
+heartbeat/progress callbacks and stale-worker timeout handling remain planned.
 
-### CGSERVE-RUN-06G [PLANNED]: Worker completion uploads artifacts to the front door first
+### CGSERVE-RUN-06G [PARTIAL]: Worker completion uploads artifacts to the front door first
 Validation: MIXED
 
 The first serverless worker completion path should let the runtime proxy upload
@@ -588,10 +594,14 @@ S3, R2, Modal volume/object storage, or another storage backend and report
 scoped artifact refs instead of uploading bytes directly to the front door, but
 the public Studio/API model should stay front-door-owned.
 
-Current implementation: the front door downloads completed artifacts from the
-runtime proxy's `/proxy/artifacts/{artifact_id}` endpoint after polling reports
-completion. Worker-pushed artifact upload and object-storage artifact refs are
-planned.
+Current implementation: in callback mode, the runtime proxy fetches generated
+ComfyUI output bytes from its local ComfyUI instance and uploads those bytes to
+the front-door callback endpoint as multipart artifact parts. The front door
+stores them under `.metadata/serve/artifacts/<prompt_id>/...`, rewrites artifact
+URLs to front-door `/outputs/view?serve_artifact=...`, and persists those
+localized refs in run, output-slot, and gallery records. Polling mode still
+downloads completed artifacts from `/proxy/artifacts/{artifact_id}`. Remote
+object-storage artifact refs remain planned.
 
 ## Runtime State And Gallery Persistence
 
@@ -862,16 +872,16 @@ ephemeral proxy URLs. Runtime proxy artifact ids and remote URLs may be retained
 inside raw result metadata for debugging, but they should not be the primary
 persisted gallery source of truth.
 
-Current implementation: the runtime proxy exposes generated artifact bytes under
-opaque `/proxy/artifacts/{artifact_id}` ids. The front-door proxy executor
-downloads those artifacts on completion, stores them under
-`.metadata/serve/artifacts/<prompt_id>/...`, rewrites artifact URLs to
-front-door `/outputs/view?serve_artifact=...`, and persists those localized refs
-in run, output-slot, and gallery records.
+Current implementation: the runtime proxy supports two localization paths. In
+polling mode it exposes generated artifact bytes under opaque
+`/proxy/artifacts/{artifact_id}` ids and the front-door proxy executor downloads
+those bytes on completion. In callback mode the worker uploads completed
+artifact bytes directly to the authenticated front-door callback endpoint. Both
+paths store artifacts under `.metadata/serve/artifacts/<prompt_id>/...`, rewrite
+artifact URLs to front-door `/outputs/view?serve_artifact=...`, and persist
+those localized refs in run, output-slot, and gallery records.
 
-Future direction: serverless workers should be able to push completed artifact
-bytes directly to authenticated front-door callback/upload endpoints instead of
-requiring the front door to fetch from a still-running proxy process. Object
-storage-backed workers may later return scoped storage refs, but durable gallery
-state should continue to point at front-door-owned refs after the front door has
-accepted and persisted the artifact metadata.
+Future direction: object-storage-backed workers may return scoped storage refs
+instead of pushing bytes directly, but durable gallery state should continue to
+point at front-door-owned refs after the front door has accepted and persisted
+the artifact metadata.
