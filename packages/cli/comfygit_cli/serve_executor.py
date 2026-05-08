@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import struct
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import aiohttp
+from comfygit_core.models.workflow_contract import WorkflowContractOutput
 from comfygit_core.services.workflow_execution import extract_contract_outputs
 
 OUTPUT_RESPONSE_HEADERS = (
@@ -21,6 +24,7 @@ OUTPUT_RESPONSE_HEADERS = (
     "last-modified",
 )
 COMFYUI_CLIENT_ID_PREFIX = "comfygit-serve"
+PROXY_AUTH_HEADER = "Authorization"
 
 
 class ComfyGitServeTimeoutError(Exception):
@@ -48,6 +52,18 @@ class ComfyUIExecutionError(Exception):
 
 
 @dataclass(frozen=True)
+class StagedUpload:
+    """A front-door uploaded file that must be staged into a runtime proxy."""
+
+    input_name: str
+    path: Path
+    filename: str
+    content_type: str
+    size: int | None
+    comfyui_filename: str
+
+
+@dataclass(frozen=True)
 class RunExecutionRequest:
     """A contract prompt ready to execute through a serve executor."""
 
@@ -58,6 +74,7 @@ class RunExecutionRequest:
     poll_interval_seconds: float
     cache_token: str
     on_submitted: Callable[[str], Awaitable[None]] | None = None
+    staged_uploads: tuple[StagedUpload, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -313,6 +330,239 @@ class LocalComfyExecutor:
         await self._client.interrupt_prompt(prompt_id)
 
 
+class ProxyComfyExecutor:
+    """Run contract prompts through a remote `cg serve --role proxy` runtime."""
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        session: aiohttp.ClientSession | None = None,
+        token: str | None = None,
+        artifact_dir: Path,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self._session = session
+        self._token = token
+        self._artifact_dir = artifact_dir
+
+    async def check_health(self) -> dict[str, Any]:
+        return await self._request_json("GET", "/proxy/health", timeout=5)
+
+    async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
+        _stamp_output_cache_busters(request.prompt, request.outputs, request.cache_token)
+        payload = {
+            "prompt": request.prompt,
+            "outputs": [_workflow_contract_output_payload(output) for output in request.outputs],
+            "wait": request.wait,
+            "timeout_seconds": request.timeout_seconds,
+            "poll_interval_seconds": request.poll_interval_seconds,
+            "cache_token": request.cache_token,
+            "uploads": [_staged_upload_payload(upload, index) for index, upload in enumerate(request.staged_uploads)],
+        }
+        response = await self._post_run(payload, request.staged_uploads)
+        prompt_id = str(response.get("prompt_id") or "")
+        if not prompt_id:
+            raise RuntimeError(f"Proxy runtime did not return a prompt_id: {response}")
+        if request.on_submitted is not None:
+            await request.on_submitted(prompt_id)
+        if not request.wait:
+            return RunExecutionResult(status=str(response.get("status") or "submitted"), prompt_id=prompt_id)
+        return await self.complete_submitted(
+            prompt_id,
+            request.outputs,
+            timeout_seconds=request.timeout_seconds,
+            poll_interval_seconds=request.poll_interval_seconds,
+        )
+
+    async def complete_submitted(
+        self,
+        prompt_id: str,
+        outputs: tuple[Any, ...],
+        *,
+        timeout_seconds: float,
+        poll_interval_seconds: float,
+    ) -> RunExecutionResult:
+        del outputs
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            payload = await self._request_json("GET", f"/proxy/runs/{prompt_id}", timeout=10)
+            status = str(payload.get("status") or "").lower()
+            if status == "completed":
+                output_payloads = [
+                    dict(output)
+                    for output in payload.get("outputs", [])
+                    if isinstance(output, Mapping)
+                ]
+                await self._localize_proxy_outputs(prompt_id, output_payloads)
+                return RunExecutionResult(status="completed", prompt_id=prompt_id, outputs=output_payloads)
+            if status in {"error", "failed"}:
+                message = str(payload.get("message") or payload.get("error") or "Proxy execution failed")
+                raise ComfyUIExecutionError(prompt_id, payload, message)
+            if status == "cancelled":
+                return RunExecutionResult(status="cancelled", prompt_id=prompt_id)
+            await asyncio.sleep(poll_interval_seconds)
+        raise ComfyGitServeTimeoutError(f"Timed out waiting for proxy prompt {prompt_id}")
+
+    async def cancel(self, prompt_id: str) -> None:
+        await self._request_json("POST", f"/proxy/runs/{prompt_id}/cancel", timeout=10)
+
+    async def _post_run(
+        self,
+        payload: Mapping[str, Any],
+        staged_uploads: tuple[StagedUpload, ...],
+    ) -> dict[str, Any]:
+        if not staged_uploads:
+            return await self._request_json("POST", "/proxy/runs", json_data=dict(payload), timeout=30)
+
+        form = aiohttp.FormData()
+        form.add_field("payload", json.dumps(payload), content_type="application/json")
+        handles = []
+        try:
+            for index, upload in enumerate(staged_uploads):
+                handle = upload.path.open("rb")
+                handles.append(handle)
+                form.add_field(
+                    f"file_{index}",
+                    handle,
+                    filename=upload.comfyui_filename,
+                    content_type=upload.content_type,
+                )
+            return await self._request_json("POST", "/proxy/runs", data=form, timeout=30)
+        finally:
+            for handle in handles:
+                handle.close()
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_data: dict[str, Any] | None = None,
+        data: aiohttp.FormData | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        request_timeout = aiohttp.ClientTimeout(total=timeout or 10)
+        headers = self._headers()
+        if self._session is not None:
+            return await self._request_json_with_session(
+                self._session,
+                method,
+                url,
+                json_data=json_data,
+                data=data,
+                headers=headers,
+                timeout=request_timeout,
+            )
+        async with aiohttp.ClientSession() as session:
+            return await self._request_json_with_session(
+                session,
+                method,
+                url,
+                json_data=json_data,
+                data=data,
+                headers=headers,
+                timeout=request_timeout,
+            )
+
+    async def _request_json_with_session(
+        self,
+        session: aiohttp.ClientSession,
+        method: str,
+        url: str,
+        *,
+        json_data: dict[str, Any] | None,
+        data: aiohttp.FormData | None,
+        headers: Mapping[str, str],
+        timeout: aiohttp.ClientTimeout,
+    ) -> dict[str, Any]:
+        async with session.request(
+            method,
+            url,
+            json=json_data,
+            data=data,
+            headers=headers,
+            timeout=timeout,
+        ) as response:
+            payload = await _response_payload(response)
+            if response.status >= 400:
+                raise ComfyUIRequestError(response.status, url, payload)
+        return payload if isinstance(payload, dict) else {}
+
+    async def _fetch_artifact(self, artifact_id: str) -> ServeOutputResponse:
+        url = f"{self.base_url}/proxy/artifacts/{quote(artifact_id, safe='')}"
+        request_timeout = aiohttp.ClientTimeout(total=60)
+        headers = self._headers()
+        if self._session is not None:
+            return await self._fetch_artifact_with_session(self._session, url, headers, request_timeout)
+        async with aiohttp.ClientSession() as session:
+            return await self._fetch_artifact_with_session(session, url, headers, request_timeout)
+
+    async def _fetch_artifact_with_session(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        headers: Mapping[str, str],
+        timeout: aiohttp.ClientTimeout,
+    ) -> ServeOutputResponse:
+        async with session.get(url, headers=headers, timeout=timeout) as response:
+            response.raise_for_status()
+            return ServeOutputResponse(
+                body=await response.read(),
+                content_type=response.headers.get("content-type") or "application/octet-stream",
+                disposition=response.headers.get("content-disposition"),
+                status=response.status,
+                headers={
+                    name: response.headers[name]
+                    for name in OUTPUT_RESPONSE_HEADERS
+                    if name in response.headers
+                },
+            )
+
+    async def _localize_proxy_outputs(self, prompt_id: str, outputs: list[dict[str, Any]]) -> None:
+        for output_index, output in enumerate(outputs):
+            artifacts = output.get("artifacts")
+            if not isinstance(artifacts, list):
+                continue
+            for artifact_index, artifact in enumerate(artifacts):
+                if not isinstance(artifact, dict):
+                    continue
+                artifact_id = str(artifact.get("proxy_artifact_id") or "")
+                if not artifact_id:
+                    continue
+                response = await self._fetch_artifact(artifact_id)
+                filename = _safe_artifact_filename(
+                    artifact.get("filename"),
+                    fallback=f"artifact_{output_index}_{artifact_index}{_extension_for_content_type(response.content_type)}",
+                )
+                ref = await self._write_local_artifact(prompt_id, filename, response.body)
+                artifact["serve_artifact"] = ref
+                artifact["url"] = f"/outputs/view?serve_artifact={quote(ref, safe='/')}"
+                artifact["content_type"] = response.content_type
+
+    async def _write_local_artifact(self, prompt_id: str, filename: str, body: bytes) -> str:
+        safe_prompt_id = _safe_artifact_path_segment(prompt_id) or f"prompt_{uuid.uuid4().hex}"
+        safe_filename = _safe_artifact_filename(filename)
+        target_dir = self._artifact_dir / safe_prompt_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / safe_filename
+        if target_path.exists():
+            stem = target_path.stem
+            suffix = target_path.suffix
+            target_path = target_dir / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+            safe_filename = target_path.name
+        temp_path = target_path.with_name(f".{target_path.name}.tmp")
+        temp_path.write_bytes(body)
+        temp_path.replace(target_path)
+        return f"{safe_prompt_id}/{safe_filename}"
+
+    def _headers(self) -> dict[str, str]:
+        if not self._token:
+            return {}
+        return {PROXY_AUTH_HEADER: f"Bearer {self._token}"}
+
+
 def _new_comfyui_client_id() -> str:
     return f"{COMFYUI_CLIENT_ID_PREFIX}-{uuid.uuid4().hex}"
 
@@ -463,6 +713,22 @@ def _contract_output_payload(output: Any) -> dict[str, Any]:
         artifacts.append(item)
     payload["artifacts"] = artifacts
     return payload
+
+
+def _workflow_contract_output_payload(output: Any) -> dict[str, Any]:
+    to_dict = getattr(output, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        return dict(payload) if isinstance(payload, Mapping) else {}
+    return {
+        key: value
+        for key in ("name", "type", "node_id", "display_name", "selector", "description")
+        if (value := getattr(output, key, None)) is not None
+    }
+
+
+def workflow_contract_output_from_payload(payload: Mapping[str, Any]) -> WorkflowContractOutput:
+    return WorkflowContractOutput.from_toml_dict(dict(payload))
 
 
 async def _attach_artifact_dimensions(client: ComfyUIClient, outputs: list[dict[str, Any]]) -> None:
@@ -648,3 +914,31 @@ def _artifact_view_params(artifact: Mapping[str, Any]) -> dict[str, str]:
         "subfolder": str(artifact.get("subfolder") or ""),
         "type": str(artifact.get("type") or "output"),
     }
+
+
+def _staged_upload_payload(upload: StagedUpload, index: int) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "field_name": f"file_{index}",
+        "input_name": upload.input_name,
+        "filename": upload.filename,
+        "comfyui_filename": upload.comfyui_filename,
+        "content_type": upload.content_type,
+    }
+    if upload.size is not None:
+        payload["size"] = upload.size
+    return payload
+
+
+def _safe_artifact_filename(value: Any, *, fallback: str = "artifact.bin") -> str:
+    raw = str(value or fallback).strip().replace("\\", "/").split("/")[-1]
+    safe = "".join(char for char in raw if char.isalnum() or char in {"-", "_", "."}).strip(" .")
+    return safe if safe and any(char.isalnum() for char in safe) else fallback
+
+
+def _safe_artifact_path_segment(value: Any) -> str:
+    return "".join(char for char in str(value or "") if char.isalnum() or char in {"-", "_"})
+
+
+def _extension_for_content_type(content_type: str) -> str:
+    extension = mimetypes.guess_extension(content_type.split(";", 1)[0].strip().lower())
+    return extension or ".bin"

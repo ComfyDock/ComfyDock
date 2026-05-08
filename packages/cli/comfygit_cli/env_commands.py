@@ -1023,6 +1023,11 @@ packages = []
             state=args.state,
             gallery=args.gallery,
             state_db=args.state_db,
+            role=args.role,
+            executor=args.executor,
+            proxy_url=args.proxy_url,
+            proxy_token=args.proxy_token,
+            artifact_dir=args.artifact_dir,
         )
         try:
             serve_environment(env, config)

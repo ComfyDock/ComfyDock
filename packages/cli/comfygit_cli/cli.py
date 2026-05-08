@@ -641,6 +641,31 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Running ComfyUI API URL (default: http://127.0.0.1:8188)",
     )
     serve_parser.add_argument(
+        "--role",
+        choices=["studio", "proxy"],
+        default="studio",
+        help="Serve role: studio front door or compute-only proxy runtime (default: studio)",
+    )
+    serve_parser.add_argument(
+        "--executor",
+        choices=["local", "proxy"],
+        default="local",
+        help="Execution adapter for studio role (default: local)",
+    )
+    serve_parser.add_argument(
+        "--proxy-url",
+        help="Proxy runtime base URL when --executor proxy is used",
+    )
+    serve_parser.add_argument(
+        "--proxy-token",
+        help="Bearer token shared by proxy front door and proxy runtime",
+    )
+    serve_parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Directory for localized proxy artifacts (default: <workspace>/.metadata/serve/artifacts)",
+    )
+    serve_parser.add_argument(
         "--max-request-mb",
         type=int,
         default=256,

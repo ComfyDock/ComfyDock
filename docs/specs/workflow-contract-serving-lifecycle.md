@@ -378,7 +378,7 @@ because cancellation is still polling-observed rather than event-streamed, the
 local executor relies on ComfyUI's prompt-id interrupt semantics, and shared
 multi-user cancellation policy is not yet configurable.
 
-### CGSERVE-RUN-06 [PLANNED]: Proxy execution is an optional future executor mode
+### CGSERVE-RUN-06 [PARTIAL]: Proxy execution is an optional executor mode
 Validation: HUMAN_REVIEW
 
 Future serve deployments may execute contracts through a Comfy runtime proxy
@@ -419,7 +419,16 @@ cg serve --role proxy --comfy-url http://127.0.0.1:8188 --proxy-token <token>
 implementation should keep ComfyUI launch and proxy serving independently
 testable.
 
-### CGSERVE-RUN-06A [PLANNED]: Runtime proxy mode is compute-only
+Current implementation: `cg serve` supports a studio front-door role with
+`--executor proxy --proxy-url <runtime-proxy-url>` and a compute-only runtime
+role with `--role proxy`. The front door keeps the public contract API, Studio,
+run rows, gallery rows, sessions, uploads, and localized artifact cache. The
+runtime proxy talks to its configured local ComfyUI instance and exposes only
+the proxy execution API. This remains partial because progress streaming,
+remote object storage, deployment auth policy beyond a shared bearer token, and
+launch sugar are not implemented.
+
+### CGSERVE-RUN-06A [PARTIAL]: Runtime proxy mode is compute-only
 Validation: HUMAN_REVIEW
 
 Runtime proxy mode should not expose the public Studio surface, contract browser,
@@ -440,7 +449,11 @@ GET  /proxy/artifacts/{artifact_id}
 The proxy may reuse local ComfyUI execution helpers internally, but its HTTP API
 is not ComfyUI's raw API and is not the user-facing ComfyGit contract API.
 
-### CGSERVE-RUN-06B [PLANNED]: Proxy executor preserves the public run model
+Current implementation: `cg serve --role proxy` exposes the minimal proxy API,
+does not mount the Studio static app or public gallery/contract endpoints, and
+can require a bearer token shared with the front-door proxy executor.
+
+### CGSERVE-RUN-06B [PARTIAL]: Proxy executor preserves the public run model
 Validation: MIXED
 
 `ProxyComfyExecutor` should conform to the same `RunExecutor` boundary as
@@ -455,7 +468,14 @@ as gallery truth. Provider ids, proxy ids, and remote artifact ids may be stored
 in `raw_result` for debugging, but public recovery and gallery behavior should
 continue to use serve-owned `run_id`, `slot_id`, and artifact refs.
 
-### CGSERVE-RUN-06C [PLANNED]: Local proxy mode is the first validation target
+Current implementation: `ProxyComfyExecutor` implements the `RunExecutor`
+boundary, submits prepared prompts and staged upload metadata to the proxy
+runtime, polls the proxy run status, maps completed proxy outputs back into the
+existing `RunExecutionResult` shape, and localizes proxy artifacts before serve
+records gallery state. Provider-specific ids remain debug metadata in raw
+results.
+
+### CGSERVE-RUN-06C [PARTIAL]: Local proxy mode is the first validation target
 Validation: TEST
 
 The first implementation should be testable without Modal, RunPod, S3, or R2 by
@@ -467,6 +487,12 @@ Studio/browser
       -> local runtime cg serve --role proxy
           -> local ComfyUI
 ```
+
+Current validation: the first implementation has focused tests for the proxy
+executor, proxy runtime app, CLI wiring, and upload staging. It has also been
+manually validated against the local `comfygit-workflow-corpus-dev` environment
+with a front-door serve process on `8791`, a runtime proxy serve process on
+`8792`, and ComfyUI on `8190`.
 
 This local proxy mode should validate the execution contract, staged uploads,
 remote artifact handoff, cancellation request shape, and error normalization
@@ -659,7 +685,7 @@ Object storage provider selection, presigned URL details, retention policy,
 multi-user isolation, and remote cache cleanup belong to serve/deployment
 adapters, not to core prompt-patching semantics.
 
-### CGSERVE-IN-05 [PLANNED]: Proxy execution stages uploads without exposing local paths
+### CGSERVE-IN-05 [PARTIAL]: Proxy execution stages uploads without exposing local paths
 Validation: MIXED
 
 For proxy execution, front-door serve should continue to own browser upload
@@ -678,6 +704,12 @@ Object storage-backed input staging remains a later adapter: the same staged
 upload record may eventually point to an S3/R2/Modal object ref instead of local
 bytes, but the public contract run payload should remain based on opaque file
 refs.
+
+Current implementation: front-door serve resolves browser `file_ref` values into
+server-side upload records, patches the workflow prompt with the generated
+ComfyUI filename, and sends matching staged file bytes to the runtime proxy as
+multipart fields on run submission. The runtime proxy writes those bytes into
+its configured ComfyUI input directory before queueing the prompt.
 
 ## Output Delivery
 
@@ -718,7 +750,7 @@ local output artifacts, serve turns those into scoped artifact refs or signed
 download URLs, and the hosted Studio consumes those refs rather than assuming
 direct filesystem or raw ComfyUI output access.
 
-### CGSERVE-OUT-03 [PLANNED]: Proxy outputs are localized before gallery persistence
+### CGSERVE-OUT-03 [PARTIAL]: Proxy outputs are localized before gallery persistence
 Validation: MIXED
 
 When `ProxyComfyExecutor` completes a run, front-door serve should copy or stream
@@ -734,3 +766,10 @@ rows should point at front-door serve-owned artifact refs, not directly at
 ephemeral proxy URLs. Runtime proxy artifact ids and remote URLs may be retained
 inside raw result metadata for debugging, but they should not be the primary
 persisted gallery source of truth.
+
+Current implementation: the runtime proxy exposes generated artifact bytes under
+opaque `/proxy/artifacts/{artifact_id}` ids. The front-door proxy executor
+downloads those artifacts on completion, stores them under
+`.metadata/serve/artifacts/<prompt_id>/...`, rewrites artifact URLs to
+front-door `/outputs/view?serve_artifact=...`, and persists those localized refs
+in run, output-slot, and gallery records.

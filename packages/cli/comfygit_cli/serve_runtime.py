@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 import uuid
 from collections.abc import Mapping
@@ -23,10 +24,14 @@ from .serve_executor import (
     ComfyUIClient,
     ComfyUIRequestError,
     LocalComfyExecutor,
+    PROXY_AUTH_HEADER,
+    ProxyComfyExecutor,
     RunExecutionRequest,
     RunExecutor,
     artifact_dimensions,
     output_kind,
+    StagedUpload,
+    workflow_contract_output_from_payload,
 )
 from .serve_state import (
     EphemeralServeStateStore,
@@ -89,6 +94,11 @@ class ServeConfig:
     state: str = "ephemeral"
     gallery: str = "private"
     state_db: Path | None = None
+    role: str = "studio"
+    executor: str = "local"
+    proxy_url: str | None = None
+    proxy_token: str | None = None
+    artifact_dir: Path | None = None
 
 
 @dataclass
@@ -114,6 +124,26 @@ class UploadRecord:
         return payload
 
 
+@dataclass(frozen=True)
+class PreparedContractInputs:
+    inputs: dict[str, Any]
+    staged_uploads: tuple[StagedUpload, ...] = ()
+
+
+@dataclass
+class ProxyRuntimeRun:
+    prompt_id: str
+    status: str
+    outputs: tuple[Any, ...]
+    raw_result: dict[str, Any]
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ProxyArtifactRef:
+    params: dict[str, str]
+
+
 class ServeState:
     """Shared state for request handlers."""
 
@@ -127,8 +157,21 @@ class ServeState:
         self.env = env
         self.config = config
         self.client = ComfyUIClient(config.comfy_url, session=session)
-        self.executor: RunExecutor = LocalComfyExecutor(self.client)
+        self.artifact_dir = _serve_artifact_dir(env, config)
+        if config.role == "studio" and config.executor == "proxy":
+            if not config.proxy_url:
+                raise ValueError("--proxy-url is required when --executor proxy is used.")
+            self.executor: RunExecutor = ProxyComfyExecutor(
+                config.proxy_url,
+                session=session,
+                token=config.proxy_token,
+                artifact_dir=self.artifact_dir,
+            )
+        else:
+            self.executor = LocalComfyExecutor(self.client)
         self.uploads: dict[str, UploadRecord] = {}
+        self.proxy_runs: dict[str, ProxyRuntimeRun] = {}
+        self.proxy_artifacts: dict[str, ProxyArtifactRef] = {}
         self.state_store = state_store or _create_state_store(env, config)
         self.background_tasks: set[asyncio.Task[Any]] = set()
         self.active_run_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -151,14 +194,21 @@ async def _serve_environment_async(env: Environment, config: ServeConfig) -> Non
     async with aiohttp.ClientSession() as session:
         state = ServeState(env, config, session)
         try:
-            app = create_app(state)
+            app = create_proxy_app(state) if config.role == "proxy" else create_app(state)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, config.host, config.port)
             await site.start()
             print(f"Serving ComfyGit environment '{env.name}' on http://{config.host}:{config.port}")
-            print(f"ComfyUI API target: {config.comfy_url}")
-            print(f"Serve state: {config.state} ({'persistent' if state.state_store.persistent else 'ephemeral'})")
+            print(f"Serve role: {config.role}")
+            if config.role == "proxy":
+                print(f"Proxy ComfyUI API target: {config.comfy_url}")
+            else:
+                print(f"Executor: {config.executor}")
+                print(f"ComfyUI API target: {config.comfy_url}")
+                if config.executor == "proxy":
+                    print(f"Proxy runtime target: {config.proxy_url}")
+                print(f"Serve state: {config.state} ({'persistent' if state.state_store.persistent else 'ephemeral'})")
             print("Press Ctrl+C to stop.")
             try:
                 await asyncio.Event().wait()
@@ -194,6 +244,20 @@ def create_app(state: ServeState) -> web.Application:
     app.router.add_get("/outputs/view", output_view_handler)
     app.router.add_get("/{tail:.*}", studio_index_handler)
     app.on_startup.append(_recover_active_runs_on_startup)
+    app.on_cleanup.append(_cleanup_background_tasks)
+    return app
+
+
+def create_proxy_app(state: ServeState) -> web.Application:
+    """Create the compute-only proxy runtime app for remote execution."""
+
+    app = web.Application(client_max_size=_max_request_bytes(state))
+    app[SERVE_STATE_KEY] = state
+    app.router.add_get("/proxy/health", proxy_health_handler)
+    app.router.add_post("/proxy/runs", proxy_run_create_handler)
+    app.router.add_get("/proxy/runs/{prompt_id}", proxy_run_status_handler)
+    app.router.add_post("/proxy/runs/{prompt_id}/cancel", proxy_run_cancel_handler)
+    app.router.add_get("/proxy/artifacts/{artifact_id}", proxy_artifact_handler)
     app.on_cleanup.append(_cleanup_background_tasks)
     return app
 
@@ -355,6 +419,21 @@ def _default_state_db_path(env: Environment) -> Path:
     return env_path / ".metadata" / "serve" / "serve.sqlite"
 
 
+def _serve_artifact_dir(env: Environment, config: ServeConfig) -> Path:
+    if config.artifact_dir is not None:
+        return config.artifact_dir
+    workspace_paths = getattr(env, "workspace_paths", None)
+    metadata_dir = getattr(workspace_paths, "metadata", None)
+    if metadata_dir is not None:
+        return Path(metadata_dir) / "serve" / "artifacts"
+    workspace = getattr(env, "workspace", None)
+    workspace_path = getattr(workspace, "path", None)
+    if workspace_path is not None:
+        return Path(workspace_path) / ".metadata" / "serve" / "artifacts"
+    env_path = Path(getattr(env, "path", "."))
+    return env_path / ".metadata" / "serve" / "artifacts"
+
+
 def _studio_static_dir() -> Path:
     return Path(str(resources.files("comfygit_cli").joinpath("contract_studio_static")))
 
@@ -385,6 +464,36 @@ async def health_handler(request: web.Request) -> web.Response:
         "ok": True,
         "environment": state.env.name,
         "comfy_url": state.config.comfy_url,
+        "executor": getattr(state.config, "executor", "local"),
+        "comfyui": {"available": False},
+    }
+    if getattr(state.config, "executor", "local") == "proxy" and isinstance(state.executor, ProxyComfyExecutor):
+        try:
+            proxy_health = await state.executor.check_health()
+            payload["proxy"] = proxy_health
+            payload["comfyui"] = proxy_health.get("comfyui", {"available": True})
+        except (ComfyUIRequestError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            payload["proxy"] = {"available": False, "error": str(exc)}
+            payload["comfyui"] = {"available": False, "error": str(exc)}
+        return web.json_response(payload)
+    try:
+        await state.client.check_health()
+        payload["comfyui"] = {"available": True}
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        payload["comfyui"] = {"available": False, "error": str(exc)}
+    return web.json_response(payload)
+
+
+async def proxy_health_handler(request: web.Request) -> web.Response:
+    auth_response = _proxy_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    state = _state(request)
+    payload: dict[str, Any] = {
+        "ok": True,
+        "role": "proxy",
+        "environment": state.env.name,
+        "comfy_url": state.config.comfy_url,
         "comfyui": {"available": False},
     }
     try:
@@ -393,6 +502,139 @@ async def health_handler(request: web.Request) -> web.Response:
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         payload["comfyui"] = {"available": False, "error": str(exc)}
     return web.json_response(payload)
+
+
+async def proxy_run_create_handler(request: web.Request) -> web.Response:
+    auth_response = _proxy_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    state = _state(request)
+    try:
+        payload = await _read_proxy_run_request(request, state)
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, dict):
+            raise ValueError("Proxy run payload must include a prompt object.")
+        outputs_payload = payload.get("outputs", [])
+        if not isinstance(outputs_payload, list):
+            raise ValueError("Proxy run payload outputs must be a list.")
+        outputs = tuple(
+            workflow_contract_output_from_payload(output)
+            for output in outputs_payload
+            if isinstance(output, Mapping)
+        )
+        timeout_seconds = float(payload.get("timeout_seconds", state.config.run_timeout_seconds))
+        poll_interval_seconds = float(payload.get("poll_interval_seconds", 1))
+        cache_token = str(payload.get("cache_token") or uuid.uuid4().hex[:10])
+
+        async def record_submitted(prompt_id: str) -> None:
+            state.proxy_runs[prompt_id] = ProxyRuntimeRun(
+                prompt_id=prompt_id,
+                status="submitted",
+                outputs=outputs,
+                raw_result={"status": "submitted", "prompt_id": prompt_id},
+            )
+
+        execution = await state.executor.execute(
+            RunExecutionRequest(
+                prompt=prompt,
+                outputs=outputs,
+                wait=False,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+                cache_token=cache_token,
+                on_submitted=record_submitted,
+            )
+        )
+        task = asyncio.create_task(
+            _complete_proxy_runtime_run(
+                state,
+                execution.prompt_id,
+                outputs,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+        )
+        _track_proxy_task(state, task)
+        return web.json_response({"status": execution.status, "prompt_id": execution.prompt_id})
+    except ValueError as exc:
+        return web.json_response({"error": "bad_request", "message": str(exc)}, status=400)
+    except ComfyUIRequestError as exc:
+        return web.json_response(
+            {
+                "error": "comfyui_rejected_request",
+                "message": str(exc),
+                "comfy_status": exc.status,
+                "comfy_url": exc.url,
+                "comfyui": exc.payload,
+            },
+            status=400 if exc.status == 400 else 502,
+        )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return web.json_response(
+            {
+                "error": "comfyui_unavailable",
+                "message": str(exc),
+                "comfy_url": state.config.comfy_url,
+            },
+            status=502,
+        )
+
+
+async def proxy_run_status_handler(request: web.Request) -> web.Response:
+    auth_response = _proxy_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    record = _state(request).proxy_runs.get(request.match_info["prompt_id"])
+    if record is None:
+        return web.json_response({"error": "not_found", "message": "Unknown proxy run."}, status=404)
+    return web.json_response(_proxy_run_payload(record))
+
+
+async def proxy_run_cancel_handler(request: web.Request) -> web.Response:
+    auth_response = _proxy_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    state = _state(request)
+    prompt_id = request.match_info["prompt_id"]
+    record = state.proxy_runs.get(prompt_id)
+    if record is None:
+        return web.json_response({"error": "not_found", "message": "Unknown proxy run."}, status=404)
+    try:
+        await state.executor.cancel(prompt_id)
+    except ComfyUIRequestError as exc:
+        return web.json_response({"error": "comfyui_rejected_cancel", "message": str(exc)}, status=400)
+    record.status = "cancelled"
+    record.raw_result = {"status": "cancelled", "prompt_id": prompt_id}
+    return web.json_response(_proxy_run_payload(record))
+
+
+async def proxy_artifact_handler(request: web.Request) -> web.StreamResponse:
+    auth_response = _proxy_auth_response(request)
+    if auth_response is not None:
+        return auth_response
+    state = _state(request)
+    artifact = state.proxy_artifacts.get(request.match_info["artifact_id"])
+    if artifact is None:
+        return web.json_response({"error": "not_found", "message": "Unknown proxy artifact."}, status=404)
+    try:
+        output_response = await state.client.fetch_output(
+            artifact.params,
+            request_headers=_output_request_headers(request),
+        )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        return web.json_response(
+            {
+                "error": "comfyui_unavailable",
+                "message": str(exc),
+                "comfy_url": state.config.comfy_url,
+            },
+            status=502,
+        )
+    headers = {"Content-Type": output_response.content_type}
+    if output_response.disposition:
+        headers["Content-Disposition"] = output_response.disposition
+    headers.update(output_response.headers)
+    return web.Response(body=output_response.body, status=output_response.status, headers=headers)
 
 
 async def contracts_handler(request: web.Request) -> web.Response:
@@ -707,6 +949,10 @@ async def run_contract_handler(request: web.Request) -> web.Response:
 
 
 async def output_view_handler(request: web.Request) -> web.StreamResponse:
+    serve_artifact = request.query.get("serve_artifact")
+    if serve_artifact:
+        return _serve_local_artifact_response(_state(request), serve_artifact)
+
     filename = request.query.get("filename")
     if not filename:
         return web.json_response(
@@ -748,6 +994,30 @@ def _output_request_headers(request: web.Request) -> dict[str, str]:
     }
 
 
+def _serve_local_artifact_response(state: ServeState, artifact_ref: str) -> web.StreamResponse:
+    path = _local_artifact_path(state, artifact_ref)
+    if path is None or not path.is_file():
+        return web.json_response({"error": "not_found", "message": "Unknown serve artifact."}, status=404)
+    return web.FileResponse(path)
+
+
+def _local_artifact_path(state: ServeState, artifact_ref: str) -> Path | None:
+    ref_path = Path(artifact_ref)
+    if ref_path.is_absolute() or ".." in ref_path.parts:
+        return None
+    if len(ref_path.parts) != 2:
+        return None
+    if any(_safe_token(part) != part for part in ref_path.parts):
+        filename = ref_path.parts[-1]
+        if _safe_upload_filename(filename) != filename:
+            return None
+    resolved = (state.artifact_dir / ref_path).resolve()
+    artifact_root = state.artifact_dir.resolve()
+    if artifact_root not in resolved.parents:
+        return None
+    return resolved
+
+
 async def _read_json_body(request: web.Request) -> dict[str, Any]:
     if request.can_read_body is False:
         return {}
@@ -760,6 +1030,211 @@ async def _read_json_body(request: web.Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Request body must be a JSON object.")
     return data
+
+
+async def _read_proxy_run_request(request: web.Request, state: ServeState) -> dict[str, Any]:
+    if not request.content_type.lower().startswith("multipart/"):
+        return await _read_json_body(request)
+
+    reader = await request.multipart()
+    payload: dict[str, Any] | None = None
+    staged_fields: set[str] = set()
+    while raw_part := await reader.next():
+        if not isinstance(raw_part, aiohttp.BodyPartReader):
+            raise ValueError("Nested multipart proxy uploads are not supported.")
+        part = raw_part
+        if part.name == "payload":
+            try:
+                payload_data = json.loads(await part.text())
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid proxy payload JSON: {exc}") from exc
+            if not isinstance(payload_data, dict):
+                raise ValueError("Proxy payload must be a JSON object.")
+            payload = payload_data
+            continue
+        if payload is None:
+            raise ValueError("Proxy multipart payload must be sent before file parts.")
+        upload = _proxy_upload_by_field(payload, str(part.name or ""))
+        if upload is None:
+            raise ValueError(f"Unexpected proxy upload field '{part.name}'.")
+        await _stage_proxy_upload_part(state, part, upload)
+        staged_fields.add(str(part.name))
+
+    if payload is None:
+        raise ValueError("Proxy run request is missing a payload field.")
+    expected_fields = {
+        str(upload.get("field_name") or "")
+        for upload in payload.get("uploads", [])
+        if isinstance(upload, Mapping)
+    }
+    missing_fields = {field for field in expected_fields if field and field not in staged_fields}
+    if missing_fields:
+        raise ValueError(f"Proxy run request is missing upload file part(s): {', '.join(sorted(missing_fields))}.")
+    return payload
+
+
+def _proxy_upload_by_field(payload: Mapping[str, Any], field_name: str) -> Mapping[str, Any] | None:
+    uploads = payload.get("uploads")
+    if not isinstance(uploads, list):
+        return None
+    for upload in uploads:
+        if isinstance(upload, Mapping) and upload.get("field_name") == field_name:
+            return upload
+    return None
+
+
+async def _stage_proxy_upload_part(
+    state: ServeState,
+    part: Any,
+    upload: Mapping[str, Any],
+) -> None:
+    filename = _safe_upload_filename(upload.get("comfyui_filename") or part.filename)
+    expected_size = _optional_positive_int(upload.get("size"))
+    max_bytes = _max_request_bytes(state)
+    if expected_size is not None and expected_size > max_bytes:
+        raise ValueError(f"Proxy upload '{filename}' is too large. Limit: {max_bytes} bytes.")
+
+    input_dir = _comfyui_input_dir(state.env)
+    input_dir.mkdir(parents=True, exist_ok=True)
+    target_path = input_dir / filename
+    temp_path = target_path.with_name(f".{target_path.name}.tmp")
+    bytes_written = 0
+    try:
+        with temp_path.open("wb") as handle:
+            while chunk := await part.read_chunk(1024 * 1024):
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    handle.close()
+                    temp_path.unlink(missing_ok=True)
+                    raise ValueError(f"Proxy upload '{filename}' is too large. Limit: {max_bytes} bytes.")
+                handle.write(chunk)
+        temp_path.replace(target_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _track_proxy_task(state: ServeState, task: asyncio.Task[Any]) -> None:
+    state.background_tasks.add(task)
+    task.add_done_callback(state.background_tasks.discard)
+
+
+async def _complete_proxy_runtime_run(
+    state: ServeState,
+    prompt_id: str,
+    outputs: tuple[Any, ...],
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float,
+) -> None:
+    record = state.proxy_runs.get(prompt_id)
+    if record is None:
+        return
+    record.status = "running"
+    record.raw_result = {"status": "running", "prompt_id": prompt_id}
+    try:
+        execution = await state.executor.complete_submitted(
+            prompt_id,
+            outputs,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    except ComfyGitServeTimeoutError as exc:
+        _record_proxy_run_error(record, {"error": "timeout", "message": str(exc), "prompt_id": prompt_id})
+        return
+    except ComfyUIRequestError as exc:
+        _record_proxy_run_error(
+            record,
+            {
+                "error": "comfyui_rejected_request",
+                "message": str(exc),
+                "comfy_status": exc.status,
+                "comfy_url": exc.url,
+                "comfyui": exc.payload,
+                "prompt_id": prompt_id,
+            },
+        )
+        return
+    except ComfyUIExecutionError as exc:
+        _record_proxy_run_error(
+            record,
+            {
+                "error": "comfyui_execution_failed",
+                "message": str(exc),
+                "prompt_id": exc.prompt_id,
+                "comfyui": exc.payload,
+            },
+        )
+        return
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        _record_proxy_run_error(
+            record,
+            {
+                "error": "comfyui_unavailable",
+                "message": str(exc),
+                "comfy_url": state.config.comfy_url,
+                "prompt_id": prompt_id,
+            },
+        )
+        return
+    except Exception as exc:
+        _record_proxy_run_error(record, {"error": "internal_error", "message": str(exc), "prompt_id": prompt_id})
+        return
+
+    output_payloads = _register_proxy_artifacts(state, execution.outputs)
+    record.status = "completed"
+    record.raw_result = {
+        "status": "completed",
+        "prompt_id": execution.prompt_id,
+        "outputs": output_payloads,
+    }
+
+
+def _record_proxy_run_error(record: ProxyRuntimeRun, payload: dict[str, Any]) -> None:
+    record.status = "error"
+    record.error = str(payload.get("message") or payload.get("error") or "Proxy run failed.")
+    record.raw_result = {"status": "error", **payload}
+
+
+def _register_proxy_artifacts(state: ServeState, outputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    output_payloads = [dict(output) for output in outputs]
+    for output in output_payloads:
+        output_type = str(output.get("type") or "output")
+        artifacts = output.get("artifacts")
+        if not isinstance(artifacts, list):
+            continue
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                continue
+            filename = str(artifact.get("filename") or "")
+            if not filename:
+                continue
+            artifact_id = f"artifact_{uuid.uuid4().hex}"
+            state.proxy_artifacts[artifact_id] = ProxyArtifactRef(
+                params={
+                    "filename": filename,
+                    "subfolder": str(artifact.get("subfolder") or ""),
+                    "type": str(artifact.get("type") or "output"),
+                }
+            )
+            artifact["proxy_artifact_id"] = artifact_id
+            artifact["url"] = f"/proxy/artifacts/{artifact_id}"
+            artifact["kind"] = output_kind(output_type, filename)
+    return output_payloads
+
+
+def _proxy_run_payload(record: ProxyRuntimeRun) -> dict[str, Any]:
+    return {"status": record.status, "prompt_id": record.prompt_id, **record.raw_result}
+
+
+def _proxy_auth_response(request: web.Request) -> web.Response | None:
+    token = getattr(_state(request).config, "proxy_token", None)
+    if not token:
+        return None
+    expected = f"Bearer {token}"
+    received = request.headers.get(PROXY_AUTH_HEADER, "")
+    if secrets.compare_digest(received, expected):
+        return None
+    return web.json_response({"error": "forbidden", "message": "Proxy token is invalid."}, status=403)
 
 
 def _serve_session(request: web.Request) -> ServeSession:
@@ -862,7 +1337,8 @@ async def _run_contract(
     poll_interval_seconds = float(body.get("poll_interval_seconds", 1))
 
     manifest = state.manifest_snapshot()
-    inputs = await _prepare_contract_inputs(state, workflow_name, contract_name, inputs)
+    prepared_contract = await _prepare_contract_run_inputs(state, workflow_name, contract_name, inputs)
+    inputs = prepared_contract.inputs
     build_result = build_manifest_contract_prompt(
         manifest,
         state.env.cec_path,
@@ -912,6 +1388,7 @@ async def _run_contract(
             poll_interval_seconds=poll_interval_seconds,
             cache_token=uuid.uuid4().hex[:10],
             on_submitted=record_submitted,
+            staged_uploads=prepared_contract.staged_uploads,
         )
     )
 
@@ -1622,6 +2099,15 @@ async def _prepare_contract_inputs(
     contract_name: str,
     inputs: dict[str, Any],
 ) -> dict[str, Any]:
+    return (await _prepare_contract_run_inputs(state, workflow_name, contract_name, inputs)).inputs
+
+
+async def _prepare_contract_run_inputs(
+    state: ServeState,
+    workflow_name: str,
+    contract_name: str,
+    inputs: dict[str, Any],
+) -> PreparedContractInputs:
     """Resolve uploaded media refs before building the ComfyUI prompt."""
 
     manifest = state.manifest_snapshot()
@@ -1629,20 +2115,43 @@ async def _prepare_contract_inputs(
     execution_contract = getattr(workflow, "execution_contract", None) if workflow else None
     contract = execution_contract.contracts.get(contract_name) if execution_contract else None
     if contract is None:
-        return inputs
+        return PreparedContractInputs(dict(inputs))
 
     prepared = dict(inputs)
+    staged_uploads: list[StagedUpload] = []
     for contract_input in contract.inputs:
         if str(contract_input.type).lower() not in FILE_UPLOAD_CONTRACT_INPUT_TYPES:
             continue
         if contract_input.name not in prepared:
             continue
-        prepared[contract_input.name] = _resolve_upload_ref(
+        resolved, record = _resolve_upload_binding(
             state,
             prepared[contract_input.name],
             input_name=contract_input.name,
         )
-    return prepared
+        prepared[contract_input.name] = resolved
+        if record is not None:
+            staged_upload = _staged_upload_from_record(contract_input.name, record)
+            if staged_upload is not None:
+                staged_uploads.append(staged_upload)
+    return PreparedContractInputs(prepared, tuple(staged_uploads))
+
+
+def _staged_upload_from_record(input_name: str, record: Any) -> StagedUpload | None:
+    path = getattr(record, "path", None)
+    filename = getattr(record, "filename", None)
+    content_type = getattr(record, "content_type", None)
+    comfyui_filename = getattr(record, "comfyui_filename", None)
+    if path is None or filename is None or content_type is None or comfyui_filename is None:
+        return None
+    return StagedUpload(
+        input_name=input_name,
+        path=Path(path),
+        filename=str(filename),
+        content_type=str(content_type),
+        size=getattr(record, "size", None),
+        comfyui_filename=str(comfyui_filename),
+    )
 
 
 def _prepare_upload_slot(state: ServeState, body: Mapping[str, Any]) -> UploadRecord:
@@ -1671,15 +2180,19 @@ def _prepare_upload_slot(state: ServeState, body: Mapping[str, Any]) -> UploadRe
 
 
 def _resolve_upload_ref(state: ServeState, value: Any, *, input_name: str) -> Any:
+    return _resolve_upload_binding(state, value, input_name=input_name)[0]
+
+
+def _resolve_upload_binding(state: ServeState, value: Any, *, input_name: str) -> tuple[Any, UploadRecord | None]:
     if isinstance(value, str):
         if value.startswith("data:"):
             raise ValueError(
                 f"Input '{input_name}' uses an inline data URL. Upload the file first and submit a file_ref."
             )
-        return value
+        return value, None
 
     if not isinstance(value, Mapping):
-        return value
+        return value, None
 
     if value.get("kind") == "file_ref":
         upload_id = value.get("ref") or value.get("upload_id")
@@ -1690,14 +2203,14 @@ def _resolve_upload_ref(state: ServeState, value: Any, *, input_name: str) -> An
             raise ValueError(f"Input '{input_name}' references an unknown upload.")
         if record.status != "ready":
             raise ValueError(f"Input '{input_name}' references an upload that is not ready.")
-        return record.comfyui_filename
+        return record.comfyui_filename, record
 
     if any(key in value for key in ("data_url", "base64", "data")):
         raise ValueError(
             f"Input '{input_name}' uses inline file bytes. Upload the file first and submit a file_ref."
         )
 
-    return value
+    return value, None
 
 
 def _safe_upload_filename(value: Any, content_type: Any = None) -> str:

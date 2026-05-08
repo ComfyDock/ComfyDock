@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -17,9 +17,11 @@ from comfygit_cli.serve_executor import (
     ComfyUIExecutionError,
     ComfyUIClient,
     LocalComfyExecutor,
+    ProxyComfyExecutor,
     RunExecutionRequest,
     RunExecutionResult,
     ServeOutputResponse,
+    StagedUpload,
     _attach_artifact_dimensions,
     _image_dimensions_from_bytes,
     _stamp_output_cache_busters,
@@ -34,6 +36,7 @@ from comfygit_cli.serve_runtime import (
     _prepare_contract_inputs,
     _record_failed_run,
     create_app,
+    create_proxy_app,
 )
 from comfygit_cli.serve_state import (
     EphemeralServeStateStore,
@@ -85,6 +88,11 @@ def test_serve_parser_defaults() -> None:
     assert args.state == "ephemeral"
     assert args.gallery == "private"
     assert args.state_db is None
+    assert args.role == "studio"
+    assert args.executor == "local"
+    assert args.proxy_url is None
+    assert args.proxy_token is None
+    assert args.artifact_dir is None
 
 
 def test_serve_parser_accepts_runtime_options() -> None:
@@ -109,6 +117,16 @@ def test_serve_parser_accepts_runtime_options() -> None:
             "shared",
             "--state-db",
             "/tmp/comfygit-serve.sqlite",
+            "--role",
+            "proxy",
+            "--executor",
+            "proxy",
+            "--proxy-url",
+            "http://127.0.0.1:9001",
+            "--proxy-token",
+            "secret-token",
+            "--artifact-dir",
+            "/tmp/comfygit-artifacts",
         ]
     )
 
@@ -120,6 +138,11 @@ def test_serve_parser_accepts_runtime_options() -> None:
     assert args.state == "local"
     assert args.gallery == "shared"
     assert str(args.state_db) == "/tmp/comfygit-serve.sqlite"
+    assert args.role == "proxy"
+    assert args.executor == "proxy"
+    assert args.proxy_url == "http://127.0.0.1:9001"
+    assert args.proxy_token == "secret-token"
+    assert str(args.artifact_dir) == "/tmp/comfygit-artifacts"
 
 
 def test_serve_parser_accepts_max_request_size() -> None:
@@ -152,6 +175,8 @@ def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> 
     assert called_config.run_timeout_seconds == 12 * 60 * 60
     assert called_config.state == "ephemeral"
     assert called_config.gallery == "private"
+    assert called_config.role == "studio"
+    assert called_config.executor == "local"
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
@@ -220,6 +245,41 @@ def test_serve_command_uses_configured_state_store(mock_serve, mock_workspace, t
     assert called_config.state_db == db_path
 
 
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_proxy_executor_config(mock_serve, mock_workspace, tmp_path) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    artifact_dir = tmp_path / "artifacts"
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(
+        [
+            "-e",
+            "demo",
+            "serve",
+            "--executor",
+            "proxy",
+            "--proxy-url",
+            "http://127.0.0.1:9001",
+            "--proxy-token",
+            "secret-token",
+            "--artifact-dir",
+            str(artifact_dir),
+        ]
+    )
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.executor == "proxy"
+    assert called_config.proxy_url == "http://127.0.0.1:9001"
+    assert called_config.proxy_token == "secret-token"
+    assert called_config.artifact_dir == artifact_dir
+
+
 @pytest.mark.asyncio
 async def test_serve_app_serves_contract_studio_root() -> None:
     state = MagicMock()
@@ -233,6 +293,200 @@ async def test_serve_app_serves_contract_studio_root() -> None:
         assert response.status == 200
         assert "ComfyGit Studio" in text
         assert "root" in text
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_comfy_executor_submits_upload_and_localizes_artifact(tmp_path) -> None:
+    upload_path = tmp_path / "source.png"
+    upload_path.write_bytes(b"upload-bytes")
+
+    async def proxy_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer secret-token"
+        reader = await request.multipart()
+        payload_part = await reader.next()
+        assert payload_part is not None
+        payload = json.loads(await payload_part.text())
+        assert payload["uploads"][0]["comfyui_filename"] == "upload_source.png"
+        file_part = await reader.next()
+        assert file_part is not None
+        assert file_part.name == "file_0"
+        assert await file_part.read() == b"upload-bytes"
+        return web.json_response({"status": "submitted", "prompt_id": "prompt_1"})
+
+    async def status_handler(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "status": "completed",
+                "prompt_id": "prompt_1",
+                "outputs": [
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {
+                                "filename": "out.png",
+                                "subfolder": "",
+                                "type": "output",
+                                "proxy_artifact_id": "artifact_1",
+                                "width": 32,
+                                "height": 16,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+    async def artifact_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer secret-token"
+        return web.Response(body=b"artifact-bytes", content_type="image/png")
+
+    app = web.Application()
+    app.router.add_post("/proxy/runs", proxy_handler)
+    app.router.add_get("/proxy/runs/{prompt_id}", status_handler)
+    app.router.add_get("/proxy/artifacts/{artifact_id}", artifact_handler)
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            executor = ProxyComfyExecutor(
+                base_url,
+                session=session,
+                token="secret-token",
+                artifact_dir=tmp_path / "artifacts",
+            )
+            result = await executor.execute(
+                RunExecutionRequest(
+                    prompt={"8": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}},
+                    outputs=(SimpleNamespace(name="save_image", type="image", node_id="8", selector="primary"),),
+                    wait=True,
+                    timeout_seconds=5,
+                    poll_interval_seconds=0.01,
+                    cache_token="cache1",
+                    staged_uploads=(
+                        StagedUpload(
+                            input_name="image",
+                            path=upload_path,
+                            filename="source.png",
+                            content_type="image/png",
+                            size=upload_path.stat().st_size,
+                            comfyui_filename="upload_source.png",
+                        ),
+                    ),
+                )
+            )
+
+        artifact = result.outputs[0]["artifacts"][0]
+        assert result.status == "completed"
+        assert artifact["serve_artifact"] == "prompt_1/out.png"
+        assert artifact["url"] == "/outputs/view?serve_artifact=prompt_1/out.png"
+        assert (tmp_path / "artifacts" / "prompt_1" / "out.png").read_bytes() == b"artifact-bytes"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_runtime_app_submits_and_exposes_artifact(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+        async def fetch_output(
+            self,
+            params: Mapping[str, str],
+            request_headers: Mapping[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params["filename"] == "out.png"
+            assert request_headers == {}
+            return ServeOutputResponse(body=b"artifact-bytes", content_type="image/png")
+
+    class FakeExecutor:
+        async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
+            assert request.wait is False
+            assert request.prompt == {"8": {"class_type": "SaveImage", "inputs": {}}}
+            if request.on_submitted is not None:
+                await request.on_submitted("prompt_1")
+            return RunExecutionResult(status="submitted", prompt_id="prompt_1")
+
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            assert prompt_id == "prompt_1"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {"filename": "out.png", "subfolder": "", "type": "output", "width": 32, "height": 16}
+                        ],
+                    }
+                ],
+            )
+
+        async def cancel(self, prompt_id: str) -> None:
+            raise AssertionError(f"Unexpected cancel for {prompt_id}")
+
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        executor=FakeExecutor(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.post(
+                f"{base_url}/proxy/runs",
+                json={
+                    "prompt": {"8": {"class_type": "SaveImage", "inputs": {}}},
+                    "outputs": [
+                        {"name": "save_image", "type": "image", "node_id": "8", "selector": "primary"}
+                    ],
+                    "timeout_seconds": 5,
+                    "poll_interval_seconds": 0.01,
+                },
+            ) as response:
+                submitted = await response.json()
+
+            for _ in range(20):
+                async with session.get(f"{base_url}/proxy/runs/prompt_1") as response:
+                    completed = await response.json()
+                if completed["status"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+
+            artifact_id = completed["outputs"][0]["artifacts"][0]["proxy_artifact_id"]
+            async with session.get(f"{base_url}/proxy/artifacts/{artifact_id}") as response:
+                artifact_body = await response.read()
+
+        assert submitted == {"status": "submitted", "prompt_id": "prompt_1"}
+        assert completed["status"] == "completed"
+        assert completed["outputs"][0]["artifacts"][0]["url"] == f"/proxy/artifacts/{artifact_id}"
+        assert artifact_body == b"artifact-bytes"
     finally:
         await runner.cleanup()
 
