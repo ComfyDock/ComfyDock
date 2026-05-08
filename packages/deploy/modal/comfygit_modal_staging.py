@@ -217,8 +217,6 @@ def _install_dev_manager(env_name: str) -> None:
             str(env_python),
             "-e",
             str(COMFYGIT_REPO_DIR / "packages/core"),
-            "-e",
-            str(MANAGER_REPO_DIR),
         ],
         timeout=30 * 60,
     )
