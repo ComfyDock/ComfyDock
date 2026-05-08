@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import secrets
+import subprocess
 import uuid
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -19,25 +21,25 @@ from comfygit_core.models.workflow_contract import NamedWorkflowContract
 from comfygit_core.services.workflow_execution import build_manifest_contract_prompt
 
 from .serve_executor import (
-    ComfyUIExecutionError,
+    PROXY_AUTH_HEADER,
     ComfyGitServeTimeoutError,
     ComfyUIClient,
+    ComfyUIExecutionError,
     ComfyUIRequestError,
     LocalComfyExecutor,
-    PROXY_AUTH_HEADER,
     ProxyComfyExecutor,
     RunExecutionRequest,
     RunExecutor,
+    StagedUpload,
     artifact_dimensions,
     output_kind,
-    StagedUpload,
     workflow_contract_output_from_payload,
 )
 from .serve_state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
-    ServeRunRecord,
     ServeRunOutputSlot,
+    ServeRunRecord,
     ServeSession,
     ServeStateStore,
     SQLiteServeStateStore,
@@ -56,6 +58,9 @@ FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 ACTIVE_RUN_STATUSES = {"submitted", "running"}
 TERMINAL_RUN_STATUSES = {"completed", "error", "failed", "cancelled"}
 OUTPUT_REQUEST_HEADERS = ("Range", "If-Range")
+ENVIRONMENT_REF_DIGEST_FILES = ("pyproject.toml",)
+ENVIRONMENT_REF_DIGEST_DIRS = ("workflow_api",)
+GIT_COMMAND_TIMEOUT_SECONDS = 2
 
 UPLOAD_FILE_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("image/jpeg", (".jpg", ".jpeg")),
@@ -400,6 +405,88 @@ def _state(request: web.Request) -> ServeState:
     return request.app[SERVE_STATE_KEY]
 
 
+def _environment_ref(env: Environment) -> dict[str, Any]:
+    cec_path = getattr(env, "cec_path", None)
+    cec_path = Path(cec_path) if cec_path is not None else None
+    return {
+        "environment": getattr(env, "name", None),
+        "cec_commit": _git_output(cec_path, "rev-parse", "HEAD") if cec_path else None,
+        "cec_dirty": _git_dirty(cec_path) if cec_path else None,
+        "contract_digest": _contract_digest(cec_path) if cec_path else None,
+    }
+
+
+def _environment_ref_match(local_ref: Mapping[str, Any], remote_ref: Any) -> bool | None:
+    if not isinstance(remote_ref, Mapping):
+        return None
+    local_digest = local_ref.get("contract_digest")
+    remote_digest = remote_ref.get("contract_digest")
+    if not isinstance(local_digest, str) or not isinstance(remote_digest, str):
+        return None
+    return secrets.compare_digest(local_digest, remote_digest)
+
+
+def _contract_digest(cec_path: Path) -> str | None:
+    paths = tuple(_contract_digest_paths(cec_path))
+    if not paths:
+        return None
+    digest = hashlib.sha256()
+    for relative_path in paths:
+        absolute_path = cec_path / relative_path
+        try:
+            file_bytes = absolute_path.read_bytes()
+        except OSError:
+            return None
+        digest.update(relative_path.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_bytes)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _contract_digest_paths(cec_path: Path) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for filename in ENVIRONMENT_REF_DIGEST_FILES:
+        path = cec_path / filename
+        if path.is_file():
+            paths.append(Path(filename))
+    for dirname in ENVIRONMENT_REF_DIGEST_DIRS:
+        directory = cec_path / dirname
+        if directory.is_dir():
+            paths.extend(
+                path.relative_to(cec_path)
+                for path in sorted(directory.rglob("*"))
+                if path.is_file()
+            )
+    return tuple(paths)
+
+
+def _git_dirty(repo_path: Path) -> bool | None:
+    status = _git_output(repo_path, "status", "--porcelain")
+    if status is None:
+        return None
+    return bool(status)
+
+
+def _git_output(repo_path: Path | None, *args: str) -> str | None:
+    if repo_path is None or not repo_path.exists():
+        return None
+    try:
+        result = subprocess.run(
+            ("git", *args),
+            cwd=repo_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
 def _create_state_store(env: Environment, config: ServeConfig) -> ServeStateStore:
     if config.state == "local":
         return SQLiteServeStateStore(config.state_db or _default_state_db_path(env))
@@ -460,9 +547,11 @@ async def favicon_handler(_request: web.Request) -> web.Response:
 
 async def health_handler(request: web.Request) -> web.Response:
     state = _state(request)
+    local_environment_ref = _environment_ref(state.env)
     payload: dict[str, Any] = {
         "ok": True,
         "environment": state.env.name,
+        "environment_ref": local_environment_ref,
         "comfy_url": state.config.comfy_url,
         "executor": getattr(state.config, "executor", "local"),
         "comfyui": {"available": False},
@@ -471,9 +560,14 @@ async def health_handler(request: web.Request) -> web.Response:
         try:
             proxy_health = await state.executor.check_health()
             payload["proxy"] = proxy_health
+            payload["proxy_environment_ref_match"] = _environment_ref_match(
+                local_environment_ref,
+                proxy_health.get("environment_ref"),
+            )
             payload["comfyui"] = proxy_health.get("comfyui", {"available": True})
         except (ComfyUIRequestError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             payload["proxy"] = {"available": False, "error": str(exc)}
+            payload["proxy_environment_ref_match"] = None
             payload["comfyui"] = {"available": False, "error": str(exc)}
         return web.json_response(payload)
     try:
@@ -493,6 +587,7 @@ async def proxy_health_handler(request: web.Request) -> web.Response:
         "ok": True,
         "role": "proxy",
         "environment": state.env.name,
+        "environment_ref": _environment_ref(state.env),
         "comfy_url": state.config.comfy_url,
         "comfyui": {"available": False},
     }

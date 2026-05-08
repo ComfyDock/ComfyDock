@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -14,8 +15,8 @@ from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_cli.serve_executor import (
-    ComfyUIExecutionError,
     ComfyUIClient,
+    ComfyUIExecutionError,
     LocalComfyExecutor,
     ProxyComfyExecutor,
     RunExecutionRequest,
@@ -30,9 +31,9 @@ from comfygit_cli.serve_executor import (
 from comfygit_cli.serve_runtime import (
     ServeConfig,
     _content_type_for_filename,
+    _ensure_active_run_recovery,
     _gallery_items_for_outputs,
     _generated_upload_filename,
-    _ensure_active_run_recovery,
     _prepare_contract_inputs,
     _record_failed_run,
     create_app,
@@ -41,8 +42,8 @@ from comfygit_cli.serve_runtime import (
 from comfygit_cli.serve_state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
-    ServeRunRecord,
     ServeRunOutputSlot,
+    ServeRunRecord,
     ServeSession,
     SQLiteServeStateStore,
 )
@@ -72,6 +73,14 @@ async def _with_app_server(app: web.Application) -> tuple[str, web.AppRunner]:
     sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
     port = sockets[0].getsockname()[1]
     return f"http://127.0.0.1:{port}", runner
+
+
+def _write_environment_ref_files(cec_path: Path) -> None:
+    cec_path.mkdir(parents=True, exist_ok=True)
+    (cec_path / "pyproject.toml").write_text("[project]\nname = \"demo\"\n", encoding="utf-8")
+    workflow_api_path = cec_path / "workflow_api"
+    workflow_api_path.mkdir()
+    (workflow_api_path / "demo.api.json").write_text('{"nodes": []}\n', encoding="utf-8")
 
 
 def test_serve_parser_defaults() -> None:
@@ -489,6 +498,116 @@ async def test_proxy_runtime_app_submits_and_exposes_artifact(tmp_path) -> None:
         assert artifact_body == b"artifact-bytes"
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_health_reports_environment_ref(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    cec_path = tmp_path / ".cec"
+    _write_environment_ref_files(cec_path)
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", cec_path=cec_path, comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    payload: dict[str, Any] = {}
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.get(f"{base_url}/proxy/health") as response:
+                payload = await response.json()
+
+        environment_ref = payload["environment_ref"]
+        assert payload["role"] == "proxy"
+        assert payload["comfyui"] == {"available": True}
+        assert environment_ref["environment"] == "demo"
+        assert environment_ref["cec_commit"] is None
+        assert environment_ref["cec_dirty"] is None
+        assert environment_ref["contract_digest"].startswith("sha256:")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_frontdoor_proxy_health_reports_environment_ref_match(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    proxy_cec_path = tmp_path / "proxy" / ".cec"
+    frontdoor_cec_path = tmp_path / "frontdoor" / ".cec"
+    _write_environment_ref_files(proxy_cec_path)
+    _write_environment_ref_files(frontdoor_cec_path)
+
+    proxy_state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", cec_path=proxy_cec_path, comfyui_path=tmp_path / "proxy" / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    proxy_app = create_proxy_app(cast(Any, proxy_state))
+    proxy_url, proxy_runner = await _with_app_server(proxy_app)
+    payload: dict[str, Any] = {}
+    try:
+        async with ClientSession() as session:
+            frontdoor_state = SimpleNamespace(
+                env=SimpleNamespace(
+                    name="demo",
+                    cec_path=frontdoor_cec_path,
+                    comfyui_path=tmp_path / "frontdoor" / "ComfyUI",
+                ),
+                config=ServeConfig(
+                    host="127.0.0.1",
+                    port=8191,
+                    comfy_url="http://127.0.0.1:8188",
+                    executor="proxy",
+                    proxy_url=proxy_url,
+                    proxy_token="secret-token",
+                ),
+                client=FakeClient(),
+                executor=ProxyComfyExecutor(
+                    proxy_url,
+                    session=session,
+                    token="secret-token",
+                    artifact_dir=tmp_path / "artifacts",
+                ),
+                background_tasks=set(),
+            )
+            frontdoor_app = create_app(cast(Any, frontdoor_state))
+            frontdoor_url, frontdoor_runner = await _with_app_server(frontdoor_app)
+            try:
+                async with session.get(f"{frontdoor_url}/health") as response:
+                    payload = await response.json()
+            finally:
+                await frontdoor_runner.cleanup()
+
+        assert payload["executor"] == "proxy"
+        assert payload["environment_ref"]["contract_digest"].startswith("sha256:")
+        assert payload["proxy"]["environment_ref"]["contract_digest"] == payload["environment_ref"]["contract_digest"]
+        assert payload["proxy_environment_ref_match"] is True
+    finally:
+        await proxy_runner.cleanup()
 
 
 @pytest.mark.asyncio
