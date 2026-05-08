@@ -1,5 +1,6 @@
 """Factory utility for creating UV project manager instances with consistent configuration."""
 
+import os
 from pathlib import Path
 
 from ..integrations.uv_command import UVCommand
@@ -33,11 +34,13 @@ def create_uv_for_environment(
     uv_cache_path, uv_python_path = get_uv_cache_paths(workspace_path, external_uv_cache)
 
     # Create UV command interface
+    link_mode = os.environ.get("COMFYGIT_UV_LINK_MODE") or os.environ.get("UV_LINK_MODE") or "hardlink"
+
     uv_command = UVCommand(
         project_env=venv_path,
         cache_dir=uv_cache_path,
         python_install_dir=uv_python_path,
-        link_mode="hardlink",
+        link_mode=link_mode,
         cwd=cec_path,
         torch_backend=torch_backend,
     )
