@@ -314,6 +314,8 @@ async def _cleanup_background_tasks(app: web.Application) -> None:
 async def _ensure_active_run_recovery(state: ServeState) -> None:
     if not _state_supports_active_run_recovery(state):
         return
+    if _state_uses_proxy_callbacks(state):
+        return
     for run in state.state_store.list_active_runs(ACTIVE_RUN_STATUSES):
         if not run.prompt_id:
             _record_recovery_failure(state, run, "Active run has no ComfyUI prompt id to recover.")
@@ -367,6 +369,14 @@ def _state_supports_active_run_recovery(state: Any) -> bool:
         and hasattr(state, "executor")
         and hasattr(state, "state_store")
         and callable(getattr(state, "manifest_snapshot", None))
+    )
+
+
+def _state_uses_proxy_callbacks(state: Any) -> bool:
+    config = getattr(state, "config", None)
+    return (
+        getattr(config, "executor", "local") == "proxy"
+        and bool(getattr(config, "callback_url", None))
     )
 
 
@@ -427,6 +437,26 @@ def _max_request_bytes(state: ServeState) -> int:
 
 def _state(request: web.Request) -> ServeState:
     return request.app[SERVE_STATE_KEY]
+
+
+def _executor_unavailable_payload(
+    state: ServeState,
+    exc: BaseException,
+    *,
+    prompt_id: str | None = None,
+) -> dict[str, Any]:
+    is_proxy = getattr(state.config, "executor", "local") == "proxy"
+    payload: dict[str, Any] = {
+        "error": "proxy_unavailable" if is_proxy else "comfyui_unavailable",
+        "message": str(exc),
+    }
+    if is_proxy:
+        payload["proxy_url"] = state.config.proxy_url
+    else:
+        payload["comfy_url"] = state.config.comfy_url
+    if prompt_id:
+        payload["prompt_id"] = prompt_id
+    return payload
 
 
 def _environment_ref(env: Environment) -> dict[str, Any]:
@@ -581,16 +611,41 @@ async def health_handler(request: web.Request) -> web.Response:
         "comfyui": {"available": False},
     }
     if getattr(state.config, "executor", "local") == "proxy" and isinstance(state.executor, ProxyComfyExecutor):
+        payload["proxy"] = {
+            "configured": True,
+            "available": None,
+            "health_check": "deferred",
+        }
+        payload["proxy_environment_ref_match"] = None
+        payload["comfyui"] = {
+            "available": True,
+            "mode": "proxy",
+            "status": "deferred",
+        }
+        check_proxy = request.query.get("check_proxy", "").lower() in {"1", "true", "yes", "on"}
+        if not check_proxy:
+            return web.json_response(payload)
         try:
             proxy_health = await state.executor.check_health()
-            payload["proxy"] = proxy_health
+            proxy_payload = {
+                "configured": True,
+                "available": bool(proxy_health.get("ok", True)),
+                "health_check": "checked",
+            }
+            proxy_payload.update(proxy_health)
+            payload["proxy"] = proxy_payload
             payload["proxy_environment_ref_match"] = _environment_ref_match(
                 local_environment_ref,
                 proxy_health.get("environment_ref"),
             )
             payload["comfyui"] = proxy_health.get("comfyui", {"available": True})
         except (ComfyUIRequestError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            payload["proxy"] = {"available": False, "error": str(exc)}
+            payload["proxy"] = {
+                "configured": True,
+                "available": False,
+                "health_check": "checked",
+                "error": str(exc),
+            }
             payload["proxy_environment_ref_match"] = None
             payload["comfyui"] = {"available": False, "error": str(exc)}
         return web.json_response(payload)
@@ -930,41 +985,29 @@ async def cancel_run_handler(request: web.Request) -> web.Response:
         )
 
     prompt_id = run.get("prompt_id")
-    if not isinstance(prompt_id, str) or not prompt_id:
-        return _json_response_for_session(
-            {
-                "error": "run_not_cancellable",
-                "message": f"Run '{run_id}' does not have a ComfyUI prompt id yet.",
-                "run": run,
-            },
-            session,
-            status=409,
-        )
-
-    try:
-        await state.executor.cancel(prompt_id)
-    except ComfyUIRequestError as exc:
-        return _json_response_for_session(
-            {
+    cancel_warning: dict[str, Any] | None = None
+    if isinstance(prompt_id, str) and prompt_id:
+        try:
+            await asyncio.wait_for(state.executor.cancel(prompt_id), timeout=10)
+        except ComfyUIRequestError as exc:
+            cancel_warning = {
                 "error": "comfyui_rejected_cancel",
                 "message": str(exc),
                 "comfy_status": exc.status,
                 "comfy_url": exc.url,
                 "comfyui": exc.payload,
-            },
-            session,
-            status=400 if exc.status == 400 else 502,
-        )
-    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-        return _json_response_for_session(
-            {
+            }
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            cancel_warning = {
                 "error": "comfyui_unavailable",
                 "message": str(exc),
                 "comfy_url": state.config.comfy_url,
-            },
-            session,
-            status=502,
-        )
+            }
+    else:
+        cancel_warning = {
+            "error": "prompt_id_missing",
+            "message": f"Run '{run_id}' did not have a remote prompt id when local cancellation was requested.",
+        }
     message = "Generation cancelled."
     raw_result = {
         "status": "cancelled",
@@ -972,6 +1015,8 @@ async def cancel_run_handler(request: web.Request) -> web.Response:
         "prompt_id": prompt_id,
         "message": message,
     }
+    if cancel_warning is not None:
+        raw_result["remote_cancel"] = cancel_warning
     if not state.state_store.cancel_run(session.scope_key, run_id, raw_result=raw_result, error=message):
         return _json_response_for_session(
             {
@@ -987,7 +1032,10 @@ async def cancel_run_handler(request: web.Request) -> web.Response:
     if task is not None and not task.done():
         task.cancel()
 
-    return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session)
+    payload = _cancelled_run_payload(state, session, run_id)
+    if cancel_warning is not None:
+        payload["remote_cancel"] = cancel_warning
+    return _json_response_for_session(payload, session)
 
 
 async def worker_callback_handler(request: web.Request) -> web.Response:
@@ -1318,11 +1366,7 @@ async def run_contract_handler(request: web.Request) -> web.Response:
         return _json_response_for_session(payload, session, status=500)
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
         state = _state(request)
-        payload = {
-            "error": "comfyui_unavailable",
-            "message": str(exc),
-            "comfy_url": state.config.comfy_url,
-        }
+        payload = _executor_unavailable_payload(state, exc)
         payload.update(_record_failed_run(state, session, request.match_info["workflow"], request.match_info["contract"], body, payload))
         return _json_response_for_session(payload, session, status=502)
     except ValueError as exc:
@@ -1592,12 +1636,7 @@ async def _complete_proxy_runtime_run(
         await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-        payload = {
-            "error": "comfyui_unavailable",
-            "message": str(exc),
-            "comfy_url": state.config.comfy_url,
-            "prompt_id": prompt_id,
-        }
+        payload = _executor_unavailable_payload(state, exc, prompt_id=prompt_id)
         _record_proxy_run_error(record, payload)
         await _post_worker_status_callback(callback, {"status": "error", "run_id": callback.run_id, **payload} if callback else {})
         return
@@ -2143,12 +2182,7 @@ async def _complete_submitted_run(
         )
         return
     except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-        payload = {
-            "error": "comfyui_unavailable",
-            "message": str(exc),
-            "comfy_url": state.config.comfy_url,
-            "prompt_id": prompt_id,
-        }
+        payload = _executor_unavailable_payload(state, exc, prompt_id=prompt_id)
         _record_failed_run(
             state,
             session,

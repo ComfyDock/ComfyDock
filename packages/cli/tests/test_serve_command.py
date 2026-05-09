@@ -33,6 +33,7 @@ from comfygit_cli.serve_runtime import (
     ServeConfig,
     _content_type_for_filename,
     _ensure_active_run_recovery,
+    _executor_unavailable_payload,
     _gallery_items_for_outputs,
     _generated_upload_filename,
     _prepare_contract_inputs,
@@ -418,6 +419,66 @@ async def test_proxy_comfy_executor_submits_upload_and_localizes_artifact(tmp_pa
         assert (tmp_path / "artifacts" / "prompt_1" / "out.png").read_bytes() == b"artifact-bytes"
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_comfy_executor_uses_run_timeout_for_submit(tmp_path) -> None:
+    calls: list[float | None] = []
+    executor = ProxyComfyExecutor(
+        "https://proxy.example",
+        token="secret-token",
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    async def fake_request_json(
+        method: str,
+        path: str,
+        *,
+        json_data: dict[str, Any] | None = None,
+        data: aiohttp.FormData | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        del method, path, json_data, data
+        calls.append(timeout)
+        return {"status": "submitted", "prompt_id": "prompt_1"}
+
+    executor._request_json = fake_request_json  # type: ignore[method-assign]
+
+    result = await executor.execute(
+        RunExecutionRequest(
+            prompt={"8": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}},
+            outputs=(SimpleNamespace(name="save_image", type="image", node_id="8", selector="primary"),),
+            wait=False,
+            timeout_seconds=123,
+            poll_interval_seconds=1,
+            cache_token="cache1",
+        )
+    )
+
+    assert result.status == "submitted"
+    assert result.prompt_id == "prompt_1"
+    assert calls == [123]
+
+
+def test_executor_unavailable_payload_uses_proxy_url_for_proxy_executor() -> None:
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            executor="proxy",
+            proxy_url="https://proxy.example",
+            comfy_url="http://127.0.0.1:8188",
+        )
+    )
+
+    payload = _executor_unavailable_payload(cast(Any, state), asyncio.TimeoutError(), prompt_id="prompt_1")
+
+    assert payload == {
+        "error": "proxy_unavailable",
+        "message": "",
+        "proxy_url": "https://proxy.example",
+        "prompt_id": "prompt_1",
+    }
 
 
 @pytest.mark.asyncio
@@ -848,7 +909,7 @@ async def test_frontdoor_proxy_health_reports_environment_ref_match(tmp_path) ->
             frontdoor_app = create_app(cast(Any, frontdoor_state))
             frontdoor_url, frontdoor_runner = await _with_app_server(frontdoor_app)
             try:
-                async with session.get(f"{frontdoor_url}/health") as response:
+                async with session.get(f"{frontdoor_url}/health?check_proxy=true") as response:
                     payload = await response.json()
             finally:
                 await frontdoor_runner.cleanup()
@@ -859,6 +920,61 @@ async def test_frontdoor_proxy_health_reports_environment_ref_match(tmp_path) ->
         assert payload["proxy_environment_ref_match"] is True
     finally:
         await proxy_runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_frontdoor_proxy_health_defers_remote_probe_by_default(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    frontdoor_cec_path = tmp_path / "frontdoor" / ".cec"
+    _write_environment_ref_files(frontdoor_cec_path)
+
+    async with ClientSession() as session:
+        frontdoor_state = SimpleNamespace(
+            env=SimpleNamespace(
+                name="demo",
+                cec_path=frontdoor_cec_path,
+                comfyui_path=tmp_path / "frontdoor" / "ComfyUI",
+            ),
+            config=ServeConfig(
+                host="127.0.0.1",
+                port=8191,
+                comfy_url="http://127.0.0.1:8188",
+                executor="proxy",
+                proxy_url="http://127.0.0.1:9",
+                proxy_token="secret-token",
+            ),
+            client=FakeClient(),
+            executor=ProxyComfyExecutor(
+                "http://127.0.0.1:9",
+                session=session,
+                token="secret-token",
+                artifact_dir=tmp_path / "artifacts",
+            ),
+            background_tasks=set(),
+        )
+        frontdoor_app = create_app(cast(Any, frontdoor_state))
+        frontdoor_url, frontdoor_runner = await _with_app_server(frontdoor_app)
+        try:
+            async with session.get(f"{frontdoor_url}/health") as response:
+                payload = await response.json()
+        finally:
+            await frontdoor_runner.cleanup()
+
+    assert payload["executor"] == "proxy"
+    assert payload["proxy"] == {
+        "configured": True,
+        "available": None,
+        "health_check": "deferred",
+    }
+    assert payload["proxy_environment_ref_match"] is None
+    assert payload["comfyui"] == {
+        "available": True,
+        "mode": "proxy",
+        "status": "deferred",
+    }
 
 
 @pytest.mark.asyncio
@@ -1336,6 +1452,58 @@ async def test_active_run_recovery_records_comfyui_execution_error() -> None:
     assert slots[0]["error"] == "SamplerCustomAdvanced node 13 failed"
 
 
+@pytest.mark.asyncio
+async def test_active_run_recovery_skips_proxy_callback_mode() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_callback",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_callback",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            raise AssertionError(f"Callback-mode recovery should not poll proxy prompt {prompt_id}")
+
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            executor="proxy",
+            proxy_url="https://proxy.example",
+            callback_url="https://frontdoor.example",
+        ),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: SimpleNamespace(workflows={}),
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+
+    assert state.background_tasks == set()
+    assert state.active_run_tasks == {}
+    assert store.list_runs("anon_1")[0]["status"] == "running"
+
+
 def test_failed_run_response_does_not_create_circular_raw_result() -> None:
     store = EphemeralServeStateStore()
     session = ServeSession(session_id="anon_1", scope_key="anon_1")
@@ -1788,6 +1956,95 @@ async def test_serve_cancel_run_endpoint_marks_pending_outputs_cancelled_and_rem
         assert payload["output_slots"][0]["status"] == "cancelled"
         assert payload["gallery_items"] == []
         assert cancelled_prompts == ["prompt_cancel"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_cancel_run_endpoint_cancels_locally_when_remote_cancel_fails() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    class FakeExecutor:
+        async def cancel(self, _prompt_id: str) -> None:
+            raise aiohttp.ClientError("proxy disappeared")
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+        executor=FakeExecutor(),
+        active_run_tasks={},
+        background_tasks=set(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.post(
+                f"{base_url}/runs/run_cancel/cancel",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["status"] == "cancelled"
+        assert payload["run"]["status"] == "cancelled"
+        assert payload["output_slots"][0]["status"] == "cancelled"
+        assert payload["gallery_items"] == []
+        assert payload["remote_cancel"]["error"] == "comfyui_unavailable"
+        run_record = store.get_run(session.scope_key, "run_cancel")
+        assert run_record is not None
+        assert run_record["raw_result"]["remote_cancel"]["message"] == "proxy disappeared"
     finally:
         await runner.cleanup()
 

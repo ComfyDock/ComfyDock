@@ -49,6 +49,10 @@ COMFYGIT_REPO_DIR = REPOS_DIR / "comfygit"
 MANAGER_REPO_DIR = REPOS_DIR / "comfygit-manager"
 TMP_UV_CACHE_DIR = Path("/tmp/comfygit-uv-cache")
 VOLUME_UV_CACHE_DIR = WORKSPACE_DIR / "uv_cache"
+RUNTIME_BUNDLE_DIR = VOLUME_ROOT / "runtime-bundles"
+RUNTIME_BUNDLE_FORMAT = os.environ.get("COMFYGIT_MODAL_RUNTIME_BUNDLE_FORMAT", "tar-zst")
+RUNTIME_ROOT = Path(os.environ.get("COMFYGIT_MODAL_RUNTIME_ROOT", "/tmp/comfygit-modal-runtime"))
+RUNTIME_WORKSPACE_DIR = RUNTIME_ROOT / "workspace"
 COMFY_PORT = 8290
 PROXY_PORT = 8793
 PROXY_TOKEN = "modal-proof-token"
@@ -98,6 +102,10 @@ def _run_capture(cmd: list[str], *, cwd: Path | None = None, timeout: int | None
     if output:
         print(output, flush=True)
     return output
+
+
+def _log_event(event: str, **fields: object) -> None:
+    print(json.dumps({"event": event, **fields}, sort_keys=True), flush=True)
 
 
 def _remote_branch_exists(path: Path, ref: str) -> bool:
@@ -294,6 +302,168 @@ def _sync_environment(env_name: str, torch_backend: str) -> None:
     )
 
 
+def _runtime_bundle_path(env_name: str, bundle_format: str = RUNTIME_BUNDLE_FORMAT) -> Path:
+    suffix_by_format = {
+        "tar": ".tar",
+        "tar-gz": ".tar.gz",
+        "tar-zst": ".tar.zst",
+    }
+    try:
+        suffix = suffix_by_format[bundle_format]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported runtime bundle format: {bundle_format}") from exc
+    return RUNTIME_BUNDLE_DIR / f"{env_name}{suffix}"
+
+
+def _runtime_env(env_name: str, *, uv_cache_dir: Path = VOLUME_UV_CACHE_DIR) -> dict[str, str]:
+    env_dir = RUNTIME_WORKSPACE_DIR / "environments" / env_name
+    env = os.environ.copy()
+    env.update(
+        {
+            "COMFYGIT_HOME": str(RUNTIME_WORKSPACE_DIR),
+            "UV_PROJECT_ENVIRONMENT": str(env_dir / ".venv"),
+            "UV_CACHE_DIR": str(uv_cache_dir),
+            "UV_PYTHON_INSTALL_DIR": str(uv_cache_dir / "python"),
+            "UV_LINK_MODE": "copy",
+            "COMFYGIT_UV_LINK_MODE": "copy",
+            "UV_TORCH_BACKEND": DEFAULT_TORCH_BACKEND,
+            "UV_NO_PROGRESS": "1",
+            "NO_COLOR": "1",
+            "PYTHONUNBUFFERED": "1",
+            "VIRTUAL_ENV": "",
+        }
+    )
+    return env
+
+
+def _copytree(src: Path, dst: Path, *, ignore: set[str] | None = None) -> None:
+    if not src.exists():
+        return
+    ignored = ignore or set()
+    shutil.copytree(
+        src,
+        dst,
+        symlinks=True,
+        ignore=lambda _directory, names: sorted(ignored.intersection(names)),
+    )
+
+
+def _hydrate_runtime_workspace(env_name: str) -> dict[str, object]:
+    started = time.monotonic()
+    if RUNTIME_WORKSPACE_DIR.exists():
+        shutil.rmtree(RUNTIME_WORKSPACE_DIR)
+
+    RUNTIME_WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    _copytree(WORKSPACE_DIR / ".metadata", RUNTIME_WORKSPACE_DIR / ".metadata")
+
+    config_path = RUNTIME_WORKSPACE_DIR / ".metadata" / "workspace.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["external_uv_cache"] = str(VOLUME_UV_CACHE_DIR)
+    config["global_model_directory"] = {
+        "path": str(MODELS_DIR),
+        "added_at": config.get("global_model_directory", {}).get("added_at", ""),
+        "last_sync": config.get("global_model_directory", {}).get("last_sync", ""),
+    }
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    env_src = WORKSPACE_DIR / "environments" / env_name
+    env_dst = RUNTIME_WORKSPACE_DIR / "environments" / env_name
+    env_dst.parent.mkdir(parents=True, exist_ok=True)
+    _copytree(env_src, env_dst, ignore={".venv"})
+
+    cache_src = WORKSPACE_DIR / "comfygit_cache"
+    cache_src.mkdir(parents=True, exist_ok=True)
+    cache_link = RUNTIME_WORKSPACE_DIR / "comfygit_cache"
+    if cache_link.exists() or cache_link.is_symlink():
+        cache_link.unlink()
+    cache_link.symlink_to(cache_src, target_is_directory=True)
+
+    (RUNTIME_WORKSPACE_DIR / "input" / env_name).mkdir(parents=True, exist_ok=True)
+    (RUNTIME_WORKSPACE_DIR / "output" / env_name).mkdir(parents=True, exist_ok=True)
+    result = {
+        "runtime_workspace": str(RUNTIME_WORKSPACE_DIR),
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("staging_runtime_hydrate_complete", **result)
+    return result
+
+
+def _sync_runtime_workspace(env_name: str, torch_backend: str) -> dict[str, object]:
+    started = time.monotonic()
+    env = _runtime_env(env_name, uv_cache_dir=VOLUME_UV_CACHE_DIR)
+    env["UV_TORCH_BACKEND"] = torch_backend
+    # Build the bundled venv at the exact absolute path used by runtime
+    # containers. Python venv entrypoints are not safely relocatable.
+    print(f"+ cg -e {env_name} sync --torch-backend {torch_backend} --verbose", flush=True)
+    subprocess.run(
+        ["cg", "-e", env_name, "sync", "--torch-backend", torch_backend, "--verbose"],
+        check=True,
+        timeout=90 * 60,
+        env=env,
+    )
+    result = {
+        "runtime_venv": str(RUNTIME_WORKSPACE_DIR / "environments" / env_name / ".venv"),
+        "uv_cache": str(VOLUME_UV_CACHE_DIR),
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("staging_runtime_sync_complete", **result)
+    return result
+
+
+def _tar_create_args(bundle_path: Path, bundle_format: str) -> list[str]:
+    if bundle_format == "tar":
+        return ["tar", "-cf", str(bundle_path), "-C", str(RUNTIME_ROOT), "workspace"]
+    if bundle_format == "tar-gz":
+        return ["tar", "-czf", str(bundle_path), "-C", str(RUNTIME_ROOT), "workspace"]
+    if bundle_format == "tar-zst":
+        return [
+            "tar",
+            "--use-compress-program",
+            "zstd -T0 -3",
+            "-cf",
+            str(bundle_path),
+            "-C",
+            str(RUNTIME_ROOT),
+            "workspace",
+        ]
+    raise ValueError(f"Unsupported runtime bundle format: {bundle_format}")
+
+
+def _build_runtime_bundle(
+    env_name: str,
+    torch_backend: str,
+    *,
+    bundle_format: str = RUNTIME_BUNDLE_FORMAT,
+) -> dict[str, object]:
+    started = time.monotonic()
+    hydrate_info = _hydrate_runtime_workspace(env_name)
+    sync_info = _sync_runtime_workspace(env_name, torch_backend)
+    RUNTIME_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
+    bundle_path = _runtime_bundle_path(env_name, bundle_format)
+    tmp_bundle_path = bundle_path.with_name(f".{bundle_path.name}.tmp")
+    if tmp_bundle_path.exists():
+        tmp_bundle_path.unlink()
+    if bundle_path.exists():
+        bundle_path.unlink()
+    archive_started = time.monotonic()
+    _run(_tar_create_args(tmp_bundle_path, bundle_format), timeout=90 * 60)
+    tmp_bundle_path.replace(bundle_path)
+    archive_seconds = time.monotonic() - archive_started
+    size_bytes = bundle_path.stat().st_size
+    result = {
+        "bundle_path": str(bundle_path),
+        "bundle_format": bundle_format,
+        "size_bytes": size_bytes,
+        "size_gib": round(size_bytes / 1024 / 1024 / 1024, 3),
+        "hydrate": hydrate_info,
+        "sync": sync_info,
+        "archive_seconds": round(archive_seconds, 3),
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("staging_runtime_bundle_complete", **result)
+    return result
+
+
 def _wait_http(url: str, *, timeout: int, headers: dict[str, str] | None = None) -> None:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
@@ -482,8 +652,12 @@ def stage_environment(
     model_strategy: str = "all",
     uv_cache: str = "volume",
     replace: bool = False,
+    materialize: bool = True,
+    sync_environment: bool = True,
+    build_runtime_bundle: bool = False,
+    runtime_bundle_format: str = RUNTIME_BUNDLE_FORMAT,
     boot_proxy: bool = True,
-) -> dict[str, str | bool]:
+) -> dict[str, object]:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -491,19 +665,28 @@ def stage_environment(
     manager_sha = _checkout_repo(DEFAULT_MANAGER_REPO, manager_ref, MANAGER_REPO_DIR)
     _install_dev_cli()
     uv_cache_dir = _configure_workspace_uv_cache(uv_cache)
-    _materialize_environment(
-        source=source,
-        branch=branch,
-        env_name=env_name,
-        torch_backend=torch_backend,
-        model_strategy=model_strategy,
-        replace=replace,
-    )
+    if materialize:
+        _materialize_environment(
+            source=source,
+            branch=branch,
+            env_name=env_name,
+            torch_backend=torch_backend,
+            model_strategy=model_strategy,
+            replace=replace,
+        )
     _apply_dev_sources(env_name)
-    _sync_environment(env_name, torch_backend)
+    if sync_environment:
+        _sync_environment(env_name, torch_backend)
+    bundle_info: dict[str, object] | None = None
+    if build_runtime_bundle:
+        bundle_info = _build_runtime_bundle(
+            env_name,
+            torch_backend,
+            bundle_format=runtime_bundle_format,
+        )
     volume.commit()
 
-    result: dict[str, str | bool] = {
+    result: dict[str, object] = {
         "volume": VOLUME_NAME,
         "volume_version": str(VOLUME_VERSION),
         "workspace": str(WORKSPACE_DIR),
@@ -512,6 +695,9 @@ def stage_environment(
         "comfygit_sha": comfygit_sha,
         "manager_sha": manager_sha,
         "uv_cache": str(uv_cache_dir),
+        "materialize": materialize,
+        "sync_environment": sync_environment,
+        "runtime_bundle": bundle_info,
         "boot_proxy": boot_proxy,
     }
 
@@ -591,6 +777,10 @@ def main(
     model_strategy: str = "all",
     uv_cache: str = "volume",
     replace: bool = False,
+    materialize: bool = True,
+    sync_environment: bool = True,
+    build_runtime_bundle: bool = False,
+    runtime_bundle_format: str = RUNTIME_BUNDLE_FORMAT,
     boot_proxy: bool = True,
     probe_fs: bool = False,
 ) -> None:
@@ -609,6 +799,10 @@ def main(
             model_strategy=model_strategy,
             uv_cache=uv_cache,
             replace=replace,
+            materialize=materialize,
+            sync_environment=sync_environment,
+            build_runtime_bundle=build_runtime_bundle,
+            runtime_bundle_format=runtime_bundle_format,
             boot_proxy=boot_proxy,
         )
     )

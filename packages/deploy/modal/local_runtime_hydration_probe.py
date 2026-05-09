@@ -146,6 +146,94 @@ def _hydrate_workspace(
     return runtime_workspace, env_dst
 
 
+def _bundle_path(args: argparse.Namespace) -> Path:
+    suffix_by_format = {
+        "tar": ".tar",
+        "tar-gz": ".tar.gz",
+        "tar-zst": ".tar.zst",
+    }
+    suffix = suffix_by_format.get(args.bundle_format)
+    if suffix is None:
+        raise RuntimeError(f"Unsupported bundle format: {args.bundle_format}")
+    return Path(args.runtime_root) / f"{args.environment}{suffix}"
+
+
+def _tar_create_args(bundle_path: Path, args: argparse.Namespace) -> list[str]:
+    runtime_root = Path(args.runtime_root)
+    if args.bundle_format == "tar":
+        return ["tar", "-cf", str(bundle_path), "-C", str(runtime_root), "workspace"]
+    if args.bundle_format == "tar-gz":
+        return ["tar", "-czf", str(bundle_path), "-C", str(runtime_root), "workspace"]
+    if args.bundle_format == "tar-zst":
+        return [
+            "tar",
+            "--use-compress-program",
+            "zstd -T0 -3",
+            "-cf",
+            str(bundle_path),
+            "-C",
+            str(runtime_root),
+            "workspace",
+        ]
+    raise RuntimeError(f"Unsupported bundle format: {args.bundle_format}")
+
+
+def _tar_extract_args(bundle_path: Path, args: argparse.Namespace) -> list[str]:
+    runtime_root = Path(args.runtime_root)
+    if args.bundle_format == "tar":
+        return ["tar", "-xf", str(bundle_path), "-C", str(runtime_root)]
+    if args.bundle_format == "tar-gz":
+        return ["tar", "-xzf", str(bundle_path), "-C", str(runtime_root)]
+    if args.bundle_format == "tar-zst":
+        return [
+            "tar",
+            "--use-compress-program",
+            "zstd -d -T0",
+            "-xf",
+            str(bundle_path),
+            "-C",
+            str(runtime_root),
+        ]
+    raise RuntimeError(f"Unsupported bundle format: {args.bundle_format}")
+
+
+def _create_runtime_bundle(args: argparse.Namespace) -> Path:
+    bundle_path = _bundle_path(args)
+    tmp_path = bundle_path.with_name(f".{bundle_path.name}.tmp")
+    for path in [tmp_path, bundle_path]:
+        if path.exists():
+            path.unlink()
+    started = time.monotonic()
+    _run(_tar_create_args(tmp_path, args), timeout=args.bundle_timeout)
+    tmp_path.replace(bundle_path)
+    _log(
+        "bundle_created",
+        bundle=str(bundle_path),
+        bundle_format=args.bundle_format,
+        size_bytes=bundle_path.stat().st_size,
+        seconds=round(time.monotonic() - started, 3),
+    )
+    return bundle_path
+
+
+def _extract_runtime_bundle(args: argparse.Namespace, runtime_workspace: Path) -> None:
+    bundle_path = Path(args.bundle).resolve() if args.bundle else _bundle_path(args)
+    if not bundle_path.exists():
+        raise RuntimeError(f"Runtime bundle does not exist: {bundle_path}")
+    if runtime_workspace.exists():
+        shutil.rmtree(runtime_workspace)
+    Path(args.runtime_root).mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    _run(_tar_extract_args(bundle_path, args), timeout=args.bundle_timeout)
+    _log(
+        "bundle_extracted",
+        bundle=str(bundle_path),
+        bundle_format=args.bundle_format,
+        size_bytes=bundle_path.stat().st_size,
+        seconds=round(time.monotonic() - started, 3),
+    )
+
+
 def _sync_local_venv(
     *,
     runtime_workspace: Path,
@@ -179,6 +267,28 @@ def _sync_local_venv(
         verbose=True,
     )
     _log("venv_sync_done", seconds=round(time.monotonic() - started, 3), venv=str(env_dir / ".venv"))
+
+
+def _copy_cache_for_mode(args: argparse.Namespace, uv_cache: Path) -> Path:
+    if args.mode == "volume-cache":
+        return uv_cache
+    local_cache = Path(args.runtime_root) / "uv_cache"
+    started = time.monotonic()
+    if local_cache.exists():
+        shutil.rmtree(local_cache)
+    if args.mode == "copy-cache":
+        shutil.copytree(uv_cache, local_cache, symlinks=True)
+    elif args.mode == "fresh-cache":
+        local_cache.mkdir(parents=True, exist_ok=True)
+    else:
+        raise RuntimeError(f"Unsupported cache mode: {args.mode}")
+    _log(
+        "cache_ready",
+        mode=args.mode,
+        uv_cache=str(local_cache),
+        seconds=round(time.monotonic() - started, 3),
+    )
+    return local_cache
 
 
 def _start_process(cmd: list[str], *, log_path: Path, env: dict[str, str]) -> subprocess.Popen[str]:
@@ -292,6 +402,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--persistent-workspace", type=Path, default=Path(os.environ.get("COMFYGIT_HOME", "")))
     parser.add_argument("--environment", default="")
     parser.add_argument("--runtime-root", type=Path, default=Path("/tmp/comfygit-runtime-hydration-probe"))
+    parser.add_argument(
+        "--mode",
+        choices=["volume-cache", "copy-cache", "fresh-cache", "runtime-bundle"],
+        default="volume-cache",
+    )
     parser.add_argument("--uv-cache", type=Path)
     parser.add_argument("--models-dir", type=Path, default=Path(os.environ.get("SHARED_MODELS_DIR", "/data/models")))
     parser.add_argument("--python-install-dir", type=Path)
@@ -301,6 +416,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proxy-token", default="local-hydration-probe-token")
     parser.add_argument("--startup-timeout", type=int, default=600)
     parser.add_argument("--sync-timeout", type=int, default=1800)
+    parser.add_argument("--bundle", type=Path)
+    parser.add_argument("--bundle-format", choices=["tar", "tar-gz", "tar-zst"], default="tar-gz")
+    parser.add_argument("--bundle-timeout", type=int, default=3600)
+    parser.add_argument("--create-bundle", action="store_true")
     parser.add_argument("--no-proxy", dest="proxy", action="store_false")
     parser.add_argument("--skip-sync", action="store_true")
     parser.add_argument("--keep-running", action="store_true")
@@ -321,29 +440,37 @@ def main() -> None:
 
     _log(
         "probe_start",
+        mode=args.mode,
         persistent_workspace=str(persistent_workspace),
         runtime_workspace=str(runtime_workspace),
         environment=args.environment,
         uv_cache=str(uv_cache),
         models_dir=str(args.models_dir),
     )
-    _, env_dir = _hydrate_workspace(
-        persistent_workspace=persistent_workspace,
-        runtime_workspace=runtime_workspace,
-        env_name=args.environment,
-        uv_cache=uv_cache,
-        models_dir=args.models_dir.resolve(),
-    )
-    if not args.skip_sync:
-        _sync_local_venv(
+    if args.mode == "runtime-bundle":
+        _extract_runtime_bundle(args, runtime_workspace)
+    else:
+        _, env_dir = _hydrate_workspace(
+            persistent_workspace=persistent_workspace,
             runtime_workspace=runtime_workspace,
             env_name=args.environment,
-            env_dir=env_dir,
             uv_cache=uv_cache,
-            python_install_dir=python_install_dir,
-            torch_backend=args.torch_backend,
-            timeout=args.sync_timeout,
+            models_dir=args.models_dir.resolve(),
         )
+        local_uv_cache = _copy_cache_for_mode(args, uv_cache)
+        local_python_install_dir = local_uv_cache / "python"
+        if not args.skip_sync:
+            _sync_local_venv(
+                runtime_workspace=runtime_workspace,
+                env_name=args.environment,
+                env_dir=env_dir,
+                uv_cache=local_uv_cache,
+                python_install_dir=local_python_install_dir,
+                torch_backend=args.torch_backend,
+                timeout=args.sync_timeout,
+            )
+        if args.create_bundle:
+            _create_runtime_bundle(args)
     _boot_runtime(args, runtime_workspace)
 
 

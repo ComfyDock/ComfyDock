@@ -31,6 +31,7 @@ RUN apt-get update -o Acquire::Retries=10 && apt-get install -y \
     python3.12-venv \
     wget \
     xz-utils \
+    zstd \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
     && apt-get clean \
@@ -47,3 +48,12 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV VIRTUAL_ENV="/opt/venv"
+
+ARG COMFYGIT_REPO=https://github.com/comfygit-ai/comfygit.git
+ARG COMFYGIT_REF=dev
+RUN git clone --depth 1 --branch "${COMFYGIT_REF}" "${COMFYGIT_REPO}" /opt/comfygit \
+    && uv pip install --python /opt/venv/bin/python \
+      -e /opt/comfygit/packages/core \
+      -e /opt/comfygit/packages/cli
+
+ENV COMFYGIT_BAKED_CLI=1

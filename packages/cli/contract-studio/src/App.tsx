@@ -213,6 +213,15 @@ export function App() {
   const hasMoreGallery = renderedGallery.length < visibleGallery.length;
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
+  const proxyExecutorConfigured = health?.executor === "proxy" && health.proxy?.configured !== false;
+  const healthReady = proxyExecutorConfigured || Boolean(health?.comfyui?.available);
+  const healthLabel = !health
+    ? "Loading"
+    : proxyExecutorConfigured
+      ? "Endpoint configured"
+      : health.comfyui?.available
+        ? "ComfyUI online"
+        : "ComfyUI unavailable";
 
   useEffect(() => {
     setGalleryRenderCount((current) =>
@@ -273,8 +282,8 @@ export function App() {
             <p className="eyebrow">ComfyGit Studio</p>
             <h1>{contractsData?.environment || "Environment"}</h1>
           </div>
-          <div className="health-pill" data-ready={health?.comfyui?.available || undefined}>
-            <span>{health?.comfyui?.available ? "ComfyUI online" : "ComfyUI unavailable"}</span>
+          <div className="health-pill" data-ready={healthReady || undefined}>
+            <span>{healthLabel}</span>
           </div>
         </header>
 

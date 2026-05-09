@@ -380,7 +380,7 @@ class ProxyComfyExecutor:
             if request.callback_token:
                 callback_payload["token"] = request.callback_token
             payload["callback"] = callback_payload
-        response = await self._post_run(payload, request.staged_uploads)
+        response = await self._post_run(payload, request.staged_uploads, timeout_seconds=request.timeout_seconds)
         prompt_id = str(response.get("prompt_id") or "")
         if not prompt_id:
             raise RuntimeError(f"Proxy runtime did not return a prompt_id: {response}")
@@ -431,9 +431,11 @@ class ProxyComfyExecutor:
         self,
         payload: Mapping[str, Any],
         staged_uploads: tuple[StagedUpload, ...],
+        *,
+        timeout_seconds: float,
     ) -> dict[str, Any]:
         if not staged_uploads:
-            return await self._request_json("POST", "/proxy/runs", json_data=dict(payload), timeout=30)
+            return await self._request_json("POST", "/proxy/runs", json_data=dict(payload), timeout=timeout_seconds)
 
         form = aiohttp.FormData()
         form.add_field("payload", json.dumps(payload), content_type="application/json")
@@ -448,7 +450,7 @@ class ProxyComfyExecutor:
                     filename=upload.comfyui_filename,
                     content_type=upload.content_type,
                 )
-            return await self._request_json("POST", "/proxy/runs", data=form, timeout=30)
+            return await self._request_json("POST", "/proxy/runs", data=form, timeout=timeout_seconds)
         finally:
             for handle in handles:
                 handle.close()

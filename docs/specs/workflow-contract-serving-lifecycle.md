@@ -368,15 +368,17 @@ single-user local Studio sessions. Shared or multi-user deployments must make
 cancellation ownership and blast radius explicit before exposing it broadly.
 
 Current implementation: serve exposes `POST /runs/{run_id}/cancel`, resolves
-the run through the caller's gallery/session scope, asks the local executor to
-delete the queued ComfyUI prompt and interrupt the matching prompt id, and marks
-the run and output slots as `cancelled` while removing pending gallery rows so
-the output grid returns to its pre-run state. Studio keeps Generate disabled and
-loading while a pending run exists, and exposes a single run-level cancel
-control under the Generate button once the run has a `run_id`. This is partial
-because cancellation is still polling-observed rather than event-streamed, the
-local executor relies on ComfyUI's prompt-id interrupt semantics, and shared
-multi-user cancellation policy is not yet configurable.
+the run through the caller's gallery/session scope, best-effort asks the
+configured executor to cancel the matching prompt id, and marks the run and
+output slots as `cancelled` while removing pending gallery rows so the output
+grid returns to its pre-run state. Remote cancellation failure, timeout, or a
+missing prompt id is recorded as warning metadata but does not block local
+cancellation because the front door owns Studio-visible state. Studio keeps
+Generate disabled and loading while a pending run exists, and exposes a single
+run-level cancel control under the Generate button once the run has a `run_id`.
+This is partial because cancellation is still polling-observed rather than
+event-streamed, the local executor relies on ComfyUI's prompt-id interrupt
+semantics, and shared multi-user cancellation policy is not yet configurable.
 
 ### CGSERVE-RUN-06 [PARTIAL]: Proxy execution is an optional executor mode
 Validation: HUMAN_REVIEW
@@ -475,7 +477,12 @@ boundary, submits prepared prompts and staged upload metadata to the proxy
 runtime, polls the proxy run status, maps completed proxy outputs back into the
 existing `RunExecutionResult` shape, and localizes proxy artifacts before serve
 records gallery state. Provider-specific ids remain debug metadata in raw
-results.
+results. The initial proxy submit request uses the configured run timeout
+rather than a short local HTTP timeout so serverless workers can cold start
+before returning their provider or ComfyUI prompt id. If that initial submit
+fails before a prompt id exists, front-door serve reports proxy availability
+failure against the configured proxy URL rather than reporting the front-door's
+local ComfyUI URL.
 
 ### CGSERVE-RUN-06C [PARTIAL]: Local proxy mode is the first validation target
 Validation: TEST
@@ -517,11 +524,14 @@ states, and provider-specific rollout policy belong to later slices after the
 health shape is stable.
 
 Current implementation: public `/health` returns a local `environment_ref`.
-When configured with `--executor proxy`, public `/health` also includes the
-proxy runtime health payload and a nullable `proxy_environment_ref_match`
-boolean based on the reported contract digest. Runtime `/proxy/health` returns
-its own `environment_ref`. A missing or mismatched ref is visible but does not
-block proxy execution.
+When configured with `--executor proxy`, public `/health` defaults to reporting
+that a proxy executor is configured without contacting the remote proxy. This
+keeps serverless proxy workers cold until a generation request actually needs
+them. Operators can pass `?check_proxy=true` to opt into the older diagnostic
+probe, which includes the proxy runtime health payload and a nullable
+`proxy_environment_ref_match` boolean based on the reported contract digest.
+Runtime `/proxy/health` returns its own `environment_ref`. A missing or
+mismatched ref is visible but does not block proxy execution.
 
 ### CGSERVE-RUN-06E [PARTIAL]: Front-door serve is the proxy coordinator
 Validation: MIXED
@@ -544,9 +554,16 @@ Current implementation: front-door serve owns public run rows, output-slot rows,
 gallery rows, sessions, browser uploads, and localized artifacts. In callback
 mode it submits public `run_id` plus a callback URL/token to the runtime proxy,
 accepts worker lifecycle callbacks, and records terminal state in the
-front-door state store. The older polling protocol remains available as a
-fallback, so runtime proxy status and proxy artifact ids may still exist as
-process-local debug/fallback state.
+front-door state store. When callback mode is configured, active-run recovery
+does not start the older proxy polling loop; callback delivery remains the
+coordinator source of truth so serverless workers do not need process-affinity
+for `/proxy/runs/{prompt_id}` status reads. The older polling protocol remains
+available as a fallback, so runtime proxy status and proxy artifact ids may
+still exist as process-local debug/fallback state. The Modal proof runtime uses
+a public ASGI front that spawns a Modal function call per generation and returns
+the Modal call id as the initial proxy prompt id; the spawned function call, not
+an HTTP background task, owns the ComfyUI/proxy process lifetime until the
+terminal callback/artifact upload completes.
 
 ### CGSERVE-RUN-06F [PARTIAL]: Proxy workers report status through authenticated callbacks
 Validation: MIXED
@@ -573,6 +590,9 @@ Current implementation: front-door serve can pass a callback URL, public
 front door. Terminal callbacks are idempotent for durable run/gallery rows:
 duplicates do not create duplicate output slots or gallery items. Fine-grained
 heartbeat/progress callbacks and stale-worker timeout handling remain planned.
+The Modal proof runtime records lightweight job-index metadata so status and
+cancel requests can resolve the spawned provider call id, but provider-local
+state remains advisory relative to authenticated front-door callbacks.
 
 ### CGSERVE-RUN-06G [PARTIAL]: Worker completion uploads artifacts to the front door first
 Validation: MIXED

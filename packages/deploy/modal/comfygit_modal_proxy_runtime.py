@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from typing import Any
 import urllib.error
 import urllib.parse
@@ -67,11 +68,19 @@ MODELS_DIR = VOLUME_ROOT / "models"
 REPOS_DIR = VOLUME_ROOT / "repos"
 COMFYGIT_REPO_DIR = REPOS_DIR / "comfygit"
 VOLUME_UV_CACHE_DIR = WORKSPACE_DIR / "uv_cache"
+RUNTIME_BUNDLE_DIR = VOLUME_ROOT / "runtime-bundles"
+RUNTIME_BUNDLE_FORMAT = os.environ.get("COMFYGIT_MODAL_RUNTIME_BUNDLE_FORMAT", "tar-zst")
 RUNTIME_ROOT = Path(os.environ.get("COMFYGIT_MODAL_RUNTIME_ROOT", "/tmp/comfygit-modal-runtime"))
 RUNTIME_WORKSPACE_DIR = RUNTIME_ROOT / "workspace"
 RUNTIME_ENV_DIR = RUNTIME_WORKSPACE_DIR / "environments" / ENV_NAME
 RUNTIME_LOGS_DIR = RUNTIME_ROOT / "logs"
+RUNTIME_MODE = os.environ.get("COMFYGIT_MODAL_RUNTIME_MODE", "volume-cache").strip().lower()
 RUNTIME_SYNC_ON_START = os.environ.get("COMFYGIT_MODAL_RUNTIME_SYNC_ON_START", "1").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+INSTALL_DEV_CLI_ON_START = os.environ.get("COMFYGIT_MODAL_INSTALL_DEV_CLI_ON_START", "").lower() in {
     "1",
     "true",
     "yes",
@@ -99,6 +108,22 @@ def _modal_image() -> modal.Image:
     env = {
         "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics,video",
         "COMFYGIT_HOME": str(RUNTIME_WORKSPACE_DIR),
+        "COMFYGIT_MODAL_RUNTIME_APP_NAME": APP_NAME,
+        "COMFYGIT_MODAL_ENV_NAME": ENV_NAME,
+        "COMFYGIT_MODAL_GPU": GPU_TYPE,
+        "COMFYGIT_MODAL_PROXY_TOKEN": PROXY_TOKEN,
+        "COMFYGIT_MODAL_PROXY_LABEL": PROXY_LABEL,
+        "COMFYGIT_MODAL_VOLUME_NAME": VOLUME_NAME,
+        "COMFYGIT_MODAL_VOLUME_VERSION": str(VOLUME_VERSION),
+        "COMFYGIT_MODAL_ENABLE_GPU_SNAPSHOT": "1" if ENABLE_GPU_SNAPSHOT else "0",
+        "COMFYGIT_MODAL_ENABLE_MEMORY_SNAPSHOT": "1" if ENABLE_MEMORY_SNAPSHOT else "0",
+        "COMFYGIT_MODAL_BOOT_IN_ENTER": "1" if BOOT_IN_ENTER else "0",
+        "COMFYGIT_MODAL_INSTALL_DEV_CLI_ON_START": "1" if INSTALL_DEV_CLI_ON_START else "0",
+        "COMFYGIT_MODAL_RUNTIME_BUNDLE_FORMAT": RUNTIME_BUNDLE_FORMAT,
+        "COMFYGIT_MODAL_RUNTIME_MODE": RUNTIME_MODE,
+        "COMFYGIT_MODAL_RUNTIME_ROOT": str(RUNTIME_ROOT),
+        "COMFYGIT_MODAL_RUNTIME_SYNC_ON_START": "1" if RUNTIME_SYNC_ON_START else "0",
+        "COMFYGIT_MODAL_TORCH_BACKEND": TORCH_BACKEND,
         "PYTHONUNBUFFERED": "1",
     }
     uv_link_mode = os.environ.get("COMFYGIT_MODAL_UV_LINK_MODE", "").strip()
@@ -108,6 +133,8 @@ def _modal_image() -> modal.Image:
 
 
 image = _modal_image()
+api_image = image.uv_pip_install("fastapi[standard]")
+job_index = modal.Dict.from_name(f"{APP_NAME}-jobs", create_if_missing=True)
 
 
 def _log_event(event: str, **fields: Any) -> None:
@@ -157,6 +184,57 @@ def _request_json(
         raise RuntimeError(f"{method} {url} failed with {exc.code}: {data}") from exc
 
 
+def _request_multipart_json(
+    method: str,
+    url: str,
+    *,
+    payload: dict[str, Any],
+    uploads: list[dict[str, Any]],
+    timeout: float = 60,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    body, content_type = _encode_multipart(payload, uploads)
+    request_headers = dict(headers or {})
+    request_headers["Content-Type"] = content_type
+    request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        data = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"{method} {url} failed with {exc.code}: {data}") from exc
+
+
+def _encode_multipart(payload: dict[str, Any], uploads: list[dict[str, Any]]) -> tuple[bytes, str]:
+    boundary = f"----comfygit-modal-{uuid.uuid4().hex}"
+    chunks: list[bytes] = []
+
+    def add(value: str | bytes) -> None:
+        chunks.append(value if isinstance(value, bytes) else value.encode("utf-8"))
+
+    add(f"--{boundary}\r\n")
+    add('Content-Disposition: form-data; name="payload"\r\n')
+    add("Content-Type: application/json\r\n\r\n")
+    add(json.dumps(payload))
+    add("\r\n")
+
+    for index, upload in enumerate(uploads):
+        field_name = str(upload.get("field_name") or f"file_{index}")
+        filename = str(upload.get("filename") or f"{field_name}.bin")
+        content_type = str(upload.get("content_type") or "application/octet-stream")
+        body = upload.get("body") or b""
+        if not isinstance(body, bytes):
+            raise TypeError(f"Upload {field_name} body must be bytes.")
+        add(f"--{boundary}\r\n")
+        add(f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n')
+        add(f"Content-Type: {content_type}\r\n\r\n")
+        add(body)
+        add("\r\n")
+
+    add(f"--{boundary}--\r\n")
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
 def _request_bytes(
     url: str,
     *,
@@ -166,6 +244,76 @@ def _request_bytes(
     request = urllib.request.Request(url, headers=headers or {})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(), response.headers.get("content-type", "application/octet-stream")
+
+
+def _utc_timestamp() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _job_key(value: str) -> str:
+    return f"job:{value}"
+
+
+def _prompt_key(value: str) -> str:
+    return f"prompt:{value}"
+
+
+def _job_put(key: str, value: dict[str, Any]) -> None:
+    try:
+        job_index.put(key, value)
+    except Exception as exc:
+        _log_event("modal_job_index_put_failed", key=key, error=str(exc))
+
+
+def _job_get(key: str) -> dict[str, Any] | None:
+    try:
+        value = job_index.get(key)
+    except Exception as exc:
+        _log_event("modal_job_index_get_failed", key=key, error=str(exc))
+        return None
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _resolve_modal_job(identifier: str) -> tuple[str, dict[str, Any] | None]:
+    prompt_mapping = _job_get(_prompt_key(identifier))
+    if prompt_mapping and isinstance(prompt_mapping.get("modal_call_id"), str):
+        call_id = str(prompt_mapping["modal_call_id"])
+        return call_id, _job_get(_job_key(call_id))
+    job = _job_get(_job_key(identifier))
+    return identifier, job
+
+
+def _proxy_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {PROXY_TOKEN}"}
+
+
+def _callback_target_from_payload(payload: dict[str, Any]) -> dict[str, str] | None:
+    callback = payload.get("callback")
+    if not isinstance(callback, dict):
+        return None
+    run_id = callback.get("run_id")
+    url = callback.get("url")
+    if not isinstance(run_id, str) or not run_id or not isinstance(url, str) or not url:
+        return None
+    result = {"run_id": run_id, "url": url}
+    token = callback.get("token")
+    if isinstance(token, str) and token:
+        result["token"] = token
+    return result
+
+
+def _post_callback_error(payload: dict[str, Any], error_payload: dict[str, Any]) -> None:
+    callback = _callback_target_from_payload(payload)
+    if callback is None:
+        return
+    body = {"run_id": callback["run_id"], **error_payload}
+    headers: dict[str, str] = {}
+    if callback.get("token"):
+        headers["Authorization"] = f"Bearer {callback['token']}"
+    try:
+        _request_json("POST", callback["url"], payload=body, headers=headers, timeout=30)
+    except Exception as exc:
+        _log_event("modal_worker_error_callback_failed", error=str(exc), callback_url=callback["url"])
 
 
 def _start_process(
@@ -198,7 +346,19 @@ def _start_process(
     return process
 
 
-def _install_dev_cli() -> None:
+def _install_dev_cli() -> dict[str, Any]:
+    started = time.monotonic()
+    existing_cg = shutil.which("cg")
+    if existing_cg and not INSTALL_DEV_CLI_ON_START:
+        result = {
+            "skipped": True,
+            "reason": "image-baked-cg",
+            "cg": existing_cg,
+            "seconds": round(time.monotonic() - started, 3),
+        }
+        _log_event("runtime_dev_cli_install_skipped", **result)
+        return result
+
     _run(
         [
             "uv",
@@ -214,18 +374,31 @@ def _install_dev_cli() -> None:
         timeout=30 * 60,
         env=_runtime_env(),
     )
+    result = {
+        "skipped": False,
+        "reason": "volume-editable-install",
+        "cg": shutil.which("cg"),
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("runtime_dev_cli_install_complete", **result)
+    return result
 
 
 def _assert_materialized_environment() -> None:
     env_dir = WORKSPACE_DIR / "environments" / ENV_NAME
     required_paths = [
         WORKSPACE_DIR / ".metadata" / "workspace.json",
-        COMFYGIT_REPO_DIR / "packages/core",
-        COMFYGIT_REPO_DIR / "packages/cli",
         env_dir / "ComfyUI",
         env_dir / ".cec" / "pyproject.toml",
         VOLUME_UV_CACHE_DIR,
     ]
+    if INSTALL_DEV_CLI_ON_START or not shutil.which("cg"):
+        required_paths.extend(
+            [
+                COMFYGIT_REPO_DIR / "packages/core",
+                COMFYGIT_REPO_DIR / "packages/cli",
+            ]
+        )
     missing = [str(path) for path in required_paths if not path.exists()]
     if missing:
         raise RuntimeError(
@@ -234,14 +407,36 @@ def _assert_materialized_environment() -> None:
         )
 
 
+def _runtime_bundle_path() -> Path:
+    suffix_by_format = {
+        "tar": ".tar",
+        "tar-gz": ".tar.gz",
+        "tar-zst": ".tar.zst",
+    }
+    try:
+        suffix = suffix_by_format[RUNTIME_BUNDLE_FORMAT]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported runtime bundle format: {RUNTIME_BUNDLE_FORMAT}") from exc
+    return RUNTIME_BUNDLE_DIR / f"{ENV_NAME}{suffix}"
+
+
+def _runtime_cache_dir() -> Path:
+    if RUNTIME_MODE == "copy-cache":
+        return RUNTIME_ROOT / "uv_cache"
+    if RUNTIME_MODE == "fresh-cache":
+        return RUNTIME_ROOT / "uv_cache"
+    return VOLUME_UV_CACHE_DIR
+
+
 def _runtime_env() -> dict[str, str]:
+    uv_cache_dir = _runtime_cache_dir()
     env = os.environ.copy()
     env.update(
         {
             "COMFYGIT_HOME": str(RUNTIME_WORKSPACE_DIR),
             "UV_PROJECT_ENVIRONMENT": str(RUNTIME_ENV_DIR / ".venv"),
-            "UV_CACHE_DIR": str(VOLUME_UV_CACHE_DIR),
-            "UV_PYTHON_INSTALL_DIR": str(VOLUME_UV_CACHE_DIR / "python"),
+            "UV_CACHE_DIR": str(uv_cache_dir),
+            "UV_PYTHON_INSTALL_DIR": str(uv_cache_dir / "python"),
             "UV_LINK_MODE": "copy",
             "COMFYGIT_UV_LINK_MODE": "copy",
             "UV_TORCH_BACKEND": TORCH_BACKEND,
@@ -308,6 +503,98 @@ def _hydrate_runtime_workspace() -> dict[str, Any]:
     return result
 
 
+def _copy_runtime_cache() -> dict[str, Any]:
+    started = time.monotonic()
+    if RUNTIME_MODE not in {"copy-cache", "fresh-cache"}:
+        return {"skipped": True, "seconds": 0, "uv_cache": str(VOLUME_UV_CACHE_DIR)}
+
+    local_cache = _runtime_cache_dir()
+    if local_cache.exists():
+        shutil.rmtree(local_cache)
+    if RUNTIME_MODE == "copy-cache":
+        shutil.copytree(VOLUME_UV_CACHE_DIR, local_cache, symlinks=True)
+    else:
+        local_cache.mkdir(parents=True, exist_ok=True)
+    result = {
+        "skipped": False,
+        "uv_cache": str(local_cache),
+        "mode": RUNTIME_MODE,
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("runtime_cache_prepare_complete", **result)
+    return result
+
+
+def _tar_extract_args(bundle_path: Path) -> list[str]:
+    if RUNTIME_BUNDLE_FORMAT == "tar":
+        return ["tar", "-xf", str(bundle_path), "-C", str(RUNTIME_ROOT)]
+    if RUNTIME_BUNDLE_FORMAT == "tar-gz":
+        return ["tar", "-xzf", str(bundle_path), "-C", str(RUNTIME_ROOT)]
+    if RUNTIME_BUNDLE_FORMAT == "tar-zst":
+        return [
+            "tar",
+            "--use-compress-program",
+            "zstd -d -T0",
+            "-xf",
+            str(bundle_path),
+            "-C",
+            str(RUNTIME_ROOT),
+        ]
+    raise ValueError(f"Unsupported runtime bundle format: {RUNTIME_BUNDLE_FORMAT}")
+
+
+def _extract_runtime_bundle() -> dict[str, Any]:
+    started = time.monotonic()
+    bundle_path = _runtime_bundle_path()
+    if not bundle_path.exists():
+        raise RuntimeError(f"Runtime bundle does not exist: {bundle_path}")
+    if RUNTIME_WORKSPACE_DIR.exists():
+        shutil.rmtree(RUNTIME_WORKSPACE_DIR)
+    RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    _run(_tar_extract_args(bundle_path), timeout=90 * 60)
+    result = {
+        "bundle_path": str(bundle_path),
+        "bundle_format": RUNTIME_BUNDLE_FORMAT,
+        "size_bytes": bundle_path.stat().st_size,
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("runtime_bundle_extract_complete", **result)
+    return result
+
+
+def _prepare_runtime_files() -> dict[str, Any]:
+    started = time.monotonic()
+    if RUNTIME_MODE == "runtime-bundle":
+        bundle_info = _extract_runtime_bundle()
+        sync_info = {
+            "skipped": True,
+            "reason": "runtime-bundle",
+            "runtime_venv": str(RUNTIME_ENV_DIR / ".venv"),
+            "seconds": 0,
+        }
+        result = {
+            "mode": RUNTIME_MODE,
+            "bundle": bundle_info,
+            "sync": sync_info,
+            "seconds": round(time.monotonic() - started, 3),
+        }
+        _log_event("runtime_prepare_files_complete", **result)
+        return result
+
+    hydrate_info = _hydrate_runtime_workspace()
+    cache_info = _copy_runtime_cache()
+    sync_info = _sync_runtime_environment()
+    result = {
+        "mode": RUNTIME_MODE,
+        "hydrate": hydrate_info,
+        "cache": cache_info,
+        "sync": sync_info,
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    _log_event("runtime_prepare_files_complete", **result)
+    return result
+
+
 def _sync_runtime_environment() -> dict[str, Any]:
     if not RUNTIME_SYNC_ON_START:
         result = {
@@ -335,7 +622,7 @@ def _sync_runtime_environment() -> dict[str, Any]:
     result = {
         "skipped": False,
         "runtime_venv": str(RUNTIME_ENV_DIR / ".venv"),
-        "uv_cache": str(VOLUME_UV_CACHE_DIR),
+        "uv_cache": str(_runtime_cache_dir()),
         "seconds": round(time.monotonic() - started, 3),
     }
     _log_event("runtime_sync_complete", **result)
@@ -406,10 +693,9 @@ class ProxyRuntime:
         started = time.monotonic()
         volume.reload()
         _assert_materialized_environment()
-        _install_dev_cli()
+        install_info = _install_dev_cli()
         install_seconds = time.monotonic() - started
-        hydrate_info = _hydrate_runtime_workspace()
-        sync_info = _sync_runtime_environment()
+        files_info = _prepare_runtime_files()
         ready: dict[str, Any] | None = None
         if BOOT_IN_ENTER:
             ready = self._ensure_started()
@@ -417,8 +703,9 @@ class ProxyRuntime:
             "runtime_prepare_complete",
             seconds=round(time.monotonic() - started, 3),
             install_seconds=round(install_seconds, 3),
-            hydrate=hydrate_info,
-            sync=sync_info,
+            install=install_info,
+            files=files_info,
+            runtime_mode=RUNTIME_MODE,
             boot_in_enter=BOOT_IN_ENTER,
             memory_snapshot=ENABLE_MEMORY_SNAPSHOT,
             gpu_snapshot=ENABLE_GPU_SNAPSHOT,
@@ -433,8 +720,7 @@ class ProxyRuntime:
         started = time.monotonic()
         if not RUNTIME_ENV_DIR.exists():
             _assert_materialized_environment()
-            _hydrate_runtime_workspace()
-            _sync_runtime_environment()
+            _prepare_runtime_files()
         logs_dir = RUNTIME_LOGS_DIR / ENV_NAME
         runtime_env = _runtime_env()
         comfy = _start_process(
@@ -509,13 +795,132 @@ class ProxyRuntime:
                 comfy.kill()
             raise
 
-    @modal.web_server(PROXY_PORT, startup_timeout=STARTUP_TIMEOUT, label=PROXY_LABEL)
+    @modal.web_server(PROXY_PORT, startup_timeout=STARTUP_TIMEOUT, label=f"{PROXY_LABEL}-direct")
     def serve(self) -> None:
         self._ensure_started()
 
     @modal.method()
     def ready(self) -> dict[str, Any]:
         return self._ensure_started()
+
+    @modal.method()
+    def run_generation(
+        self,
+        payload: dict[str, Any],
+        uploads: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        call_id = modal.current_function_call_id() or uuid.uuid4().hex
+        uploads = uploads or []
+        started = time.monotonic()
+        timeout_seconds = float(payload.get("timeout_seconds") or 3 * 60 * 60)
+        poll_interval_seconds = float(payload.get("poll_interval_seconds") or 1)
+        base_url = f"http://127.0.0.1:{PROXY_PORT}"
+        headers = _proxy_headers()
+
+        _job_put(
+            _job_key(call_id),
+            {
+                "status": "starting",
+                "modal_call_id": call_id,
+                "updated_at": _utc_timestamp(),
+            },
+        )
+        try:
+            ready_info = self._ensure_started()
+            submit_started = time.monotonic()
+            if uploads:
+                submitted = _request_multipart_json(
+                    "POST",
+                    f"{base_url}/proxy/runs",
+                    payload=payload,
+                    uploads=uploads,
+                    headers=headers,
+                    timeout=max(60, timeout_seconds),
+                )
+            else:
+                submitted = _request_json(
+                    "POST",
+                    f"{base_url}/proxy/runs",
+                    payload=payload,
+                    headers=headers,
+                    timeout=max(60, timeout_seconds),
+                )
+            prompt_id = str(submitted.get("prompt_id") or "")
+            if not prompt_id:
+                raise RuntimeError(f"Proxy did not return prompt_id: {submitted}")
+
+            _job_put(
+                _job_key(call_id),
+                {
+                    "status": str(submitted.get("status") or "submitted"),
+                    "modal_call_id": call_id,
+                    "prompt_id": prompt_id,
+                    "submitted": submitted,
+                    "ready": ready_info,
+                    "submit_seconds": round(time.monotonic() - submit_started, 3),
+                    "updated_at": _utc_timestamp(),
+                },
+            )
+            _job_put(
+                _prompt_key(prompt_id),
+                {
+                    "modal_call_id": call_id,
+                    "prompt_id": prompt_id,
+                    "updated_at": _utc_timestamp(),
+                },
+            )
+
+            deadline = time.monotonic() + timeout_seconds
+            completed: dict[str, Any] = {}
+            while time.monotonic() < deadline:
+                completed = _request_json(
+                    "GET",
+                    f"{base_url}/proxy/runs/{urllib.parse.quote(prompt_id, safe='')}",
+                    headers=headers,
+                    timeout=60,
+                )
+                status = str(completed.get("status") or "").lower()
+                _job_put(
+                    _job_key(call_id),
+                    {
+                        "status": status or "running",
+                        "modal_call_id": call_id,
+                        "prompt_id": prompt_id,
+                        "result": completed,
+                        "updated_at": _utc_timestamp(),
+                    },
+                )
+                if status in {"completed", "error", "failed", "timeout", "cancelled"}:
+                    result = {
+                        "modal_call_id": call_id,
+                        "prompt_id": prompt_id,
+                        "seconds": round(time.monotonic() - started, 3),
+                        **completed,
+                    }
+                    _job_put(_job_key(call_id), {**result, "updated_at": _utc_timestamp()})
+                    return result
+                time.sleep(max(0.1, poll_interval_seconds))
+
+            error_payload = {
+                "status": "timeout",
+                "error": "timeout",
+                "message": f"Timed out waiting for proxy prompt {prompt_id}",
+                "prompt_id": prompt_id,
+                "modal_call_id": call_id,
+            }
+            _job_put(_job_key(call_id), {**error_payload, "updated_at": _utc_timestamp()})
+            _post_callback_error(payload, error_payload)
+            return error_payload
+        except Exception as exc:
+            error_payload = {
+                "status": "error",
+                "error": "modal_worker_error",
+                "message": str(exc),
+                "modal_call_id": call_id,
+            }
+            _job_put(_job_key(call_id), {**error_payload, "updated_at": _utc_timestamp()})
+            _post_callback_error(payload, error_payload)
+            raise
 
     @modal.method()
     def profile_txt2img(self, timeout_seconds: float = 30 * 60) -> dict[str, Any]:
@@ -604,3 +1009,184 @@ class ProxyRuntime:
             },
             "timings": {key: round(value, 3) for key, value in timings.items()},
         }
+
+
+@app.function(image=api_image, timeout=60 * 60, scaledown_window=SCALEDOWN_WINDOW)
+@modal.asgi_app(label=PROXY_LABEL)
+def proxy_api():
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse
+
+    api = FastAPI()
+
+    def unauthorized() -> JSONResponse:
+        return JSONResponse(
+            {"error": "forbidden", "message": "Proxy token is invalid."},
+            status_code=403,
+        )
+
+    def auth_response(request: Request) -> JSONResponse | None:
+        expected = f"Bearer {PROXY_TOKEN}"
+        if request.headers.get("Authorization", "") == expected:
+            return None
+        return unauthorized()
+
+    async def job_put(key: str, value: dict[str, Any]) -> None:
+        await job_index.put.aio(key, value)
+
+    async def job_get(key: str) -> dict[str, Any] | None:
+        value = await job_index.get.aio(key)
+        return value if isinstance(value, dict) else None
+
+    async def resolve_modal_job(prompt_id: str) -> tuple[str, dict[str, Any] | None]:
+        direct = await job_get(_job_key(prompt_id))
+        if direct is not None:
+            return str(direct.get("modal_call_id") or prompt_id), direct
+        prompt_mapping = await job_get(_prompt_key(prompt_id))
+        if prompt_mapping is not None:
+            call_id = str(prompt_mapping.get("modal_call_id") or prompt_id)
+            return call_id, await job_get(_job_key(call_id))
+        return prompt_id, None
+
+    async def read_proxy_request(request: Request) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        content_type = request.headers.get("content-type", "").lower()
+        if not content_type.startswith("multipart/"):
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Proxy run payload must be a JSON object.")
+            return payload, []
+
+        form = await request.form()
+        payload_part = form.get("payload")
+        if not isinstance(payload_part, str):
+            raise ValueError("Multipart proxy request must include a JSON payload field.")
+        payload_data = json.loads(payload_part)
+        if not isinstance(payload_data, dict):
+            raise ValueError("Multipart proxy payload must be a JSON object.")
+
+        uploads: list[dict[str, Any]] = []
+        for field_name, value in form.multi_items():
+            if field_name == "payload":
+                continue
+            filename = getattr(value, "filename", None)
+            read = getattr(value, "read", None)
+            if not filename or not callable(read):
+                continue
+            body = await read()
+            uploads.append(
+                {
+                    "field_name": str(field_name),
+                    "filename": str(filename),
+                    "content_type": str(getattr(value, "content_type", None) or "application/octet-stream"),
+                    "body": body,
+                }
+            )
+        return payload_data, uploads
+
+    async def proxy_health(request):
+        if response := auth_response(request):
+            return response
+        return {
+            "status": "ok",
+            "role": "modal-job-proxy",
+            "runtime": "modal",
+            "environment": ENV_NAME,
+            "gpu": GPU_TYPE,
+            "worker": "ProxyRuntime.run_generation",
+        }
+
+    proxy_health.__annotations__["request"] = Request
+    api.add_api_route("/proxy/health", proxy_health, methods=["GET"])
+
+    async def proxy_submit(request):
+        if response := auth_response(request):
+            return response
+        try:
+            payload, uploads = await read_proxy_request(request)
+        except Exception as exc:
+            return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+        call = await ProxyRuntime().run_generation.spawn.aio(payload, uploads)
+        call_id = str(call.object_id)
+        submitted = {
+            "status": "submitted",
+            "prompt_id": call_id,
+            "modal_call_id": call_id,
+            "runtime": "modal-job",
+        }
+        await job_put(
+            _job_key(call_id),
+            {
+                **submitted,
+                "updated_at": _utc_timestamp(),
+            },
+        )
+        return submitted
+
+    proxy_submit.__annotations__["request"] = Request
+    api.add_api_route("/proxy/runs", proxy_submit, methods=["POST"])
+
+    async def proxy_status(request, prompt_id):
+        if response := auth_response(request):
+            return response
+        call_id, job = await resolve_modal_job(prompt_id)
+        if job is not None:
+            result = job.get("result")
+            payload: dict[str, Any] = {
+                "status": str(job.get("status") or "running"),
+                "prompt_id": str(job.get("prompt_id") or prompt_id),
+                "modal_call_id": call_id,
+            }
+            if isinstance(result, dict):
+                payload.update(result)
+                payload["modal_call_id"] = call_id
+            return payload
+
+        try:
+            result = await modal.FunctionCall.from_id(call_id).get.aio(timeout=0)
+        except modal.exception.TimeoutError:
+            return {"status": "running", "prompt_id": prompt_id, "modal_call_id": call_id}
+        except Exception as exc:
+            return JSONResponse(
+                {
+                    "error": "not_found",
+                    "message": f"Unknown proxy run: {exc}",
+                    "prompt_id": prompt_id,
+                    "modal_call_id": call_id,
+                },
+                status_code=404,
+            )
+        if isinstance(result, dict):
+            await job_put(_job_key(call_id), {**result, "updated_at": _utc_timestamp()})
+            return result
+        return {"status": "completed", "prompt_id": prompt_id, "modal_call_id": call_id}
+
+    proxy_status.__annotations__["request"] = Request
+    proxy_status.__annotations__["prompt_id"] = str
+    api.add_api_route("/proxy/runs/{prompt_id}", proxy_status, methods=["GET"])
+
+    async def proxy_cancel(request, prompt_id):
+        if response := auth_response(request):
+            return response
+        call_id, job = await resolve_modal_job(prompt_id)
+        warning = None
+        try:
+            await modal.FunctionCall.from_id(call_id).cancel.aio(terminate_containers=True)
+        except Exception as exc:
+            warning = str(exc)
+        result = {
+            "status": "cancelled",
+            "prompt_id": str(job.get("prompt_id") if job else prompt_id),
+            "modal_call_id": call_id,
+        }
+        if warning:
+            result["warning"] = warning
+        await job_put(_job_key(call_id), {**result, "updated_at": _utc_timestamp()})
+        await job_put(_prompt_key(prompt_id), {"modal_call_id": call_id, **result, "updated_at": _utc_timestamp()})
+        return result
+
+    proxy_cancel.__annotations__["request"] = Request
+    proxy_cancel.__annotations__["prompt_id"] = str
+    api.add_api_route("/proxy/runs/{prompt_id}/cancel", proxy_cancel, methods=["POST"])
+
+    return api

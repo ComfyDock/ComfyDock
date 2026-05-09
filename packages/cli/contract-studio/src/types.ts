@@ -35,7 +35,19 @@ export type HealthResponse = {
   ok: boolean;
   environment: string;
   comfy_url: string;
-  comfyui?: { available: boolean; error?: string };
+  executor?: "local" | "proxy" | string;
+  comfyui?: { available: boolean; error?: string; mode?: string; status?: string };
+  proxy?: {
+    configured?: boolean;
+    available?: boolean | null;
+    health_check?: "deferred" | "checked" | string;
+    error?: string;
+    ok?: boolean;
+    role?: string;
+    environment?: string;
+    comfyui?: { available: boolean; error?: string };
+    environment_ref?: unknown;
+  };
 };
 
 export type RunIssue = {
