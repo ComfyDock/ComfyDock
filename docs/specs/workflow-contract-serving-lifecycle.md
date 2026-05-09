@@ -487,8 +487,9 @@ local ComfyUI URL.
 ### CGSERVE-RUN-06C [PARTIAL]: Local proxy mode is the first validation target
 Validation: TEST
 
-The first implementation should be testable without Modal, RunPod, S3, or R2 by
-running two local serve processes against one local ComfyUI:
+The first implementation should be testable without any managed provider or
+object-storage service by running two local serve processes against one local
+ComfyUI:
 
 ```text
 Studio/browser
@@ -559,11 +560,10 @@ does not start the older proxy polling loop; callback delivery remains the
 coordinator source of truth so serverless workers do not need process-affinity
 for `/proxy/runs/{prompt_id}` status reads. The older polling protocol remains
 available as a fallback, so runtime proxy status and proxy artifact ids may
-still exist as process-local debug/fallback state. The Modal proof runtime uses
-a public ASGI front that spawns a Modal function call per generation and returns
-the Modal call id as the initial proxy prompt id; the spawned function call, not
-an HTTP background task, owns the ComfyUI/proxy process lifetime until the
-terminal callback/artifact upload completes.
+still exist as process-local debug/fallback state. Provider adapters that run
+workers behind short-lived web requests should translate proxy submissions into
+provider-native jobs so the worker lifetime covers ComfyUI execution and the
+terminal callback/artifact upload.
 
 ### CGSERVE-RUN-06F [PARTIAL]: Proxy workers report status through authenticated callbacks
 Validation: MIXED
@@ -590,9 +590,9 @@ Current implementation: front-door serve can pass a callback URL, public
 front door. Terminal callbacks are idempotent for durable run/gallery rows:
 duplicates do not create duplicate output slots or gallery items. Fine-grained
 heartbeat/progress callbacks and stale-worker timeout handling remain planned.
-The Modal proof runtime records lightweight job-index metadata so status and
-cancel requests can resolve the spawned provider call id, but provider-local
-state remains advisory relative to authenticated front-door callbacks.
+Provider adapters may keep lightweight job-index metadata so status and cancel
+requests can resolve provider-native job ids, but provider-local state remains
+advisory relative to authenticated front-door callbacks.
 
 ### CGSERVE-RUN-06G [PARTIAL]: Worker completion uploads artifacts to the front door first
 Validation: MIXED
@@ -609,10 +609,10 @@ names/selectors, artifact content type, filename, dimensions when available, and
 enough raw provider/ComfyUI metadata for debugging. The front door should be the
 only component that decides the final public artifact URL or gallery record.
 
-Remote object storage remains a later adapter. A future worker may upload to
-S3, R2, Modal volume/object storage, or another storage backend and report
-scoped artifact refs instead of uploading bytes directly to the front door, but
-the public Studio/API model should stay front-door-owned.
+Remote object storage remains a later adapter. A future worker may upload to a
+provider object store and report scoped artifact refs instead of uploading bytes
+directly to the front door, but the public Studio/API model should stay
+front-door-owned.
 
 Current implementation: in callback mode, the runtime proxy fetches generated
 ComfyUI output bytes from its local ComfyUI instance and uploads those bytes to
@@ -826,9 +826,9 @@ requested generated filenames before submitting the prompt. Browser clients must
 not receive trusted local paths from either side of the proxy boundary.
 
 Object storage-backed input staging remains a later adapter: the same staged
-upload record may eventually point to an S3/R2/Modal object ref instead of local
-bytes, but the public contract run payload should remain based on opaque file
-refs.
+upload record may eventually point to a provider object-store ref instead of
+local bytes, but the public contract run payload should remain based on opaque
+file refs.
 
 Current implementation: front-door serve resolves browser `file_ref` values into
 server-side upload records, patches the workflow prompt with the generated
