@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, cast
 
 from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
@@ -495,6 +496,132 @@ class WorkflowManager:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Error comparing workflows '{name}': {e}")
             return True
+
+    @staticmethod
+    def _normalize_workflow_api_prompt_ref(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+
+        ref = value.strip()
+        if not ref:
+            return None
+
+        path = PurePosixPath(ref.replace("\\", "/"))
+        if path.is_absolute() or ".." in path.parts:
+            return None
+        if not path.parts or path.parts[0] != "workflow_api":
+            return None
+
+        return path.as_posix()
+
+    @staticmethod
+    def _workflow_entries_from_config(config: dict) -> Mapping[str, object]:
+        workflows = config.get("tool", {}).get("comfygit", {}).get("workflows", {})
+        if isinstance(workflows, Mapping):
+            return workflows
+        return {}
+
+    def _referenced_workflow_api_prompt_files(self, config: dict) -> set[str]:
+        workflows = self._workflow_entries_from_config(config)
+
+        referenced: set[str] = set()
+        for workflow_data in workflows.values():
+            if not isinstance(workflow_data, Mapping):
+                continue
+
+            workflow_entry = cast("Mapping[str, object]", workflow_data)
+            contract = workflow_entry.get("execution_contract")
+            if not isinstance(contract, Mapping):
+                continue
+
+            contract_entry = cast("Mapping[str, object]", contract)
+            ref = self._normalize_workflow_api_prompt_ref(
+                contract_entry.get("api_prompt_file")
+            )
+            if ref:
+                referenced.add(ref)
+
+        return referenced
+
+    def cleanup_orphaned_workflow_entries(self, config: dict | None = None) -> int:
+        """Remove manifest workflow entries whose editable workflow file is gone."""
+        is_batch = config is not None
+        if config is None:
+            config = self.pyproject.load()
+
+        workflows = self._workflow_entries_from_config(config)
+
+        workflows_in_pyproject = set(workflows.keys())
+        workflows_in_comfyui = set()
+        if self.comfyui_workflows.exists():
+            workflows_in_comfyui = {
+                f.stem for f in self.comfyui_workflows.glob("*.json")
+            }
+
+        orphaned_workflows = sorted(workflows_in_pyproject - workflows_in_comfyui)
+        if not orphaned_workflows:
+            return 0
+
+        removed_count = self.pyproject.workflows.remove_workflows(
+            orphaned_workflows,
+            config=config,
+        )
+        if removed_count > 0:
+            logger.info(f"Cleaned up {removed_count} deleted workflow(s) from pyproject.toml")
+            if not is_batch:
+                self.pyproject.save(config)
+
+        return removed_count
+
+    def cleanup_orphaned_workflow_api_prompts(self, config: dict | None = None) -> int:
+        """Remove workflow API prompt files not referenced by remaining contracts."""
+        if config is None:
+            config = self.pyproject.load()
+
+        workflow_api_dir = self.cec_path / "workflow_api"
+        if not workflow_api_dir.exists():
+            return 0
+
+        referenced = self._referenced_workflow_api_prompt_files(config)
+        removed_count = 0
+
+        for api_file in sorted(workflow_api_dir.rglob("*.json")):
+            if not api_file.is_file():
+                continue
+
+            rel_path = api_file.relative_to(self.cec_path).as_posix()
+            if rel_path in referenced:
+                continue
+
+            try:
+                api_file.unlink()
+                removed_count += 1
+                logger.info(
+                    f"Removed unreferenced workflow API prompt artifact: {rel_path}"
+                )
+
+                parent = api_file.parent
+                while parent != workflow_api_dir:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            except OSError as e:
+                logger.warning(
+                    f"Failed to remove unreferenced workflow API prompt '{rel_path}': {e}"
+                )
+
+        return removed_count
+
+    def cleanup_orphaned_workflow_state(self, config: dict | None = None) -> dict[str, int]:
+        """Clean manifest workflow orphans and unreferenced workflow API artifacts."""
+        removed_workflows = self.cleanup_orphaned_workflow_entries(config=config)
+        removed_api_prompts = self.cleanup_orphaned_workflow_api_prompts(config=config)
+        return {
+            "workflow_entries": removed_workflows,
+            "api_prompts": removed_api_prompts,
+        }
 
     def copy_all_workflows(self) -> dict[str, Path | None]:
         """Copy ALL workflows from ComfyUI to .cec for commit.
@@ -1295,18 +1422,9 @@ class WorkflowManager:
         # Write all models to workflow
         self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
 
-        # Clean up orphaned workflows from pyproject.toml
-        # This handles workflows deleted from ComfyUI (whether committed or never-committed)
-        workflows_in_pyproject = set(config.get('tool', {}).get('comfygit', {}).get('workflows', {}).keys())
-        workflows_in_comfyui = set()
-        if self.comfyui_workflows.exists():
-            workflows_in_comfyui = {f.stem for f in self.comfyui_workflows.glob("*.json")}
-
-        orphaned_workflows = workflows_in_pyproject - workflows_in_comfyui
-        if orphaned_workflows:
-            removed_count = self.pyproject.workflows.remove_workflows(list(orphaned_workflows), config=config)
-            if removed_count > 0:
-                logger.info(f"Cleaned up {removed_count} deleted workflow(s) from pyproject.toml")
+        # Clean up workflows deleted from ComfyUI, including their now-unreferenced
+        # workflow API prompt artifacts.
+        self.cleanup_orphaned_workflow_state(config=config)
 
         # Clean up orphaned models (must run AFTER workflow sections are removed)
         self.pyproject.models.cleanup_orphans(config=config)

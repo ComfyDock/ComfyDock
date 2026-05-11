@@ -1900,17 +1900,28 @@ class Environment:
         if not workflow_status:
             workflow_status = self.workflow_manager.get_workflow_status()
 
+        # Check if changes are safe to commit (no unresolved issues)
+        if not workflow_status.is_commit_safe and not allow_issues:
+            logger.error("Cannot commit with unresolved issues. Use --allow-issues to force.")
+            return
+
+        # Commit can be responsible for cleanup even when the only pending
+        # change is a stale tracked workflow_api artifact.
+        cleanup_config = self.pyproject.load()
+        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
+            config=cleanup_config,
+        )
+        if cleanup_result["workflow_entries"] > 0:
+            # Clean up orphaned models after workflow sections are removed.
+            self.pyproject.models.cleanup_orphans(config=cleanup_config)
+            self.pyproject.save(cleanup_config)
+
         # Check if there are any changes to commit (workflows OR git)
         has_workflow_changes = workflow_status.sync_status.has_changes
         has_git_changes = self.git_manager.has_uncommitted_changes()
 
         if not has_workflow_changes and not has_git_changes:
             logger.error("No changes to commit")
-            return
-
-        # Check if changes are safe to commit (no unresolved issues)
-        if not workflow_status.is_commit_safe and not allow_issues:
-            logger.error("Cannot commit with unresolved issues. Use --allow-issues to force.")
             return
 
         # Apply auto-resolutions to pyproject.toml for workflows with changes
@@ -1923,25 +1934,15 @@ class Environment:
                 # Apply resolution results to pyproject (in-memory mutations)
                 self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
 
-        # Clean up orphaned workflows from pyproject.toml
+        # Clean up orphaned workflow entries and workflow API prompt artifacts.
         # This handles BOTH:
         # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
         # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
-        workflows_in_pyproject = set(
-            config.get('tool', {}).get('comfygit', {}).get('workflows', {}).keys()
-        )
-        workflows_in_comfyui = set()
-        comfyui_workflows_dir = self.comfyui_path / "user" / "default" / "workflows"
-        if comfyui_workflows_dir.exists():
-            workflows_in_comfyui = {f.stem for f in comfyui_workflows_dir.glob("*.json")}
+        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
+        if cleanup_result["workflow_entries"] > 0:
+            logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
 
-        orphaned_workflows = list(workflows_in_pyproject - workflows_in_comfyui)
-        if orphaned_workflows:
-            logger.info(f"Cleaning up {len(orphaned_workflows)} orphaned workflow(s) from pyproject.toml...")
-            removed_count = self.pyproject.workflows.remove_workflows(orphaned_workflows, config=config)
-            logger.debug(f"Removed {removed_count} workflow section(s)")
-
-            # Clean up orphaned models (must run AFTER workflow sections are removed)
+            # Clean up orphaned models (must run AFTER workflow sections are removed).
             self.pyproject.models.cleanup_orphans(config=config)
 
         # Save all changes at once

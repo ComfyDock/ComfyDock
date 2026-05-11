@@ -17,6 +17,7 @@ The root cause: execute_commit() only processes "new" and "modified" workflows,
 completely ignoring "deleted" workflows. It calls copy_all_workflows() which removes
 JSON files, but never cleans up the pyproject.toml sections.
 """
+import subprocess
 import sys
 from pathlib import Path
 
@@ -284,8 +285,16 @@ class TestWorkflowDeletionCleanup:
 
         contract = WorkflowExecutionContract(
             contracts={"default": NamedWorkflowContract()},
+            api_prompt_file="workflow_api/default.api.json",
         )
         test_env.pyproject.workflows.set_execution_contract("default", contract)
+
+        api_prompt = test_env.cec_path / "workflow_api" / "default.api.json"
+        api_prompt.parent.mkdir(parents=True, exist_ok=True)
+        api_prompt.write_text(
+            '{"1": {"class_type": "CheckpointLoaderSimple"}}',
+            encoding="utf-8",
+        )
 
         (test_env.comfyui_path / "user" / "default" / "workflows" / "default.json").unlink()
 
@@ -296,6 +305,66 @@ class TestWorkflowDeletionCleanup:
         workflows = config.get("tool", {}).get("comfygit", {}).get("workflows", {})
         assert "default" not in workflows, \
             "Deleted workflow section should be removed with nested execution contract"
+        assert not api_prompt.exists(), \
+            "Deleted workflow's referenced API prompt artifact should be removed"
+
+    def test_commit_prunes_unreferenced_workflow_api_artifacts(self, test_env, test_workspace):
+        """Commit should remove workflow_api files that no contract references."""
+        builder = ModelIndexBuilder(test_workspace)
+        builder.add_model("model.safetensors", "checkpoints")
+        builder.index_all()
+
+        wf = WorkflowBuilder().add_checkpoint_loader("model.safetensors").build()
+        simulate_comfyui_save_workflow(test_env, "default", wf)
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Add default workflow")
+
+        api_dir = test_env.cec_path / "workflow_api"
+        api_dir.mkdir(parents=True, exist_ok=True)
+        referenced_api = api_dir / "default.api.json"
+        orphaned_api = api_dir / "orphaned.api.json"
+        referenced_api.write_text(
+            '{"1": {"class_type": "CheckpointLoaderSimple"}}',
+            encoding="utf-8",
+        )
+        orphaned_api.write_text('{"1": {"class_type": "SaveImage"}}', encoding="utf-8")
+
+        contract = WorkflowExecutionContract(
+            contracts={"default": NamedWorkflowContract()},
+            api_prompt_file="workflow_api/default.api.json",
+        )
+        test_env.pyproject.workflows.set_execution_contract("default", contract)
+
+        subprocess.run(
+            ["git", "add", "pyproject.toml", "workflow_api"],
+            cwd=test_env.cec_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Add execution contract and orphan API prompt"],
+            cwd=test_env.cec_path,
+            check=True,
+        )
+
+        assert referenced_api.exists()
+        assert orphaned_api.exists()
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        test_env.execute_commit(workflow_status, message="Clean orphan workflow API prompt")
+
+        assert referenced_api.exists(), "Referenced API prompt artifact should remain"
+        assert not orphaned_api.exists(), "Unreferenced API prompt artifact should be removed"
+
+        tracked_files = subprocess.run(
+            ["git", "ls-files", "workflow_api"],
+            cwd=test_env.cec_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        assert "workflow_api/default.api.json" in tracked_files
+        assert "workflow_api/orphaned.api.json" not in tracked_files
 
     def test_rename_workflow_drops_old_execution_contract(self, test_env, test_workspace):
         """Rename should follow delete-plus-create semantics for contracts."""

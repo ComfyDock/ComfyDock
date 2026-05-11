@@ -72,6 +72,11 @@ handoff flows must require those files to be committed when referenced by a
 workflow execution contract. Losing the file while preserving the manifest
 contract leaves the contract non-executable.
 
+When a workflow entry or execution contract is removed during commit-time
+reconciliation, any `workflow_api/*.json` artifact that is no longer referenced
+by a remaining execution contract should be pruned from tracked environment
+state.
+
 ### CGSPEC-MAN-07 [LIVE]: Workflow contract numeric metadata must remain TOML-safe
 Validation: TEST
 

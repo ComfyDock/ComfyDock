@@ -48,6 +48,19 @@ compatibility checks against ComfyUI frontend versions remain future work.
 not be filtered out by export packaging, directory-source materialization, or
 git commit/push flows when the files are referenced by workflow contracts.
 
+### CGSERVE-CORE-02D [LIVE]: Workflow cleanup prunes unreferenced API prompt artifacts
+Validation: TEST
+
+When commit-time workflow reconciliation removes a workflow manifest entry
+because its editable workflow file no longer exists, core should also remove
+that workflow contract's referenced API prompt artifact from `workflow_api/`.
+Commit-time reconciliation should also prune `workflow_api/*.json` files that
+are not referenced by any remaining workflow execution contract.
+
+Unreferenced API prompt files are inert at runtime, but keeping them as tracked
+portable state makes environment repositories harder to reason about after
+workflow deletion, branch changes, and workflow subset cleanup.
+
 ### CGSERVE-CORE-02A [PARTIAL]: Stored API prompts are required for contract execution
 Validation: TEST
 
