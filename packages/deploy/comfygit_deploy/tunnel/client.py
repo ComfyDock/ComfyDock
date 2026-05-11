@@ -43,7 +43,7 @@ def normalize_cloud_ws_url(cloud_url: str) -> str:
 
 
 class TunnelClient:
-    """Maintains an outbound worker tunnel connection to ComfyGit Cloud."""
+    """Maintains an outbound worker tunnel connection to a remote coordination service."""
 
     def __init__(self, cloud_url: str, token: str, worker_server: WorkerServer):
         self.websocket_url = normalize_cloud_ws_url(cloud_url)

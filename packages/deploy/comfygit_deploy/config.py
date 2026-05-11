@@ -76,7 +76,7 @@ class DeployConfig:
 
     @property
     def cloud_url(self) -> str | None:
-        """Get the saved ComfyGit Cloud URL for tunnel mode."""
+        """Get the saved remote service URL for tunnel mode."""
         return self._data.get("cloud", {}).get("url")
 
     @cloud_url.setter
@@ -90,7 +90,7 @@ class DeployConfig:
 
     @property
     def cloud_token(self) -> str | None:
-        """Get the saved ComfyGit Cloud auth token for tunnel mode."""
+        """Get the saved remote service auth token for tunnel mode."""
         return self._data.get("cloud", {}).get("token")
 
     @cloud_token.setter

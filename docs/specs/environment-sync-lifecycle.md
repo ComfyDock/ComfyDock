@@ -201,6 +201,18 @@ already-known-source filtering should remain shared.
 Manager currently owns the first source-candidate UI implementation. Extract it
 when build/dependency proof needs the same candidate discovery behavior.
 
+### CGSYNC-READY-04 [LIVE]: Core readiness does not prove live import success
+Validation: HUMAN_REVIEW
+
+Core readiness is allowed to report whether custom nodes have portable
+acquisition metadata, required versus optional criticality, and manifest-backed
+handoff state. It must not report a custom node as imported or failed to import
+inside the currently running ComfyUI process.
+
+Live import health is process-local runtime evidence. Manager and serve
+runtimes may layer that evidence into their own status surfaces, but they must
+not treat it as a core sync input or rewrite manifest criticality from it.
+
 ## Build Compatibility
 
 ### CGSYNC-BUILD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync

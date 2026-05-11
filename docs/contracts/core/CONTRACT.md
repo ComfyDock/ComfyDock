@@ -215,6 +215,20 @@ extensions, and runtime hooks mean graph analysis must not mutate package-level
 criticality. Only explicit user action may mark an installed custom node
 optional.
 
+### CGCORE-DEP-05A [LIVE]: Live custom-node import health is runtime-owned
+Validation: HUMAN_REVIEW
+
+Core readiness describes portable environment state: manifest dependency
+metadata, acquisition paths, git handoff state, and reproducibility inputs. It
+must not claim that a custom node imported successfully inside a specific live
+ComfyUI process, because that evidence depends on the active runtime's loader,
+Python process, logs, and startup order.
+
+Manager, serve, or provider runtimes may surface live import failures as
+runtime health warnings. Those warnings may use core manifest identity and
+workflow-usage metadata, but the live import signal itself is not core portable
+state and must not mutate custom-node criticality.
+
 ### CGCORE-DEP-06 [PLANNED]: Model source candidate discovery is reusable core logic
 Validation: MIXED
 
