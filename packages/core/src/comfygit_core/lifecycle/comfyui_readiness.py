@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -11,7 +12,8 @@ from urllib.request import urlopen
 class ProcessLike(Protocol):
     returncode: int | None
 
-    def poll(self) -> int | None: ...
+    def poll(self) -> int | None:
+        pass
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,14 @@ class ComfyUIEndpoint:
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
         return f"http://{host}:{self.port}"
+
+
+def _parse_port(value: str, current_port: int) -> int:
+    """Parse a ComfyUI port override, retaining the current port on invalid input."""
+    try:
+        return int(value)
+    except ValueError:
+        return current_port
 
 
 def resolve_comfyui_endpoint(
@@ -51,18 +61,12 @@ def resolve_comfyui_endpoint(
         token = tokens[index]
 
         if token == "--port" and index + 1 < len(tokens):
-            try:
-                port = int(tokens[index + 1])
-            except ValueError:
-                pass
+            port = _parse_port(tokens[index + 1], port)
             index += 2
             continue
 
         if token.startswith("--port="):
-            try:
-                port = int(token.split("=", 1)[1])
-            except ValueError:
-                pass
+            port = _parse_port(token.split("=", 1)[1], port)
             index += 1
             continue
 
@@ -112,8 +116,8 @@ def is_comfyui_ready(
         except HTTPError as exc:
             if 400 <= exc.code < 500:
                 return True
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            continue
     return False
 
 

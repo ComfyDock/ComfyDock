@@ -105,7 +105,7 @@ class RunExecutor(Protocol):
 
     async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
         """Execute a contract prompt and return normalized output payloads."""
-        ...
+        raise NotImplementedError
 
     async def complete_submitted(
         self,
@@ -116,11 +116,11 @@ class RunExecutor(Protocol):
         poll_interval_seconds: float,
     ) -> RunExecutionResult:
         """Wait for a previously submitted prompt and normalize its outputs."""
-        ...
+        raise NotImplementedError
 
     async def cancel(self, prompt_id: str) -> None:
         """Request cancellation for a previously submitted prompt."""
-        ...
+        raise NotImplementedError
 
 
 class ComfyUIClient:

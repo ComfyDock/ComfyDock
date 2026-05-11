@@ -5,18 +5,16 @@ import argparse
 import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
-import shutil
 import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from comfygit_core.models.exceptions import (
-    CDDependencyConflictError,
-    CDNodeConflictError,
-    CDRegistryDataError,
-    UVCommandError,
+from comfygit_core.lifecycle.comfyui_readiness import (
+    resolve_comfyui_endpoint,
+    wait_for_comfyui_ready,
 )
 from comfygit_core.lifecycle.switch_observer import (
     SwitchObserverServer,
@@ -25,9 +23,11 @@ from comfygit_core.lifecycle.switch_observer import (
     read_switch_status,
     write_switch_status,
 )
-from comfygit_core.lifecycle.comfyui_readiness import (
-    resolve_comfyui_endpoint,
-    wait_for_comfyui_ready,
+from comfygit_core.models.exceptions import (
+    CDDependencyConflictError,
+    CDNodeConflictError,
+    CDRegistryDataError,
+    UVCommandError,
 )
 
 from .formatters.error_formatter import NodeErrorFormatter
@@ -984,14 +984,14 @@ packages = []
                 target_env=target_env,
                 source_env=source_env,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not write switch status: %s", exc)
 
     def _release_switch_lock(self) -> None:
         try:
             (self.workspace.path / ".metadata" / ".switch.lock").unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not release switch lock: %s", exc)
 
     def _schedule_switch_status_cleanup(self, target_env: str) -> None:
         metadata_dir = self.workspace.path / ".metadata"
@@ -3557,7 +3557,7 @@ packages = []
                                 # Try to extract meaningful error
                                 user_msg = error.split(":", 1)[1].strip() if ":" in error else error
                                 print(f"✗ ({user_msg})")
-                            except:
+                            except Exception:
                                 print(f"✗ ({error})")
                         else:
                             print(f"✗ ({error})")
