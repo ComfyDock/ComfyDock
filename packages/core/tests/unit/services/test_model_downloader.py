@@ -605,6 +605,59 @@ class TestModelDownloaderHuggingFaceFallback:
 
     @patch('comfygit_core.services.model_downloader.hf_hub_download')
     @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
+    def test_hf_download_indexes_symlinked_models_mount(self, mock_parse, mock_hf_download, tmp_path):
+        """HF downloads should index files when a mount resolves to a backing path."""
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+
+        backing_models = tmp_path / "__modal" / "volumes" / "vo-test" / "models"
+        mount_models = tmp_path / "volume" / "models"
+        backing_models.mkdir(parents=True)
+        mount_models.parent.mkdir(parents=True)
+        mount_models.symlink_to(backing_models, target_is_directory=True)
+
+        mock_parse.return_value = ParsedHuggingFaceUrl(
+            kind="file",
+            repo_id="user/model",
+            path_in_repo="model.safetensors",
+            revision="main",
+        )
+
+        def side_effect(**kwargs):
+            local_file = Path(kwargs["local_dir"]) / kwargs["filename"]
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+            local_file.write_bytes(b"model_data")
+            return str(local_file.resolve())
+
+        mock_hf_download.side_effect = side_effect
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = mount_models
+        workspace_config.get_huggingface_token.return_value = None
+
+        downloader = ModelDownloader(repo, workspace_config)
+        target_path = mount_models / "checkpoints" / "model.safetensors"
+
+        request = DownloadRequest(
+            url="https://huggingface.co/user/model/resolve/main/model.safetensors",
+            target_path=target_path
+        )
+
+        result = downloader.download(request)
+
+        assert result.success is True
+        assert result.model.relative_path == "checkpoints/model.safetensors"
+        assert target_path.exists()
+        assert target_path.resolve().is_file()
+        repo.add_location.assert_called_once()
+        assert repo.add_location.call_args.kwargs["base_directory"] == mount_models
+        assert repo.add_location.call_args.kwargs["relative_path"] == "checkpoints/model.safetensors"
+
+    @patch('comfygit_core.services.model_downloader.hf_hub_download')
+    @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
     def test_hf_download_handles_repo_path_target_path_mismatch(self, mock_parse, mock_hf_download, tmp_path):
         """HF downloads should still materialize at target_path when repo path differs."""
         from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl

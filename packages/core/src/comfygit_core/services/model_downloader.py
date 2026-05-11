@@ -85,6 +85,13 @@ class ModelDownloader:
 
         self.model_config = ModelConfig.load()
 
+    def _relative_to_models_dir(self, path: Path) -> Path:
+        """Return a path relative to models_dir, allowing symlinked mount roots."""
+        try:
+            return path.relative_to(self.models_dir)
+        except ValueError:
+            return path.resolve().relative_to(self.models_dir.resolve())
+
     def detect_url_type(self, url: str) -> str:
         """Detect source type from URL.
 
@@ -370,8 +377,6 @@ class ModelDownloader:
                     os.link(str(downloaded_path), str(target_path))
                 except OSError:
                     shutil.copy2(downloaded_path, target_path)
-            else:
-                target_path = downloaded_path
 
             # Hash target file for ComfyGit model index integrity verification
             hasher = blake3()
@@ -384,7 +389,7 @@ class ModelDownloader:
             # Register in repository
             short_hash = self.repository.calculate_short_hash(target_path)
             blake3_hash = hasher.hexdigest()
-            relative_path = target_path.relative_to(self.models_dir)
+            relative_path = self._relative_to_models_dir(target_path)
             mtime = target_path.stat().st_mtime
 
             self.repository.ensure_model(
@@ -557,7 +562,7 @@ class ModelDownloader:
             temp_path = None  # Clear temp_path since file has been moved
 
             # Step 7: Register in repository
-            relative_path = request.target_path.relative_to(self.models_dir)
+            relative_path = self._relative_to_models_dir(request.target_path)
             mtime = request.target_path.stat().st_mtime
 
             self.repository.ensure_model(
