@@ -227,8 +227,8 @@ class WorkflowCacheRepository:
         if pyproject_path and pyproject_path.exists():
             try:
                 pyproject_mtime_for_session = pyproject_path.stat().st_mtime
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(f"Could not stat pyproject for session cache key; using default mtime: {e}")
         current_models_sync_time = self._get_current_models_sync_time()
 
         # Phase 1: Check session cache. Include every external state value that
@@ -436,8 +436,8 @@ class WorkflowCacheRepository:
         if pyproject_path and pyproject_path.exists():
             try:
                 pyproject_mtime = pyproject_path.stat().st_mtime
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(f"Could not stat pyproject for persistent cache metadata; using default mtime: {e}")
 
         # Compute resolution context hash
         resolution_context_hash = ""

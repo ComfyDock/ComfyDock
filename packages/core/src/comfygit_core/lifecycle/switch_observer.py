@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SWITCH_STATUS_FILE = ".switch_status.json"
 SUPERVISOR_LOG_FILE = "supervisor-switch.log"
@@ -84,11 +85,11 @@ def read_switch_logs(metadata_dir: Path, line_count: int = 80) -> list[dict[str,
     for line in lines[-line_count:]:
         try:
             parsed = json.loads(line)
-            if isinstance(parsed, dict):
-                entries.append(parsed)
-                continue
-        except Exception:
-            pass
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            entries.append(parsed)
+            continue
         entries.append({"timestamp": None, "level": "info", "message": line})
     return entries
 
