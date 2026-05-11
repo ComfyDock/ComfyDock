@@ -1651,6 +1651,10 @@ class GlobalCommands:
             self._set_civitai_key(args.civitai_key)
             return
 
+        if hasattr(args, 'github_token') and args.github_token is not None:
+            self._set_github_token(args.github_token)
+            return
+
         if hasattr(args, 'uv_cache') and args.uv_cache is not None:
             self._set_uv_cache(args.uv_cache)
             return
@@ -1670,6 +1674,15 @@ class GlobalCommands:
         else:
             self.workspace.workspace_config_manager.set_civitai_token(key)
             print("✓ Civitai API key saved")
+
+    def _set_github_token(self, token: str):
+        """Set GitHub token."""
+        if token == "":
+            self.workspace.workspace_config_manager.set_github_token(None)
+            print("✓ GitHub token cleared")
+        else:
+            self.workspace.workspace_config_manager.set_github_token(token)
+            print("✓ GitHub token saved")
 
     def _set_uv_cache(self, path_str: str):
         """Set external UV cache path."""
@@ -1704,6 +1717,14 @@ class GlobalCommands:
             print(f"  Civitai API Key: {masked}")
         else:
             print("  Civitai API Key: Not set")
+
+        # GitHub token
+        github_token = self.workspace.workspace_config_manager.get_github_token()
+        if github_token:
+            masked = f"••••••••{github_token[-4:]}" if len(github_token) > 4 else "••••"
+            print(f"  GitHub Token:    {masked}")
+        else:
+            print("  GitHub Token:    Not set")
 
         # External UV cache
         uv_cache = self.workspace.workspace_config_manager.get_external_uv_cache()

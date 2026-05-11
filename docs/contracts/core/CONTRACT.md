@@ -288,6 +288,24 @@ Editable local package and node paths are development conveniences. They should 
 kept in local configuration unless explicitly converted into portable manifest
 source metadata.
 
+### CGCORE-SYNC-03A [LIVE]: Portable development nodes hydrate from pinned git refs
+Validation: TEST
+
+When a development custom node has portable git metadata, core sync and
+materialization should be able to reconstruct a missing local node by cloning its
+repository. If both branch and pinned commit metadata are present, core should
+prefer the pinned commit for exact reconstruction. Branch metadata is advisory
+for development context unless a caller explicitly requests branch-tracking
+behavior.
+
+### CGCORE-SYNC-03B [LIVE]: Git acquisition auth is local runtime configuration
+Validation: TEST
+
+Core may use local workspace credentials or runtime environment variables to
+authenticate GitHub API calls and git clone/fetch operations for private
+repositories. Those credentials must not be stored in environment manifests,
+export bundles, or committed provider-neutral provenance metadata.
+
 ### CGCORE-SYNC-04 [PLANNED]: Build/runtime materialization fails on sync errors by default
 Validation: TEST
 

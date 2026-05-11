@@ -7,6 +7,7 @@ class APICredentials:
     civitai_token: str | None = None
     runpod_api_key: str | None = None
     huggingface_token: str | None = None
+    github_token: str | None = None
 
     @classmethod
     def from_dict(cls, data):
@@ -16,6 +17,7 @@ class APICredentials:
             civitai_token=data.get("civitai_token"),
             runpod_api_key=data.get("runpod_api_key"),
             huggingface_token=data.get("huggingface_token"),
+            github_token=data.get("github_token"),
         )
 
     def to_dict(self):
@@ -26,6 +28,8 @@ class APICredentials:
             result["runpod_api_key"] = self.runpod_api_key
         if self.huggingface_token:
             result["huggingface_token"] = self.huggingface_token
+        if self.github_token:
+            result["github_token"] = self.github_token
         return result
 
     def __repr__(self):
@@ -37,6 +41,8 @@ class APICredentials:
             parts.append(f"runpod_api_key='***{self.runpod_api_key[-4:]}'")
         if self.huggingface_token:
             parts.append(f"huggingface_token='***{self.huggingface_token[-4:]}'")
+        if self.github_token:
+            parts.append(f"github_token='***{self.github_token[-4:]}'")
         return f"APICredentials({', '.join(parts) if parts else ''})"
 
 @dataclass

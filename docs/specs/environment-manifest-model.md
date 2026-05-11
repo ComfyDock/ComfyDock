@@ -122,6 +122,15 @@ Core should preserve whether a node came from a registry entry, a Git/source URL
 or a local development path. Local development paths are not portable by
 themselves.
 
+### CGSPEC-NODE-02A [LIVE]: Development nodes become portable through git provenance
+Validation: TEST
+
+Development custom nodes may remain marked as `source = "development"` while
+recording portable git provenance. A development node intended for handoff should
+record its repository URL and pinned commit in the manifest. Branch metadata may
+describe the author's current development branch, but exact import,
+materialization, and deployment should prefer the pinned commit when available.
+
 ### CGSPEC-NODE-03 [LIVE]: Node criticality defaults to required
 Validation: TEST
 
@@ -175,6 +184,16 @@ Validation: TEST
 Local editable source paths and private local indexes belong in gitignored local
 configuration. They should be injected into uv resolution when active, but not
 committed as the portable environment recipe.
+
+### CGSPEC-LOCAL-02A [LIVE]: Git credentials are machine-local acquisition config
+Validation: TEST
+
+GitHub or other git host credentials used to resolve private environment
+repositories, git custom nodes, or development node repositories belong in local
+workspace configuration or runtime environment variables. They must not be
+written into the portable environment manifest. Manifest entries should store
+repository URLs and refs; each machine or deployment provider supplies its own
+credentials.
 
 ### CGSPEC-LOCAL-03 [LIVE]: ComfyGit-managed resolver floors are tracked policy
 Validation: TEST

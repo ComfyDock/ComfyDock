@@ -1077,8 +1077,9 @@ class NodeManager:
         """
         node_path = self.custom_nodes_path / node_info.name
 
-        # Determine ref: branch takes priority over pinned_commit
-        ref = node_info.branch or node_info.pinned_commit
+        # Prefer exact reconstruction when a development node was exported or
+        # committed with a pinned source revision.
+        ref = node_info.pinned_commit or node_info.branch
         if not node_info.repository:
             logger.error(f"Cannot clone dev node '{node_info.name}': missing repository URL")
             return False
@@ -1093,7 +1094,8 @@ class NodeManager:
                 url=node_info.repository,
                 target_path=node_path,
                 depth=0,
-                ref=ref
+                ref=ref,
+                token=self.node_lookup.get_git_token(),
             )
             logger.info(f"Successfully cloned dev node: {node_info.name}")
             return True

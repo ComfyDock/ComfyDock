@@ -134,7 +134,9 @@ class EnvironmentFactory:
         from ..utils.comfyui_ops import resolve_comfyui_version
         from ..utils.git import git_rev_parse
 
-        github_client = GitHubClient()
+        github_client = GitHubClient(
+            token_provider=workspace.workspace_config_manager.get_github_token,
+        )
 
         version_to_clone, version_type, _ = resolve_comfyui_version(
             comfyui_version,
@@ -447,11 +449,12 @@ class EnvironmentFactory:
         from ..utils.git import git_clone, git_clone_subdirectory, parse_git_url_with_subdir
 
         base_url, subdir = parse_git_url_with_subdir(git_url)
+        git_token = workspace.workspace_config_manager.get_github_token()
 
         # Clone repository to .cec (with subdirectory extraction if specified)
         if subdir:
             logger.info(f"Cloning {base_url} and extracting subdirectory '{subdir}' to {cec_path}")
-            git_clone_subdirectory(base_url, cec_path, subdir, ref=branch)
+            git_clone_subdirectory(base_url, cec_path, subdir, ref=branch, token=git_token)
             # Note: git_clone_subdirectory validates pyproject.toml internally
 
             # Subdirectory imports lose git history, need to init new repo
@@ -469,7 +472,7 @@ class EnvironmentFactory:
                 )
         else:
             logger.info(f"Cloning {base_url} to {cec_path}")
-            git_clone(base_url, cec_path, ref=branch)
+            git_clone(base_url, cec_path, ref=branch, token=git_token)
 
             # Validate it's a ComfyGit environment (only for non-subdir imports)
             pyproject_path = cec_path / "pyproject.toml"

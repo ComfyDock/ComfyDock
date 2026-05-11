@@ -1,10 +1,13 @@
 """GitHub API client for repository operations and metadata retrieval."""
 
 import json
+import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from comfygit_core.constants import DEFAULT_GITHUB_URL
 from comfygit_core.logging.logging_config import get_logger
@@ -44,8 +47,15 @@ class GitHubClient:
     Always fetches fresh data from API (no caching) to ensure latest versions.
     """
 
-    def __init__(self, base_url: str = DEFAULT_GITHUB_URL):
+    def __init__(
+        self,
+        base_url: str = DEFAULT_GITHUB_URL,
+        token: str | None = None,
+        token_provider: Callable[[], str | None] | None = None,
+    ):
         self.base_url = base_url
+        self._token = token
+        self._token_provider = token_provider
         self.rate_limiter = RateLimitManager(min_interval=0.05)
         self.retry_config = RetryConfig(
             max_retries=3,
@@ -54,6 +64,21 @@ class GitHubClient:
             exponential_base=2.0,
             jitter=True,
         )
+
+    def _resolve_token(self) -> str | None:
+        if self._token:
+            return self._token
+        if self._token_provider:
+            return self._token_provider()
+        return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+
+    def _open_json(self, url: str) -> Any:
+        request = urllib.request.Request(url)
+        request.add_header("Accept", "application/vnd.github+json")
+        if token := self._resolve_token():
+            request.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read())
 
     def parse_github_url(self, url: str) -> GitHubRepoInfo | None:
         """Parse a GitHub URL to extract repository information.
@@ -118,8 +143,7 @@ class GitHubClient:
 
             # Get repo metadata
             api_url = f"https://api.github.com/repos/{owner}/{name}"
-            with urllib.request.urlopen(api_url) as response:
-                repo_data = json.loads(response.read())
+            repo_data = self._open_json(api_url)
 
             default_branch = repo_data.get("default_branch", "main")
 
@@ -129,9 +153,8 @@ class GitHubClient:
                 # Ref specified - resolve to commit (works for branches, tags, and commits)
                 try:
                     commits_url = f"https://api.github.com/repos/{owner}/{name}/commits/{target_ref}"
-                    with urllib.request.urlopen(commits_url) as response:
-                        commit_data = json.loads(response.read())
-                        latest_commit = commit_data.get("sha")
+                    commit_data = self._open_json(commits_url)
+                    latest_commit = commit_data.get("sha")
                 except urllib.error.HTTPError:
                     logger.warning(f"Could not resolve ref '{target_ref}' for {owner}/{name}")
                     pass
@@ -139,9 +162,8 @@ class GitHubClient:
                 # No ref - get latest commit from default branch
                 try:
                     commits_url = f"https://api.github.com/repos/{owner}/{name}/commits/{default_branch}"
-                    with urllib.request.urlopen(commits_url) as response:
-                        commit_data = json.loads(response.read())
-                        latest_commit = commit_data.get("sha")
+                    commit_data = self._open_json(commits_url)
+                    latest_commit = commit_data.get("sha")
                 except urllib.error.HTTPError:
                     pass
 
@@ -149,9 +171,8 @@ class GitHubClient:
             latest_release = None
             try:
                 releases_url = f"https://api.github.com/repos/{owner}/{name}/releases/latest"
-                with urllib.request.urlopen(releases_url) as response:
-                    release_data = json.loads(response.read())
-                    latest_release = release_data.get("tag_name")
+                release_data = self._open_json(releases_url)
+                latest_release = release_data.get("tag_name")
             except urllib.error.HTTPError:
                 # No releases found, that's okay
                 pass
@@ -194,8 +215,7 @@ class GitHubClient:
 
             # Get all releases
             api_url = f"https://api.github.com/repos/{owner}/{name}/releases?per_page={min(limit * 2, 100)}"
-            with urllib.request.urlopen(api_url) as response:
-                releases_data = json.loads(response.read())
+            releases_data = self._open_json(api_url)
 
             # Parse into GitHubRelease objects
             releases = []
@@ -248,8 +268,7 @@ class GitHubClient:
 
             # Get specific release by tag
             api_url = f"https://api.github.com/repos/{owner}/{name}/releases/tags/{tag}"
-            with urllib.request.urlopen(api_url) as response:
-                release_data = json.loads(response.read())
+            release_data = self._open_json(api_url)
 
             return GitHubRelease(
                 tag_name=release_data["tag_name"],

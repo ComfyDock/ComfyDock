@@ -93,7 +93,7 @@ class NodeInfo:
 
     # Git reference fields for dev nodes (optional, used for sharing)
     branch: str | None = None           # Branch to track (e.g., "dev", "main")
-    pinned_commit: str | None = None    # Commit hash at export time (advisory only)
+    pinned_commit: str | None = None    # Commit hash for exact portable reconstruction
 
     def __post_init__(self) -> None:
         self.criticality = normalize_node_criticality(self.criticality)

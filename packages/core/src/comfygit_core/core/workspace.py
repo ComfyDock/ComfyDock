@@ -566,15 +566,16 @@ class Workspace:
 
         # Parse URL for subdirectory
         base_url, subdir = parse_git_url_with_subdir(git_url)
+        git_token = self.workspace_config_manager.get_github_token()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_cec = Path(temp_dir) / ".cec"
 
             # Clone to temp location (with subdirectory extraction if specified)
             if subdir:
-                git_clone_subdirectory(base_url, temp_cec, subdir, ref=branch)
+                git_clone_subdirectory(base_url, temp_cec, subdir, ref=branch, token=git_token)
             else:
-                git_clone(base_url, temp_cec, ref=branch)
+                git_clone(base_url, temp_cec, ref=branch, token=git_token)
 
             # Analyze
             return self.import_analyzer.analyze_import(temp_cec)

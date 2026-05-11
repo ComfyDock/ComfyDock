@@ -113,6 +113,37 @@ class TestGitCloneCommitDetection:
         assert mock_git.call_args_list[0].args[0] == ["clone", "https://github.com/example/repo.git", str(target_path)]
         assert mock_git.call_args_list[1].args[0] == ["checkout", full_hash]
 
+    @patch("comfygit_core.utils.git._git_with_auth")
+    @patch("comfygit_core.utils.git._git")
+    def test_https_clone_with_token_uses_askpass_auth(self, mock_git, mock_git_with_auth):
+        """HTTPS clones should use GIT_ASKPASS auth when a token is provided."""
+        target_path = Path("/tmp/repo")
+
+        git_clone("https://github.com/example/repo.git", target_path, depth=1, ref="main", token="ghp_test")
+
+        mock_git_with_auth.assert_called_once()
+        assert mock_git_with_auth.call_args.args[0] == [
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            "main",
+            "https://github.com/example/repo.git",
+            str(target_path),
+        ]
+        mock_git.assert_not_called()
+
+    @patch("comfygit_core.utils.git._git_with_auth")
+    @patch("comfygit_core.utils.git._git")
+    def test_ssh_clone_with_token_uses_normal_git(self, mock_git, mock_git_with_auth):
+        """SSH remotes should rely on SSH credentials instead of token askpass."""
+        target_path = Path("/tmp/repo")
+
+        git_clone("git@github.com:example/repo.git", target_path, depth=1, ref="main", token="ghp_test")
+
+        mock_git.assert_called_once()
+        mock_git_with_auth.assert_not_called()
+
 
 class TestGitListRemoteRefs:
     """Test remote ref parsing for git import source selection."""

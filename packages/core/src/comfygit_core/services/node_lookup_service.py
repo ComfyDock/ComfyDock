@@ -17,6 +17,7 @@ from ..utils.git import is_git_url
 if TYPE_CHECKING:
     from comfygit_core.configs.package_config import PackageConfigManager
     from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
+    from comfygit_core.repositories.workspace_config_repository import WorkspaceConfigRepository
 
 logger = get_logger(__name__)
 
@@ -79,18 +80,27 @@ class NodeLookupService:
         self,
         cache_path: Path,
         node_mappings_repository: NodeMappingsRepository | None = None,
+        workspace_config: WorkspaceConfigRepository | None = None,
     ):
         """Initialize the node lookup service.
 
         Args:
             cache_path: Required path to workspace cache directory
             node_mappings_repository: Repository for cached node mappings (fallback when API fails)
+            workspace_config: Optional workspace config for git/GitHub credentials
         """
+        self.workspace_config = workspace_config
         self.scanner = CustomNodeScanner()
         self.custom_node_cache = CustomNodeCacheManager(cache_base_path=cache_path)
         self.registry_client = ComfyRegistryClient()
-        self.github_client = GitHubClient()
+        self.github_client = GitHubClient(token_provider=self.get_git_token)
         self.node_mappings_repository = node_mappings_repository
+
+    def get_git_token(self) -> str | None:
+        """Return the configured git host token, if one is available."""
+        if not self.workspace_config:
+            return None
+        return self.workspace_config.get_github_token()
 
     def find_node(self, identifier: str) -> NodeInfo | None:
         """Find node info from registry API, git URL, or local cache.
@@ -268,7 +278,14 @@ class NodeLookupService:
                         return None
                     # Only use version as ref if it's a valid git ref
                     ref = node_info.version if _is_valid_git_ref(node_info.version) else None
-                    git_clone(node_info.repository, temp_path, depth=1, ref=ref, timeout=30)
+                    git_clone(
+                        node_info.repository,
+                        temp_path,
+                        depth=1,
+                        ref=ref,
+                        timeout=30,
+                        token=self.get_git_token(),
+                    )
                 else:
                     logger.error(f"Unsupported source: '{node_info.source}'")
                     return None

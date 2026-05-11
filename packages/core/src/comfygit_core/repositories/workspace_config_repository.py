@@ -194,6 +194,38 @@ class WorkspaceConfigRepository:
 
         return None
 
+    def set_github_token(self, token: str | None):
+        """Set or clear GitHub API token."""
+        data = self.config_file
+        if token:
+            if not data.api_credentials:
+                data.api_credentials = APICredentials(github_token=token)
+            else:
+                data.api_credentials.github_token = token
+            logger.info("GitHub API token configured")
+        else:
+            if data.api_credentials:
+                data.api_credentials.github_token = None
+            logger.info("GitHub API token cleared")
+        self.save(data)
+
+    def get_github_token(self) -> str | None:
+        """Get GitHub API token from config or environment.
+
+        Priority: GITHUB_TOKEN env > GH_TOKEN env > config file
+        """
+        env_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if env_token:
+            logger.debug("Using GitHub token from environment")
+            return env_token
+
+        data = self.config_file
+        if data.api_credentials and data.api_credentials.github_token:
+            logger.debug("Using GitHub token from config")
+            return data.api_credentials.github_token
+
+        return None
+
     def get_external_uv_cache(self) -> Path | None:
         """Get external UV cache path if configured."""
         data = self.config_file
