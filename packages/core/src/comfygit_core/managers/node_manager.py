@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
-SYSTEM_UV_DEPENDENCY = "uv>=0.10.0"
+SYSTEM_UV_DEPENDENCY = "uv>=0.11.8"
 SYSTEM_DEPENDENCIES = [SYSTEM_UV_DEPENDENCY]
 
 

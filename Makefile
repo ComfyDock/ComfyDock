@@ -100,7 +100,7 @@ show-versions:
 
 # Check version compatibility
 check-versions:
-	@python3 dev/scripts/check-versions.py
+	@uv run python dev/scripts/check-versions.py
 
 # Bump version for coordinated release (lockstep versioning)
 # Supports PEP 440 versions: X.Y.Z, X.Y.Z.devN, X.Y.ZaN, X.Y.ZbN, X.Y.ZrcN

@@ -371,8 +371,10 @@ class TestRunBehavior:
         target_env = MagicMock()
         target_env.name = "target-env"
         target_env.get_current_branch.return_value = "main"
+        target_env.comfyui_path = tmp_path / "target-comfyui"
+        target_env.comfyui_path.mkdir()
+        target_env.uv_manager.python_executable = tmp_path / "target-venv" / "bin" / "python"
         target_env.sync.return_value = MagicMock(success=True)
-        target_env.run.return_value = MagicMock(returncode=0)
 
         metadata_dir = tmp_path / ".metadata"
         metadata_dir.mkdir()
@@ -402,13 +404,22 @@ class TestRunBehavior:
             overlay=[],
         )
 
-        with pytest.raises(SystemExit) as exc:
+        mock_proc = MagicMock()
+        mock_proc.pid = 1234
+        mock_proc.stdout = []
+        mock_proc.wait.return_value = 0
+
+        with (
+            patch("comfygit_cli.env_commands.subprocess.Popen", return_value=mock_proc) as mock_popen,
+            patch("comfygit_cli.env_commands.wait_for_comfyui_ready", return_value=True),
+            pytest.raises(SystemExit) as exc,
+        ):
             cmd.run(args)
 
         assert exc.value.code == 0
         mock_workspace.get_environment.assert_called_with("target-env", auto_sync=False)
         target_env.sync.assert_called_once()
-        target_env.run.assert_called_once()
+        mock_popen.assert_called_once()
         assert not (metadata_dir / ".switch_request.json").exists()
         assert not (metadata_dir / ".switch.lock").exists()
 

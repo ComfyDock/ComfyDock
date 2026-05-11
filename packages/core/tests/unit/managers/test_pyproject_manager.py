@@ -999,7 +999,7 @@ class TestInitialPyprojectConfig:
         # Verify uv section exists with only system-tool policy.
         assert "tool" in config
         assert "uv" in config["tool"]
-        assert config["tool"]["uv"] == {"override-dependencies": ["uv>=0.10.0"]}
+        assert config["tool"]["uv"] == {"override-dependencies": ["uv>=0.11.8"]}
 
 
 class TestExcludeDependencies:

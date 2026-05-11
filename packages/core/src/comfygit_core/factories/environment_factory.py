@@ -604,11 +604,11 @@ class EnvironmentFactory:
                     "nodes": {}
                 },
                 "uv": {
-                    "override-dependencies": ["uv>=0.10.0"],
+                    "override-dependencies": ["uv>=0.11.8"],
                 }
             },
             "dependency-groups": {
-                "comfygit-system": ["uv>=0.10.0"],
+                "comfygit-system": ["uv>=0.11.8"],
             },
         }
 

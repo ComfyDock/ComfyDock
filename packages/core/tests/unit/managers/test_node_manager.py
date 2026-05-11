@@ -253,7 +253,7 @@ class TestNodeManagerSystemDependencyGroup:
         nm._sync_uv(quiet=True, all_groups=True)
 
         mock_pyproject.ensure_system_uv_dependency.assert_called_once_with(
-            dependency="uv>=0.10.0",
+            dependency="uv>=0.11.8",
             group="comfygit-system",
         )
         mock_uv.sync_project.assert_called_once()
@@ -385,7 +385,7 @@ class TestNodeManagerDependencyProvisioning:
 
     def test_sync_uv_does_not_duplicate_system_group(self):
         mock_pyproject = Mock()
-        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.10.0"]}
+        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.11.8"]}
 
         mock_uv = Mock()
         nm = NodeManager(mock_pyproject, mock_uv, Mock(), Mock(), Mock(), Mock())
@@ -605,15 +605,9 @@ class TestInstallTransactionSafety:
         )
         nm.add_node_package = Mock()
 
-        # Make sync succeed during remove_node (1st call), fail during new install (2nd call)
-        call_count = 0
-        def sync_side_effect(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count >= 2:
-                raise Exception("sync failed on new version")
-
-        mock_uv.sync_project.side_effect = sync_side_effect
+        # Replacement now syncs once after swapping the node and pyproject state.
+        # Fail that final sync to exercise rollback of the old filesystem entry.
+        mock_uv.sync_project.side_effect = Exception("sync failed on new version")
 
         with pytest.raises((CDEnvironmentError, CDNodeConflictError)):
             nm.add_node("test-node@2.0.0", no_test=True)

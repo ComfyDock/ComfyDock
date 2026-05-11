@@ -10,6 +10,16 @@ from comfygit_deploy.worker.native_manager import (
 )
 
 
+class _FakeStdout:
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = list(lines)
+
+    async def readline(self) -> bytes:
+        if not self._lines:
+            return b""
+        return self._lines.pop(0)
+
+
 class TestEnvironmentExistsCheck:
     """Test environment existence detection (skip re-import)."""
 
@@ -68,7 +78,7 @@ class TestEnvironmentExistsCheck:
 
         with patch("asyncio.create_subprocess_exec") as mock_exec:
             mock_proc = AsyncMock()
-            mock_proc.communicate.return_value = (b"Success", None)
+            mock_proc.stdout = _FakeStdout([b"Success\n"])
             mock_proc.returncode = 0
             mock_exec.return_value = mock_proc
 
@@ -138,7 +148,7 @@ class TestNativeManager:
             # Mock subprocess to avoid actually running command
             with patch("asyncio.create_subprocess_exec") as mock_exec:
                 mock_proc = AsyncMock()
-                mock_proc.communicate.return_value = (b"Success", None)
+                mock_proc.stdout = _FakeStdout([b"Success\n"])
                 mock_proc.returncode = 0
                 mock_exec.return_value = mock_proc
 
@@ -169,7 +179,7 @@ class TestNativeManager:
 
             with patch("asyncio.create_subprocess_exec") as mock_exec:
                 mock_proc = AsyncMock()
-                mock_proc.communicate.return_value = (b"Error", None)
+                mock_proc.stdout = _FakeStdout([b"Error\n"])
                 mock_proc.returncode = 1
                 mock_exec.return_value = mock_proc
 

@@ -89,7 +89,7 @@ class PyprojectManager:
 
     def ensure_system_uv_dependency(
         self,
-        dependency: str = "uv>=0.10.0",
+        dependency: str = "uv>=0.11.8",
         group: str = "comfygit-system",
     ) -> None:
         """Ensure uv remains a ComfyGit-managed system tool."""

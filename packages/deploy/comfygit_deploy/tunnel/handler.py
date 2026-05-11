@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from .. import __version__
 from ..worker.server import (
     WorkerServer,
@@ -16,6 +18,7 @@ from ..worker.server import (
     _deploy_instance,
     _get_git_log_payload,
     _get_git_status_payload,
+    _get_running_instance,
     _instance_response,
     _instance_has_git_repo,
     _proxy_comfyui_json_payload,

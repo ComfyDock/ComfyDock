@@ -66,15 +66,18 @@ def save_worker_config(config: dict) -> None:
 def _resolve_cloud_settings(args: argparse.Namespace) -> tuple[str | None, str | None]:
     config = DeployConfig()
 
-    cloud_url = args.cloud or config.cloud_url
-    cloud_token = args.token or config.cloud_token
+    cloud_arg = getattr(args, "cloud", None)
+    token_arg = getattr(args, "token", None)
+
+    cloud_url = cloud_arg or config.cloud_url
+    cloud_token = token_arg or config.cloud_token
 
     updated = False
-    if args.cloud:
-        config.cloud_url = args.cloud
+    if cloud_arg:
+        config.cloud_url = cloud_arg
         updated = True
-    if args.token:
-        config.cloud_token = args.token
+    if token_arg:
+        config.cloud_token = token_arg
         updated = True
     if updated:
         config.save()
