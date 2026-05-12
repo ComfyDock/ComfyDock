@@ -4,8 +4,10 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS: dict[str, str] = {
+    "calculate_model_short_hash": "model_repository",
     "ComfyUIBuiltinVersionsRepository": "comfyui_builtin_versions_repository",
     "migrate_path_separators": "migrate_paths",
+    "MODEL_SHORT_HASH_ALGORITHM": "model_repository",
     "ModelRepository": "model_repository",
     "NodeMappingsRepository": "node_mappings_repository",
     "WorkflowRepository": "workflow_repository",
