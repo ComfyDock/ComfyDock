@@ -1,12 +1,14 @@
 [project]
 name = "comfygit"
-version = "0.3.22"
+version = "0.4.0"
 description = "ComfyGit - Git-based environment management for ComfyUI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "comfygit-core==0.3.22",
+    "comfygit-core==0.4.0",
+    "aiohttp>=3.13.4",
     "argcomplete>=3.5.0",
+    "requests>=2.33.0",
 ]
 
 [project.urls]
@@ -24,6 +26,15 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["comfygit_cli"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "comfygit_cli",
+    "contract-studio",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE.txt",
+]
 
 [tool.uv.sources]
 comfygit-core = { workspace = true }

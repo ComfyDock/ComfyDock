@@ -252,15 +252,140 @@ class TestNodeManagerSystemDependencyGroup:
 
         nm._sync_uv(quiet=True, all_groups=True)
 
-        mock_pyproject.dependencies.add_to_group.assert_called_once_with(
-            "comfygit-system",
-            ["uv>=0.7"],
+        mock_pyproject.ensure_system_uv_dependency.assert_called_once_with(
+            dependency="uv>=0.11.8",
+            group="comfygit-system",
         )
         mock_uv.sync_project.assert_called_once()
 
+
+class TestNodeManagerDependencyProvisioning:
+    def test_provision_missing_node_dependencies_stages_group_and_sources(self, tmp_path):
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        node_path = custom_nodes_dir / "test-node"
+        node_path.mkdir(parents=True)
+
+        node_info = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            source="registry",
+        )
+
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {"test-node": node_info}
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abcd1234"
+        mock_pyproject.dependencies.get_groups.return_value = {}
+        mock_pyproject.uv_config.get_source_names.side_effect = [set(), {"extra-index"}]
+
+        mock_uv = Mock()
+        mock_node_lookup = Mock()
+        mock_node_lookup.scan_requirements.return_value = [
+            "opencv-contrib-python-headless",
+            "onnxruntime>=1.20",
+        ]
+
+        package_config = object()
+        node_manager = NodeManager(
+            mock_pyproject,
+            mock_uv,
+            mock_node_lookup,
+            Mock(),
+            custom_nodes_dir,
+            Mock(),
+            package_config=package_config,
+        )
+
+        staged = node_manager.provision_missing_node_dependencies()
+
+        assert staged == ["test-node-abcd1234"]
+        mock_node_lookup.scan_requirements.assert_called_once_with(
+            node_path,
+            package_config=package_config,
+        )
+        mock_uv.add_requirements_with_sources.assert_called_once_with(
+            ["opencv-contrib-python-headless", "onnxruntime>=1.20"],
+            group="test-node-abcd1234",
+            no_sync=True,
+            raw=True,
+        )
+        stored_node = mock_pyproject.nodes.add.call_args.args[0]
+        assert stored_node.dependency_sources == ["extra-index"]
+        assert mock_pyproject.nodes.add.call_args.args[1] == "test-node"
+
+    def test_provision_missing_node_dependencies_skips_existing_group(self, tmp_path):
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        node_path = custom_nodes_dir / "test-node"
+        node_path.mkdir(parents=True)
+
+        node_info = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            source="registry",
+        )
+
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {"test-node": node_info}
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abcd1234"
+        mock_pyproject.dependencies.get_groups.return_value = {
+            "test-node-abcd1234": ["onnxruntime>=1.20"],
+        }
+
+        node_manager = NodeManager(
+            mock_pyproject,
+            Mock(),
+            Mock(),
+            Mock(),
+            custom_nodes_dir,
+            Mock(),
+        )
+
+        staged = node_manager.provision_missing_node_dependencies()
+
+        assert staged == []
+        node_manager.node_lookup.scan_requirements.assert_not_called()
+        node_manager.uv.add_requirements_with_sources.assert_not_called()
+
+    def test_provision_missing_node_dependencies_records_empty_group(self, tmp_path):
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        node_path = custom_nodes_dir / "test-node"
+        node_path.mkdir(parents=True)
+
+        node_info = NodeInfo(
+            name="test-node",
+            registry_id="test-node",
+            source="registry",
+        )
+
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {"test-node": node_info}
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abcd1234"
+        mock_pyproject.dependencies.get_groups.return_value = {}
+        mock_pyproject.uv_config.get_source_names.side_effect = [set(), set()]
+
+        mock_node_lookup = Mock()
+        mock_node_lookup.scan_requirements.return_value = []
+
+        node_manager = NodeManager(
+            mock_pyproject,
+            Mock(),
+            mock_node_lookup,
+            Mock(),
+            custom_nodes_dir,
+            Mock(),
+        )
+
+        staged = node_manager.provision_missing_node_dependencies()
+
+        assert staged == ["test-node-abcd1234"]
+        mock_pyproject.dependencies.add_to_group.assert_called_once_with(
+            "test-node-abcd1234",
+            [],
+        )
+        node_manager.uv.add_requirements_with_sources.assert_not_called()
+
     def test_sync_uv_does_not_duplicate_system_group(self):
         mock_pyproject = Mock()
-        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.7"]}
+        mock_pyproject.dependencies.get_groups.return_value = {"comfygit-system": ["uv>=0.11.8"]}
 
         mock_uv = Mock()
         nm = NodeManager(mock_pyproject, mock_uv, Mock(), Mock(), Mock(), Mock())
@@ -480,15 +605,9 @@ class TestInstallTransactionSafety:
         )
         nm.add_node_package = Mock()
 
-        # Make sync succeed during remove_node (1st call), fail during new install (2nd call)
-        call_count = 0
-        def sync_side_effect(**kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count >= 2:
-                raise Exception("sync failed on new version")
-
-        mock_uv.sync_project.side_effect = sync_side_effect
+        # Replacement now syncs once after swapping the node and pyproject state.
+        # Fail that final sync to exercise rollback of the old filesystem entry.
+        mock_uv.sync_project.side_effect = Exception("sync failed on new version")
 
         with pytest.raises((CDEnvironmentError, CDNodeConflictError)):
             nm.add_node("test-node@2.0.0", no_test=True)

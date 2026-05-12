@@ -128,9 +128,13 @@ class DependencyConflictContext:
     # The node being added
     node_name: str
 
+    # Broad failure class used by frontends to decide whether a dependency
+    # review preview is useful.
+    conflict_kind: str = "resolution_conflict"
+
     # Parsed conflict information
-    conflicting_packages: list[tuple[str, str]]  # Package pairs that conflict
-    conflict_descriptions: list[str]  # Simplified conflict messages
+    conflicting_packages: list[tuple[str, str]] = field(default_factory=list)  # Package pairs that conflict
+    conflict_descriptions: list[str] = field(default_factory=list)  # Simplified conflict messages
 
     # Raw UV stderr for verbose mode
     raw_stderr: str = ""
@@ -152,6 +156,11 @@ class CDDependencyConflictError(ComfyDockError):
     def get_actions(self) -> list[NodeAction]:
         """Get suggested actions for resolving this conflict."""
         return self.context.suggested_actions if self.context else []
+
+
+class CDDependencyPreviewStaleError(ComfyDockError):
+    """Raised when a reviewed dependency preview no longer matches current state."""
+    pass
 
 # ===================================================
 # Registry exceptions
@@ -380,9 +389,15 @@ class DownloadErrorContext:
 class CDModelDownloadError(ComfyDockError):
     """Model download error with provider-specific context."""
 
-    def __init__(self, message: str, context: DownloadErrorContext | None = None):
+    def __init__(
+        self,
+        message: str,
+        context: DownloadErrorContext | None = None,
+        failures: list[tuple[str, str]] | None = None
+    ):
         super().__init__(message)
         self.context = context
+        self.failures = failures or []
 
     def get_user_message(self) -> str:
         """Get user-friendly error message."""

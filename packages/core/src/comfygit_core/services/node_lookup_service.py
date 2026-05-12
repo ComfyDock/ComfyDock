@@ -17,8 +17,12 @@ from ..utils.git import is_git_url
 if TYPE_CHECKING:
     from comfygit_core.configs.package_config import PackageConfigManager
     from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
+    from comfygit_core.repositories.workspace_config_repository import WorkspaceConfigRepository
 
 logger = get_logger(__name__)
+
+
+GIT_ACQUISITION_VERSION_ALIASES = {"nightly", "dev"}
 
 
 def _is_valid_git_ref(version: str | None) -> bool:
@@ -57,6 +61,11 @@ def _is_valid_git_ref(version: str | None) -> bool:
     return True
 
 
+def _is_explicit_git_acquisition_version(version: str | None) -> bool:
+    """Return whether a registry version label means explicit git acquisition."""
+    return (version or "").lower() in GIT_ACQUISITION_VERSION_ALIASES
+
+
 class NodeLookupService:
     """Pure stateless service for finding nodes and analyzing their requirements.
 
@@ -71,18 +80,27 @@ class NodeLookupService:
         self,
         cache_path: Path,
         node_mappings_repository: NodeMappingsRepository | None = None,
+        workspace_config: WorkspaceConfigRepository | None = None,
     ):
         """Initialize the node lookup service.
 
         Args:
             cache_path: Required path to workspace cache directory
             node_mappings_repository: Repository for cached node mappings (fallback when API fails)
+            workspace_config: Optional workspace config for git/GitHub credentials
         """
+        self.workspace_config = workspace_config
         self.scanner = CustomNodeScanner()
         self.custom_node_cache = CustomNodeCacheManager(cache_base_path=cache_path)
         self.registry_client = ComfyRegistryClient()
-        self.github_client = GitHubClient()
+        self.github_client = GitHubClient(token_provider=self.get_git_token)
         self.node_mappings_repository = node_mappings_repository
+
+    def get_git_token(self) -> str | None:
+        """Return the configured git host token, if one is available."""
+        if not self.workspace_config:
+            return None
+        return self.workspace_config.get_github_token()
 
     def find_node(self, identifier: str) -> NodeInfo | None:
         """Find node info from registry API, git URL, or local cache.
@@ -137,6 +155,16 @@ class NodeLookupService:
                 node_version = self.registry_client.install_node(registry_node.id, version)
                 if node_version:
                     registry_node.latest_version = node_version
+                elif _is_explicit_git_acquisition_version(requested_version) and registry_node.repository:
+                    repo_info = self.github_client.get_repository_info(registry_node.repository)
+                    if repo_info:
+                        return NodeInfo(
+                            name=repo_info.name,
+                            registry_id=registry_node.id,
+                            repository=repo_info.clone_url,
+                            source="git",
+                            version=repo_info.latest_commit,
+                        )
                 return NodeInfo.from_registry_node(registry_node)
         except CDRegistryError as e:
             logger.warning(f"Cannot reach registry: {e}")
@@ -236,28 +264,12 @@ class NodeLookupService:
             try:
                 if node_info.source == "registry":
                     if not node_info.download_url:
-                        # Fallback: Clone from repository if download URL missing
-                        if node_info.repository:
-                            logger.info(
-                                f"No CDN package for '{node_info.name}', "
-                                f"falling back to git clone from {node_info.repository}"
-                            )
-                            # Update source to git for this installation
-                            node_info.source = "git"
-                            # Only use version as ref if it's a valid git ref (not pure semver)
-                            ref = node_info.version if _is_valid_git_ref(node_info.version) else None
-                            if node_info.version and not ref:
-                                logger.info(
-                                    f"Version '{node_info.version}' is not a valid git ref, "
-                                    f"cloning default branch instead"
-                                )
-                            git_clone(node_info.repository, temp_path, depth=1, ref=ref, timeout=30)
-                        else:
-                            logger.error(
-                                f"Cannot download '{node_info.name}': "
-                                f"no CDN package and no repository URL"
-                            )
-                            return None
+                        logger.error(
+                            f"Cannot download registry node '{node_info.name}': "
+                            f"no registry artifact is available. "
+                            f"Choose an explicit git install if repository acquisition is acceptable."
+                        )
+                        return None
                     else:
                         download_and_extract_archive(node_info.download_url, temp_path)
                 elif node_info.source == "git":
@@ -266,7 +278,14 @@ class NodeLookupService:
                         return None
                     # Only use version as ref if it's a valid git ref
                     ref = node_info.version if _is_valid_git_ref(node_info.version) else None
-                    git_clone(node_info.repository, temp_path, depth=1, ref=ref, timeout=30)
+                    git_clone(
+                        node_info.repository,
+                        temp_path,
+                        depth=1,
+                        ref=ref,
+                        timeout=30,
+                        token=self.get_git_token(),
+                    )
                 else:
                     logger.error(f"Unsupported source: '{node_info.source}'")
                     return None

@@ -1,11 +1,17 @@
 """Simplified Environment - owns everything about a single ComfyUI environment."""
 from __future__ import annotations
 
+import json
+import os
+import re
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import tomlkit
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
@@ -52,6 +58,12 @@ if TYPE_CHECKING:
     )
 
     from ..caching.workflow_cache import WorkflowCacheRepository
+    from ..models.dependency_resolution import (
+        DependencyResolutionAcceptance,
+        DependencyResolutionApplyResult,
+        DependencyResolutionPreview,
+    )
+    from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.workflow import (
         BatchDownloadCallbacks,
@@ -60,9 +72,16 @@ if TYPE_CHECKING:
         ResolutionResult,
         WorkflowSyncStatus,
     )
+    from ..models.workflow_contract import WorkflowExecutionContract
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+
+
+def _workflow_api_prompt_relpath(workflow_name: str) -> Path:
+    safe_name = re.sub(r"[^A-Za-z0-9._ -]+", "_", workflow_name).strip()
+    safe_name = safe_name or "workflow"
+    return Path("workflow_api") / f"{safe_name}.api.json"
 
 
 def _requires_env_lock(method):
@@ -149,6 +168,7 @@ class Environment:
         return NodeLookupService(
             cache_path=self.workspace_paths.cache,
             node_mappings_repository=self.node_mapping_repository,
+            workspace_config=self.workspace_config_manager,
         )
 
     @cached_property
@@ -492,8 +512,42 @@ class Environment:
     def _set_headless_marker(self) -> None:
         """Persist headless marker in pyproject.toml."""
         config = self.pyproject.load()
-        config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
+        self._set_comfygit_scalar(config, "headless", True)
         self.pyproject.save(config)
+
+    def _set_comfygit_scalar(self, config: dict, key: str, value: object) -> None:
+        """Set a scalar on [tool.comfygit] before child tables.
+
+        TOML requires table values to appear before child tables such as
+        [tool.comfygit.nodes.*]. TOMLKit can silently drop scalars appended
+        after those child tables, so rebuild this table in a valid order.
+        """
+        tool = config.setdefault("tool", {})
+        comfygit_cfg = tool.setdefault("comfygit", {})
+        rebuilt = tomlkit.table()
+        child_items: list[tuple[str, object]] = []
+
+        for existing_key, existing_value in comfygit_cfg.items():
+            if existing_key == key:
+                continue
+            if isinstance(existing_value, dict):
+                child_items.append((existing_key, existing_value))
+            else:
+                rebuilt[existing_key] = existing_value
+
+        rebuilt[key] = value
+        for child_key, child_value in child_items:
+            rebuilt[child_key] = child_value
+
+        tool["comfygit"] = rebuilt
+
+    def _prepare_headless_import(self) -> None:
+        """Prepare imported/materialized environments that should not load Manager."""
+        from ..constants import MANAGER_NODE_ID
+
+        if self.pyproject.nodes.remove(MANAGER_NODE_ID):
+            logger.info("Removed comfygit-manager from headless environment manifest")
+        self._set_headless_marker()
 
     def _clear_headless_marker(self) -> None:
         """Remove headless marker after manager installation."""
@@ -612,7 +666,10 @@ class Environment:
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
+        self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
+        self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
         self._untrack_uvlock_if_tracked()
+        self._untrack_generated_metadata_if_tracked()
 
         return migrated
 
@@ -669,6 +726,7 @@ class Environment:
         self.pyproject.uv_config.set_exclude_dependencies(
             self.package_config.exclude_packages
         )
+        self.pyproject.ensure_system_uv_dependency()
 
         extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
 
@@ -723,6 +781,33 @@ class Environment:
             logger.error(f"Node sync failed: {e}")
             result.errors.append(f"Node sync failed: {e}")
             result.success = False
+
+        staged_node_groups: list[str] = []
+        if not dry_run:
+            try:
+                staged_node_groups = self.node_manager.provision_missing_node_dependencies()
+                if staged_node_groups:
+                    logger.info(
+                        "Syncing %d staged node dependency group(s)",
+                        len(staged_node_groups),
+                    )
+                    self.uv_manager.sync_project(
+                        verbose=verbose,
+                        pytorch_manager=self.pytorch_manager,
+                        overlay_names=overlay_names,
+                        backend_override=backend_override,
+                        extras=extras,
+                        all_extras=all_extras,
+                        all_groups=True,
+                    )
+                    result.dependency_groups_installed.extend(staged_node_groups)
+            except Exception as e:
+                logger.error(f"Node dependency provisioning failed: {e}")
+                result.errors.append(f"Node dependency provisioning failed: {e}")
+                result.dependency_groups_failed.extend(
+                    (group_name, str(e)) for group_name in staged_node_groups
+                )
+                result.success = False
 
         # Restore workflows from .cec/ to ComfyUI (for git pull workflow)
         if not dry_run and not preserve_workflows:
@@ -1048,6 +1133,22 @@ class Environment:
                 "  Run: cg commit -m 'message' first"
             )
 
+        from ..services.environment_readiness import collect_contract_artifact_blockers
+
+        contract_artifact_issues = collect_contract_artifact_blockers(self)
+        if contract_artifact_issues:
+            details = [
+                detail
+                for issue in contract_artifact_issues
+                for detail in issue.details
+            ]
+            detail_text = "\n".join(f"  • {detail}" for detail in details)
+            raise CDEnvironmentError(
+                "Cannot push with missing or invalid workflow contract API prompt files.\n"
+                f"{detail_text}\n"
+                "  Re-save the affected contract in ComfyGit Manager, then commit again."
+            )
+
         # Note: Workflow issue validation happens during commit (execute_commit checks is_commit_safe).
         # By the time we reach push, all committed changes have already been validated.
         # No need to re-check workflow issues here.
@@ -1333,8 +1434,18 @@ class Environment:
         python = self.uv_manager.python_executable
         cmd = [str(python), "main.py"] + (args or [])
 
+        child_env = os.environ.copy()
+        child_env["COMFYGIT_ENV_NAME"] = self.name
+        child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+
         logger.info(f"Starting ComfyUI with: {' '.join(cmd)}")
-        return run_command(cmd, cwd=self.comfyui_path, capture_output=False, timeout=None)
+        return run_command(
+            cmd,
+            cwd=self.comfyui_path,
+            capture_output=False,
+            timeout=None,
+            env=child_env,
+        )
 
     # =====================================================
     # Node Management
@@ -1396,6 +1507,20 @@ class Environment:
             all_extras=all_extras,
             **add_kwargs,
         )
+
+    @_requires_env_lock
+    def preview_add_node_dependency_changes(self, identifier: str) -> DependencyResolutionPreview:
+        """Preview lockfile dependency changes for adding a node."""
+        return self.node_manager.preview_add_node_dependency_changes(identifier)
+
+    @_requires_env_lock
+    def apply_reviewed_node_dependency_changes(
+        self,
+        identifier: str,
+        acceptance: DependencyResolutionAcceptance,
+    ) -> DependencyResolutionApplyResult:
+        """Apply a reviewed node install if the accepted dependency preview is current."""
+        return self.node_manager.apply_reviewed_dependency_changes(identifier, acceptance)
 
     @_requires_env_lock
     def install_nodes_with_progress(
@@ -1696,6 +1821,16 @@ class Environment:
         return [installed_nodes[nid] for nid in unused_ids]
 
     @_requires_env_lock
+    def update_node_criticality(self, node_identifier: str, criticality: str) -> bool:
+        """Update package-level custom-node criticality.
+
+        Custom-node criticality is a user-declared deployment/readiness signal.
+        It is not inferred from workflow graph usage because custom nodes may
+        affect runtime behavior through hooks, extensions, or side effects.
+        """
+        return self.pyproject.nodes.set_criticality(node_identifier, criticality)
+
+    @_requires_env_lock
     def prune_unused_nodes(
         self,
         exclude: list[str] | None = None,
@@ -1766,17 +1901,28 @@ class Environment:
         if not workflow_status:
             workflow_status = self.workflow_manager.get_workflow_status()
 
+        # Check if changes are safe to commit (no unresolved issues)
+        if not workflow_status.is_commit_safe and not allow_issues:
+            logger.error("Cannot commit with unresolved issues. Use --allow-issues to force.")
+            return
+
+        # Commit can be responsible for cleanup even when the only pending
+        # change is a stale tracked workflow_api artifact.
+        cleanup_config = self.pyproject.load()
+        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
+            config=cleanup_config,
+        )
+        if cleanup_result["workflow_entries"] > 0:
+            # Clean up orphaned models after workflow sections are removed.
+            self.pyproject.models.cleanup_orphans(config=cleanup_config)
+            self.pyproject.save(cleanup_config)
+
         # Check if there are any changes to commit (workflows OR git)
         has_workflow_changes = workflow_status.sync_status.has_changes
         has_git_changes = self.git_manager.has_uncommitted_changes()
 
         if not has_workflow_changes and not has_git_changes:
             logger.error("No changes to commit")
-            return
-
-        # Check if changes are safe to commit (no unresolved issues)
-        if not workflow_status.is_commit_safe and not allow_issues:
-            logger.error("Cannot commit with unresolved issues. Use --allow-issues to force.")
             return
 
         # Apply auto-resolutions to pyproject.toml for workflows with changes
@@ -1789,25 +1935,15 @@ class Environment:
                 # Apply resolution results to pyproject (in-memory mutations)
                 self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
 
-        # Clean up orphaned workflows from pyproject.toml
+        # Clean up orphaned workflow entries and workflow API prompt artifacts.
         # This handles BOTH:
         # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
         # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
-        workflows_in_pyproject = set(
-            config.get('tool', {}).get('comfygit', {}).get('workflows', {}).keys()
-        )
-        workflows_in_comfyui = set()
-        comfyui_workflows_dir = self.comfyui_path / "user" / "default" / "workflows"
-        if comfyui_workflows_dir.exists():
-            workflows_in_comfyui = {f.stem for f in comfyui_workflows_dir.glob("*.json")}
+        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
+        if cleanup_result["workflow_entries"] > 0:
+            logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
 
-        orphaned_workflows = list(workflows_in_pyproject - workflows_in_comfyui)
-        if orphaned_workflows:
-            logger.info(f"Cleaning up {len(orphaned_workflows)} orphaned workflow(s) from pyproject.toml...")
-            removed_count = self.pyproject.workflows.remove_workflows(orphaned_workflows, config=config)
-            logger.debug(f"Removed {removed_count} workflow section(s)")
-
-            # Clean up orphaned models (must run AFTER workflow sections are removed)
+            # Clean up orphaned models (must run AFTER workflow sections are removed).
             self.pyproject.models.cleanup_orphans(config=config)
 
         # Save all changes at once
@@ -1819,6 +1955,60 @@ class Environment:
         logger.debug(f"Copied {copied_count} workflow(s)")
 
         self.commit(message)
+
+    # =====================================================
+    # Workflow Contract Management
+    # =====================================================
+
+    @_requires_env_lock
+    def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
+        """Return a typed read-only projection of the current manifest."""
+        return self.pyproject.get_manifest_snapshot()
+
+    @_requires_env_lock
+    def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
+        """Get the saved execution contract for a workflow."""
+        return self.pyproject.workflows.get_execution_contract(workflow_name)
+
+    @_requires_env_lock
+    def set_workflow_execution_contract(
+        self,
+        workflow_name: str,
+        contract: WorkflowExecutionContract,
+        api_prompt_data: dict | None = None,
+    ) -> None:
+        """Create or replace the saved execution contract for a workflow."""
+        if api_prompt_data is not None:
+            rel_path = _workflow_api_prompt_relpath(workflow_name)
+            api_prompt_path = self.cec_path / rel_path
+            api_prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            with api_prompt_path.open("w", encoding="utf-8") as handle:
+                json.dump(api_prompt_data, handle, indent=2)
+                handle.write("\n")
+
+            contract.api_prompt_file = rel_path.as_posix()
+            contract.api_prompt_source = "comfyui_frontend"
+            contract.api_prompt_generated_by = "comfygit-manager"
+            contract.api_prompt_generated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        self.pyproject.workflows.set_execution_contract(workflow_name, contract)
+
+    @_requires_env_lock
+    def remove_workflow_execution_contract(self, workflow_name: str) -> bool:
+        """Remove the saved execution contract for a workflow."""
+        contract = self.pyproject.workflows.get_execution_contract(workflow_name)
+        removed = self.pyproject.workflows.remove_execution_contract(workflow_name)
+        if removed and contract is not None and contract.api_prompt_file:
+            api_prompt_path = self.cec_path / contract.api_prompt_file
+            try:
+                if api_prompt_path.exists() and api_prompt_path.is_file():
+                    api_prompt_path.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "Failed to remove API prompt artifact for workflow '%s': %s",
+                    workflow_name,
+                    exc,
+                )
+        return removed
 
     # =====================================================
     # Model Source Management
@@ -2045,70 +2235,33 @@ class Environment:
         """
         from ..managers.export_import_manager import ExportImportManager
         from ..models.exceptions import CDExportError, ExportErrorContext
-
-        # Validation: Get workflow status first for comprehensive checks
-        status = self.workflow_manager.get_workflow_status()
-
-        # Check for uncommitted workflow changes (new, modified, or deleted)
-        if status.sync_status.has_changes:
-            context = ExportErrorContext(
-                uncommitted_workflows=(
-                    status.sync_status.new +
-                    status.sync_status.modified +
-                    status.sync_status.deleted
-                )
-            )
-            raise CDExportError(
-                "Cannot export with uncommitted workflow changes",
-                context=context
-            )
-
-        # Validation: Check for uncommitted git changes in .cec/
-        if self.git_manager.has_uncommitted_changes():
-            context = ExportErrorContext(uncommitted_git_changes=True)
-            raise CDExportError(
-                "Cannot export with uncommitted git changes",
-                context=context
-            )
-
-        # Validation: Check all workflows are resolved (unless allow_issues)
-        if not status.is_commit_safe and not allow_issues:
-            context = ExportErrorContext(has_unresolved_issues=True)
-            raise CDExportError(
-                "Cannot export - workflows have unresolved issues",
-                context=context
-            )
-
-        # Check for models without sources and collect workflow usage
         from ..models.shared import ModelWithoutSourceInfo
+        from ..services.environment_readiness import build_environment_readiness
 
-        models_without_sources: list[ModelWithoutSourceInfo] = []
-        models_by_hash = {m.hash: m for m in self.pyproject.models.get_all() if not m.sources}
+        readiness = build_environment_readiness(self, include_blocking=True)
 
-        if models_by_hash:
-            # Map models to workflows that use them
-            all_workflows = self.pyproject.workflows.get_all_with_resolutions()
-            for workflow_name in all_workflows.keys():
-                workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name)
-                for wf_model in workflow_models:
-                    if wf_model.hash and wf_model.hash in models_by_hash:
-                        # Find or create entry for this model
-                        existing = next((m for m in models_without_sources if m.hash == wf_model.hash), None)
-                        if existing:
-                            existing.workflows.append(workflow_name)
-                        else:
-                            model_data = models_by_hash[wf_model.hash]
-                            models_without_sources.append(
-                                ModelWithoutSourceInfo(
-                                    filename=model_data.filename,
-                                    hash=wf_model.hash,
-                                    workflows=[workflow_name]
-                                )
-                            )
+        for issue in readiness.blocking_issues:
+            if issue.type == "uncommitted_workflows":
+                context = ExportErrorContext(uncommitted_workflows=issue.details)
+                raise CDExportError(issue.message, context=context)
 
-            # Notify callback with structured data
-            if callbacks:
-                callbacks.on_models_without_sources(models_without_sources)
+            if issue.type == "uncommitted_git_changes":
+                context = ExportErrorContext(uncommitted_git_changes=True)
+                raise CDExportError(issue.message, context=context)
+
+            if issue.type == "unresolved_issues" and not allow_issues:
+                context = ExportErrorContext(has_unresolved_issues=True)
+                raise CDExportError(issue.message, context=context)
+
+        if callbacks and readiness.warnings.models_without_sources:
+            callbacks.on_models_without_sources([
+                ModelWithoutSourceInfo(
+                    filename=warning.filename,
+                    hash=warning.hash or "",
+                    workflows=list(warning.workflows),
+                )
+                for warning in readiness.warnings.models_without_sources
+            ])
 
         # Auto-populate git info for dev nodes before export
         self._auto_populate_dev_node_git_info(callbacks)
@@ -2148,14 +2301,16 @@ class Environment:
 
             if git_info is None:
                 # Not a git repo - notify callback
-                if callbacks and hasattr(callbacks, 'on_dev_node_no_git'):
-                    callbacks.on_dev_node_no_git(node_info.name)
+                no_git_callback = getattr(callbacks, 'on_dev_node_no_git', None)
+                if callable(no_git_callback):
+                    no_git_callback(node_info.name)
                 continue
 
             if not git_info.remote_url:
                 # Git repo but no remote - notify callback
-                if callbacks and hasattr(callbacks, 'on_dev_node_no_git'):
-                    callbacks.on_dev_node_no_git(node_info.name)
+                no_git_callback = getattr(callbacks, 'on_dev_node_no_git', None)
+                if callable(no_git_callback):
+                    no_git_callback(node_info.name)
                 continue
 
             # Update node info with git data
@@ -2187,6 +2342,9 @@ class Environment:
         model_strategy: str = "all",
         callbacks: ImportCallbacks | None = None,
         no_manager: bool = False,
+        *,
+        create_import_commit: bool = True,
+        fail_on_sync_errors: bool = False,
     ) -> None:
         """Complete import setup after .cec extraction.
 
@@ -2203,6 +2361,8 @@ class Environment:
             model_strategy: "all", "required", or "skip"
             callbacks: Optional progress callbacks
             no_manager: Skip comfygit-manager install/registration (headless mode)
+            create_import_commit: Commit final import/materialization changes
+            fail_on_sync_errors: Raise if sync reports or raises dependency errors
 
         Raises:
             ValueError: If ComfyUI already exists or .cec not properly initialized
@@ -2345,7 +2505,7 @@ class Environment:
         # Auto-register comfygit-manager if present in imported environment
         # (replaces legacy symlink system - manager is now per-environment)
         if no_manager:
-            self._set_headless_marker()
+            self._prepare_headless_import()
             logger.info("Manager registration skipped during import (--no-manager)")
         else:
             self._register_imported_manager()
@@ -2422,6 +2582,20 @@ class Environment:
             if callbacks:
                 callbacks.on_phase("detect_overlays", overlay_msg)
 
+        # Phase 3.5: Ensure ComfyUI base requirements are present
+        # Web-exported environments may have dependencies=[] since the exact
+        # requirements.txt isn't known at export time. Add them now from the
+        # freshly cloned ComfyUI so uv sync installs everything.
+        comfyui_reqs = self.comfyui_path / "requirements.txt"
+        if comfyui_reqs.exists():
+            pyproject_data = self.pyproject.load()
+            current_deps = pyproject_data.get("project", {}).get("dependencies", [])
+            if not current_deps:
+                logger.info("Adding ComfyUI requirements (empty dependencies detected)...")
+                if callbacks:
+                    callbacks.on_phase("add_requirements", "Adding ComfyUI base requirements...")
+                self.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration
         if callbacks:
@@ -2437,9 +2611,14 @@ class Environment:
             elif not sync_result.success and callbacks:
                 for error in sync_result.errors:
                     callbacks.on_error(f"Node sync: {error}")
+            if fail_on_sync_errors and not sync_result.success:
+                error_text = "; ".join(sync_result.errors) if sync_result.errors else "unknown sync error"
+                raise RuntimeError(f"Environment sync failed during materialization: {error_text}")
         except Exception as e:
             if callbacks:
                 callbacks.on_error(f"Node sync failed: {e}")
+            if fail_on_sync_errors:
+                raise
 
         # Phase 5: Prepare and resolve models
         if callbacks:
@@ -2505,15 +2684,30 @@ class Environment:
         if download_failures and callbacks:
             callbacks.on_download_failures(download_failures)
 
+        if no_manager:
+            self._set_headless_marker()
+
         # Mark environment as fully initialized
         from ..utils.environment_cleanup import mark_environment_complete
         mark_environment_complete(self.cec_path)
 
         # Phase 7: Commit all changes from import process
         # This captures: workflows copied, nodes synced, models resolved, pyproject updates
-        if self.git_manager.has_uncommitted_changes():
+        if create_import_commit and self.git_manager.has_uncommitted_changes():
             self.git_manager.commit_with_identity("Imported environment", add_all=True)
             logger.info("Committed import changes")
+
+        if download_failures and model_strategy != "skip":
+            from ..models.exceptions import CDModelDownloadError
+
+            formatted_failures = ", ".join(
+                f"{model_name} (from {workflow_name})"
+                for workflow_name, model_name in download_failures
+            )
+            raise CDModelDownloadError(
+                f"{len(download_failures)} model(s) failed to download: {formatted_failures}",
+                failures=download_failures
+            )
 
         logger.info("Import finalization completed successfully")
 
@@ -2550,6 +2744,20 @@ class Environment:
             # Untrack without deleting the file
             _git(["rm", "--cached", "uv.lock"], self.cec_path, check=False)
             logger.info("Untracked uv.lock (now gitignored)")
+
+    def _untrack_generated_metadata_if_tracked(self) -> None:
+        """Untrack generated ComfyUI metadata files if previously committed."""
+        from ..utils.git import _git
+
+        for filename in ("comfyui_builtins.json", "comfyui_folder_paths.json"):
+            result = _git(
+                ["ls-files", filename],
+                self.cec_path,
+                check=False
+            )
+            if result.stdout.strip() == filename:
+                _git(["rm", "--cached", filename], self.cec_path, check=False)
+                logger.info(f"Untracked {filename} (now gitignored)")
 
     # =====================================================
     # Metadata Management

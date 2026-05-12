@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,57 @@ class NativeManager:
         self._processes: dict[str, subprocess.Popen] = {}
         self._log_buffers: dict[str, list[str]] = {}  # Ring buffers for log capture
         self._max_log_lines: int = 1000  # Keep last N lines per instance
+        self._log_threads: dict[str, threading.Thread] = {}
+
+    def _ensure_log_buffer(self, instance_id: str) -> list[str]:
+        """Create the ring buffer for an instance if needed."""
+        return self._log_buffers.setdefault(instance_id, [])
+
+    def _append_log_line(self, instance_id: str, line: str) -> None:
+        """Append a line to the in-memory log buffer."""
+        buf = self._ensure_log_buffer(instance_id)
+        buf.append(line)
+        if len(buf) > self._max_log_lines:
+            del buf[0 : len(buf) - self._max_log_lines]
+
+    def recover_instance_logs(self, instance_id: str, pid: int) -> None:
+        """Try to re-attach log reading for a recovered instance.
+
+        When the worker restarts, running instances have no log reader thread.
+        This attempts to read from /proc/{pid}/fd/1 (stdout) to capture ongoing
+        output, and seeds the buffer with a recovery notice.
+        """
+        if instance_id in self._log_threads and self._log_threads[instance_id].is_alive():
+            return  # Already have a reader
+
+        buf = self._ensure_log_buffer(instance_id)
+        buf.append(f"[worker] Recovered instance (PID {pid}) — log capture re-attached")
+
+        # Try to tail the process's stdout via /proc
+        fd_path = Path(f"/proc/{pid}/fd/1")
+        if not fd_path.exists():
+            buf.append(f"[worker] Cannot read /proc/{pid}/fd/1 — process stdout not accessible")
+            return
+
+        try:
+            # Open the fd in non-blocking read mode
+            fd = os.open(str(fd_path), os.O_RDONLY | os.O_NONBLOCK)
+        except (OSError, PermissionError) as exc:
+            buf.append(f"[worker] Cannot open /proc/{pid}/fd/1: {exc}")
+            return
+
+        def _tail_proc_fd():
+            """Background thread to read from the process fd."""
+            try:
+                f = os.fdopen(fd, "r", errors="replace")
+                for line in f:
+                    self._append_log_line(instance_id, line.rstrip())
+            except Exception:
+                pass
+
+        thread = threading.Thread(target=_tail_proc_fd, daemon=True, name=f"log-recover-{instance_id}")
+        thread.start()
+        self._log_threads[instance_id] = thread
 
     def environment_exists(self, environment_name: str) -> bool:
         """Check if an environment is fully set up.
@@ -115,6 +167,7 @@ class NativeManager:
         # Check if environment already exists (e.g., worker restart)
         if self.environment_exists(environment_name):
             # Still apply dev nodes in case config changed
+            self._append_log_line(instance_id, "Environment already exists. Skipping import.")
             self._apply_dev_nodes(environment_name)
             return DeployResult(success=True, skipped=True)
 
@@ -143,11 +196,21 @@ class NativeManager:
             stderr=asyncio.subprocess.STDOUT,
         )
 
-        # Wait for completion
-        stdout, _ = await proc.communicate()
+        output_lines: list[str] = []
+        stdout_stream = proc.stdout
+        if stdout_stream is not None:
+            while True:
+                line = await stdout_stream.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                output_lines.append(text)
+                self._append_log_line(instance_id, text)
+
+        await proc.wait()
 
         if proc.returncode != 0:
-            output = stdout.decode() if stdout else ""
+            output = "\n".join(output_lines)
             return DeployResult(
                 success=False,
                 error=f"Import failed for {instance_id}: {output}",
@@ -248,17 +311,14 @@ class NativeManager:
                 bufsize=1,  # Line buffered
             )
             self._processes[instance_id] = proc
-            self._log_buffers[instance_id] = []
+            self._ensure_log_buffer(instance_id)
 
             # Start background thread to read output
             import threading
             def read_output():
                 try:
                     for line in proc.stdout:
-                        buf = self._log_buffers.get(instance_id, [])
-                        buf.append(line.rstrip())
-                        if len(buf) > self._max_log_lines:
-                            buf.pop(0)
+                        self._append_log_line(instance_id, line.rstrip())
                 except Exception:
                     pass
 
@@ -406,6 +466,7 @@ class NativeManager:
         port: int,
         timeout_seconds: float = 120.0,
         poll_interval: float = 2.0,
+        instance_id: str | None = None,
     ) -> bool:
         """Wait for ComfyUI to become ready by polling HTTP endpoint.
 
@@ -416,6 +477,7 @@ class NativeManager:
             port: Port ComfyUI is listening on
             timeout_seconds: Maximum time to wait (default 2 minutes)
             poll_interval: Time between polling attempts
+            instance_id: Optional instance identifier for fail-fast exit checks
 
         Returns:
             True if ComfyUI is ready, False if timeout expired
@@ -425,6 +487,8 @@ class NativeManager:
 
         async with aiohttp.ClientSession() as session:
             while time.monotonic() < deadline:
+                if instance_id and not self.is_running(instance_id):
+                    return False
                 try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                         if resp.status == 200:

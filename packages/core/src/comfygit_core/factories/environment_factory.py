@@ -28,7 +28,8 @@ def _get_manager_install_identifier() -> str:
 
     identifier = MANAGER_NODE_ID
     try:
-        from importlib.metadata import PackageNotFoundError, version as pkg_version
+        from importlib.metadata import PackageNotFoundError
+        from importlib.metadata import version as pkg_version
 
         current_version = pkg_version(MANAGER_NODE_ID)
     except PackageNotFoundError:
@@ -133,7 +134,9 @@ class EnvironmentFactory:
         from ..utils.comfyui_ops import resolve_comfyui_version
         from ..utils.git import git_rev_parse
 
-        github_client = GitHubClient()
+        github_client = GitHubClient(
+            token_provider=workspace.workspace_config_manager.get_github_token,
+        )
 
         version_to_clone, version_type, _ = resolve_comfyui_version(
             comfyui_version,
@@ -446,11 +449,12 @@ class EnvironmentFactory:
         from ..utils.git import git_clone, git_clone_subdirectory, parse_git_url_with_subdir
 
         base_url, subdir = parse_git_url_with_subdir(git_url)
+        git_token = workspace.workspace_config_manager.get_github_token()
 
         # Clone repository to .cec (with subdirectory extraction if specified)
         if subdir:
             logger.info(f"Cloning {base_url} and extracting subdirectory '{subdir}' to {cec_path}")
-            git_clone_subdirectory(base_url, cec_path, subdir, ref=branch)
+            git_clone_subdirectory(base_url, cec_path, subdir, ref=branch, token=git_token)
             # Note: git_clone_subdirectory validates pyproject.toml internally
 
             # Subdirectory imports lose git history, need to init new repo
@@ -468,7 +472,7 @@ class EnvironmentFactory:
                 )
         else:
             logger.info(f"Cloning {base_url} to {cec_path}")
-            git_clone(base_url, cec_path, ref=branch)
+            git_clone(base_url, cec_path, ref=branch, token=git_token)
 
             # Validate it's a ComfyGit environment (only for non-subdir imports)
             pyproject_path = cec_path / "pyproject.toml"
@@ -493,6 +497,65 @@ class EnvironmentFactory:
 
         # Create and return Environment instance
         # NOTE: ComfyUI is not cloned yet, workflows not copied, models not resolved
+        return Environment(
+            name=name,
+            path=env_path,
+            workspace=workspace,
+            torch_backend=torch_backend,
+        )
+
+    @staticmethod
+    def import_from_directory(
+        source_path: Path,
+        name: str,
+        env_path: Path,
+        workspace: Workspace,
+        torch_backend: str = "auto",
+    ) -> Environment:
+        """Create environment structure from a portable source directory.
+
+        The directory source path represents the portable environment payload,
+        not a live ComfyUI runtime directory. Only files that belong to the
+        portable manifest are copied into the new environment repo.
+        """
+        if env_path.exists():
+            raise CDEnvironmentExistsError(f"Environment path already exists: {env_path}")
+
+        source_path = source_path.resolve()
+        pyproject_path = source_path / "pyproject.toml"
+        if not pyproject_path.exists():
+            raise ValueError(
+                f"Directory does not contain pyproject.toml - not a valid ComfyGit environment: {source_path}"
+            )
+
+        logger.info(f"Creating environment structure from directory: {source_path}")
+
+        env_path.mkdir(parents=True, exist_ok=True)
+        cec_path = env_path / ".cec"
+        cec_path.mkdir(parents=True, exist_ok=True)
+
+        for filename in ("pyproject.toml", ".python-version", "package_config.toml"):
+            src = source_path / filename
+            if src.exists() and src.is_file():
+                shutil.copy2(src, cec_path / filename)
+
+        workflows_src = source_path / "workflows"
+        if workflows_src.exists() and workflows_src.is_dir():
+            shutil.copytree(workflows_src, cec_path / "workflows", dirs_exist_ok=True)
+
+        workflow_api_src = source_path / "workflow_api"
+        if workflow_api_src.exists() and workflow_api_src.is_dir():
+            shutil.copytree(workflow_api_src, cec_path / "workflow_api", dirs_exist_ok=True)
+
+        overlays_src = source_path / "overlays"
+        if overlays_src.exists() and overlays_src.is_dir():
+            overlays_dst = cec_path / "overlays"
+            overlays_dst.mkdir(parents=True, exist_ok=True)
+            for overlay_file in overlays_src.glob("*.toml"):
+                if overlay_file.name == ".local.toml" or overlay_file.name.startswith("."):
+                    continue
+                shutil.copy2(overlay_file, overlays_dst / overlay_file.name)
+
         return Environment(
             name=name,
             path=env_path,
@@ -540,10 +603,12 @@ class EnvironmentFactory:
                     "python_version": python_version,
                     "nodes": {}
                 },
-                "uv": {}
+                "uv": {
+                    "override-dependencies": ["uv>=0.11.8"],
+                }
             },
             "dependency-groups": {
-                "comfygit-system": ["uv>=0.7"],
+                "comfygit-system": ["uv>=0.11.8"],
             },
         }
 

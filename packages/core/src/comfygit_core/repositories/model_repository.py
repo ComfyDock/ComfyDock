@@ -307,6 +307,39 @@ class ModelRepository:
         rows_affected = self.sqlite.execute_write(query, (relative_path,))
         return rows_affected > 0
 
+    def remove_location_by_id(self, location_id: int) -> bool:
+        """Remove a specific model location by database id.
+
+        Args:
+            location_id: model_locations.id value to remove
+
+        Returns:
+            True if location was removed, False if not found
+        """
+        query = "DELETE FROM model_locations WHERE id = ?"
+        rows_affected = self.sqlite.execute_write(query, (location_id,))
+        return rows_affected > 0
+
+    def remove_location_for_directory(self, base_directory: Path, relative_path: str) -> bool:
+        """Remove a model location scoped to one base directory.
+
+        Args:
+            base_directory: Base models directory for the location
+            relative_path: Path relative to that base directory
+
+        Returns:
+            True if location was removed, False if not found
+        """
+        query = """
+        DELETE FROM model_locations
+        WHERE base_directory = ? AND relative_path = ?
+        """
+        rows_affected = self.sqlite.execute_write(
+            query,
+            (str(base_directory.resolve()), relative_path.replace('\\', '/')),
+        )
+        return rows_affected > 0
+
     def clean_stale_locations(self, models_dir: Path) -> int:
         """Remove locations from this directory that no longer exist on disk.
 
@@ -939,6 +972,23 @@ class ModelRepository:
 
         if rows_affected > 0:
             logger.info(f"Removed {rows_affected} orphaned models with no locations")
+
+        return rows_affected
+
+    def clear_orphaned_model_sources(self) -> int:
+        """Remove model sources whose model record no longer exists.
+
+        SQLite foreign-key cascading is not guaranteed for every connection used
+        by this repository, so cleanup is explicit.
+        """
+        query = """
+        DELETE FROM model_sources
+        WHERE model_hash NOT IN (SELECT hash FROM models)
+        """
+        rows_affected = self.sqlite.execute_write(query)
+
+        if rows_affected > 0:
+            logger.info(f"Removed {rows_affected} orphaned model sources")
 
         return rows_affected
 

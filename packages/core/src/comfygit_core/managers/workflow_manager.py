@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, cast
 
 from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.repositories.node_mappings_repository import NodeMappingsRepository
 from comfygit_core.resolvers.global_node_resolver import GlobalNodeResolver
 
-from ..analyzers.node_classifier import NodeClassifier
 from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
 from ..logging.logging_config import get_logger
 from ..models.protocols import ModelResolutionStrategy, NodeResolutionStrategy
@@ -32,6 +32,10 @@ from ..models.workflow import (
 from ..repositories.workflow_repository import WorkflowRepository
 from ..resolvers.model_resolver import ModelResolver
 from ..services.model_downloader import ModelDownloader
+from ..services.workflow_resolution_service import (
+    ResolutionContext,
+    WorkflowResolutionService,
+)
 from ..utils.git import is_git_url
 from ..utils.workflow_hash import normalize_workflow
 
@@ -101,6 +105,10 @@ class WorkflowManager:
         self.model_resolver = ModelResolver(
             model_repository=self.model_repository,
             cec_path=self.cec_path
+        )
+        self.workflow_resolution_service = WorkflowResolutionService(
+            self.global_node_resolver,
+            self.model_resolver,
         )
 
         # Use injected model downloader from workspace
@@ -489,6 +497,132 @@ class WorkflowManager:
             logger.warning(f"Error comparing workflows '{name}': {e}")
             return True
 
+    @staticmethod
+    def _normalize_workflow_api_prompt_ref(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+
+        ref = value.strip()
+        if not ref:
+            return None
+
+        path = PurePosixPath(ref.replace("\\", "/"))
+        if path.is_absolute() or ".." in path.parts:
+            return None
+        if not path.parts or path.parts[0] != "workflow_api":
+            return None
+
+        return path.as_posix()
+
+    @staticmethod
+    def _workflow_entries_from_config(config: dict) -> Mapping[str, object]:
+        workflows = config.get("tool", {}).get("comfygit", {}).get("workflows", {})
+        if isinstance(workflows, Mapping):
+            return workflows
+        return {}
+
+    def _referenced_workflow_api_prompt_files(self, config: dict) -> set[str]:
+        workflows = self._workflow_entries_from_config(config)
+
+        referenced: set[str] = set()
+        for workflow_data in workflows.values():
+            if not isinstance(workflow_data, Mapping):
+                continue
+
+            workflow_entry = cast("Mapping[str, object]", workflow_data)
+            contract = workflow_entry.get("execution_contract")
+            if not isinstance(contract, Mapping):
+                continue
+
+            contract_entry = cast("Mapping[str, object]", contract)
+            ref = self._normalize_workflow_api_prompt_ref(
+                contract_entry.get("api_prompt_file")
+            )
+            if ref:
+                referenced.add(ref)
+
+        return referenced
+
+    def cleanup_orphaned_workflow_entries(self, config: dict | None = None) -> int:
+        """Remove manifest workflow entries whose editable workflow file is gone."""
+        is_batch = config is not None
+        if config is None:
+            config = self.pyproject.load()
+
+        workflows = self._workflow_entries_from_config(config)
+
+        workflows_in_pyproject = set(workflows.keys())
+        workflows_in_comfyui = set()
+        if self.comfyui_workflows.exists():
+            workflows_in_comfyui = {
+                f.stem for f in self.comfyui_workflows.glob("*.json")
+            }
+
+        orphaned_workflows = sorted(workflows_in_pyproject - workflows_in_comfyui)
+        if not orphaned_workflows:
+            return 0
+
+        removed_count = self.pyproject.workflows.remove_workflows(
+            orphaned_workflows,
+            config=config,
+        )
+        if removed_count > 0:
+            logger.info(f"Cleaned up {removed_count} deleted workflow(s) from pyproject.toml")
+            if not is_batch:
+                self.pyproject.save(config)
+
+        return removed_count
+
+    def cleanup_orphaned_workflow_api_prompts(self, config: dict | None = None) -> int:
+        """Remove workflow API prompt files not referenced by remaining contracts."""
+        if config is None:
+            config = self.pyproject.load()
+
+        workflow_api_dir = self.cec_path / "workflow_api"
+        if not workflow_api_dir.exists():
+            return 0
+
+        referenced = self._referenced_workflow_api_prompt_files(config)
+        removed_count = 0
+
+        for api_file in sorted(workflow_api_dir.rglob("*.json")):
+            if not api_file.is_file():
+                continue
+
+            rel_path = api_file.relative_to(self.cec_path).as_posix()
+            if rel_path in referenced:
+                continue
+
+            try:
+                api_file.unlink()
+                removed_count += 1
+                logger.info(
+                    f"Removed unreferenced workflow API prompt artifact: {rel_path}"
+                )
+
+                parent = api_file.parent
+                while parent != workflow_api_dir:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            except OSError as e:
+                logger.warning(
+                    f"Failed to remove unreferenced workflow API prompt '{rel_path}': {e}"
+                )
+
+        return removed_count
+
+    def cleanup_orphaned_workflow_state(self, config: dict | None = None) -> dict[str, int]:
+        """Clean manifest workflow orphans and unreferenced workflow API artifacts."""
+        removed_workflows = self.cleanup_orphaned_workflow_entries(config=config)
+        removed_api_prompts = self.cleanup_orphaned_workflow_api_prompts(config=config)
+        return {
+            "workflow_entries": removed_workflows,
+            "api_prompts": removed_api_prompts,
+        }
+
     def copy_all_workflows(self) -> dict[str, Path | None]:
         """Copy ALL workflows from ComfyUI to .cec for commit.
 
@@ -832,133 +966,13 @@ class WorkflowManager:
         Returns:
             ResolutionResult with resolved and unresolved dependencies
         """
-        nodes_resolved: list[ResolvedNodePackage] = []
-        nodes_version_gated: list[WorkflowNode] = []
-        nodes_uninstallable: list[ResolvedNodePackage] = []
-        nodes_unresolved: list[WorkflowNode] = []
-        nodes_ambiguous: list[list[ResolvedNodePackage]] = []
-        node_guidance: dict[str, str] = {}
-
-        models_resolved: list[ResolvedModel] = []
-        models_unresolved: list[WorkflowNodeWidgetRef] = []
-        models_ambiguous: list[list[ResolvedModel]] = []
-
         workflow_name = analysis.workflow_name
-        cec_path = getattr(self, "cec_path", None)
-        node_classifier = NodeClassifier(
-            cec_path,
-            builtin_versions_repository=self.builtin_versions_repository,
-        )
-
-        version_gated_types: set[str] = set()
-
-        def add_version_gated(node: WorkflowNode) -> None:
-            if node.type not in version_gated_types:
-                nodes_version_gated.append(node)
-                version_gated_types.add(node.type)
-
-            if node.type in node_guidance:
-                return
-
-            gate_info = node_classifier.get_version_gate_info(node.type)
-            if gate_info:
-                node_guidance[node.type] = gate_info.message
-            else:
-                node_guidance[node.type] = (
-                    f"Node {node.type} may require a newer ComfyUI version."
-                )
-
-        for node in analysis.version_gated_nodes:
-            add_version_gated(node)
-
-        # Build node resolution context with per-workflow custom_node_map
-        node_context = NodeResolutionContext(
-            installed_packages=self.pyproject.nodes.get_existing(),
-            custom_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
-            workflow_name=workflow_name,
-            auto_select_ambiguous=True # TODO: Make configurable
-        )
-
-        # Deduplicate node types (same type appears multiple times in workflow)
-        # Prefer nodes with properties when deduplicating
-        unique_nodes: dict[str, WorkflowNode] = {}
-        for node in analysis.non_builtin_nodes:
-            if node.type not in unique_nodes:
-                unique_nodes[node.type] = node
-            else:
-                # Prefer node with properties over one without
-                if node.properties.get('cnr_id') and not unique_nodes[node.type].properties.get('cnr_id'):
-                    # TODO: Log if the same node type already exists with a different cnr_id
-                    unique_nodes[node.type] = node
-
-        logger.debug(f"Resolving {len(unique_nodes)} unique node types from {len(analysis.non_builtin_nodes)} total non-builtin nodes")
-
-        # Resolve each unique node type with context
-        for _node_type, node in unique_nodes.items():
-            logger.debug(f"Trying to resolve node: {node}")
-            resolved_packages = self.global_node_resolver.resolve_single_node_with_context(node, node_context)
-
-            if resolved_packages is None:
-                # Not resolved - trigger strategy
-                logger.debug(f"Node not found: {node}")
-                nodes_unresolved.append(node)
-            elif len(resolved_packages) == 1:
-                candidate = resolved_packages[0]
-                if candidate.is_manager_only_uninstallable:
-                    gate_info = node_classifier.get_version_gate_info(node.type)
-                    if gate_info:
-                        add_version_gated(node)
-                        node_guidance[node.type] = gate_info.message
-                    else:
-                        logger.debug("Uninstallable manager-only node match: %s", candidate)
-                        nodes_uninstallable.append(candidate)
-                        pkg_id = candidate.package_id or "unknown-package"
-                        node_guidance[node.type] = (
-                            f"Node {node.type} matched manager-only mapping "
-                            f"'{pkg_id}' with no installable versions."
-                        )
-                else:
-                    # Single match - cleanly resolved
-                    logger.debug(f"Resolved node: {candidate}")
-                    nodes_resolved.append(candidate)
-            else:
-                installable_candidates = [
-                    pkg for pkg in resolved_packages
-                    if not pkg.is_manager_only_uninstallable
-                ]
-
-                if len(installable_candidates) == 1:
-                    nodes_resolved.append(installable_candidates[0])
-                elif len(installable_candidates) > 1:
-                    # Multiple installable matches from registry (ambiguous)
-                    nodes_ambiguous.append(installable_candidates)
-                else:
-                    # All candidates are manager-only and uninstallable
-                    selected = min(resolved_packages, key=lambda x: x.rank or 999)
-                    gate_info = node_classifier.get_version_gate_info(node.type)
-                    if gate_info:
-                        add_version_gated(node)
-                        node_guidance[node.type] = gate_info.message
-                    else:
-                        nodes_uninstallable.append(selected)
-                        pkg_id = selected.package_id or "unknown-package"
-                        node_guidance[node.type] = (
-                            f"Node {node.type} matched manager-only mapping "
-                            f"'{pkg_id}' with no installable versions."
-                        )
-
-        # Build context with full ManifestWorkflowModel objects
-        # This enables download intent detection and other advanced resolution logic
         previous_resolutions = {}
         workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name)
-
         for manifest_model in workflow_models:
-            # Store full ManifestWorkflowModel object for each node reference
-            # This provides access to hash, sources, status, relative_path, etc.
             for ref in manifest_model.nodes:
                 previous_resolutions[ref] = manifest_model
 
-        # Get global models table for download intent creation
         global_models_dict = {}
         try:
             all_global_models = self.pyproject.models.get_all()
@@ -967,73 +981,36 @@ class WorkflowManager:
         except Exception as e:
             logger.warning(f"Failed to load global models table: {e}")
 
-        model_context = ModelResolutionContext(
-            workflow_name=workflow_name,
-            previous_resolutions=previous_resolutions,
+        context = ResolutionContext(
+            installed_packages=self.pyproject.nodes.get_existing(),
+            custom_node_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
+            previous_model_resolutions=previous_resolutions,
             global_models=global_models_dict,
-            auto_select_ambiguous=True # TODO: Make configurable
-        )
-
-        # Deduplicate model refs by (widget_value, node_type) before resolving
-        # This ensures status reporting shows accurate counts (not inflated by duplicates)
-        model_groups: dict[tuple[str, str], list[WorkflowNodeWidgetRef]] = {}
-        for model_ref in analysis.found_models:
-            key = (model_ref.widget_value, model_ref.node_type)
-            if key not in model_groups:
-                model_groups[key] = []
-            model_groups[key].append(model_ref)
-
-        # Resolve each unique model group (one resolution per unique model)
-        for (_widget_value, _node_type), refs_in_group in model_groups.items():
-            # Use first ref as representative for resolution
-            primary_ref = refs_in_group[0]
-
-            result = self.model_resolver.resolve_model(primary_ref, model_context)
-
-            if result is None:
-                # Model not found at all - add primary ref only (deduplicated)
-                logger.debug(f"Failed to resolve model: {primary_ref}")
-                models_unresolved.append(primary_ref)
-            elif len(result) == 1:
-                # Clean resolution (exact match or from pyproject cache)
-                resolved_model = result[0]
-
-                # Check if path needs syncing (only for builtin nodes with resolved models)
-                if resolved_model.resolved_model:
-                    resolved_model.needs_path_sync = self._check_path_needs_sync(
-                        resolved_model
-                    )
-
-                # Check category mismatch (functional issue - model in wrong directory)
-                if resolved_model.resolved_model:
-                    has_mismatch, expected, actual = self._check_category_mismatch(resolved_model)
-                    resolved_model.has_category_mismatch = has_mismatch
-                    resolved_model.expected_categories = expected
-                    resolved_model.actual_category = actual
-
-                logger.debug(f"Resolved model: {resolved_model}")
-                models_resolved.append(resolved_model)
-            elif len(result) > 1:
-                # Ambiguous - multiple matches (use primary ref)
-                logger.debug(f"Ambiguous model: {result}")
-                models_ambiguous.append(result)
-            else:
-                # No resolution possible - add primary ref only (deduplicated)
-                logger.debug(f"Failed to resolve model: {primary_ref}, result: {result}")
-                models_unresolved.append(primary_ref)
-
-        return ResolutionResult(
+            cec_path=getattr(self, "cec_path", None),
+            builtin_versions_repository=self.builtin_versions_repository,
             workflow_name=workflow_name,
-            nodes_resolved=nodes_resolved,
-            nodes_version_gated=nodes_version_gated,
-            nodes_uninstallable=nodes_uninstallable,
-            nodes_unresolved=nodes_unresolved,
-            nodes_ambiguous=nodes_ambiguous,
-            node_guidance=node_guidance,
-            models_resolved=models_resolved,
-            models_unresolved=models_unresolved,
-            models_ambiguous=models_ambiguous,
+            auto_select_ambiguous=True,  # TODO: Make configurable
         )
+
+        resolution_service = getattr(self, "workflow_resolution_service", None)
+        if resolution_service is None:
+            resolution_service = WorkflowResolutionService(
+                self.global_node_resolver,
+                self.model_resolver,
+            )
+
+        resolution = resolution_service.resolve(analysis, context)
+
+        # Environment-specific post-processing that requires filesystem/model index state.
+        for resolved_model in resolution.models_resolved:
+            if resolved_model.resolved_model:
+                resolved_model.needs_path_sync = self._check_path_needs_sync(resolved_model)
+                has_mismatch, expected, actual = self._check_category_mismatch(resolved_model)
+                resolved_model.has_category_mismatch = has_mismatch
+                resolved_model.expected_categories = expected
+                resolved_model.actual_category = actual
+
+        return resolution
 
     def fix_resolution(
         self,
@@ -1445,18 +1422,9 @@ class WorkflowManager:
         # Write all models to workflow
         self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
 
-        # Clean up orphaned workflows from pyproject.toml
-        # This handles workflows deleted from ComfyUI (whether committed or never-committed)
-        workflows_in_pyproject = set(config.get('tool', {}).get('comfygit', {}).get('workflows', {}).keys())
-        workflows_in_comfyui = set()
-        if self.comfyui_workflows.exists():
-            workflows_in_comfyui = {f.stem for f in self.comfyui_workflows.glob("*.json")}
-
-        orphaned_workflows = workflows_in_pyproject - workflows_in_comfyui
-        if orphaned_workflows:
-            removed_count = self.pyproject.workflows.remove_workflows(list(orphaned_workflows), config=config)
-            if removed_count > 0:
-                logger.info(f"Cleaned up {removed_count} deleted workflow(s) from pyproject.toml")
+        # Clean up workflows deleted from ComfyUI, including their now-unreferenced
+        # workflow API prompt artifacts.
+        self.cleanup_orphaned_workflow_state(config=config)
 
         # Clean up orphaned models (must run AFTER workflow sections are removed)
         self.pyproject.models.cleanup_orphans(config=config)
@@ -1471,7 +1439,7 @@ class WorkflowManager:
     def update_workflow_model_paths(
         self,
         resolution: ResolutionResult
-    ) -> None:
+    ) -> int:
         """Update workflow JSON files with resolved and stripped model paths.
 
         IMPORTANT: Only updates paths for BUILTIN ComfyUI nodes. Custom nodes are
@@ -1484,6 +1452,9 @@ class WorkflowManager:
 
         Args:
             resolution: Resolution result with ref→model mapping
+
+        Returns:
+            Number of builtin model path widget values updated.
 
         Raises:
             FileNotFoundError if workflow not found
@@ -1528,6 +1499,8 @@ class WorkflowManager:
                     # Strip base directory prefix for ComfyUI BUILTIN node loaders
                     # e.g., "checkpoints/sd15/model.ckpt" → "sd15/model.ckpt"
                     display_path = self._strip_base_directory_for_node(ref.node_type, model.relative_path)
+                    if old_path == display_path:
+                        continue
                     node.widgets_values[widget_idx] = display_path
                     logger.debug(f"Updated node {node_id} widget {widget_idx}: {old_path} → {display_path}")
                     updated_count += 1
@@ -1552,6 +1525,7 @@ class WorkflowManager:
         # Note: We intentionally do NOT update .cec here
         # The .cec copy represents "committed state" and should only be updated during commit
         # This ensures workflow status correctly shows as "new" or "modified" until committed
+        return updated_count
 
     def _get_default_criticality(self, category: str) -> str:
         """Determine smart default criticality based on model category.

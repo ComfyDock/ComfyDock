@@ -54,7 +54,7 @@ class TestPhase1NodeInfoGitFields:
         assert node_info.pinned_commit == "abc123def"
 
     def test_node_info_from_pyproject_reads_branch(self, tmp_path):
-        """from_pyproject_config should read branch field from pyproject.toml."""
+        """from_pyproject_config should read branch and default criticality."""
         # ARRANGE - Create pyproject with branch field
         pyproject_path = tmp_path / "pyproject.toml"
         pyproject_path.write_text("""
@@ -78,6 +78,7 @@ pinned_commit = "abc123def"
 
         # ASSERT
         assert node_info is not None
+        assert node_info.criticality == "required", "Missing criticality should default to required"
         assert node_info.branch == "dev", "Should read branch from pyproject"
         assert node_info.pinned_commit == "abc123def", "Should read pinned_commit from pyproject"
 
@@ -211,8 +212,7 @@ class TestPhase3ImportChanges:
         # ACT - Mock git_clone to verify it gets called
         with patch('comfygit_core.managers.node_manager.git_clone') as mock_clone:
             # Make mock create the directory (simulating successful clone)
-            # Match the actual function signature: git_clone(url, target_path, depth=1, ref=None, timeout=30)
-            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30):
+            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30, token=None):
                 target_path.mkdir(parents=True, exist_ok=True)
                 (target_path / "nodes.py").write_text("# cloned code")
 
@@ -230,6 +230,32 @@ class TestPhase3ImportChanges:
             assert call_args.kwargs.get('ref') == "dev"
             assert call_args.kwargs.get('depth') == 0  # Full clone, not shallow
 
+    def test_sync_clones_dev_node_with_pinned_commit_before_branch(self, test_env):
+        """sync_nodes_to_filesystem should prefer pinned_commit over branch for exact reconstruction."""
+        from unittest.mock import patch
+
+        node_info = NodeInfo(
+            name="exact-dev-node",
+            source="development",
+            version="dev",
+            repository="https://github.com/user/exact-dev-node.git",
+            branch="dev",
+            pinned_commit="abc123def456",
+        )
+        test_env.pyproject.nodes.add(node_info, "exact-dev-node")
+
+        with patch('comfygit_core.managers.node_manager.git_clone') as mock_clone:
+            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30, token=None):
+                target_path.mkdir(parents=True, exist_ok=True)
+
+            mock_clone.side_effect = clone_side_effect
+            test_env.node_manager.sync_nodes_to_filesystem()
+
+            mock_clone.assert_called_once()
+            call_args = mock_clone.call_args
+            assert call_args.kwargs.get('ref') == "abc123def456"
+            assert call_args.kwargs.get('depth') == 0
+
     def test_sync_clones_dev_node_with_pinned_commit_when_no_branch(self, test_env):
         """sync_nodes_to_filesystem should use pinned_commit if branch not set."""
         from unittest.mock import patch
@@ -246,7 +272,7 @@ class TestPhase3ImportChanges:
 
         # ACT
         with patch('comfygit_core.managers.node_manager.git_clone') as mock_clone:
-            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30):
+            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30, token=None):
                 target_path.mkdir(parents=True, exist_ok=True)
 
             mock_clone.side_effect = clone_side_effect
@@ -326,7 +352,7 @@ class TestPhase3ImportChanges:
 
         # ACT
         with patch('comfygit_core.managers.node_manager.git_clone') as mock_clone:
-            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30):
+            def clone_side_effect(url, target_path, depth=1, ref=None, timeout=30, token=None):
                 target_path.mkdir(parents=True, exist_ok=True)
 
             mock_clone.side_effect = clone_side_effect

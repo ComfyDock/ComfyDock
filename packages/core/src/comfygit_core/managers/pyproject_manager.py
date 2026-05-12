@@ -13,10 +13,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tomlkit
-from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
+
+from comfygit_core.models.manifest import (
+    EnvironmentManifestSnapshot,
+    ManifestModel,
+    ManifestWorkflowModel,
+)
+from comfygit_core.models.workflow_contract import (
+    WorkflowExecutionContract,
+    toml_safe_contract_value,
+)
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
@@ -77,6 +86,50 @@ class PyprojectManager:
         return ModelHandler(self)
 
     # ===== Core Operations =====
+
+    def ensure_system_uv_dependency(
+        self,
+        dependency: str = "uv>=0.11.8",
+        group: str = "comfygit-system",
+    ) -> None:
+        """Ensure uv remains a ComfyGit-managed system tool."""
+        config = self.load()
+
+        if 'dependency-groups' not in config:
+            config['dependency-groups'] = tomlkit.table()
+        if group not in config['dependency-groups']:
+            config['dependency-groups'][group] = []
+
+        group_deps = config['dependency-groups'][group]
+        if not isinstance(group_deps, list):
+            group_deps = [group_deps] if group_deps else []
+
+        def _name(spec: str) -> str:
+            return self.uv_config._extract_package_name(spec)
+
+        group_deps = [dep for dep in group_deps if _name(str(dep)) != "uv"]
+        group_deps.append(dependency)
+        config['dependency-groups'][group] = group_deps
+
+        self.uv_config.ensure_section(config, 'tool', 'uv')
+
+        constraints = config['tool']['uv'].get('constraint-dependencies', [])
+        if not isinstance(constraints, list):
+            constraints = [constraints] if constraints else []
+        constraints = [item for item in constraints if _name(str(item)) != "uv"]
+        if constraints:
+            config['tool']['uv']['constraint-dependencies'] = constraints
+        else:
+            config['tool']['uv'].pop('constraint-dependencies', None)
+
+        overrides = config['tool']['uv'].get('override-dependencies', [])
+        if not isinstance(overrides, list):
+            overrides = [overrides] if overrides else []
+        overrides = [item for item in overrides if _name(str(item)) != "uv"]
+        overrides.append(dependency)
+        config['tool']['uv']['override-dependencies'] = overrides
+
+        self.save(config)
 
     def exists(self) -> bool:
         """Check if the pyproject.toml file exists."""
@@ -147,7 +200,7 @@ class PyprojectManager:
             with open(self.path, encoding='utf-8') as f:
                 config = tomlkit.load(f)
         except (OSError, TOMLKitError) as e:
-            raise CDPyprojectInvalidError(f"Failed to parse pyproject.toml at {self.path}: {e}")
+            raise CDPyprojectInvalidError(f"Failed to parse pyproject.toml at {self.path}: {e}") from e
 
         if not config:
             raise CDPyprojectInvalidError(f"pyproject.toml is empty at {self.path}")
@@ -168,6 +221,16 @@ class PyprojectManager:
 
         return config
 
+    def get_manifest_snapshot(self, force_reload: bool = False) -> EnvironmentManifestSnapshot:
+        """Return a typed read-only projection of the current manifest.
+
+        The snapshot is derived from the same freshness-aware `load()` path as
+        handler reads. Callers should request a new snapshot after any manifest
+        mutation instead of retaining one as an authority.
+        """
+        return EnvironmentManifestSnapshot.from_toml_dict(
+            self.load(force_reload=force_reload)
+        )
 
     def save(self, config: dict | None = None) -> None:
         """Save the configuration to pyproject.toml.
@@ -183,6 +246,8 @@ class PyprojectManager:
         if config is None:
             raise CDPyprojectError("No configuration to save")
 
+        self._sanitize_workflow_contracts_for_toml(config)
+
         # Clean up empty sections before saving
         self._cleanup_empty_sections(config)
 
@@ -196,13 +261,60 @@ class PyprojectManager:
             with open(self.path, 'w', encoding='utf-8') as f:
                 tomlkit.dump(config, f)
         except OSError as e:
-            raise CDPyprojectError(f"Failed to write pyproject.toml to {self.path}: {e}")
+            raise CDPyprojectError(f"Failed to write pyproject.toml to {self.path}: {e}") from e
 
         # Invalidate cache after save to ensure fresh reads
         self._config_cache = None
         self._cache_mtime = None
 
         logger.debug(f"Saved pyproject.toml to {self.path}")
+
+    def _sanitize_workflow_contracts_for_toml(self, config: dict) -> bool:
+        """Make workflow contract numeric fields safe for TOML writers.
+
+        TOML integers are signed 64-bit. ComfyUI widgets may expose unsigned
+        64-bit seed bounds, so oversized integers must be serialized as strings
+        to keep pyproject.toml parseable by UV and other strict TOML readers.
+        """
+        changed = False
+        workflows = (
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("workflows", {})
+        )
+        if not isinstance(workflows, dict):
+            return False
+
+        for workflow_data in workflows.values():
+            if not isinstance(workflow_data, dict):
+                continue
+            execution_contract = workflow_data.get("execution_contract")
+            if not isinstance(execution_contract, dict):
+                continue
+            contracts = execution_contract.get("contracts", {})
+            if not isinstance(contracts, dict):
+                continue
+
+            for contract_data in contracts.values():
+                if not isinstance(contract_data, dict):
+                    continue
+                inputs = contract_data.get("inputs", [])
+                if not isinstance(inputs, list):
+                    continue
+
+                for input_data in inputs:
+                    if not isinstance(input_data, dict):
+                        continue
+                    for key in ("default", "min", "max"):
+                        if key not in input_data:
+                            continue
+                        original_value = input_data[key]
+                        safe_value = toml_safe_contract_value(original_value)
+                        if safe_value != original_value or type(safe_value) is not type(original_value):
+                            input_data[key] = safe_value
+                            changed = True
+
+        return changed
 
     def reset_lazy_handlers(self):
         """Clear all cached properties to force re-initialization."""
@@ -291,10 +403,16 @@ class PyprojectManager:
         # Create a new table with sections in the correct order
         new_table = tomlkit.table()
 
-        # Add metadata fields first
-        for key in ['schema_version', 'comfyui_version', 'python_version', 'manifest_state']:
-            if key in comfygit:
-                new_table[key] = comfygit[key]
+        # Add scalar metadata fields first. Preserve unknown scalar metadata so
+        # callers can add new top-level manifest flags without this formatter
+        # silently dropping them.
+        for key, value in comfygit.items():
+            if key in {"nodes", "workflows", "models"}:
+                continue
+            if key == "":
+                continue
+            if not isinstance(value, dict):
+                new_table[key] = value
 
         # Add nodes if it exists
         if has_nodes:
@@ -534,6 +652,10 @@ class PyprojectManager:
 
                 try:
                     config = self.load()
+                    if self._sanitize_workflow_contracts_for_toml(config):
+                        self.save(config)
+                        original_content = self.path.read_text(encoding="utf-8")
+                        config = self.load(force_reload=True)
 
                     # Strip tracked local path sources before local overlays are applied.
                     if any(overlay.is_local for overlay in effective_overlays):
@@ -1181,6 +1303,29 @@ class UVConfigHandler(BaseHandler):
         config['tool']['uv']['constraint-dependencies'] = constraints
         self.save(config)
 
+    def add_override(self, package: str) -> None:
+        """Add an override dependency to [tool.uv]."""
+        config = self.load()
+        self.ensure_section(config, 'tool', 'uv')
+
+        overrides = config['tool']['uv'].get('override-dependencies', [])
+        if not isinstance(overrides, list):
+            overrides = [overrides] if overrides else []
+
+        pkg_name = self._extract_package_name(package)
+
+        for i, existing in enumerate(overrides):
+            if self._extract_package_name(existing) == pkg_name:
+                logger.info(f"Updating override: {existing} -> {package}")
+                overrides[i] = package
+                break
+        else:
+            logger.info(f"Adding override: {package}")
+            overrides.append(package)
+
+        config['tool']['uv']['override-dependencies'] = overrides
+        self.save(config)
+
     def add_no_build_isolation_package(self, package_name: str) -> None:
         """Add package to no-build-isolation-package list."""
         config = self.load()
@@ -1512,11 +1657,32 @@ class NodeHandler(BaseHandler):
                 source=node_data.get('source', 'unknown'),
                 download_url=node_data.get('download_url'),
                 dependency_sources=node_data.get('dependency_sources'),
+                criticality=node_data.get('criticality', 'required'),
                 branch=node_data.get('branch'),
                 pinned_commit=node_data.get('pinned_commit'),
             )
 
         return result
+
+    def set_criticality(self, node_identifier: str, criticality: str) -> bool:
+        """Set package-level custom-node criticality.
+
+        Criticality is intentionally user-declared package metadata. Workflow graph
+        analysis must not infer or mutate it.
+        """
+        from ..models.shared import normalize_node_criticality
+
+        normalized = normalize_node_criticality(criticality)
+        config = self.load()
+        nodes = config.get('tool', {}).get('comfygit', {}).get('nodes', {})
+
+        if node_identifier not in nodes:
+            return False
+
+        nodes[node_identifier]['criticality'] = normalized
+        self.save(config)
+        logger.debug("Set custom node criticality: %s -> %s", node_identifier, normalized)
+        return True
 
     def remove(self, node_identifier: str) -> bool:
         """Remove a custom node and its associated dependency group."""
@@ -1578,6 +1744,21 @@ class NodeHandler(BaseHandler):
 class WorkflowHandler(BaseHandler):
     """Handles workflow model resolutions and tracking."""
 
+    @staticmethod
+    def _ensure_workflow_entry(config: dict, workflow_name: str) -> dict:
+        """Ensure workflow table and path exist, then return the workflow table."""
+        workflows = config.setdefault('tool', {}).setdefault('comfygit', {}).setdefault('workflows', {})
+        workflow = workflows.get(workflow_name)
+
+        if workflow is None:
+            workflow = tomlkit.table()
+            workflows[workflow_name] = workflow
+
+        if 'path' not in workflow:
+            workflow['path'] = f"workflows/{workflow_name}.json"
+
+        return workflow
+
     def get_workflow(self, name: str) -> dict | None:
         """Get a workflow from pyproject.toml."""
         try:
@@ -1590,11 +1771,68 @@ class WorkflowHandler(BaseHandler):
     def add_workflow(self, name: str) -> None:
         """Add a new workflow to the pyproject.toml."""
         config = self.load()
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows')
-        config['tool']['comfygit']['workflows'][name] = tomlkit.table()
-        config['tool']['comfygit']['workflows'][name]['path'] = f"workflows/{name}.json"
+        self._ensure_workflow_entry(config, name)
         logger.info(f"Added new workflow: {name}")
         self.save(config)
+
+    def get_execution_contract(
+        self,
+        workflow_name: str,
+        config: dict | None = None
+    ) -> WorkflowExecutionContract | None:
+        """Get the saved execution contract for a workflow."""
+        try:
+            if config is None:
+                config = self.load()
+            workflow_data = config.get('tool', {}).get('comfygit', {}).get('workflows', {}).get(workflow_name, {})
+            contract_data = workflow_data.get('execution_contract')
+            if not contract_data:
+                return None
+            return WorkflowExecutionContract.from_toml_dict(contract_data)
+        except Exception as e:
+            logger.debug(f"Error loading execution contract for '{workflow_name}': {e}")
+            return None
+
+    def set_execution_contract(
+        self,
+        workflow_name: str,
+        contract: WorkflowExecutionContract,
+        config: dict | None = None
+    ) -> None:
+        """Create or replace the saved execution contract for a workflow."""
+        is_batch = config is not None
+        if not is_batch:
+            config = self.load()
+
+        workflow = self._ensure_workflow_entry(config, workflow_name)
+        workflow['execution_contract'] = contract.to_toml_dict()
+
+        if not is_batch:
+            self.save(config)
+
+        logger.debug(f"Set execution contract for workflow '{workflow_name}'")
+
+    def remove_execution_contract(
+        self,
+        workflow_name: str,
+        config: dict | None = None
+    ) -> bool:
+        """Remove the saved execution contract for a workflow."""
+        is_batch = config is not None
+        if not is_batch:
+            config = self.load()
+
+        workflow = config.get('tool', {}).get('comfygit', {}).get('workflows', {}).get(workflow_name, {})
+        if 'execution_contract' not in workflow:
+            return False
+
+        del workflow['execution_contract']
+
+        if not is_batch:
+            self.save(config)
+
+        logger.debug(f"Removed execution contract for workflow '{workflow_name}'")
+        return True
 
     def get_workflow_models(
         self,
@@ -1638,16 +1876,7 @@ class WorkflowHandler(BaseHandler):
         if not is_batch:
             config = self.load()
 
-        # Ensure sections exist
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows')
-
-        # Ensure specific workflow exists
-        if workflow_name not in config['tool']['comfygit']['workflows']:
-            config['tool']['comfygit']['workflows'][workflow_name] = tomlkit.table()
-
-        # Set workflow path
-        if 'path' not in config['tool']['comfygit']['workflows'][workflow_name]:
-            config['tool']['comfygit']['workflows'][workflow_name]['path'] = f"workflows/{workflow_name}.json"
+        workflow = self._ensure_workflow_entry(config, workflow_name)
 
         # Serialize to array of tables
         models_array = []
@@ -1656,7 +1885,7 @@ class WorkflowHandler(BaseHandler):
             # Convert to inline table for compact representation
             models_array.append(model_dict)
 
-        config['tool']['comfygit']['workflows'][workflow_name]['models'] = models_array
+        workflow['models'] = models_array
 
         if not is_batch:
             self.save(config)
@@ -1746,14 +1975,14 @@ class WorkflowHandler(BaseHandler):
         if not is_batch:
             config = self.load()
 
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows', name)
+        workflow = self._ensure_workflow_entry(config, name)
         if not node_pack_ids:
-            if 'nodes' in config['tool']['comfygit']['workflows'][name]:
+            if 'nodes' in workflow:
                 logger.info(f"Clearing node packs for workflow: {name}")
-                del config['tool']['comfygit']['workflows'][name]['nodes']
+                del workflow['nodes']
         else:
             logger.info(f"Set {len(node_pack_ids)} node pack(s) for workflow: {name}")
-            config['tool']['comfygit']['workflows'][name]['nodes'] = sorted(node_pack_ids)
+            workflow['nodes'] = sorted(node_pack_ids)
 
         if not is_batch:
             self.save(config)
@@ -1802,17 +2031,17 @@ class WorkflowHandler(BaseHandler):
             package_id: Package ID (or None for optional = false)
         """
         config = self.load()
-        self.ensure_section(config, 'tool', 'comfygit', 'workflows', workflow_name)
+        workflow = self._ensure_workflow_entry(config, workflow_name)
 
         # Ensure custom_node_map exists
-        if 'custom_node_map' not in config['tool']['comfygit']['workflows'][workflow_name]:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'] = {}
+        if 'custom_node_map' not in workflow:
+            workflow['custom_node_map'] = {}
 
         # Set mapping (false for optional, package_id string for resolved)
         if package_id is None:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'][node_type] = False
+            workflow['custom_node_map'][node_type] = False
         else:
-            config['tool']['comfygit']['workflows'][workflow_name]['custom_node_map'][node_type] = package_id
+            workflow['custom_node_map'][node_type] = package_id
 
         self.save(config)
         logger.debug(f"Set custom_node_map for workflow '{workflow_name}': {node_type} -> {package_id}")

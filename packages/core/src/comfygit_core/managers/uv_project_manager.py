@@ -233,11 +233,14 @@ class UVProjectManager:
         """
         pytorch_config = None
         if pytorch_manager:
-            from ..constants import PYTORCH_CORE_PACKAGES
+            from ..constants import PYTORCH_CORE_PACKAGES, PYTORCH_PACKAGE_NAMES
 
-            # Force reinstall of PyTorch packages to ensure correct backend is used
-            # Without this, uv may skip reinstall if torch is already installed
-            flags['reinstall_package'] = list(PYTORCH_CORE_PACKAGES)
+            # Force reinstall of PyTorch packages to ensure the correct backend is used.
+            # Backend overrides can change PyTorch's transitive NVIDIA wheel set, and
+            # reinstalling only torch/vision/audio can leave stale or partially-linked
+            # CUDA payloads in the venv.
+            reinstall_packages = PYTORCH_PACKAGE_NAMES if backend_override else PYTORCH_CORE_PACKAGES
+            flags['reinstall_package'] = sorted(reinstall_packages)
 
             # When overriding backend, delete uv.lock to force complete re-resolution.
             # The lock file contains platform-specific PyTorch wheel pins that won't

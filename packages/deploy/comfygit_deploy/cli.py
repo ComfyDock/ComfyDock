@@ -187,6 +187,8 @@ def create_parser() -> argparse.ArgumentParser:
     )
     up_parser.add_argument("--broadcast", action="store_true", help="Enable mDNS broadcast")
     up_parser.add_argument("--port-range", default="8200:8210", help="Instance port range")
+    up_parser.add_argument("--cloud", help="Remote coordination service base URL or websocket URL")
+    up_parser.add_argument("--token", help="Tunnel auth token for the remote coordination service")
     up_parser.add_argument("--dev", action="store_true", help="Use saved dev config (from 'dev setup')")
     up_parser.add_argument("--dev-core", metavar="PATH", help="Use local comfygit-core (editable)")
     up_parser.add_argument("--dev-manager", metavar="PATH", help="Use local comfygit-manager")

@@ -3,7 +3,7 @@
 Tests for the scenario where:
 1. API lookup succeeds → return API result
 2. API lookup fails (network error) → fall back to local cache
-3. Git clone uses correct ref (tag vs semver)
+3. Explicit git clone uses correct ref (tag vs commit)
 """
 
 import tempfile
@@ -15,8 +15,8 @@ from comfygit_core.models.shared import NodeInfo
 from comfygit_core.services.node_lookup_service import NodeLookupService
 
 
-class TestDownloadToCacheGitFallback:
-    """Test git clone fallback behavior in download_to_cache."""
+class TestDownloadToCacheGitBehavior:
+    """Test registry artifact and explicit git behavior in download_to_cache."""
 
     @pytest.fixture
     def cache_dir(self):
@@ -24,19 +24,15 @@ class TestDownloadToCacheGitFallback:
         with tempfile.TemporaryDirectory() as tmpdir:
             yield Path(tmpdir)
 
-    def test_git_clone_omits_ref_when_version_is_semver(self, cache_dir):
-        """SHOULD clone without --branch when version looks like semver (not a git ref).
-
-        Scenario: Node has source=registry but no download_url
-        Git clone fallback should NOT use semver "1.11.1" as --branch
-        """
+    def test_registry_node_without_artifact_does_not_fallback_to_git(self, cache_dir):
+        """Registry installs without artifacts should fail instead of cloning git."""
         # ARRANGE
         node_info = NodeInfo(
             name="ComfyUI-AKatz-Nodes",
             registry_id="comfyui-akatz-nodes",
             repository="https://github.com/akatz-ai/comfyui-akatz-nodes",
             version="1.11.1",  # Semver, not a git tag
-            download_url=None,  # No download URL - triggers git fallback
+            download_url=None,
             source="registry"
         )
 
@@ -45,14 +41,11 @@ class TestDownloadToCacheGitFallback:
         # Mock at the utils.git module level where it's imported from
         with patch('comfygit_core.utils.git.git_clone') as mock_git_clone:
             # ACT
-            service.download_to_cache(node_info)
+            result = service.download_to_cache(node_info)
 
             # ASSERT
-            mock_git_clone.assert_called_once()
-            call_kwargs = mock_git_clone.call_args
-            # Should NOT pass the semver as ref - ref should be None
-            assert call_kwargs.kwargs.get('ref') is None, \
-                f"Git clone should not use semver '1.11.1' as ref, got: {call_kwargs}"
+            assert result is None
+            mock_git_clone.assert_not_called()
 
     def test_git_clone_uses_ref_when_version_is_git_tag(self, cache_dir):
         """SHOULD use ref when version looks like a valid git tag (v1.11.1).

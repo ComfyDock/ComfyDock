@@ -28,7 +28,6 @@ ComfyUI Manager helps you browse, install, and update custom nodes in a single s
 
 - **ComfyUI Manager:** manage nodes in-place (one environment)
 - **ComfyGit:** create per-project environments with commits, branches, rollback, export/import
-- **Together:** install ComfyUI Manager inside a ComfyGit environment and use both
 
 ## Installation
 
@@ -127,4 +126,4 @@ Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-ComfyGit is dual-licensed under [GPL-3.0](LICENSE.txt) for open-source use and proprietary licenses for commercial use. See the [LICENSE.txt](LICENSE.txt) for more information.
+ComfyGit is licensed under [GPL-3.0](LICENSE.txt).

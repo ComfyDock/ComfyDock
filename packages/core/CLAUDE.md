@@ -1,86 +1,122 @@
-## Important Documents
-#### only read if instructed
-- docs/layer-hierarchy.md
-- docs/architecture.md
+<!-- NOTE: packages/core/AGENTS.md and packages/core/CLAUDE.md must stay in sync. -->
 
-## Core Package
-- Code under packages/core should be assumed to be a library and properly abstracted from client rendering code.
-- DO NOT couple this code with a particular frontend implementation like the CLI!
-- We should NOT see any print() or input() in the core library code.
-- All user interaction happens through callback protocols (see `models/protocols.py`).
+# ComfyGit Core Agent Guide
+
+`packages/core` is the UI-agnostic library package. It owns workspace and
+environment state, manifest semantics, sync/materialization behavior, model and
+node metadata, git orchestration, and callback/protocol contracts used by CLI,
+manager, deploy, and future runtime tooling.
+
+## Active Truth Layer
+
+Read root truth-layer docs before changing core behavior:
+
+- `../../docs/contracts/core/CONTRACT.md` - active core contract and invariants.
+- `../../docs/specs/environment-manifest-model.md` - tracked manifest semantics.
+- `../../docs/specs/environment-sync-lifecycle.md` - sync/run/git lifecycle.
+- `../../docs/specs/dependency-criticality.md` - model/node required vs optional behavior.
+- `../../docs/spec-driven-development.md` - clause syntax and validation rules.
+
+Package docs are supporting reference:
+
+- `docs/architecture.md` - core layer overview.
+- `docs/layer-hierarchy.md` - package-local layering reference.
+- `docs/knowledge/` - topic-specific behavior notes.
+- `docs/plans/` - planning docs; verify against truth-layer clauses before treating as current.
+
+## Core Boundaries
+
+- Keep core independent of CLI, manager UI, and ComfyUI panel rendering.
+- Avoid normal-use `print()` and `input()` in core; expose callbacks,
+  strategies, protocols, return values, and exceptions so callers own UX.
+- Prefer `Workspace` and `Environment` as public entry points. Keep direct manager
+  access for internal composition, tests, and package-local advanced behavior.
+- Do not put service-specific deployment policy into core. Core should
+  write/read portable manifest semantics that runtime adapters can consume.
+
+## Source Map
+
+| Path | Purpose |
+| --- | --- |
+| `src/comfygit_core/core/` | Public `Workspace` and `Environment` APIs. |
+| `src/comfygit_core/managers/` | Stateful orchestration for pyproject, uv, git, nodes, workflows, models, overlays, and symlinks. |
+| `src/comfygit_core/models/` | Dataclasses, protocols, exceptions, manifest/workflow/sync types. |
+| `src/comfygit_core/resolvers/` | Node and model resolution logic. |
+| `src/comfygit_core/services/` | Stateless business logic, registry/model lookup, downloads, workflow services. |
+| `src/comfygit_core/repositories/` | SQLite-backed caches and persistent indexes. |
+| `src/comfygit_core/analyzers/` | Workflow, git, config, model, and custom-node analysis. |
+| `src/comfygit_core/integrations/` | External command integrations such as uv. |
+| `src/comfygit_core/utils/` | Low-level filesystem, git, dependency, PyTorch, retry, and parsing helpers. |
+
+Check existing managers/services before adding new abstractions.
 
 ## Key Managers
 
-| Manager | File | Purpose |
-|---------|------|---------|
-| `PyprojectManager` | `managers/pyproject_manager.py` | pyproject.toml CRUD, UV config injection/restoration |
-| `UVProjectManager` | `managers/uv_project_manager.py` | UV sync, add, remove with injection context |
-| `PyTorchBackendManager` | `managers/pytorch_backend_manager.py` | `.pytorch-backend` file, GPU probing, config generation |
-| `LocalUVConfigManager` | `managers/local_uv_config_manager.py` | `.local-uv-config` file, machine-local UV overrides |
-| `NodeManager` | `managers/node_manager.py` | Node install/remove/update |
-| `WorkflowManager` | `managers/workflow_manager.py` | Workflow tracking/resolution |
-| `GitManager` | `managers/git_manager.py` | Git operations (auto-strips local paths before commit) |
-| `ExportImportManager` | `managers/export_import_manager.py` | Environment export/import |
+| Manager | File | Main responsibility |
+| --- | --- | --- |
+| `PyprojectManager` | `managers/pyproject_manager.py` | Manifest CRUD and temporary uv/PyTorch injection. |
+| `UVProjectManager` | `managers/uv_project_manager.py` | uv sync/add/remove operations. |
+| `OverlayManager` | `managers/overlay_manager.py` | Overlay loading and legacy `.local-uv-config` migration. |
+| `PyTorchBackendManager` | `managers/pytorch_backend_manager.py` | `.pytorch-backend`, GPU probing, torch source config. |
+| `NodeManager` | `managers/node_manager.py` | Custom node install/remove/update. |
+| `WorkflowManager` | `managers/workflow_manager.py` | Workflow tracking, node/model resolution, contract metadata. |
+| `EnvironmentModelManager` | `managers/environment_model_manager.py` | Environment-level model status and metadata aggregation. |
+| `GitManager` | `managers/git_manager.py` | Environment repo git operations. |
+| `ExportImportManager` | `managers/export_import_manager.py` | Portable environment import/export. |
 
-## Injection System
+## Manifest And Local State
 
-The core uses a temporary injection pattern for machine-specific config:
-1. `uv_injection_context()` in `PyprojectManager` saves original pyproject.toml
-2. Injects `.local-uv-config` sources/indexes/constraints
-3. Injects `.pytorch-backend` config (wins on torch conflicts)
-4. UV resolves against the merged config
-5. Original pyproject.toml is restored in `finally` block
+Tracked portable truth lives in each environment repo's `pyproject.toml`.
+Runtime/materialized state lives under environment runtime directories such as
+`.cec/`, virtualenvs, ComfyUI checkouts, symlinks, caches, and local SQLite DBs.
 
-Both `.pytorch-backend` and `.local-uv-config` are auto-gitignored.
+Machine-local sync inputs are not portable manifest truth:
 
-## Python Environment Management
+- `.pytorch-backend` stores local torch backend choice and generated source pins.
+- Local uv overrides now flow through overlays, with legacy `.local-uv-config`
+  migrated by `OverlayManager`.
 
-- ALWAYS use uv and the commands below for python environment management! NEVER try to run the system python!
-- uv commands should be run in the root repo directory in order to use the repo's .venv
+`PyprojectManager.uv_injection_context()` temporarily merges local overlays and
+PyTorch backend config into `pyproject.toml` for uv operations, then restores the
+tracked manifest in a `finally` path. Preserve that invariant.
 
-## Development
+## Dependency Criticality
 
-- `uv add <package>` - Install dependencies
-- `uv run ruff check --fix` - Lint and auto-fix with ruff
-- `uv pip list` - View dependencies
-- `uv run <command>` - Run cli tools locally installed (e.g. uv run comfygit)
+Current model criticality supports required, flexible, and optional. Required
+unresolved models are reproducibility blockers; optional unresolved models are
+warnings.
+
+Custom node criticality is planned as explicit manifest metadata:
+
+- Supported values should start as `required` and `optional`.
+- Missing criticality reads as `required`.
+- Optional unresolved nodes warn instead of blocking build readiness.
+- Workflow graph usage can inform UI messaging, but must not silently downgrade
+  user-declared custom node criticality.
 
 ## Testing
 
-- New tests should go under tests/ under their respective category.
-- Read tests/README.md for info on how to create new integration tests.
-- Try to add new tests to existing test files rather than creating new files (unless necessary)
-- `uv run pytest tests/ -v` - Run all tests (full info)
-- `uv run pytest <filename>` - Run specific test file
+Run tests from the repo root with uv:
 
-#### Testing comfygit cli
-- Use the existing testing workspace by seeing what path exists in COMFYGIT_HOME (cg will default to this workspace)
+```bash
+uv run pytest packages/core/tests/ -v
+uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v
+uv run pytest packages/core/tests/ -k "injection" -v
+```
 
-## Code Style
+Core tests should usually exercise core APIs and fixtures rather than subprocess
+CLI calls. See `tests/README.md` for fixture details:
 
-Optimize for human readability — minimize mental energy to trace logic flow.
+- `test_workspace` creates an isolated workspace.
+- `test_env` creates a minimal environment without cloning ComfyUI.
+- `test_models` creates indexed model stubs.
+- `tests/helpers/` has workflow builders and pyproject assertions.
 
-**Flatten nesting:**
-- Extract conditional values early: `x = d.get('key') if d else None` instead of `if d: ... if d.get('key'): ...`
-- Max 3-4 indentation levels in a method. If deeper, extract a helper.
+## Style
 
-**Guard clauses over nested ifs:**
-- Return/continue early for rejection cases instead of wrapping the happy path in else blocks.
-- Each early return should make the rejection reason obvious.
-
-**No state-tracking flags:**
-- Don't use boolean flags like `checked = True` to track whether something ran. Check the actual state instead (e.g., `result is not None`).
-
-**Extract complex decision branches:**
-- If an `if` block has 3+ outcomes with its own sub-conditions, extract it into a method that returns a value or None.
-- The caller reads as a flat decision chain: `try A? → try B? → try C? → fallback`.
-
-**Keep methods scannable:**
-- A method's priorities/steps should be visible without scrolling.
-- Decision logic in helpers, orchestration in the caller.
-
-## General
-Don't make any implementation overly complex. This is a one-person dev MVP project.
-We are still pre-customer - any unnecessary fallbacks, unnecessary versioning, testing overkill should be avoided.
-Simple, elegant, maintainable code is the goal.
-We DONT want any legacy or backwards compatible code.
+- Keep orchestration methods scannable; extract complex decision logic.
+- Prefer guard clauses over nested branches.
+- Avoid state-tracking boolean flags when the actual state can be checked.
+- Keep compatibility/fallback code only when it protects real current behavior.
+- Add focused tests for main paths and important edge cases; avoid large matrices
+  for low-risk changes.

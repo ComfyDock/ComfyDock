@@ -179,6 +179,42 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     list_parser = subparsers.add_parser("list", help="List all environments")
     list_parser.set_defaults(func=global_cmds.list_envs)
 
+    # analyze - Analyze a workflow file without requiring workspace/env
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help="Analyze a workflow file for dependencies",
+    )
+    analyze_parser.add_argument("workflow", type=Path, help="Path to workflow JSON file")
+    analyze_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Output as JSON",
+    )
+    analyze_parser.add_argument(
+        "--draft-spec",
+        action="store_true",
+        help="Output draft pyproject.toml",
+    )
+    analyze_parser.add_argument(
+        "--online",
+        action="store_true",
+        help="Enrich model sources using online provider lookups",
+    )
+    analyze_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed provenance",
+    )
+    analyze_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Only show unresolved items",
+    )
+    analyze_parser.set_defaults(func=global_cmds.analyze)
+
     # update - Update ComfyGit CLI (self-update)
     update_parser = subparsers.add_parser("update", help="Update ComfyGit CLI")
     update_parser.add_argument("--check", action="store_true", help="Check for updates without upgrading")
@@ -219,6 +255,41 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     import_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts, use defaults for workspace initialization")
     import_parser.set_defaults(func=global_cmds.import_env)
+
+    # materialize - Hydrate a portable environment for headless runtime/build use
+    materialize_parser = subparsers.add_parser(
+        "materialize",
+        help="Materialize a ComfyGit environment from a directory, tarball, or git URL",
+    )
+    materialize_parser.add_argument("source", type=str, help="Source directory, .tar.gz bundle, or git repository URL")
+    materialize_parser.add_argument("--name", type=str, required=True, help="Name for the materialized environment")
+    materialize_parser.add_argument("--workspace", type=Path, help="Workspace path to create/use")
+    materialize_parser.add_argument("--models-dir", type=Path, help="Global model directory for the workspace")
+    materialize_parser.add_argument("--branch", "-b", type=str, help="Git branch, tag, or commit to materialize")
+    materialize_parser.add_argument(
+        "--torch-backend",
+        default="auto",
+        metavar="BACKEND",
+        help=(
+            "PyTorch backend. Examples: auto (detect GPU), cpu, "
+            "cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). "
+            "Default: auto"
+        ),
+    )
+    materialize_parser.add_argument(
+        "--models",
+        choices=["all", "required", "skip"],
+        default="skip",
+        help="Model download strategy. Default: skip",
+    )
+    materialize_parser.add_argument(
+        "--with-manager",
+        action="store_true",
+        help="Install/register comfygit-manager during materialization",
+    )
+    materialize_parser.add_argument("--use", action="store_true", help="Set materialized environment as active")
+    materialize_parser.add_argument("--replace", action="store_true", help="Replace an existing environment with the same name")
+    materialize_parser.set_defaults(func=global_cmds.materialize_env)
 
     # export - Export ComfyGit environment
     export_parser = subparsers.add_parser("export", help="Export ComfyGit environment (include relevant files from .cec)")
@@ -278,6 +349,12 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     model_add_source_parser.add_argument("url", nargs="?", help="Download URL")
     model_add_source_parser.set_defaults(func=global_cmds.model_add_source)
 
+    # model delete
+    model_delete_parser = model_subparsers.add_parser("delete", help="Delete model files and clean index entries")
+    model_delete_parser.add_argument("identifier", help="Model hash, hash prefix, filename, or path")
+    model_delete_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    model_delete_parser.set_defaults(func=global_cmds.model_delete)
+
     # Registry management subcommands
     registry_parser = subparsers.add_parser("registry", help="Manage node registry cache")
     registry_subparsers = registry_parser.add_subparsers(dest="registry_command", help="Registry commands")
@@ -297,6 +374,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # Legacy flags - still supported at root level for backward compatibility
     config_parser.add_argument("--civitai-key", type=str, help="Set Civitai API key (use empty string to clear)")
+    config_parser.add_argument("--github-token", type=str, help="Set GitHub token for private git repository access (use empty string to clear)")
     config_parser.add_argument("--uv-cache", type=str, help="Set external UV cache path (use empty string to clear)")
     config_parser.add_argument("--show", action="store_true", help="Show current configuration")
     config_parser.set_defaults(func=global_cmds.config)
@@ -541,6 +619,91 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Apply overlay for this run sync (can be repeated)",
     )
     run_parser.set_defaults(func=env_cmds.run, args=[])
+
+    # serve - Front a running ComfyUI instance with contract-shaped endpoints
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve workflow contracts for this environment",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host/interface to bind (default: 127.0.0.1)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8190,
+        help="Port to bind (default: 8190)",
+    )
+    serve_parser.add_argument(
+        "--comfy-url",
+        default="http://127.0.0.1:8188",
+        help="Running ComfyUI API URL (default: http://127.0.0.1:8188)",
+    )
+    serve_parser.add_argument(
+        "--role",
+        choices=["studio", "proxy"],
+        default="studio",
+        help="Serve role: studio front door or compute-only proxy runtime (default: studio)",
+    )
+    serve_parser.add_argument(
+        "--executor",
+        choices=["local", "proxy"],
+        default="local",
+        help="Execution adapter for studio role (default: local)",
+    )
+    serve_parser.add_argument(
+        "--proxy-url",
+        help="Proxy runtime base URL when --executor proxy is used",
+    )
+    serve_parser.add_argument(
+        "--proxy-token",
+        help="Bearer token shared by proxy front door and proxy runtime",
+    )
+    serve_parser.add_argument(
+        "--callback-url",
+        help="Browser/coordinator-reachable base URL that proxy workers call back after async runs",
+    )
+    serve_parser.add_argument(
+        "--callback-token",
+        help="Bearer token accepted by the front door worker-callback endpoint (defaults to --proxy-token)",
+    )
+    serve_parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="Directory for localized proxy artifacts (default: <workspace>/.metadata/serve/artifacts)",
+    )
+    serve_parser.add_argument(
+        "--max-request-mb",
+        type=int,
+        default=256,
+        help="Maximum contract request body size in MiB (default: 256)",
+    )
+    serve_parser.add_argument(
+        "--run-timeout-seconds",
+        type=float,
+        default=12 * 60 * 60,
+        help="Maximum background run wait time in seconds (default: 43200)",
+    )
+    serve_parser.add_argument(
+        "--state",
+        choices=["ephemeral", "local"],
+        default="ephemeral",
+        help="Serve runtime state adapter (default: ephemeral)",
+    )
+    serve_parser.add_argument(
+        "--gallery",
+        choices=["private", "shared"],
+        default="private",
+        help="Gallery visibility policy for serve state (default: private)",
+    )
+    serve_parser.add_argument(
+        "--state-db",
+        type=Path,
+        help="SQLite database path for --state local (default: <workspace>/.metadata/serve/serve.sqlite)",
+    )
+    serve_parser.set_defaults(func=env_cmds.serve)
 
     # status - Show environment status
     status_parser = subparsers.add_parser("status", help="Show status (both sync and git status)")

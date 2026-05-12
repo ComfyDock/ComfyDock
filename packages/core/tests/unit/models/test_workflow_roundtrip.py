@@ -67,6 +67,54 @@ class TestWorkflowRoundTripSerialization:
         assert "CheckpointLoaderSimple" in node_types
         assert "KSampler" in node_types
 
+    def test_roundtrip_workflow_with_legacy_groups_without_ids(self):
+        """Legacy visual groups without IDs should not block workflow parsing."""
+        # ARRANGE
+        original_json = {
+            "id": "legacy-groups",
+            "revision": 0,
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "Note",
+                    "pos": [100, 100],
+                    "size": [200, 100],
+                    "flags": {},
+                    "order": 0,
+                    "mode": 0,
+                    "inputs": [],
+                    "outputs": [],
+                    "properties": {},
+                    "widgets_values": ["hello"]
+                }
+            ],
+            "links": [],
+            "groups": [
+                {
+                    "title": "Legacy group",
+                    "bounding": [90, 90, 250, 160],
+                    "color": "#3f789e",
+                    "font_size": 24,
+                    "flags": {}
+                }
+            ],
+            "config": {},
+            "extra": {},
+            "version": 0.4
+        }
+
+        # ACT
+        workflow = Workflow.from_json(original_json)
+        output_json = workflow.to_json()
+
+        # ASSERT
+        assert len(workflow.groups) == 1
+        assert workflow.groups[0].id is None
+        assert output_json["groups"][0]["title"] == "Legacy group"
+        assert "id" not in output_json["groups"][0]
+
     def test_roundtrip_workflow_with_single_subgraph_preserves_structure(self):
         """Workflow with subgraph should preserve original structure on save.
 

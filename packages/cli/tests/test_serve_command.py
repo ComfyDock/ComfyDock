@@ -1,0 +1,2413 @@
+"""Tests for the `cg serve` command wiring."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
+
+import aiohttp
+import pytest
+from aiohttp import ClientSession, web
+from comfygit_cli.cli import create_parser
+from comfygit_cli.env_commands import EnvironmentCommands
+from comfygit_cli.serve_executor import (
+    ComfyUIClient,
+    ComfyUIExecutionError,
+    LocalComfyExecutor,
+    ProxyComfyExecutor,
+    RunExecutionRequest,
+    RunExecutionResult,
+    ServeOutputResponse,
+    StagedUpload,
+    _attach_artifact_dimensions,
+    _image_dimensions_from_bytes,
+    _stamp_output_cache_busters,
+    _video_dimensions_from_ffprobe_json,
+)
+from comfygit_cli.serve_runtime import (
+    ServeConfig,
+    _content_type_for_filename,
+    _ensure_active_run_recovery,
+    _executor_unavailable_payload,
+    _gallery_items_for_outputs,
+    _generated_upload_filename,
+    _prepare_contract_inputs,
+    _record_failed_run,
+    create_app,
+    create_proxy_app,
+)
+from comfygit_cli.serve_state import (
+    EphemeralServeStateStore,
+    ServeGalleryItem,
+    ServeRunOutputSlot,
+    ServeRunRecord,
+    ServeSession,
+    SQLiteServeStateStore,
+)
+
+
+async def _with_test_server(
+    handler: Callable[[web.Request], Awaitable[web.Response]],
+    method: str,
+    path: str,
+) -> tuple[str, web.AppRunner]:
+    app = web.Application()
+    app.router.add_route(method, path, handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    port = sockets[0].getsockname()[1]
+    return f"http://127.0.0.1:{port}", runner
+
+
+async def _with_app_server(app: web.Application) -> tuple[str, web.AppRunner]:
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    port = sockets[0].getsockname()[1]
+    return f"http://127.0.0.1:{port}", runner
+
+
+def _write_environment_ref_files(cec_path: Path) -> None:
+    cec_path.mkdir(parents=True, exist_ok=True)
+    (cec_path / "pyproject.toml").write_text("[project]\nname = \"demo\"\n", encoding="utf-8")
+    workflow_api_path = cec_path / "workflow_api"
+    workflow_api_path.mkdir()
+    (workflow_api_path / "demo.api.json").write_text('{"nodes": []}\n', encoding="utf-8")
+
+
+def test_serve_parser_defaults() -> None:
+    parser = create_parser()
+
+    args = parser.parse_args(["-e", "demo", "serve"])
+
+    assert args.command == "serve"
+    assert args.target_env == "demo"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8190
+    assert args.comfy_url == "http://127.0.0.1:8188"
+    assert args.run_timeout_seconds == 12 * 60 * 60
+    assert args.state == "ephemeral"
+    assert args.gallery == "private"
+    assert args.state_db is None
+    assert args.role == "studio"
+    assert args.executor == "local"
+    assert args.proxy_url is None
+    assert args.proxy_token is None
+    assert args.callback_url is None
+    assert args.callback_token is None
+    assert args.artifact_dir is None
+
+
+def test_serve_parser_accepts_runtime_options() -> None:
+    parser = create_parser()
+
+    args = parser.parse_args(
+        [
+            "-e",
+            "demo",
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--comfy-url",
+            "http://127.0.0.1:8189",
+            "--state",
+            "local",
+            "--run-timeout-seconds",
+            "900",
+            "--gallery",
+            "shared",
+            "--state-db",
+            "/tmp/comfygit-serve.sqlite",
+            "--role",
+            "proxy",
+            "--executor",
+            "proxy",
+            "--proxy-url",
+            "http://127.0.0.1:9001",
+            "--proxy-token",
+            "secret-token",
+            "--callback-url",
+            "http://frontdoor.local:8791",
+            "--callback-token",
+            "callback-token",
+            "--artifact-dir",
+            "/tmp/comfygit-artifacts",
+        ]
+    )
+
+    assert args.host == "0.0.0.0"
+    assert args.port == 9000
+    assert args.comfy_url == "http://127.0.0.1:8189"
+    assert args.max_request_mb == 256
+    assert args.run_timeout_seconds == 900
+    assert args.state == "local"
+    assert args.gallery == "shared"
+    assert str(args.state_db) == "/tmp/comfygit-serve.sqlite"
+    assert args.role == "proxy"
+    assert args.executor == "proxy"
+    assert args.proxy_url == "http://127.0.0.1:9001"
+    assert args.proxy_token == "secret-token"
+    assert args.callback_url == "http://frontdoor.local:8791"
+    assert args.callback_token == "callback-token"
+    assert str(args.artifact_dir) == "/tmp/comfygit-artifacts"
+
+
+def test_serve_parser_accepts_max_request_size() -> None:
+    parser = create_parser()
+
+    args = parser.parse_args(["-e", "demo", "serve", "--max-request-mb", "512"])
+
+    assert args.max_request_mb == 512
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(["-e", "demo", "serve", "--port", "9000"])
+
+    cmd.serve(args)
+
+    mock_workspace.return_value.get_environment.assert_any_call("demo")
+    mock_serve.assert_called_once()
+    called_env, called_config = mock_serve.call_args.args
+    assert called_env is mock_env
+    assert called_config.port == 9000
+    assert called_config.max_request_bytes == 256 * 1024 * 1024
+    assert called_config.run_timeout_seconds == 12 * 60 * 60
+    assert called_config.state == "ephemeral"
+    assert called_config.gallery == "private"
+    assert called_config.role == "studio"
+    assert called_config.executor == "local"
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_configured_request_size(mock_serve, mock_workspace) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(["-e", "demo", "serve", "--max-request-mb", "512"])
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.max_request_bytes == 512 * 1024 * 1024
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_configured_run_timeout(mock_serve, mock_workspace) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(["-e", "demo", "serve", "--run-timeout-seconds", "7200"])
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.run_timeout_seconds == 7200
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_configured_state_store(mock_serve, mock_workspace, tmp_path) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    db_path = tmp_path / "serve.sqlite"
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(
+        [
+            "-e",
+            "demo",
+            "serve",
+            "--state",
+            "local",
+            "--gallery",
+            "shared",
+            "--state-db",
+            str(db_path),
+        ]
+    )
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.state == "local"
+    assert called_config.gallery == "shared"
+    assert called_config.state_db == db_path
+
+
+@patch("comfygit_cli.env_commands.get_workspace_or_exit")
+@patch("comfygit_cli.serve_runtime.serve_environment")
+def test_serve_command_uses_proxy_executor_config(mock_serve, mock_workspace, tmp_path) -> None:
+    mock_env = MagicMock()
+    mock_env.name = "demo"
+    mock_workspace.return_value.get_environment.return_value = mock_env
+
+    artifact_dir = tmp_path / "artifacts"
+    cmd = EnvironmentCommands()
+    parser = create_parser()
+    args = parser.parse_args(
+        [
+            "-e",
+            "demo",
+            "serve",
+            "--executor",
+            "proxy",
+            "--proxy-url",
+            "http://127.0.0.1:9001",
+            "--proxy-token",
+            "secret-token",
+            "--callback-url",
+            "http://frontdoor.local:8791",
+            "--callback-token",
+            "callback-token",
+            "--artifact-dir",
+            str(artifact_dir),
+        ]
+    )
+
+    cmd.serve(args)
+
+    called_config = mock_serve.call_args.args[1]
+    assert called_config.executor == "proxy"
+    assert called_config.proxy_url == "http://127.0.0.1:9001"
+    assert called_config.proxy_token == "secret-token"
+    assert called_config.callback_url == "http://frontdoor.local:8791"
+    assert called_config.callback_token == "callback-token"
+    assert called_config.artifact_dir == artifact_dir
+
+
+@pytest.mark.asyncio
+async def test_serve_app_serves_contract_studio_root() -> None:
+    state = MagicMock()
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.get(f"{base_url}/") as response:
+                text = await response.text()
+
+        assert response.status == 200
+        assert "ComfyGit Studio" in text
+        assert "root" in text
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_comfy_executor_submits_upload_and_localizes_artifact(tmp_path) -> None:
+    upload_path = tmp_path / "source.png"
+    upload_path.write_bytes(b"upload-bytes")
+
+    async def proxy_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer secret-token"
+        reader = await request.multipart()
+        payload_part = await reader.next()
+        assert isinstance(payload_part, aiohttp.BodyPartReader)
+        payload = json.loads(await payload_part.text())
+        assert payload["uploads"][0]["comfyui_filename"] == "upload_source.png"
+        assert payload["callback"] == {
+            "run_id": "run_1",
+            "url": "http://frontdoor.local/worker-callback/runs/run_1",
+            "token": "callback-token",
+        }
+        file_part = await reader.next()
+        assert isinstance(file_part, aiohttp.BodyPartReader)
+        assert file_part.name == "file_0"
+        assert await file_part.read() == b"upload-bytes"
+        return web.json_response({"status": "submitted", "prompt_id": "prompt_1"})
+
+    async def status_handler(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "status": "completed",
+                "prompt_id": "prompt_1",
+                "outputs": [
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {
+                                "filename": "out.png",
+                                "subfolder": "",
+                                "type": "output",
+                                "proxy_artifact_id": "artifact_1",
+                                "width": 32,
+                                "height": 16,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+
+    async def artifact_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer secret-token"
+        return web.Response(body=b"artifact-bytes", content_type="image/png")
+
+    app = web.Application()
+    app.router.add_post("/proxy/runs", proxy_handler)
+    app.router.add_get("/proxy/runs/{prompt_id}", status_handler)
+    app.router.add_get("/proxy/artifacts/{artifact_id}", artifact_handler)
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            executor = ProxyComfyExecutor(
+                base_url,
+                session=session,
+                token="secret-token",
+                artifact_dir=tmp_path / "artifacts",
+            )
+            result = await executor.execute(
+                RunExecutionRequest(
+                    prompt={"8": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}},
+                    outputs=(SimpleNamespace(name="save_image", type="image", node_id="8", selector="primary"),),
+                    wait=True,
+                    timeout_seconds=5,
+                    poll_interval_seconds=0.01,
+                    cache_token="cache1",
+                    callback_run_id="run_1",
+                    callback_url="http://frontdoor.local/worker-callback/runs/run_1",
+                    callback_token="callback-token",
+                    staged_uploads=(
+                        StagedUpload(
+                            input_name="image",
+                            path=upload_path,
+                            filename="source.png",
+                            content_type="image/png",
+                            size=upload_path.stat().st_size,
+                            comfyui_filename="upload_source.png",
+                        ),
+                    ),
+                )
+            )
+
+        artifact = result.outputs[0]["artifacts"][0]
+        assert result.status == "completed"
+        assert artifact["serve_artifact"] == "prompt_1/out.png"
+        assert artifact["url"] == "/outputs/view?serve_artifact=prompt_1/out.png"
+        assert (tmp_path / "artifacts" / "prompt_1" / "out.png").read_bytes() == b"artifact-bytes"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_comfy_executor_uses_run_timeout_for_submit(tmp_path) -> None:
+    calls: list[float | None] = []
+    executor = ProxyComfyExecutor(
+        "https://proxy.example",
+        token="secret-token",
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    async def fake_request_json(
+        method: str,
+        path: str,
+        *,
+        json_data: dict[str, Any] | None = None,
+        data: aiohttp.FormData | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        del method, path, json_data, data
+        calls.append(timeout)
+        return {"status": "submitted", "prompt_id": "prompt_1"}
+
+    executor._request_json = fake_request_json  # type: ignore[method-assign]
+
+    result = await executor.execute(
+        RunExecutionRequest(
+            prompt={"8": {"class_type": "SaveImage", "inputs": {"filename_prefix": "ComfyUI"}}},
+            outputs=(SimpleNamespace(name="save_image", type="image", node_id="8", selector="primary"),),
+            wait=False,
+            timeout_seconds=123,
+            poll_interval_seconds=1,
+            cache_token="cache1",
+        )
+    )
+
+    assert result.status == "submitted"
+    assert result.prompt_id == "prompt_1"
+    assert calls == [123]
+
+
+def test_executor_unavailable_payload_uses_proxy_url_for_proxy_executor() -> None:
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            executor="proxy",
+            proxy_url="https://proxy.example",
+            comfy_url="http://127.0.0.1:8188",
+        )
+    )
+
+    payload = _executor_unavailable_payload(cast(Any, state), asyncio.TimeoutError(), prompt_id="prompt_1")
+
+    assert payload == {
+        "error": "proxy_unavailable",
+        "message": "",
+        "proxy_url": "https://proxy.example",
+        "prompt_id": "prompt_1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_proxy_runtime_app_submits_and_exposes_artifact(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+        async def fetch_output(
+            self,
+            params: Mapping[str, str],
+            request_headers: Mapping[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params["filename"] == "out.png"
+            assert request_headers == {}
+            return ServeOutputResponse(body=b"artifact-bytes", content_type="image/png")
+
+    class FakeExecutor:
+        async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
+            assert request.wait is False
+            assert request.prompt == {"8": {"class_type": "SaveImage", "inputs": {}}}
+            if request.on_submitted is not None:
+                await request.on_submitted("prompt_1")
+            return RunExecutionResult(status="submitted", prompt_id="prompt_1")
+
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            assert prompt_id == "prompt_1"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {"filename": "out.png", "subfolder": "", "type": "output", "width": 32, "height": 16}
+                        ],
+                    }
+                ],
+            )
+
+        async def cancel(self, prompt_id: str) -> None:
+            raise AssertionError(f"Unexpected cancel for {prompt_id}")
+
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        executor=FakeExecutor(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.post(
+                f"{base_url}/proxy/runs",
+                json={
+                    "prompt": {"8": {"class_type": "SaveImage", "inputs": {}}},
+                    "outputs": [
+                        {"name": "save_image", "type": "image", "node_id": "8", "selector": "primary"}
+                    ],
+                    "timeout_seconds": 5,
+                    "poll_interval_seconds": 0.01,
+                },
+            ) as response:
+                submitted = await response.json()
+
+            completed: dict[str, Any] = {}
+            for _ in range(20):
+                async with session.get(f"{base_url}/proxy/runs/prompt_1") as response:
+                    completed = await response.json()
+                if completed["status"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+
+            artifact_id = completed["outputs"][0]["artifacts"][0]["proxy_artifact_id"]
+            async with session.get(f"{base_url}/proxy/artifacts/{artifact_id}") as response:
+                artifact_body = await response.read()
+
+        assert submitted == {"status": "submitted", "prompt_id": "prompt_1"}
+        assert completed["status"] == "completed"
+        assert completed["outputs"][0]["artifacts"][0]["url"] == f"/proxy/artifacts/{artifact_id}"
+        assert artifact_body == b"artifact-bytes"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_runtime_app_pushes_callback_artifacts(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+        async def fetch_output(
+            self,
+            params: Mapping[str, str],
+            request_headers: Mapping[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params["filename"] == "out.png"
+            assert request_headers == {}
+            return ServeOutputResponse(body=b"artifact-bytes", content_type="image/png")
+
+    class FakeExecutor:
+        async def execute(self, request: RunExecutionRequest) -> RunExecutionResult:
+            assert request.wait is False
+            if request.on_submitted is not None:
+                await request.on_submitted("prompt_1")
+            return RunExecutionResult(status="submitted", prompt_id="prompt_1")
+
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            del timeout_seconds, poll_interval_seconds
+            assert prompt_id == "prompt_1"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {"filename": "out.png", "subfolder": "", "type": "output", "width": 32, "height": 16}
+                        ],
+                    }
+                ],
+            )
+
+        async def cancel(self, prompt_id: str) -> None:
+            raise AssertionError(f"Unexpected cancel for {prompt_id}")
+
+    callbacks: list[dict[str, Any]] = []
+    callback_files: dict[str, bytes] = {}
+
+    async def callback_handler(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer callback-token"
+        if request.content_type.lower().startswith("multipart/"):
+            reader = await request.multipart()
+            payload_part = await reader.next()
+            assert isinstance(payload_part, aiohttp.BodyPartReader)
+            payload = json.loads(await payload_part.text())
+            callbacks.append(payload)
+            while part := await reader.next():
+                assert isinstance(part, aiohttp.BodyPartReader)
+                callback_files[str(part.name)] = await part.read()
+        else:
+            callbacks.append(await request.json())
+        return web.json_response({"ok": True})
+
+    callback_app = web.Application()
+    callback_app.router.add_post("/worker-callback/runs/{run_id}", callback_handler)
+    callback_base_url, callback_runner = await _with_app_server(callback_app)
+
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        executor=FakeExecutor(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.post(
+                f"{base_url}/proxy/runs",
+                json={
+                    "prompt": {"8": {"class_type": "SaveImage", "inputs": {}}},
+                    "outputs": [
+                        {"name": "save_image", "type": "image", "node_id": "8", "selector": "primary"}
+                    ],
+                    "timeout_seconds": 5,
+                    "poll_interval_seconds": 0.01,
+                    "callback": {
+                        "run_id": "run_1",
+                        "url": f"{callback_base_url}/worker-callback/runs/run_1",
+                        "token": "callback-token",
+                    },
+                },
+            ) as response:
+                submitted = await response.json()
+
+            for _ in range(20):
+                if any(callback.get("status") == "completed" for callback in callbacks):
+                    break
+                await asyncio.sleep(0.01)
+
+        completed = next(callback for callback in callbacks if callback.get("status") == "completed")
+        artifact = completed["outputs"][0]["artifacts"][0]
+        assert submitted == {"status": "submitted", "prompt_id": "prompt_1"}
+        assert any(callback.get("status") == "running" for callback in callbacks)
+        assert completed["run_id"] == "run_1"
+        assert artifact["upload_field"] == "artifact_0_0"
+        assert artifact["content_type"] == "image/png"
+        assert callback_files == {"artifact_0_0": b"artifact-bytes"}
+    finally:
+        await runner.cleanup()
+        await callback_runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_worker_callback_endpoint_records_uploaded_artifact(tmp_path) -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_save_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_1",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            executor="proxy",
+            proxy_token="secret-token",
+        ),
+        state_store=store,
+        artifact_dir=tmp_path / "artifacts",
+        background_tasks=set(),
+        active_run_tasks={},
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        form = aiohttp.FormData()
+        form.add_field(
+            "payload",
+            json.dumps(
+                {
+                    "status": "completed",
+                    "run_id": "run_1",
+                    "prompt_id": "prompt_1",
+                    "outputs": [
+                        {
+                            "name": "save_image",
+                            "type": "image",
+                            "node_id": "8",
+                            "selector": "primary",
+                            "artifacts": [
+                                {
+                                    "filename": "out.png",
+                                    "subfolder": "",
+                                    "type": "output",
+                                    "upload_field": "artifact_0_0",
+                                    "width": 32,
+                                    "height": 16,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        form.add_field("artifact_0_0", b"artifact-bytes", filename="out.png", content_type="image/png")
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session_client:
+            async with session_client.post(f"{base_url}/worker-callback/runs/run_1", data=form) as response:
+                payload = await response.json()
+
+        artifact = payload["gallery_items"][0]["artifact"]
+        assert response.status == 200
+        assert payload["status"] == "completed"
+        assert payload["run"]["status"] == "completed"
+        assert payload["output_slots"][0]["status"] == "done"
+        assert payload["gallery_items"][0]["status"] == "done"
+        assert artifact["serve_artifact"] == "prompt_1/out.png"
+        assert artifact["url"] == "/outputs/view?serve_artifact=prompt_1/out.png"
+        assert (tmp_path / "artifacts" / "prompt_1" / "out.png").read_bytes() == b"artifact-bytes"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_proxy_health_reports_environment_ref(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    cec_path = tmp_path / ".cec"
+    _write_environment_ref_files(cec_path)
+    state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", cec_path=cec_path, comfyui_path=tmp_path / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    app = create_proxy_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    payload: dict[str, Any] = {}
+    try:
+        async with ClientSession(headers={"Authorization": "Bearer secret-token"}) as session:
+            async with session.get(f"{base_url}/proxy/health") as response:
+                payload = await response.json()
+
+        environment_ref = payload["environment_ref"]
+        assert payload["role"] == "proxy"
+        assert payload["comfyui"] == {"available": True}
+        assert environment_ref["environment"] == "demo"
+        assert environment_ref["cec_commit"] is None
+        assert environment_ref["cec_dirty"] is None
+        assert environment_ref["contract_digest"].startswith("sha256:")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_frontdoor_proxy_health_reports_environment_ref_match(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    proxy_cec_path = tmp_path / "proxy" / ".cec"
+    frontdoor_cec_path = tmp_path / "frontdoor" / ".cec"
+    _write_environment_ref_files(proxy_cec_path)
+    _write_environment_ref_files(frontdoor_cec_path)
+
+    proxy_state = SimpleNamespace(
+        env=SimpleNamespace(name="demo", cec_path=proxy_cec_path, comfyui_path=tmp_path / "proxy" / "ComfyUI"),
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            role="proxy",
+            proxy_token="secret-token",
+        ),
+        client=FakeClient(),
+        proxy_runs={},
+        proxy_artifacts={},
+        background_tasks=set(),
+    )
+    proxy_app = create_proxy_app(cast(Any, proxy_state))
+    proxy_url, proxy_runner = await _with_app_server(proxy_app)
+    payload: dict[str, Any] = {}
+    try:
+        async with ClientSession() as session:
+            frontdoor_state = SimpleNamespace(
+                env=SimpleNamespace(
+                    name="demo",
+                    cec_path=frontdoor_cec_path,
+                    comfyui_path=tmp_path / "frontdoor" / "ComfyUI",
+                ),
+                config=ServeConfig(
+                    host="127.0.0.1",
+                    port=8191,
+                    comfy_url="http://127.0.0.1:8188",
+                    executor="proxy",
+                    proxy_url=proxy_url,
+                    proxy_token="secret-token",
+                ),
+                client=FakeClient(),
+                executor=ProxyComfyExecutor(
+                    proxy_url,
+                    session=session,
+                    token="secret-token",
+                    artifact_dir=tmp_path / "artifacts",
+                ),
+                background_tasks=set(),
+            )
+            frontdoor_app = create_app(cast(Any, frontdoor_state))
+            frontdoor_url, frontdoor_runner = await _with_app_server(frontdoor_app)
+            try:
+                async with session.get(f"{frontdoor_url}/health?check_proxy=true") as response:
+                    payload = await response.json()
+            finally:
+                await frontdoor_runner.cleanup()
+
+        assert payload["executor"] == "proxy"
+        assert payload["environment_ref"]["contract_digest"].startswith("sha256:")
+        assert payload["proxy"]["environment_ref"]["contract_digest"] == payload["environment_ref"]["contract_digest"]
+        assert payload["proxy_environment_ref_match"] is True
+    finally:
+        await proxy_runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_frontdoor_proxy_health_defers_remote_probe_by_default(tmp_path) -> None:
+    class FakeClient:
+        async def check_health(self) -> dict[str, Any]:
+            return {"system": "ok"}
+
+    frontdoor_cec_path = tmp_path / "frontdoor" / ".cec"
+    _write_environment_ref_files(frontdoor_cec_path)
+
+    async with ClientSession() as session:
+        frontdoor_state = SimpleNamespace(
+            env=SimpleNamespace(
+                name="demo",
+                cec_path=frontdoor_cec_path,
+                comfyui_path=tmp_path / "frontdoor" / "ComfyUI",
+            ),
+            config=ServeConfig(
+                host="127.0.0.1",
+                port=8191,
+                comfy_url="http://127.0.0.1:8188",
+                executor="proxy",
+                proxy_url="http://127.0.0.1:9",
+                proxy_token="secret-token",
+            ),
+            client=FakeClient(),
+            executor=ProxyComfyExecutor(
+                "http://127.0.0.1:9",
+                session=session,
+                token="secret-token",
+                artifact_dir=tmp_path / "artifacts",
+            ),
+            background_tasks=set(),
+        )
+        frontdoor_app = create_app(cast(Any, frontdoor_state))
+        frontdoor_url, frontdoor_runner = await _with_app_server(frontdoor_app)
+        try:
+            async with session.get(f"{frontdoor_url}/health") as response:
+                payload = await response.json()
+        finally:
+            await frontdoor_runner.cleanup()
+
+    assert payload["executor"] == "proxy"
+    assert payload["proxy"] == {
+        "configured": True,
+        "available": None,
+        "health_check": "deferred",
+    }
+    assert payload["proxy_environment_ref_match"] is None
+    assert payload["comfyui"] == {
+        "available": True,
+        "mode": "proxy",
+        "status": "deferred",
+    }
+
+
+@pytest.mark.asyncio
+async def test_serve_app_suppresses_missing_favicon() -> None:
+    state = MagicMock()
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.get(f"{base_url}/favicon.ico") as response:
+                await response.read()
+
+        assert response.status == 204
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_output_view_proxies_byte_range_headers() -> None:
+    class FakeClient:
+        async def fetch_output(
+            self,
+            params: dict[str, str],
+            request_headers: dict[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params == {"filename": "video.mp4", "subfolder": "video", "type": "output"}
+            assert request_headers == {"Range": "bytes=0-1023", "If-Range": '"etag-1"'}
+            return ServeOutputResponse(
+                body=b"partial",
+                content_type="video/mp4",
+                disposition='filename="video.mp4"',
+                status=206,
+                headers={
+                    "accept-ranges": "bytes",
+                    "content-range": "bytes 0-6/100",
+                    "etag": '"etag-1"',
+                    "last-modified": "Thu, 07 May 2026 00:00:00 GMT",
+                },
+            )
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        client=FakeClient(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.get(
+                f"{base_url}/outputs/view?filename=video.mp4&subfolder=video&type=output",
+                headers={"Range": "bytes=0-1023", "If-Range": '"etag-1"'},
+            ) as response:
+                body = await response.read()
+
+        assert response.status == 206
+        assert response.headers["Content-Type"] == "video/mp4"
+        assert response.headers["Content-Range"] == "bytes 0-6/100"
+        assert response.headers["Accept-Ranges"] == "bytes"
+        assert response.headers["ETag"] == '"etag-1"'
+        assert body == b"partial"
+    finally:
+        await runner.cleanup()
+
+
+def test_serve_app_uses_configured_request_limit() -> None:
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            max_request_bytes=512 * 1024 * 1024,
+        )
+    )
+
+    app = create_app(cast(Any, state))
+
+    assert app._client_max_size == 512 * 1024 * 1024  # noqa: SLF001 - aiohttp stores this setting privately.
+
+
+def test_sqlite_state_store_persists_gallery_items(tmp_path) -> None:
+    db_path = tmp_path / "serve.sqlite"
+    store = SQLiteServeStateStore(db_path)
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "completed"},
+        )
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_1",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="done",
+                output_type="image",
+                slot_id="slot_run_1_0_image",
+                output_name="save_image",
+                prompt_id="prompt_1",
+                filename="image.png",
+                url="/outputs/view?filename=image.png",
+                width=1024,
+                height=1024,
+                inputs={"prompt": "blue eyes"},
+                raw_result={"status": "completed"},
+            )
+        ]
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="done",
+                prompt_id="prompt_1",
+                width=1024,
+                height=1024,
+                raw_result={"status": "completed"},
+            )
+        ]
+    )
+    store.close()
+
+    reopened = SQLiteServeStateStore(db_path)
+    try:
+        items = reopened.list_gallery_items("anon_1")
+        slots = reopened.list_output_slots("anon_1", "run_1")
+
+        assert items == [
+            {
+                "id": "gallery_1",
+                "run_id": "run_1",
+                "contract": "z-image / default",
+                "contractWorkflow": "z-image",
+                "contractName": "default",
+                "status": "done",
+                "type": "image",
+                "inputs": {"prompt": "blue eyes"},
+                "createdAt": items[0]["createdAt"],
+                "slotId": "slot_run_1_0_image",
+                "promptId": "prompt_1",
+                "outputName": "save_image",
+                "filename": "image.png",
+                "url": "/outputs/view?filename=image.png",
+                "width": 1024,
+                "height": 1024,
+                "rawResult": {"status": "completed"},
+            }
+        ]
+        assert slots == [
+            {
+                "slot_id": "slot_run_1_0_image",
+                "run_id": "run_1",
+                "contract": "z-image / default",
+                "contractWorkflow": "z-image",
+                "contractName": "default",
+                "outputName": "save_image",
+                "type": "image",
+                "status": "done",
+                "createdAt": slots[0]["createdAt"],
+                "updatedAt": slots[0]["updatedAt"],
+                "promptId": "prompt_1",
+                "width": 1024,
+                "height": 1024,
+                "rawResult": {"status": "completed"},
+            }
+        ]
+        assert items[0]["createdAt"]
+    finally:
+        reopened.close()
+
+
+def test_state_store_lists_active_runs(tmp_path) -> None:
+    db_path = tmp_path / "serve.sqlite"
+    store = SQLiteServeStateStore(db_path)
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_submitted",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="submitted",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_done",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_2",
+            inputs={"prompt": "green eyes"},
+        )
+    )
+
+    active = store.list_runs("anon_1", statuses={"submitted", "running"})
+    active_records = store.list_active_runs({"submitted", "running"})
+
+    assert [run["run_id"] for run in active] == ["run_submitted"]
+    assert active[0]["status"] == "submitted"
+    assert [run.run_id for run in active_records] == ["run_submitted"]
+    store.close()
+
+
+def test_state_store_cancels_active_run() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_save_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_save_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_save_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    assert store.cancel_run(
+        "anon_1",
+        "run_cancel",
+        raw_result={"status": "cancelled", "run_id": "run_cancel"},
+        error="Generation cancelled.",
+    )
+
+    assert store.list_runs("anon_1")[0]["status"] == "cancelled"
+    assert store.list_active_runs({"submitted", "running"}) == []
+    assert store.list_output_slots("anon_1", "run_cancel")[0]["status"] == "cancelled"
+    assert store.list_gallery_items("anon_1") == []
+
+
+@pytest.mark.asyncio
+async def test_active_run_recovery_completes_persisted_run() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_recover",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_recover",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_run_recover",
+                run_id="run_recover",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="z-image",
+                contract="default",
+                status="pending",
+                output_type="image",
+                prompt_id="prompt_recover",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            assert prompt_id == "prompt_recover"
+            assert outputs[0].name == "save_image"
+            return RunExecutionResult(
+                status="completed",
+                prompt_id=prompt_id,
+                outputs=[
+                    {
+                        "name": "save_image",
+                        "type": "image",
+                        "node_id": "8",
+                        "selector": "primary",
+                        "artifacts": [
+                            {
+                                "filename": "recovered.png",
+                                "subfolder": "",
+                                "type": "output",
+                                "url": "/outputs/view?filename=recovered.png",
+                                "width": 512,
+                                "height": 512,
+                            }
+                        ],
+                    }
+                ],
+            )
+
+    contract = SimpleNamespace(outputs=[SimpleNamespace(name="save_image", type="image", node_id="8")])
+    manifest = SimpleNamespace(
+        workflows={
+            "z-image": SimpleNamespace(
+                execution_contract=SimpleNamespace(contracts={"default": contract})
+            )
+        }
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: manifest,
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+    assert list(state.active_run_tasks) == ["run_recover"]
+    await asyncio.gather(*state.background_tasks)
+
+    runs = store.list_runs("anon_1")
+    gallery = store.list_gallery_items("anon_1")
+    slots = store.list_output_slots("anon_1", "run_recover")
+    assert runs[0]["run_id"] == "run_recover"
+    assert runs[0]["status"] == "completed"
+    assert gallery[0]["id"] == "gallery_run_recover"
+    assert gallery[0]["status"] == "done"
+    assert gallery[0]["slotId"] == "slot_run_recover_0_save_image"
+    assert gallery[0]["filename"] == "recovered.png"
+    assert slots[0]["slot_id"] == "slot_run_recover_0_save_image"
+    assert slots[0]["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_active_run_recovery_records_comfyui_execution_error() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_error",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="video",
+            contract="default",
+            status="running",
+            prompt_id="prompt_error",
+            inputs={"prompt": "animate"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+
+    history = {
+        "status": {
+            "status_str": "error",
+            "completed": False,
+            "messages": [
+                [
+                    "execution_error",
+                    {
+                        "prompt_id": "prompt_error",
+                        "node_id": "13",
+                        "node_type": "SamplerCustomAdvanced",
+                        "exception_message": "'NoneType' object has no attribute 'encode'",
+                    },
+                ]
+            ],
+        },
+        "outputs": {},
+    }
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            raise ComfyUIExecutionError(prompt_id, history, "SamplerCustomAdvanced node 13 failed")
+
+    contract = SimpleNamespace(outputs=[SimpleNamespace(name="video_combine", type="video", node_id="43")])
+    manifest = SimpleNamespace(
+        workflows={
+            "video": SimpleNamespace(
+                execution_contract=SimpleNamespace(contracts={"default": contract})
+            )
+        }
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: manifest,
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+    await asyncio.gather(*state.background_tasks)
+
+    runs = store.list_runs("anon_1")
+    gallery = store.list_gallery_items("anon_1")
+    slots = store.list_output_slots("anon_1", "run_error")
+    assert runs[0]["status"] == "error"
+    assert runs[0]["error"] == "SamplerCustomAdvanced node 13 failed"
+    assert gallery[0]["status"] == "error"
+    assert gallery[0]["slotId"] == "slot_run_error_0_video_combine"
+    assert slots[0]["status"] == "error"
+    assert slots[0]["error"] == "SamplerCustomAdvanced node 13 failed"
+
+
+@pytest.mark.asyncio
+async def test_active_run_recovery_skips_proxy_callback_mode() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_1", scope_key="anon_1")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_callback",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="z-image",
+            contract="default",
+            status="running",
+            prompt_id="prompt_callback",
+            inputs={"prompt": "blue eyes"},
+            raw_result={"status": "running", "issues": []},
+        )
+    )
+
+    class FakeExecutor:
+        async def complete_submitted(
+            self,
+            prompt_id: str,
+            outputs: tuple[Any, ...],
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> RunExecutionResult:
+            raise AssertionError(f"Callback-mode recovery should not poll proxy prompt {prompt_id}")
+
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            executor="proxy",
+            proxy_url="https://proxy.example",
+            callback_url="https://frontdoor.example",
+        ),
+        executor=FakeExecutor(),
+        state_store=store,
+        background_tasks=set(),
+        active_run_tasks={},
+        manifest_snapshot=lambda: SimpleNamespace(workflows={}),
+    )
+
+    await _ensure_active_run_recovery(cast(Any, state))
+
+    assert state.background_tasks == set()
+    assert state.active_run_tasks == {}
+    assert store.list_runs("anon_1")[0]["status"] == "running"
+
+
+def test_failed_run_response_does_not_create_circular_raw_result() -> None:
+    store = EphemeralServeStateStore()
+    session = ServeSession(session_id="anon_1", scope_key="anon_1")
+    state = SimpleNamespace(state_store=store)
+    payload: dict[str, Any] = {
+        "error": "comfyui_rejected_request",
+        "message": "Prompt outputs failed validation",
+        "comfyui": {"node_errors": {"1": {"errors": [{"message": "Value not in list"}]}}},
+    }
+
+    payload.update(
+        _record_failed_run(
+            cast(Any, state),
+            session,
+            "z-image",
+            "default",
+            {"inputs": {"width": 1024, "height": 1024}},
+            payload,
+        )
+    )
+
+    encoded = json.dumps(payload)
+    assert "Prompt outputs failed validation" in encoded
+    assert "gallery_items" not in payload["gallery_items"][0]["rawResult"]
+    assert payload["gallery_items"][0]["width"] == 1
+    assert payload["gallery_items"][0]["height"] == 1
+
+
+def test_gallery_items_use_artifact_dimensions_not_inputs() -> None:
+    session = ServeSession(session_id="anon_1", scope_key="anon_1")
+    items = _gallery_items_for_outputs(
+        run_id="run_1",
+        session=session,
+        workflow_name="z-image",
+        contract_name="default",
+        inputs={"width": 2048, "height": 2048},
+        response={
+            "prompt_id": "prompt_1",
+            "outputs": [
+                {
+                    "name": "save_image",
+                    "type": "image",
+                    "artifacts": [
+                        {
+                            "filename": "image.png",
+                            "url": "/outputs/view?filename=image.png",
+                            "width": 640,
+                            "height": 360,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0].width == 640
+    assert items[0].height == 360
+
+
+def test_image_dimensions_from_png_bytes() -> None:
+    png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (320).to_bytes(4, "big") + (240).to_bytes(4, "big")
+
+    assert _image_dimensions_from_bytes(png_header) == (320, 240)
+
+
+def test_video_dimensions_from_ffprobe_json() -> None:
+    payload = b'{"streams":[{"width":768,"height":512}]}'
+
+    assert _video_dimensions_from_ffprobe_json(payload) == (768, 512)
+
+
+@pytest.mark.asyncio
+async def test_attach_artifact_dimensions_fetches_image_size() -> None:
+    png_header = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (111).to_bytes(4, "big") + (222).to_bytes(4, "big")
+
+    class FakeClient:
+        async def fetch_output(
+            self,
+            params: dict[str, str],
+            request_headers: dict[str, str] | None = None,
+        ) -> ServeOutputResponse:
+            assert params == {"filename": "image.png", "subfolder": "", "type": "output"}
+            assert request_headers is None
+            return ServeOutputResponse(body=png_header, content_type="image/png")
+
+    outputs: list[dict[str, Any]] = [
+        {
+            "name": "save_image",
+            "type": "image",
+            "artifacts": [{"filename": "image.png", "subfolder": "", "type": "output"}],
+        }
+    ]
+
+    await _attach_artifact_dimensions(cast(Any, FakeClient()), outputs)
+
+    assert outputs[0]["artifacts"][0]["width"] == 111
+    assert outputs[0]["artifacts"][0]["height"] == 222
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_is_scoped_by_session_cookie() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_saved",
+                run_id="run_saved",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=512,
+                height=512,
+                inputs={},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                saved_payload = await response.json()
+
+        async with ClientSession() as session_client:
+            async with session_client.get(f"{base_url}/gallery") as response:
+                fresh_payload = await response.json()
+
+        assert saved_payload["items"][0]["id"] == "gallery_saved"
+        assert fresh_payload["items"] == []
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_accepts_explicit_session_header() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_header", scope_key="anon_header")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_header",
+                run_id="run_saved",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                headers={"X-ComfyGit-Studio-Session": "anon_header"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["items"][0]["id"] == "gallery_header"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_gallery_prefers_existing_cookie_session_over_header() -> None:
+    store = EphemeralServeStateStore()
+    cookie_session = store.ensure_session("anon_cookie", scope_key="anon_cookie")
+    header_session = store.ensure_session("anon_header", scope_key="anon_header")
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_cookie",
+                run_id="run_cookie",
+                session_id=cookie_session.session_id,
+                scope_key=cookie_session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            ),
+            ServeGalleryItem(
+                item_id="gallery_header",
+                run_id="run_header",
+                session_id=header_session.session_id,
+                scope_key=header_session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                width=1,
+                height=1,
+                inputs={},
+            ),
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/gallery",
+                headers={"X-ComfyGit-Studio-Session": "anon_header"},
+                cookies={"comfygit_studio_session": "anon_cookie"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert [item["id"] for item in payload["items"]] == ["gallery_cookie"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_runs_endpoint_lists_active_runs_for_session() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_active",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_active",
+            inputs={},
+        )
+    )
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_done",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_done",
+            inputs={},
+        )
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/runs?active=true",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert [run["run_id"] for run in payload["runs"]] == ["run_active"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_single_run_endpoint_returns_slots_and_gallery_items() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_1",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="completed",
+            prompt_id="prompt_1",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_1_0_image",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="done",
+                prompt_id="prompt_1",
+                width=512,
+                height=512,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_run_1",
+                run_id="run_1",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="done",
+                output_type="image",
+                slot_id="slot_run_1_0_image",
+                output_name="save_image",
+                prompt_id="prompt_1",
+                filename="image.png",
+                url="/outputs/view?filename=image.png",
+                width=512,
+                height=512,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.get(
+                f"{base_url}/runs/run_1",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["run"]["run_id"] == "run_1"
+        assert payload["output_slots"][0]["slot_id"] == "slot_run_1_0_image"
+        assert payload["gallery_items"][0]["slotId"] == "slot_run_1_0_image"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_cancel_run_endpoint_marks_pending_outputs_cancelled_and_removes_gallery_items() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    cancelled_prompts: list[str] = []
+
+    class FakeExecutor:
+        async def cancel(self, prompt_id: str) -> None:
+            cancelled_prompts.append(prompt_id)
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+        executor=FakeExecutor(),
+        active_run_tasks={},
+        background_tasks=set(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.post(
+                f"{base_url}/runs/run_cancel/cancel",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["status"] == "cancelled"
+        assert payload["run"]["status"] == "cancelled"
+        assert payload["output_slots"][0]["status"] == "cancelled"
+        assert payload["gallery_items"] == []
+        assert cancelled_prompts == ["prompt_cancel"]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_serve_cancel_run_endpoint_cancels_locally_when_remote_cancel_fails() -> None:
+    store = EphemeralServeStateStore()
+    session = store.ensure_session("anon_saved", scope_key="anon_saved")
+    store.record_run(
+        ServeRunRecord(
+            run_id="run_cancel",
+            session_id=session.session_id,
+            scope_key=session.scope_key,
+            workflow="demo",
+            contract="default",
+            status="running",
+            prompt_id="prompt_cancel",
+            inputs={"prompt": "blue eyes"},
+        )
+    )
+    store.record_output_slots(
+        [
+            ServeRunOutputSlot(
+                slot_id="slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                output_name="save_image",
+                output_type="image",
+                status="running",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+            )
+        ]
+    )
+    store.record_gallery_items(
+        [
+            ServeGalleryItem(
+                item_id="gallery_slot_run_cancel_0_image",
+                run_id="run_cancel",
+                session_id=session.session_id,
+                scope_key=session.scope_key,
+                workflow="demo",
+                contract="default",
+                status="pending",
+                output_type="image",
+                slot_id="slot_run_cancel_0_image",
+                output_name="save_image",
+                prompt_id="prompt_cancel",
+                width=1,
+                height=1,
+                inputs={"prompt": "blue eyes"},
+            )
+        ]
+    )
+
+    class FakeExecutor:
+        async def cancel(self, _prompt_id: str) -> None:
+            raise aiohttp.ClientError("proxy disappeared")
+
+    state = SimpleNamespace(
+        config=ServeConfig(host="127.0.0.1", port=8190, comfy_url="http://127.0.0.1:8188"),
+        state_store=store,
+        executor=FakeExecutor(),
+        active_run_tasks={},
+        background_tasks=set(),
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session_client:
+            async with session_client.post(
+                f"{base_url}/runs/run_cancel/cancel",
+                cookies={"comfygit_studio_session": "anon_saved"},
+            ) as response:
+                payload = await response.json()
+
+        assert response.status == 200
+        assert payload["status"] == "cancelled"
+        assert payload["run"]["status"] == "cancelled"
+        assert payload["output_slots"][0]["status"] == "cancelled"
+        assert payload["gallery_items"] == []
+        assert payload["remote_cancel"]["error"] == "comfyui_unavailable"
+        run_record = store.get_run(session.scope_key, "run_cancel")
+        assert run_record is not None
+        assert run_record["raw_result"]["remote_cancel"]["message"] == "proxy disappeared"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_cancel_deletes_queue_item_and_interrupts_prompt() -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        body = await request.json()
+        calls.append((request.path, body))
+        return web.json_response({})
+
+    app = web.Application()
+    app.router.add_post("/queue", handler)
+    app.router.add_post("/interrupt", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    sockets = cast(Any, site._server).sockets  # noqa: SLF001 - aiohttp exposes no public bound-port helper.
+    base_url = f"http://127.0.0.1:{sockets[0].getsockname()[1]}"
+    try:
+        executor = LocalComfyExecutor(ComfyUIClient(base_url))
+
+        await executor.cancel("prompt_cancel")
+
+        assert calls == [
+            ("/queue", {"delete": ["prompt_cancel"]}),
+            ("/interrupt", {"prompt_id": "prompt_cancel"}),
+        ]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_comfyui_client_submit_prompt_returns_prompt_id() -> None:
+    async def handler(request: web.Request) -> web.Response:
+        body = await request.json()
+        assert body["prompt"] == {"1": {"class_type": "Test", "inputs": {}}}
+        assert body["client_id"].startswith("comfygit-serve-")
+        return web.json_response({"prompt_id": "abc123"})
+
+    base_url, runner = await _with_test_server(handler, "POST", "/prompt")
+    try:
+        client = ComfyUIClient(base_url)
+
+        assert await client.submit_prompt({"1": {"class_type": "Test", "inputs": {}}}) == "abc123"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_comfyui_client_unwraps_prompt_history() -> None:
+    history_payload = {
+        "abc123": {
+            "outputs": {
+                "9": {
+                    "images": [
+                        {"filename": "image.png", "subfolder": "", "type": "output"}
+                    ]
+                }
+            }
+        }
+    }
+
+    async def handler(_request: web.Request) -> web.Response:
+        return web.json_response(history_payload)
+
+    base_url, runner = await _with_test_server(handler, "GET", "/history/abc123")
+    try:
+        client = ComfyUIClient(base_url)
+
+        assert await client.get_history("abc123") == history_payload["abc123"]
+    finally:
+        await runner.cleanup()
+
+
+def test_stamp_output_cache_busters_updates_save_image_prefix() -> None:
+    prompt = {
+        "8": {
+            "class_type": "SaveImage",
+            "inputs": {"filename_prefix": "ComfyUI", "images": ["4", 0]},
+        },
+        "9": {
+            "class_type": "PreviewImage",
+            "inputs": {"images": ["4", 0]},
+        },
+    }
+    outputs = (
+        SimpleNamespace(type="image", node_id="8"),
+        SimpleNamespace(type="image", node_id="9"),
+    )
+
+    _stamp_output_cache_busters(prompt, outputs, "abc123")
+
+    assert prompt["8"]["inputs"]["filename_prefix"] == "ComfyUI_abc123"
+    assert "filename_prefix" not in prompt["9"]["inputs"]
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_submits_and_records_submitted_callback() -> None:
+    class FakeClient:
+        async def submit_prompt(self, prompt: dict[str, dict[str, Any]]) -> str:
+            assert prompt["8"]["inputs"]["filename_prefix"] == "ComfyUI_run123"
+            return "prompt_123"
+
+    submitted: list[str] = []
+
+    async def on_submitted(prompt_id: str) -> None:
+        submitted.append(prompt_id)
+
+    executor = LocalComfyExecutor(cast(Any, FakeClient()))
+    result = await executor.execute(
+        RunExecutionRequest(
+            prompt={
+                "8": {
+                    "class_type": "SaveImage",
+                    "inputs": {"filename_prefix": "ComfyUI", "images": ["4", 0]},
+                }
+            },
+            outputs=(SimpleNamespace(type="image", node_id="8"),),
+            wait=False,
+            timeout_seconds=300,
+            poll_interval_seconds=1,
+            cache_token="run123",
+            on_submitted=on_submitted,
+        )
+    )
+
+    assert result.status == "submitted"
+    assert result.prompt_id == "prompt_123"
+    assert result.outputs == []
+    assert submitted == ["prompt_123"]
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_localizes_temp_artifacts(tmp_path) -> None:
+    class FakeClient:
+        async def wait_for_history(
+            self,
+            prompt_id: str,
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> dict[str, Any]:
+            assert prompt_id == "prompt_audio"
+            assert timeout_seconds == 300
+            assert poll_interval_seconds == 1
+            return {
+                "outputs": {
+                    "3": {
+                        "audio": [
+                            {
+                                "filename": "ComfyUI_temp_audio_00001_.flac",
+                                "subfolder": "",
+                                "type": "temp",
+                            }
+                        ]
+                    }
+                }
+            }
+
+        async def fetch_output(self, params: Mapping[str, str]) -> ServeOutputResponse:
+            assert params == {
+                "filename": "ComfyUI_temp_audio_00001_.flac",
+                "subfolder": "",
+                "type": "temp",
+            }
+            return ServeOutputResponse(body=b"flac-bytes", content_type="audio/flac")
+
+    artifact_dir = tmp_path / "artifacts"
+    executor = LocalComfyExecutor(cast(Any, FakeClient()), artifact_dir=artifact_dir)
+
+    result = await executor.complete_submitted(
+        "prompt_audio",
+        (SimpleNamespace(name="save_audio_flac", type="audio", node_id="3", selector="primary"),),
+        timeout_seconds=300,
+        poll_interval_seconds=1,
+    )
+
+    artifact = result.outputs[0]["artifacts"][0]
+    assert artifact["serve_artifact"] == "prompt_audio/ComfyUI_temp_audio_00001_.flac"
+    assert artifact["url"] == "/outputs/view?serve_artifact=prompt_audio/ComfyUI_temp_audio_00001_.flac"
+    assert artifact["content_type"] == "audio/flac"
+    assert (artifact_dir / "prompt_audio" / "ComfyUI_temp_audio_00001_.flac").read_bytes() == b"flac-bytes"
+
+
+@pytest.mark.asyncio
+async def test_local_comfy_executor_rejects_error_history() -> None:
+    class FakeClient:
+        async def wait_for_history(
+            self,
+            prompt_id: str,
+            *,
+            timeout_seconds: float,
+            poll_interval_seconds: float,
+        ) -> dict[str, Any]:
+            return {
+                "status": {
+                    "status_str": "error",
+                    "completed": False,
+                    "messages": [
+                        [
+                            "execution_error",
+                            {
+                                "prompt_id": prompt_id,
+                                "node_id": "13",
+                                "node_type": "SamplerCustomAdvanced",
+                                "exception_message": "'NoneType' object has no attribute 'encode'\n",
+                            },
+                        ]
+                    ],
+                },
+                "outputs": {},
+            }
+
+    executor = LocalComfyExecutor(cast(Any, FakeClient()))
+
+    with pytest.raises(ComfyUIExecutionError) as error_info:
+        await executor.complete_submitted(
+            "prompt_error",
+            (SimpleNamespace(name="video_combine", type="video", node_id="43", selector="primary"),),
+            timeout_seconds=300,
+            poll_interval_seconds=1,
+        )
+
+    assert str(error_info.value) == "SamplerCustomAdvanced node 13 failed: 'NoneType' object has no attribute 'encode'"
+    assert error_info.value.prompt_id == "prompt_error"
+    assert error_info.value.payload["status"]["status_str"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_upload_slot_writes_to_comfyui_input_dir(tmp_path) -> None:
+    state = SimpleNamespace(
+        config=ServeConfig(
+            host="127.0.0.1",
+            port=8190,
+            comfy_url="http://127.0.0.1:8188",
+            max_request_bytes=1024,
+        ),
+        env=SimpleNamespace(comfyui_path=tmp_path / "ComfyUI"),
+        uploads={},
+    )
+    app = create_app(cast(Any, state))
+    base_url, runner = await _with_app_server(app)
+    try:
+        async with ClientSession() as session:
+            async with session.post(
+                f"{base_url}/uploads/prepare",
+                json={"filename": "folder/source.png", "mime_type": "image/png", "size": 11},
+            ) as response:
+                prepared = await response.json()
+
+            assert response.status == 200
+            assert prepared["file_ref"]["kind"] == "file_ref"
+            assert prepared["file_ref"]["filename"] == "source.png"
+            assert not str(prepared["file_ref"]["ref"]).endswith("source.png")
+
+            async with session.put(
+                f"{base_url}{prepared['upload_url']}",
+                data=b"image-bytes",
+                headers={"content-type": "image/png"},
+            ) as response:
+                uploaded = await response.json()
+
+            assert response.status == 200
+            assert uploaded["status"] == "ready"
+
+            async with session.get(
+                f"{base_url}/uploads/{prepared['upload_id']}/status",
+            ) as response:
+                status = await response.json()
+
+        assert response.status == 200
+        assert status["status"] == "ready"
+        record = state.uploads[prepared["upload_id"]]
+        assert record.path == tmp_path / "ComfyUI" / "input" / record.comfyui_filename
+        assert record.path.read_bytes() == b"image-bytes"
+    finally:
+        await runner.cleanup()
+
+
+def test_upload_filename_and_mime_helpers_share_media_type_map() -> None:
+    assert _content_type_for_filename("clip.mp4") == "video/mp4"
+    assert _content_type_for_filename("sound.wav") == "audio/wav"
+    assert _content_type_for_filename("photo.jpeg") == "image/jpeg"
+
+    assert _generated_upload_filename("video/mp4", stem="clip") == "clip.mp4"
+    assert _generated_upload_filename("audio/x-wav", stem="sound") == "sound.wav"
+    assert _generated_upload_filename("image/jpg", stem="photo") == "photo.jpg"
+
+
+@pytest.mark.asyncio
+async def test_prepare_contract_inputs_resolves_file_refs() -> None:
+    state = SimpleNamespace(
+        uploads={
+            "upload_abc123": SimpleNamespace(
+                status="ready",
+                comfyui_filename="upload_abc123_source.png",
+            )
+        },
+        manifest_snapshot=lambda: SimpleNamespace(
+            workflows={
+                "demo": SimpleNamespace(
+                    execution_contract=SimpleNamespace(
+                        contracts={
+                            "default": SimpleNamespace(
+                                inputs=[
+                                    SimpleNamespace(name="source_image", type="image"),
+                                    SimpleNamespace(name="prompt", type="string"),
+                                ]
+                            )
+                        }
+                    )
+                )
+            }
+        ),
+    )
+
+    prepared = await _prepare_contract_inputs(
+        cast(Any, state),
+        "demo",
+        "default",
+        {
+            "source_image": {
+                "kind": "file_ref",
+                "ref": "upload_abc123",
+                "filename": "source.png",
+            },
+            "prompt": "keep this",
+        },
+    )
+
+    assert prepared == {
+        "source_image": "upload_abc123_source.png",
+        "prompt": "keep this",
+    }
+
+
+@pytest.mark.asyncio
+async def test_prepare_contract_inputs_rejects_inline_image_bytes() -> None:
+    state = SimpleNamespace(
+        uploads={},
+        manifest_snapshot=lambda: SimpleNamespace(
+            workflows={
+                "demo": SimpleNamespace(
+                    execution_contract=SimpleNamespace(
+                        contracts={
+                            "default": SimpleNamespace(
+                                inputs=[SimpleNamespace(name="source_image", type="image")]
+                            )
+                        }
+                    )
+                )
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Upload the file first"):
+        await _prepare_contract_inputs(
+            cast(Any, state),
+            "demo",
+            "default",
+            {"source_image": {"data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="}},
+        )

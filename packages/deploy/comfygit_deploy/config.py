@@ -30,7 +30,12 @@ class DeployConfig:
             path: Config file path. Defaults to ~/.config/comfygit/deploy/config.json
         """
         self.path = path or _get_default_config_path()
-        self._data: dict[str, Any] = {"version": "1", "providers": {}, "workers": {}}
+        self._data: dict[str, Any] = {
+            "version": "1",
+            "providers": {},
+            "workers": {},
+            "cloud": {},
+        }
         self._load()
 
     def _load(self) -> None:
@@ -68,6 +73,34 @@ class DeployConfig:
     def workers(self) -> dict[str, dict[str, Any]]:
         """Get custom workers registry."""
         return self._data.get("workers", {})
+
+    @property
+    def cloud_url(self) -> str | None:
+        """Get the saved remote service URL for tunnel mode."""
+        return self._data.get("cloud", {}).get("url")
+
+    @cloud_url.setter
+    def cloud_url(self, value: str | None) -> None:
+        if "cloud" not in self._data:
+            self._data["cloud"] = {}
+        if value is None:
+            self._data["cloud"].pop("url", None)
+        else:
+            self._data["cloud"]["url"] = value
+
+    @property
+    def cloud_token(self) -> str | None:
+        """Get the saved remote service auth token for tunnel mode."""
+        return self._data.get("cloud", {}).get("token")
+
+    @cloud_token.setter
+    def cloud_token(self, value: str | None) -> None:
+        if "cloud" not in self._data:
+            self._data["cloud"] = {}
+        if value is None:
+            self._data["cloud"].pop("token", None)
+        else:
+            self._data["cloud"]["token"] = value
 
     def add_worker(
         self,

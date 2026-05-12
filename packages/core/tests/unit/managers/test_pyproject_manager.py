@@ -93,6 +93,308 @@ class TestModelHandlerFormatting:
         assert "[tool.comfygit.models]" in content
         assert "xyz789" in content
 
+
+class TestWorkflowExecutionContractLoading:
+    """Test workflow execution contracts load through the canonical model."""
+
+    def test_get_execution_contract_loads_workflow_contract_model(self, temp_pyproject):
+        from comfygit_core.models import WorkflowExecutionContract as PublicWorkflowExecutionContract
+        from comfygit_core.models.workflow_contract import WorkflowExecutionContract
+
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["tool"]["comfygit"]["workflows"] = {
+            "simple_txt2img": {
+                "path": "workflows/simple_txt2img.json",
+                "execution_contract": {
+                    "version": 1,
+                    "default_contract": "default",
+                    "contracts": {
+                        "default": {
+                            "display_name": "Default",
+                            "description": "Primary API shape",
+                            "inputs": [
+                                {
+                                    "name": "prompt",
+                                    "type": "string",
+                                    "node_id": 6,
+                                    "widget_idx": 0,
+                                    "required": True,
+                                    "default": "a test prompt",
+                                },
+                                {
+                                    "name": "steps",
+                                    "type": "integer",
+                                    "node_id": "3",
+                                    "widget_index": 2,
+                                    "required": False,
+                                    "default": 30,
+                                    "min": 1,
+                                    "max": 150,
+                                },
+                            ],
+                            "outputs": [
+                                {
+                                    "name": "image",
+                                    "type": "image",
+                                    "node_id": 9,
+                                    "selector": "slot:0",
+                                }
+                            ],
+                        }
+                    },
+                },
+            }
+        }
+        manager.save(config)
+
+        contract = manager.workflows.get_execution_contract("simple_txt2img")
+
+        assert isinstance(contract, WorkflowExecutionContract)
+        assert isinstance(contract, PublicWorkflowExecutionContract)
+        assert contract is not None
+        assert contract.active_contract is not None
+        assert contract.active_contract.display_name == "Default"
+        assert contract.active_contract.inputs[0].name == "prompt"
+        assert contract.active_contract.inputs[1].widget_idx == 2
+        assert contract.active_contract.inputs[1].widget_index == 2
+        assert contract.active_contract.outputs[0].selector_slot == 0
+        assert contract.to_public_schema() == {
+            "inputs": [
+                {
+                    "name": "prompt",
+                    "type": "string",
+                    "node_id": 6,
+                    "required": True,
+                    "widget_idx": 0,
+                    "default": "a test prompt",
+                },
+                {
+                    "name": "steps",
+                    "type": "integer",
+                    "node_id": "3",
+                    "required": False,
+                    "widget_idx": 2,
+                    "default": 30,
+                    "min": 1,
+                    "max": 150,
+                },
+            ],
+            "outputs": [
+                {
+                    "name": "image",
+                    "type": "image",
+                    "node_id": 9,
+                    "selector": "slot:0",
+                }
+            ],
+        }
+
+    def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
+        import tomllib
+
+        from comfygit_core.models.workflow_contract import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowExecutionContract,
+        )
+
+        manager = PyprojectManager(temp_pyproject)
+        large_uint64_bound = 18446744073709552000
+        contract = WorkflowExecutionContract(
+            contracts={
+                "default": NamedWorkflowContract(
+                    inputs=[
+                        WorkflowContractInput(
+                            name="seed",
+                            type="number",
+                            node_id="3",
+                            required=True,
+                            widget_idx=0,
+                            default=large_uint64_bound,
+                            min=0,
+                            max=large_uint64_bound,
+                        ),
+                    ],
+                    outputs=[],
+                )
+            }
+        )
+
+        manager.workflows.set_execution_contract("simple_txt2img", contract)
+        content = temp_pyproject.read_text()
+
+        assert f'default = "{large_uint64_bound}"' in content
+        assert f'max = "{large_uint64_bound}"' in content
+        tomllib.loads(content)
+
+        loaded = manager.workflows.get_execution_contract("simple_txt2img")
+
+        assert loaded is not None
+        active = loaded.active_contract
+        assert active is not None
+        seed_input = active.inputs[0]
+        assert seed_input.default == large_uint64_bound
+        assert seed_input.max == large_uint64_bound
+        assert loaded.to_public_schema()["inputs"][0]["default"] == large_uint64_bound
+        assert loaded.to_public_schema()["inputs"][0]["max"] == large_uint64_bound
+
+    def test_save_sanitizes_existing_raw_contract_numbers_for_uv(self, temp_pyproject):
+        import tomllib
+
+        manager = PyprojectManager(temp_pyproject)
+        large_uint64_bound = 18446744073709552000
+        config = manager.load()
+        config["tool"]["comfygit"]["workflows"] = {
+            "simple_txt2img": {
+                "path": "workflows/simple_txt2img.json",
+                "execution_contract": {
+                    "version": 1,
+                    "default_contract": "default",
+                    "contracts": {
+                        "default": {
+                            "inputs": [
+                                {
+                                    "name": "seed",
+                                    "type": "number",
+                                    "node_id": "3",
+                                    "required": True,
+                                    "default": large_uint64_bound,
+                                    "max": large_uint64_bound,
+                                }
+                            ],
+                            "outputs": [],
+                        }
+                    },
+                },
+            }
+        }
+
+        manager.save(config)
+        content = temp_pyproject.read_text()
+
+        assert f'default = "{large_uint64_bound}"' in content
+        assert f'max = "{large_uint64_bound}"' in content
+        tomllib.loads(content)
+
+    def test_get_manifest_snapshot_projects_major_manifest_sections(self, temp_pyproject):
+        from comfygit_core.models import EnvironmentManifestSnapshot
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+        from comfygit_core.models.workflow_contract import (
+            NamedWorkflowContract,
+            WorkflowContractInput,
+            WorkflowContractOutput,
+            WorkflowExecutionContract,
+        )
+
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["dependency-groups"] = {
+            "demo-node-a1b2c3d4": ["requests>=2"],
+        }
+        config["tool"]["uv"] = {
+            "exclude-dependencies": ["opencv-python"],
+            "constraint-dependencies": ["numpy<3"],
+            "sources": {"demo-package": {"git": "https://example.invalid/demo.git"}},
+        }
+        manager.save(config)
+
+        manager.nodes.add(
+            NodeInfo(
+                name="DemoNode",
+                repository="https://example.invalid/DemoNode.git",
+                version="abc123",
+                source="git",
+                criticality="optional",
+            ),
+            "demo-node",
+        )
+        manager.models.add_model(
+            ManifestModel(
+                hash="modelhash",
+                filename="model.safetensors",
+                size=123,
+                relative_path="checkpoints/model.safetensors",
+                category="checkpoints",
+                sources=["https://example.invalid/model.safetensors"],
+            )
+        )
+        manager.workflows.set_node_packs("simple_txt2img", {"demo-node"})
+        manager.workflows.set_custom_node_mapping(
+            "simple_txt2img",
+            "DemoNodeType",
+            "demo-node",
+        )
+        manager.workflows.set_workflow_models(
+            "simple_txt2img",
+            [
+                ManifestWorkflowModel(
+                    filename="model.safetensors",
+                    category="checkpoints",
+                    criticality="required",
+                    status="resolved",
+                    nodes=[
+                        WorkflowNodeWidgetRef(
+                            node_id="4",
+                            node_type="CheckpointLoaderSimple",
+                            widget_index=0,
+                            widget_value="model.safetensors",
+                        )
+                    ],
+                    hash="modelhash",
+                )
+            ],
+        )
+        manager.workflows.set_execution_contract(
+            "simple_txt2img",
+            WorkflowExecutionContract(
+                contracts={
+                    "default": NamedWorkflowContract(
+                        inputs=[
+                            WorkflowContractInput(
+                                name="prompt",
+                                type="string",
+                                node_id="6",
+                                widget_idx=0,
+                                required=True,
+                            )
+                        ],
+                        outputs=[
+                            WorkflowContractOutput(
+                                name="image",
+                                type="image",
+                                node_id="9",
+                                selector="primary",
+                            )
+                        ],
+                    )
+                }
+            ),
+        )
+
+        snapshot = manager.get_manifest_snapshot()
+
+        assert isinstance(snapshot, EnvironmentManifestSnapshot)
+        assert snapshot.project.name == "test-project"
+        assert snapshot.comfyui_version == "v0.3.60"
+        assert snapshot.python_version == "3.11"
+        assert snapshot.uv.exclude_dependencies == ("opencv-python",)
+        assert snapshot.uv.constraints == ("numpy<3",)
+        assert snapshot.dependency_groups["demo-node-a1b2c3d4"] == ("requests>=2",)
+        assert snapshot.nodes["demo-node"].criticality == "optional"
+        assert snapshot.models["modelhash"].relative_path == "checkpoints/model.safetensors"
+
+        workflow = snapshot.workflows["simple_txt2img"]
+        assert workflow.path == "workflows/simple_txt2img.json"
+        assert workflow.node_packs == ("demo-node",)
+        assert workflow.custom_node_map["DemoNodeType"] == "demo-node"
+        assert workflow.models[0].hash == "modelhash"
+        assert workflow.has_execution_contract is True
+        assert workflow.execution_contract is not None
+        assert workflow.execution_contract.active_contract is not None
+        assert workflow.execution_contract.active_contract.inputs[0].name == "prompt"
+
     def test_add_both_model_categories(self, temp_pyproject):
         """Test adding multiple models to global manifest."""
         from comfygit_core.models.manifest import ManifestModel
@@ -172,6 +474,72 @@ class TestNodeHandlerFormatting:
         # Verify nodes section exists
         assert "[tool.comfygit.nodes" in content
         assert "test-node-id" in content
+        assert 'criticality = "required"' in content
+
+    def test_get_existing_defaults_missing_node_criticality_to_required(self, temp_pyproject):
+        """Legacy manifests without node criticality should read as required."""
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {})["nodes"] = {
+            "legacy-node": {
+                "name": "legacy-node",
+                "version": "1.0.0",
+                "source": "registry",
+            }
+        }
+        manager.save(config)
+
+        nodes = manager.nodes.get_existing()
+
+        assert nodes["legacy-node"].criticality == "required"
+
+    def test_add_node_preserves_optional_criticality(self, temp_pyproject):
+        """Explicit optional criticality should round-trip through pyproject."""
+        manager = PyprojectManager(temp_pyproject)
+        node_info = NodeInfo(
+            name="scratch-node",
+            version="dev",
+            source="development",
+            criticality="optional",
+        )
+
+        manager.nodes.add(node_info, "scratch-node")
+
+        nodes = manager.nodes.get_existing()
+        assert nodes["scratch-node"].criticality == "optional"
+
+    def test_set_node_criticality_updates_existing_node(self, temp_pyproject):
+        """Users should be able to explicitly override package-level criticality."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(name="test-node", version="1.0.0", source="registry"),
+            "test-node",
+        )
+
+        changed = manager.nodes.set_criticality("test-node", "optional")
+
+        nodes = manager.nodes.get_existing()
+        assert changed is True
+        assert nodes["test-node"].criticality == "optional"
+
+    def test_set_node_criticality_returns_false_for_missing_node(self, temp_pyproject):
+        """Missing nodes should not create manifest entries while updating criticality."""
+        manager = PyprojectManager(temp_pyproject)
+
+        changed = manager.nodes.set_criticality("missing-node", "optional")
+
+        assert changed is False
+
+    def test_invalid_node_criticality_is_rejected(self, temp_pyproject):
+        """Custom-node criticality intentionally supports only required or optional."""
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(name="test-node", version="1.0.0", source="registry"),
+            "test-node",
+        )
+
+        with pytest.raises(ValueError, match="Invalid node criticality"):
+            manager.nodes.set_criticality("test-node", "flexible")
 
     def test_remove_all_nodes_cleans_section(self, temp_pyproject):
         """Test removing all nodes cleans up empty section."""
@@ -611,8 +979,8 @@ index = "pytorch-cu129"
 class TestInitialPyprojectConfig:
     """Test initial pyproject.toml configuration."""
 
-    def test_initial_pyproject_has_empty_uv_section(self):
-        """Test that newly created pyproject.toml has empty uv section.
+    def test_initial_pyproject_has_system_uv_override(self):
+        """Test that newly created pyproject.toml has the system uv override.
 
         exclude-dependencies is set by first sync() from package_config.toml,
         not hardcoded in initial config.
@@ -628,10 +996,10 @@ class TestInitialPyprojectConfig:
             comfyui_commit_sha="abc123"
         )
 
-        # Verify uv section exists but is empty (sync will populate it)
+        # Verify uv section exists with only system-tool policy.
         assert "tool" in config
         assert "uv" in config["tool"]
-        assert config["tool"]["uv"] == {}
+        assert config["tool"]["uv"] == {"override-dependencies": ["uv>=0.11.8"]}
 
 
 class TestExcludeDependencies:

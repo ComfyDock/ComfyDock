@@ -118,11 +118,20 @@ class TestOptionalDependencyGroups:
         # The call should have all groups in a list
         groups = sync_calls[0].get('group', [])
         assert isinstance(groups, list), "Group should be a list"
-        assert set(groups) == {'optional-accel', 'optional-extra', 'comfyui-node-a'}
+        assert set(groups) == {
+            'comfygit-system',
+            'optional-accel',
+            'optional-extra',
+            'comfyui-node-a',
+        }
 
         # Result should track all groups as installed
-        assert len(result.dependency_groups_installed) == 3
-        assert set(result.dependency_groups_installed) == {'optional-accel', 'optional-extra', 'comfyui-node-a'}
+        assert set(result.dependency_groups_installed) == {
+            'comfygit-system',
+            'optional-accel',
+            'optional-extra',
+            'comfyui-node-a',
+        }
 
     def test_sync_result_tracks_all_group_outcomes(self, test_env):
         """SyncResult should track which groups succeeded and failed."""
@@ -217,5 +226,5 @@ class TestOptionalDependencyGroups:
         # ASSERT
         assert result.success
         assert result.packages_synced
-        assert len(result.dependency_groups_installed) == 0
+        assert result.dependency_groups_installed == ["comfygit-system"]
         assert len(result.dependency_groups_failed) == 0

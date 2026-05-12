@@ -48,7 +48,8 @@ class TestCreateInitialPyproject:
         config = EnvironmentFactory._create_initial_pyproject(
             "test-env", "3.12", "v0.3.50"
         )
-        assert config["dependency-groups"]["comfygit-system"] == ["uv>=0.7"]
+        assert config["dependency-groups"]["comfygit-system"] == ["uv>=0.11.8"]
+        assert config["tool"]["uv"]["override-dependencies"] == ["uv>=0.11.8"]
 
     def test_requires_python_pins_minor_from_patch_version(self):
         """Even if user passes 3.12.7, pin to ==3.12.*."""

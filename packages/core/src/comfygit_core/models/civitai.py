@@ -58,6 +58,16 @@ class ModelSize(str, Enum):
     PRUNED = "pruned"
 
 
+def _safe_enum(enum_cls, value):
+    """Parse provider enum values without failing on newly added API values."""
+    if value is None:
+        return None
+    try:
+        return enum_cls(value)
+    except ValueError:
+        return value
+
+
 @dataclass
 class FileHashes:
     """File hash values for different algorithms."""
@@ -117,9 +127,9 @@ class CivitAIFile:
             primary=data.get("primary", False),
             download_url=data.get("downloadUrl"),
             hashes=FileHashes.from_api_data(data.get("hashes")),
-            fp=FloatPrecision(metadata["fp"]) if metadata.get("fp") else None,
-            size=ModelSize(metadata["size"]) if metadata.get("size") else None,
-            format=FileFormat(metadata["format"]) if metadata.get("format") else None,
+            fp=_safe_enum(FloatPrecision, metadata.get("fp")),
+            size=_safe_enum(ModelSize, metadata.get("size")),
+            format=_safe_enum(FileFormat, metadata.get("format")),
         )
 
     def get_preferred_hash(self) -> str | None:
@@ -194,6 +204,7 @@ class CivitAIModelVersion:
     images: list[CivitAIImage] | None = None
     model: CivitAIBasicModelInfo | None = None
     download_count: int = 0
+    thumbs_up_count: int = 0
     rating_count: int = 0
     rating: float = 0.0
 
@@ -216,6 +227,7 @@ class CivitAIModelVersion:
             images=[CivitAIImage.from_api_data(i) for i in data.get("images", [])],
             model=CivitAIBasicModelInfo.from_api_data(data.get("model")),
             download_count=stats.get("downloadCount", 0),
+            thumbs_up_count=stats.get("thumbsUpCount", 0),
             rating_count=stats.get("ratingCount", 0),
             rating=stats.get("rating", 0.0),
         )
@@ -251,6 +263,7 @@ class CivitAIModel:
 
     # Stats
     download_count: int = 0
+    thumbs_up_count: int = 0
     favorite_count: int = 0
     comment_count: int = 0
     rating_count: int = 0
@@ -275,7 +288,7 @@ class CivitAIModel:
             id=data.get("id", 0),
             name=data.get("name", ""),
             description=data.get("description"),
-            type=ModelType(data["type"]) if data.get("type") else None,
+            type=_safe_enum(ModelType, data.get("type")),
             nsfw=data.get("nsfw", False),
             tags=tags,
             mode=data.get("mode"),
@@ -285,6 +298,7 @@ class CivitAIModel:
                 for v in data.get("modelVersions", [])
             ],
             download_count=stats.get("downloadCount", 0),
+            thumbs_up_count=stats.get("thumbsUpCount", 0),
             favorite_count=stats.get("favoriteCount", 0),
             comment_count=stats.get("commentCount", 0),
             rating_count=stats.get("ratingCount", 0),

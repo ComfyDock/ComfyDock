@@ -7,9 +7,9 @@ from pathlib import Path
 
 from comfygit_core.core.workspace import Workspace
 from comfygit_core.factories.workspace_factory import WorkspaceFactory
-from comfygit_core.models.protocols import ExportCallbacks, ImportCallbacks
+from comfygit_core.models.protocols import ImportCallbacks
 
-from .cli_utils import get_workspace_or_exit
+from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
 from .logging.logging_config import get_logger
 from .utils import create_progress_callback, paginate, show_civitai_auth_help, show_download_stats
@@ -75,6 +75,22 @@ class GlobalCommands:
 
             print("\n✓ Workspace initialized! Continuing with command...\n")
             return workspace
+
+    def _get_or_create_workspace_at(self, workspace_path: Path | None, models_dir: Path | None = None) -> Workspace:
+        """Get or create a workspace at an explicit path for non-interactive commands."""
+        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
+
+        try:
+            workspace = WorkspaceFactory.find(workspace_path)
+        except CDWorkspaceNotFoundError:
+            workspace = WorkspaceFactory.create(workspace_path)
+
+        WorkspaceLogger.set_workspace_path(workspace.path)
+
+        if models_dir is not None:
+            workspace.set_models_directory(models_dir.resolve())
+
+        return workspace
 
     def init(self, args: argparse.Namespace) -> None:
         """Initialize a new ComfyGit workspace.
@@ -327,6 +343,106 @@ class GlobalCommands:
             logger.error(f"Failed to list environments: {e}")
             print(f"✗ Failed to list environments: {e}", file=sys.stderr)
             sys.exit(1)
+
+    def analyze(self, args: argparse.Namespace) -> None:
+        """Analyze a workflow file without requiring a workspace."""
+        import json
+
+        import tomlkit
+        from comfygit_core.services.workflow_analysis_service import WorkflowAnalysisService
+
+        workspace = get_workspace_optional()
+        if workspace:
+            service = WorkflowAnalysisService.create_from_workspace(workspace)
+        else:
+            service = WorkflowAnalysisService.create_standalone()
+
+        try:
+            report = service.analyze(args.workflow, online=getattr(args, "online", False))
+        except Exception as e:
+            print(f"✗ Failed to analyze workflow: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json_output:
+            print(json.dumps(report.to_dict(), indent=2, default=str))
+            return
+
+        if args.draft_spec:
+            print(tomlkit.dumps(report.draft_spec))
+            return
+
+        if args.quiet:
+            if not report.unresolved_items:
+                print("No unresolved items.")
+                return
+            for item in report.unresolved_items:
+                print(
+                    f"{item['type']}: {item['name']} - "
+                    f"{item['suggestion']} ({item['next_action']})"
+                )
+            return
+
+        format_name = {
+            "ui_list": "ComfyUI UI (list-based)",
+            "ui_dict": "ComfyUI UI (dict-based)",
+            "api": "ComfyUI API prompt",
+            "api_wrapped": "ComfyUI API prompt (wrapped)",
+        }.get(report.input_format, report.input_format)
+
+        total_node_types = report.total_unique_node_types
+        resolved_node_types = len(report.builtin_nodes) + len(report.resolution.nodes_resolved)
+
+        print(f"Workflow Analysis: {args.workflow.name}")
+        print()
+        print(f"Format: {format_name}")
+        print(f"Nodes:  {report.total_nodes} total, {total_node_types} unique types")
+        print(f"Models: {report.total_model_refs} references")
+        print()
+        print("Node Resolution")
+        print(f"  ✓ {len(report.builtin_nodes)} builtin node types")
+        print(f"  ✓ {len(report.resolution.nodes_resolved)} custom node types resolved")
+        if report.resolution.nodes_version_gated:
+            print(f"  ⚠ {len(report.resolution.nodes_version_gated)} version-gated node types")
+        unresolved_node_count = (
+            len(report.resolution.nodes_uninstallable)
+            + len(report.resolution.nodes_unresolved)
+            + len(report.resolution.nodes_ambiguous)
+        )
+        if unresolved_node_count:
+            print(f"  ✗ {unresolved_node_count} unresolved/ambiguous node types")
+        print()
+        print("Model Resolution")
+        print(f"  ✓ {len(report.resolution.models_resolved)} models resolved")
+        if report.models_with_embedded_urls:
+            print(f"  ✓ {report.models_with_embedded_urls} models with embedded URLs")
+        if report.models_without_sources:
+            print(f"  ⚠ {report.models_without_sources} models without source URLs")
+        unresolved_model_count = (
+            len(report.resolution.models_unresolved)
+            + len(report.resolution.models_ambiguous)
+        )
+        if unresolved_model_count:
+            print(f"  ✗ {unresolved_model_count} unresolved/ambiguous models")
+        print()
+        print("Summary")
+        print(
+            f"  Node resolution:  {report.node_resolution_rate:.0f}% "
+            f"({resolved_node_types}/{total_node_types})"
+        )
+        print(
+            f"  Model resolution: {report.model_resolution_rate:.0f}% "
+            f"({len(report.resolution.models_resolved)}/{report.total_model_refs})"
+        )
+        print(f"  Confidence: {report.overall_confidence}")
+
+        if args.verbose and report.unresolved_items:
+            print()
+            print("Unresolved Items")
+            for item in report.unresolved_items:
+                print(
+                    f"  • {item['type']}: {item['name']} - "
+                    f"{item['suggestion']} ({item['next_action']})"
+                )
 
     def debug(self, args: argparse.Namespace) -> None:
         """Show application debug logs with smart environment detection."""
@@ -660,6 +776,101 @@ class GlobalCommands:
 
         sys.exit(0)
 
+    @with_workspace_logging("materialize")
+    def materialize_env(self, args: argparse.Namespace) -> None:
+        """Materialize a ComfyGit environment for headless runtime/build use."""
+
+        class CLIMaterializeCallbacks(ImportCallbacks):
+            def on_phase(self, phase: str, description: str):
+                print(f"   {description}")
+
+            def on_dependency_group_start(self, group_name: str, is_optional: bool):
+                optional_marker = " (optional)" if is_optional else ""
+                print(f"      Installing {group_name}{optional_marker}...", end="", flush=True)
+
+            def on_dependency_group_complete(self, group_name: str, success: bool, error: str | None = None):
+                if success:
+                    print(" ✓")
+                else:
+                    print(f" ✗ {error or 'failed'}")
+
+            def on_workflow_copied(self, workflow_name: str):
+                print(f"   Copied: {workflow_name}")
+
+            def on_node_installed(self, node_name: str):
+                print(f"   Installed: {node_name}")
+
+            def on_workflow_resolved(self, workflow_name: str, downloads: int):
+                suffix = f" ({downloads} model downloads)" if downloads else ""
+                print(f"   Resolved: {workflow_name}{suffix}")
+
+            def on_error(self, error: str):
+                print(f"   Error: {error}")
+
+            def on_download_failures(self, failures: list[tuple[str, str]]):
+                for workflow_name, model_name in failures:
+                    print(f"   Model download failed: {model_name} ({workflow_name})")
+
+            def on_download_batch_start(self, count: int):
+                print(f"   Downloading {count} model(s)")
+
+            def on_download_file_start(self, name: str, idx: int, total: int):
+                print(f"   [{idx}/{total}] {name}")
+
+            def on_download_file_progress(self, downloaded: int, total: int | None):
+                return None
+
+            def on_download_file_complete(self, name: str, success: bool, error: str | None):
+                if success:
+                    print(f"   Downloaded: {name}")
+                else:
+                    print(f"   Download failed: {name}: {error}")
+
+            def on_download_batch_complete(self, success: int, total: int):
+                print(f"   Downloaded {success}/{total} model(s)")
+
+        try:
+            workspace = self._get_or_create_workspace_at(
+                getattr(args, "workspace", None),
+                getattr(args, "models_dir", None),
+            )
+
+            print("📦 Materializing environment")
+            print(f"   Source: {args.source}")
+            print(f"   Name: {args.name}")
+            print(f"   Workspace: {workspace.path}")
+            print(f"   Models: {args.models}")
+            print(f"   Manager: {'enabled' if args.with_manager else 'disabled'}")
+            print()
+
+            result = workspace.materialize_environment(
+                source=args.source,
+                name=args.name,
+                branch=getattr(args, "branch", None),
+                model_strategy=args.models,
+                torch_backend=args.torch_backend,
+                no_manager=not args.with_manager,
+                replace=args.replace,
+                set_active=args.use,
+                callbacks=CLIMaterializeCallbacks(),
+            )
+
+            print(f"\n✅ Materialize complete: {result.environment_name}")
+            print(f"   Source type: {result.source_type}")
+            print(f"   Environment: {result.environment_path}")
+            print(f"   ComfyUI: {result.comfyui_path}")
+
+            if args.use:
+                print(f"   '{result.environment_name}' set as active environment")
+            else:
+                print(f"\nActivate with: cg use {result.environment_name}")
+
+        except Exception as e:
+            print(f"\n✗ Materialize failed: {e}")
+            sys.exit(1)
+
+        sys.exit(0)
+
     @with_workspace_logging("export")
     def export_env(self, args: argparse.Namespace) -> None:
         """Export a ComfyGit environment to a package."""
@@ -691,69 +902,79 @@ class GlobalCommands:
         print(f"📦 Exporting environment: {env.name}")
         print()
 
-        # Export callbacks
-        class CLIExportCallbacks(ExportCallbacks):
-            def __init__(self):
-                self.models_without_sources = []
+        from comfygit_core.services.environment_readiness import build_environment_readiness
 
-            def on_models_without_sources(self, models: list):
-                self.models_without_sources = models
+        readiness = build_environment_readiness(env, include_blocking=True)
+        blocking_issues = [
+            issue
+            for issue in readiness.blocking_issues
+            if issue.type != "unresolved_issues" or not args.allow_issues
+        ]
 
-        callbacks = CLIExportCallbacks()
+        if blocking_issues:
+            print("✗ Export blocked:")
+            for issue in blocking_issues:
+                print(f"  • {issue.message}")
+                if issue.details:
+                    for detail in issue.details:
+                        print(f"    - {detail}")
+
+            issue_types = {issue.type for issue in blocking_issues}
+            if "uncommitted_workflows" in issue_types or "uncommitted_git_changes" in issue_types:
+                print("\n💡 Commit first:")
+                print("   cg commit -m 'Pre-export checkpoint'")
+            if "unresolved_issues" in issue_types:
+                print("\n💡 Resolve workflow issues first:")
+                print("   cg workflow resolve <workflow_name>")
+                print("   Or export anyway with: cg export --allow-issues")
+            sys.exit(1)
+
+        warnings = readiness.warnings
+        warning_count = (
+            len(warnings.models_without_sources)
+            + len(warnings.nodes_without_provenance)
+        )
+
+        if warning_count > 0 and not args.allow_issues:
+            print("⚠️  Export reproducibility warnings:")
+            print(f"\n{warning_count} dependency detail(s) are missing.\n")
+
+            if warnings.models_without_sources:
+                print("Models without download sources:")
+                for warning in warnings.models_without_sources[:3]:
+                    print(f"  • {warning.filename}")
+                    if warning.workflows:
+                        workflows_str = ", ".join(warning.workflows)
+                        print(f"    Used by: {workflows_str}")
+                remaining = len(warnings.models_without_sources) - 3
+                if remaining > 0:
+                    print(f"  ... and {remaining} more model(s)")
+
+            if warnings.nodes_without_provenance:
+                if warnings.models_without_sources:
+                    print()
+                print("Custom nodes without portable source metadata:")
+                for warning in warnings.nodes_without_provenance[:3]:
+                    print(f"  • {warning.name} ({warning.source}, {warning.criticality})")
+                    print(f"    {warning.reason}")
+                remaining = len(warnings.nodes_without_provenance) - 3
+                if remaining > 0:
+                    print(f"  ... and {remaining} more node(s)")
+
+            print("\n⚠️  Another machine may not rebuild this exactly.")
+            print("   Add model sources or mark local-only development nodes optional.")
+
+            response = input("\nContinue export? (y/N): ").strip().lower()
+            if response != "y":
+                print("\n✗ Export cancelled")
+                sys.exit(1)
 
         try:
-            tarball_path = env.export_environment(output_path, callbacks=callbacks, allow_issues=args.allow_issues)
-
-            # Check if we need user confirmation
-            if callbacks.models_without_sources and not args.allow_issues:
-                print("⚠️  Export validation:")
-                print(f"\n{len(callbacks.models_without_sources)} model(s) have no source URLs.\n")
-
-                # Show first 3 models initially
-                shown_all = len(callbacks.models_without_sources) <= 3
-
-                def show_models(show_all=False):
-                    if show_all or len(callbacks.models_without_sources) <= 3:
-                        for model_info in callbacks.models_without_sources:
-                            print(f"  • {model_info.filename}")
-                            workflows_str = ", ".join(model_info.workflows)
-                            print(f"    Used by: {workflows_str}")
-                    else:
-                        for model_info in callbacks.models_without_sources[:3]:
-                            print(f"  • {model_info.filename}")
-                            workflows_str = ", ".join(model_info.workflows)
-                            print(f"    Used by: {workflows_str}")
-                        remaining = len(callbacks.models_without_sources) - 3
-                        print(f"\n  ... and {remaining} more")
-
-                show_models()
-
-                print("\n⚠️  Recipients won't be able to download these models automatically.")
-                print("   Add sources: cg model add-source")
-
-                # Single confirmation loop
-                while True:
-                    if shown_all or len(callbacks.models_without_sources) <= 3:
-                        response = input("\nContinue export? (y/N): ").strip().lower()
-                    else:
-                        response = input("\nContinue export? (y/N) or (s)how all models: ").strip().lower()
-
-                    if response == 's' and not shown_all:
-                        print()
-                        show_models(show_all=True)
-                        shown_all = True
-                        print("\n⚠️  Recipients won't be able to download these models automatically.")
-                        print("   Add sources: cg model add-source")
-                        continue
-                    elif response == 'y':
-                        break
-                    else:
-                        print("\n✗ Export cancelled")
-                        print("   Fix with: cg model add-source")
-                        # Clean up the created tarball
-                        if tarball_path.exists():
-                            tarball_path.unlink()
-                        sys.exit(1)
+            tarball_path = env.export_environment(
+                output_path,
+                callbacks=None,
+                allow_issues=args.allow_issues,
+            )
 
             size_mb = tarball_path.stat().st_size / (1024 * 1024)
             print(f"\n✅ Export complete: {tarball_path.name} ({size_mb:.1f} MB)")
@@ -1265,6 +1486,79 @@ class GlobalCommands:
             # Interactive mode
             self._add_source_interactive(env)
 
+    @with_workspace_logging("model delete")
+    def model_delete(self, args: argparse.Namespace) -> None:
+        """Delete model files from disk and clean their index entries."""
+        from comfygit_core.utils.common import format_size
+
+        identifier = args.identifier
+        logger.info(f"Deleting model: '{identifier}'")
+
+        try:
+            details = self.workspace.get_model_details(identifier)
+        except KeyError:
+            print(f"✗ Model not found: {identifier}", file=sys.stderr)
+            sys.exit(1)
+        except ValueError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            print("  Use a full hash or a more specific filename.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            logger.error(f"Failed to load model details for '{identifier}': {exc}")
+            print(f"✗ Failed to load model details: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        model = details.model
+        locations = details.all_locations
+
+        print(f"Delete model: {model.filename}")
+        print(f"  Hash: {model.hash}")
+        print(f"  Size: {format_size(model.file_size)}")
+        print(f"  Locations: {len(locations)}")
+        for location in locations:
+            base_directory = location.get("base_directory")
+            relative_path = location.get("relative_path")
+            if base_directory and relative_path:
+                print(f"    • {Path(base_directory) / relative_path}")
+            else:
+                print(f"    • {location.get('path') or relative_path or 'unknown'}")
+
+        if not args.yes:
+            choice = input("\nDelete these model file(s) and clean index entries? [y/N]: ").strip().lower()
+            if choice not in {"y", "yes"}:
+                print("Delete cancelled")
+                return
+
+        try:
+            result = self.workspace.delete_model(identifier)
+        except Exception as exc:
+            logger.error(f"Failed to delete model '{identifier}': {exc}")
+            print(f"✗ Delete failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if result.deleted_paths:
+            print(f"\n✓ Deleted {len(result.deleted_paths)} file(s):")
+            for path in result.deleted_paths:
+                print(f"  • {path}")
+        else:
+            print("\nNo files were deleted from disk.")
+
+        if result.missing_paths:
+            print(f"\nCleaned {len(result.missing_paths)} stale index location(s):")
+            for path in result.missing_paths:
+                print(f"  • {path}")
+
+        if result.remaining_locations:
+            print(f"\nRemaining indexed locations: {result.remaining_locations}")
+
+        if result.errors:
+            print("\nDelete completed with errors:", file=sys.stderr)
+            for error in result.errors:
+                print(f"  • {error.get('path', '')}: {error.get('error', 'unknown error')}", file=sys.stderr)
+            sys.exit(1)
+
+        print("\n✓ Model index cleaned")
+
     def _add_source_direct(self, env, identifier: str, url: str):
         """Direct mode: add source to specific model."""
         result = env.add_model_source(identifier, url)
@@ -1357,6 +1651,10 @@ class GlobalCommands:
             self._set_civitai_key(args.civitai_key)
             return
 
+        if hasattr(args, 'github_token') and args.github_token is not None:
+            self._set_github_token(args.github_token)
+            return
+
         if hasattr(args, 'uv_cache') and args.uv_cache is not None:
             self._set_uv_cache(args.uv_cache)
             return
@@ -1376,6 +1674,15 @@ class GlobalCommands:
         else:
             self.workspace.workspace_config_manager.set_civitai_token(key)
             print("✓ Civitai API key saved")
+
+    def _set_github_token(self, token: str):
+        """Set GitHub token."""
+        if token == "":
+            self.workspace.workspace_config_manager.set_github_token(None)
+            print("✓ GitHub token cleared")
+        else:
+            self.workspace.workspace_config_manager.set_github_token(token)
+            print("✓ GitHub token saved")
 
     def _set_uv_cache(self, path_str: str):
         """Set external UV cache path."""
@@ -1410,6 +1717,14 @@ class GlobalCommands:
             print(f"  Civitai API Key: {masked}")
         else:
             print("  Civitai API Key: Not set")
+
+        # GitHub token
+        github_token = self.workspace.workspace_config_manager.get_github_token()
+        if github_token:
+            masked = f"••••••••{github_token[-4:]}" if len(github_token) > 4 else "••••"
+            print(f"  GitHub Token:    {masked}")
+        else:
+            print("  GitHub Token:    Not set")
 
         # External UV cache
         uv_cache = self.workspace.workspace_config_manager.get_external_uv_cache()
@@ -1664,6 +1979,8 @@ class GlobalCommands:
 
     def orch_clean(self, args: argparse.Namespace) -> None:
         """Clean orchestrator state files."""
+        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
+
         from .utils.orchestrator import (
             cleanup_orchestrator_state,
             is_orchestrator_running,
@@ -1681,7 +1998,7 @@ class GlobalCommands:
             ".control_port",
             ".cmd",
             ".switch_request.json",
-            ".switch_status.json",
+            SWITCH_STATUS_FILE,
             ".switch.lock",
             ".startup_state.json",
             ".cmd.tmp.* (temp files)"

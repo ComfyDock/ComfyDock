@@ -1,26 +1,26 @@
-"""Integration test for registry git fallback behavior.
+"""Integration test for registry artifact behavior.
 
-When a registry node has metadata but no download URL, the system should
-fallback to cloning from the repository URL instead of failing.
+When a registry node has metadata but no download URL, registry install should
+fail rather than silently cloning a repository URL.
 """
 from unittest.mock import patch
 
 import pytest
+from comfygit_core.models.exceptions import CDEnvironmentError
 from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
 
 
-class TestRegistryGitFallback:
-    """Test git fallback when registry node has no download URL."""
+class TestRegistryArtifactInstall:
+    """Test registry artifact install behavior."""
 
-    def test_node_without_download_url_falls_back_to_git(self, test_env):
+    def test_node_without_download_url_does_not_fallback_to_git(self, test_env):
         """
-        When registry node has no download URL, should clone from repository.
+        When registry node has no download URL, registry install should fail.
 
         Scenario:
         - Registry returns node metadata (name, repo URL, etc.)
         - Registry install endpoint returns 404 (no download URL)
-        - System should detect this and fallback to git clone from repository URL
-        - Node should be successfully installed via git
+        - System should not fallback to git without explicit user intent
 
         Real-world case: ComfyUI_Comfyroll_CustomNodes, masquerade-nodes-comfyui
         """
@@ -53,30 +53,17 @@ class TestRegistryGitFallback:
             mock_git_clone.side_effect = mock_git_clone_side_effect
 
             # ACT - Try to add the node
-            test_env.add_node("test-node-without-cdn", no_test=True)
+            with pytest.raises(CDEnvironmentError):
+                test_env.add_node("test-node-without-cdn", no_test=True)
 
-            # ASSERT - Node should be installed via git fallback
-            # Note: Node name from registry is used for directory name
+            # ASSERT - Node should not be installed or tracked by silent git fallback
             installed_path = test_env.custom_nodes_path / mock_registry_node.name
-            assert installed_path.exists(), \
-                f"Node should be installed via git fallback even without registry CDN URL. Expected: {installed_path}"
+            assert not installed_path.exists()
+            mock_git_clone.assert_not_called()
 
-            # Verify it's a git clone (has .git directory)
-            assert (installed_path / ".git").exists(), \
-                "Node should be git cloned (not downloaded from CDN)"
-
-            # Verify node is tracked in pyproject.toml
             config = test_env.pyproject.load()
             nodes = config.get("tool", {}).get("comfygit", {}).get("nodes", {})
-            assert "test-node-without-cdn" in nodes, \
-                "Node should be tracked in pyproject.toml"
-
-            # Verify source is marked as git (not registry)
-            node_config = nodes["test-node-without-cdn"]
-            assert node_config.get("source") == "git", \
-                "Node source should be 'git' when using fallback"
-            assert node_config.get("repository") == mock_registry_node.repository, \
-                "Repository URL should be preserved"
+            assert "test-node-without-cdn" not in nodes
 
     def test_registry_node_with_download_url_uses_cdn(self, test_env):
         """

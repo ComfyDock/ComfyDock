@@ -3,12 +3,14 @@
 TDD: Tests written first - should FAIL until implementation exists.
 """
 
+import shutil
 import tempfile
 from pathlib import Path
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 from comfygit_deploy.worker.server import create_worker_app
+from comfygit_deploy.worker.state import InstanceState
 
 
 class TestWorkerServerEndpoints(AioHTTPTestCase):
@@ -32,6 +34,62 @@ class TestWorkerServerEndpoints(AioHTTPTestCase):
             port_range_start=8200,
             port_range_end=8210,
             state_dir=Path(self._temp_dir),
+        )
+
+    async def tearDownAsync(self) -> None:
+        if getattr(self, "_comfyui_runner", None):
+            await self._comfyui_runner.cleanup()
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+
+    async def _start_comfyui_stub(self) -> tuple[str, int]:
+        self._last_prompt_payload = None
+        self._last_view_query = None
+
+        stub = web.Application()
+
+        async def object_info(request: web.Request) -> web.Response:
+            return web.json_response({"KSampler": {"input": {"required": {}}}})
+
+        async def prompt(request: web.Request) -> web.Response:
+            self._last_prompt_payload = await request.json()
+            return web.json_response({
+                "prompt_id": "prompt-123",
+                "received": self._last_prompt_payload,
+            })
+
+        async def history(request: web.Request) -> web.Response:
+            prompt_id = request.match_info["prompt_id"]
+            return web.json_response({prompt_id: {"outputs": {}}})
+
+        async def view(request: web.Request) -> web.Response:
+            self._last_view_query = dict(request.query)
+            return web.Response(body=b"png-bytes", content_type="image/png")
+
+        stub.router.add_get("/object_info", object_info)
+        stub.router.add_post("/prompt", prompt)
+        stub.router.add_get("/history/{prompt_id}", history)
+        stub.router.add_get("/view", view)
+
+        self._comfyui_runner = web.AppRunner(stub)
+        await self._comfyui_runner.setup()
+        site = web.TCPSite(self._comfyui_runner, "127.0.0.1", 0)
+        await site.start()
+        sockets = site._server.sockets
+        assert sockets
+        return "inst_proxy", sockets[0].getsockname()[1]
+
+    def _register_running_instance(self, instance_id: str, port: int) -> None:
+        worker = self.app["worker"]
+        worker.state.add_instance(
+            InstanceState(
+                id=instance_id,
+                name="deploy-proxy-test",
+                environment_name="deploy-proxy-test",
+                mode="native",
+                assigned_port=port,
+                import_source="https://github.com/test/repo.git",
+                status="running",
+            )
         )
 
     @unittest_run_loop
@@ -223,3 +281,57 @@ class TestWorkerServerEndpoints(AioHTTPTestCase):
         )
         instances = (await list_resp.json())["instances"]
         assert not any(i["id"] == instance_id for i in instances)
+
+    @unittest_run_loop
+    async def test_comfyui_object_info_proxy_returns_json(self) -> None:
+        instance_id, port = await self._start_comfyui_stub()
+        self._register_running_instance(instance_id, port)
+
+        resp = await self.client.get(
+            f"/api/v1/instances/{instance_id}/comfyui/object_info",
+            headers={"Authorization": "Bearer cg_wk_test123"},
+        )
+
+        assert resp.status == 200
+        assert await resp.json() == {"KSampler": {"input": {"required": {}}}}
+
+    @unittest_run_loop
+    async def test_comfyui_prompt_proxy_forwards_json_body(self) -> None:
+        instance_id, port = await self._start_comfyui_stub()
+        self._register_running_instance(instance_id, port)
+
+        resp = await self.client.post(
+            f"/api/v1/instances/{instance_id}/comfyui/prompt",
+            headers={"Authorization": "Bearer cg_wk_test123"},
+            json={"prompt": {"1": {"class_type": "KSampler"}}, "client_id": "run-123"},
+        )
+
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["prompt_id"] == "prompt-123"
+        assert self._last_prompt_payload == {
+            "prompt": {"1": {"class_type": "KSampler"}},
+            "client_id": "run-123",
+        }
+
+    @unittest_run_loop
+    async def test_comfyui_view_proxy_base64_encodes_binary(self) -> None:
+        instance_id, port = await self._start_comfyui_stub()
+        self._register_running_instance(instance_id, port)
+
+        resp = await self.client.get(
+            f"/api/v1/instances/{instance_id}/comfyui/view"
+            "?filename=result.png&subfolder=outputs&type=output",
+            headers={"Authorization": "Bearer cg_wk_test123"},
+        )
+
+        assert resp.status == 200
+        assert await resp.json() == {
+            "data": "cG5nLWJ5dGVz",
+            "content_type": "image/png",
+        }
+        assert self._last_view_query == {
+            "filename": "result.png",
+            "subfolder": "outputs",
+            "type": "output",
+        }

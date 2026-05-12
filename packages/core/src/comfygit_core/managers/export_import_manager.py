@@ -58,13 +58,22 @@ class ExportImportManager:
             # Add workflows
             workflows_path = self.cec_path / "workflows"
             if workflows_path.exists():
-                for workflow_file in workflows_path.glob("*.json"):
+                for workflow_file in sorted(workflows_path.glob("*.json")):
                     tar.add(workflow_file, arcname=f"workflows/{workflow_file.name}")
+
+            # Add captured API prompts for workflow execution contracts.
+            workflow_api_path = self.cec_path / "workflow_api"
+            if workflow_api_path.exists():
+                for api_file in sorted(workflow_api_path.rglob("*.json")):
+                    if not api_file.is_file():
+                        continue
+                    relative = api_file.relative_to(workflow_api_path)
+                    tar.add(api_file, arcname=f"workflow_api/{relative.as_posix()}")
 
             # Add shared overlays (tracked). Local overlays are dot-prefixed and excluded.
             overlays_path = self.cec_path / "overlays"
             if overlays_path.exists():
-                for overlay_file in overlays_path.glob("*.toml"):
+                for overlay_file in sorted(overlays_path.glob("*.toml")):
                     if overlay_file.name.startswith("."):
                         continue
                     tar.add(overlay_file, arcname=f"overlays/{overlay_file.name}")

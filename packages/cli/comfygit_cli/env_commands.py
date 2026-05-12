@@ -2,13 +2,27 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+import json
 import os
+import shutil
 import subprocess
 import sys
-import shutil
+import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from comfygit_core.lifecycle.comfyui_readiness import (
+    resolve_comfyui_endpoint,
+    wait_for_comfyui_ready,
+)
+from comfygit_core.lifecycle.switch_observer import (
+    SwitchObserverServer,
+    cleanup_supervisor_advertisement,
+    cleanup_switch_status,
+    read_switch_status,
+    write_switch_status,
+)
 from comfygit_core.models.exceptions import (
     CDDependencyConflictError,
     CDNodeConflictError,
@@ -655,6 +669,7 @@ packages = []
     def run(self, args: argparse.Namespace) -> None:
         """Run ComfyUI in the specified environment."""
         RESTART_EXIT_CODE = 42
+        SWITCH_ENV_EXIT_CODE = 43
         env = self._get_env(args)
         comfyui_args = args.args if hasattr(args, 'args') else []
         if comfyui_args and comfyui_args[0] == "--":
@@ -663,6 +678,9 @@ packages = []
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
         overlay_names = getattr(args, 'overlay', None) or []
+        supervisor_control = self._start_supervisor_control()
+        if supervisor_control:
+            atexit.register(supervisor_control.stop)
 
         if no_sync and overlay_names:
             print("✗ Cannot use --overlay with --no-sync. Overlays require a sync to take effect.")
@@ -680,13 +698,26 @@ packages = []
         else:
             print(f"🔧 Using PyTorch backend: {torch_backend}")
 
-        current_branch = env.get_current_branch()
-        branch_display = f" (on {current_branch})" if current_branch else " (detached HEAD)"
-
+        switch_source_env: str | None = None
         while True:
+            current_branch = env.get_current_branch()
+            branch_display = f" (on {current_branch})" if current_branch else " (detached HEAD)"
+
             # Sync before running (unless --no-sync)
             # Use explicit override if provided, otherwise None (backend is now in file)
             if not no_sync:
+                if switch_source_env:
+                    self._write_switch_status(
+                        state="syncing",
+                        progress=30,
+                        message=f"Syncing {env.name}...",
+                        target_env=env.name,
+                        source_env=switch_source_env,
+                    )
+                    self._append_switch_log(
+                        supervisor_control,
+                        f"Syncing target environment {env.name}",
+                    )
                 print(f"🔄 Syncing environment: {env.name}")
                 env.sync(
                     preserve_workflows=True,
@@ -702,14 +733,313 @@ packages = []
             if comfyui_args:
                 print(f"   Arguments: {' '.join(comfyui_args)}")
 
-            result = env.run(comfyui_args)
+            if switch_source_env:
+                result = self._run_switched_comfyui(
+                    env,
+                    comfyui_args,
+                    source_env=switch_source_env,
+                    supervisor_control=supervisor_control,
+                )
+                switch_source_env = None
+            else:
+                result = env.run(comfyui_args)
 
             if result.returncode == RESTART_EXIT_CODE:
                 print("\n🔄 Restart requested, syncing dependencies...\n")
                 no_sync = False  # Ensure sync runs on restart
                 continue
 
+            if result.returncode == SWITCH_ENV_EXIT_CODE:
+                next_env = self._consume_switch_request(env)
+                if next_env is None:
+                    sys.exit(result.returncode)
+
+                switch_source_env = env.name
+                env = next_env
+                print(f"\n🔁 Switching ComfyGit run supervisor to: {env.name}\n")
+                self._append_switch_log(
+                    supervisor_control,
+                    f"Switch request accepted; target environment is {env.name}",
+                )
+                no_sync = False  # Ensure target sync runs before launch
+                continue
+
             sys.exit(result.returncode)
+
+    def _start_supervisor_control(self) -> SwitchObserverServer | None:
+        port_text = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_PORT")
+        if not port_text:
+            cleanup_supervisor_advertisement(self.workspace.path)
+            return None
+
+        try:
+            port = int(port_text)
+        except ValueError:
+            print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
+            cleanup_supervisor_advertisement(self.workspace.path)
+            return None
+
+        host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST", "127.0.0.1")
+        control = SwitchObserverServer(self.workspace.path, host, port)
+        try:
+            control.start()
+            return control
+        except OSError as exc:
+            print(f"⚠️  Could not start supervisor control server on {host}:{port}: {exc}")
+            control.stop()
+            return None
+
+    def _append_switch_log(
+        self,
+        supervisor_control: SwitchObserverServer | None,
+        message: str,
+        level: str = "info",
+    ) -> None:
+        if supervisor_control:
+            supervisor_control.append_log(message, level=level)
+
+    def _run_switched_comfyui(
+        self,
+        env: Environment,
+        comfyui_args: list[str],
+        *,
+        source_env: str,
+        supervisor_control: SwitchObserverServer | None,
+    ) -> subprocess.CompletedProcess:
+        """Start target ComfyUI under `cg run` switch supervision.
+
+        The switch observer should not report success merely because the
+        supervisor accepted the target environment. It should remain in the
+        startup/validation states while the target ComfyUI child boots, teeing
+        child output into the same observer log, and only publish `complete`
+        after the target HTTP server is reachable.
+        """
+        self._write_switch_status(
+            state="starting",
+            progress=65,
+            message=f"Starting ComfyUI for {env.name}...",
+            target_env=env.name,
+            source_env=source_env,
+        )
+        self._append_switch_log(
+            supervisor_control,
+            f"Switch complete; starting ComfyUI for {env.name}",
+        )
+
+        python = env.uv_manager.python_executable
+        cmd = [str(python), "main.py"] + (comfyui_args or [])
+        child_env = os.environ.copy()
+        child_env["COMFYGIT_ENV_NAME"] = env.name
+        child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(env.comfyui_path),
+            env=child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        self._append_switch_log(
+            supervisor_control,
+            f"ComfyUI process started for {env.name} (pid {proc.pid})",
+        )
+        output_thread = threading.Thread(
+            target=self._tee_switched_comfyui_output,
+            args=(proc, supervisor_control),
+            name=f"ComfyGitSwitchOutput-{env.name}",
+            daemon=True,
+        )
+        output_thread.start()
+
+        self._write_switch_status(
+            state="validating",
+            progress=85,
+            message=f"Waiting for {env.name} to be ready...",
+            target_env=env.name,
+            source_env=source_env,
+        )
+        endpoint = resolve_comfyui_endpoint(comfyui_args)
+        self._append_switch_log(
+            supervisor_control,
+            f"Waiting for ComfyUI readiness at {endpoint.base_url}",
+        )
+
+        if wait_for_comfyui_ready(
+            proc,
+            endpoint,
+            timeout=240.0,
+            log=lambda message, level="info": self._append_switch_log(
+                supervisor_control,
+                message,
+                level=level,
+            ),
+        ):
+            self._write_switch_status(
+                state="complete",
+                progress=100,
+                message=f"Successfully switched to {env.name}",
+                target_env=env.name,
+                source_env=source_env,
+            )
+            self._append_switch_log(
+                supervisor_control,
+                f"ComfyUI is ready for {env.name}",
+            )
+            self._release_switch_lock()
+            self._schedule_switch_status_cleanup(env.name)
+        else:
+            self._write_switch_status(
+                state="critical_failure",
+                progress=100,
+                message=f"ComfyUI did not become ready for {env.name}",
+                target_env=env.name,
+                source_env=source_env,
+            )
+            self._append_switch_log(
+                supervisor_control,
+                f"ComfyUI did not become ready for {env.name}",
+                level="error",
+            )
+            self._release_switch_lock()
+
+        returncode = proc.wait()
+        output_thread.join(timeout=2)
+        return subprocess.CompletedProcess(cmd, returncode)
+
+    def _tee_switched_comfyui_output(
+        self,
+        proc: subprocess.Popen,
+        supervisor_control: SwitchObserverServer | None,
+    ) -> None:
+        if proc.stdout is None:
+            return
+
+        for line in proc.stdout:
+            clean = line.rstrip("\n")
+            print(clean, flush=True)
+            if clean:
+                self._append_switch_log(supervisor_control, clean)
+
+    def _consume_switch_request(self, current_env: Environment) -> Environment | None:
+        """Consume a Manager switch request while `cg run` is PID 1.
+
+        Docker dev containers run `cg run` as the long-lived process. If ComfyUI
+        exits with the Manager switch code, the CLI must switch environments
+        itself; otherwise Docker restarts the original fixed `cg -e <env> run`
+        command and the requested environment never takes over.
+        """
+        metadata_dir = self.workspace.path / ".metadata"
+        request_file = metadata_dir / ".switch_request.json"
+
+        if not request_file.exists():
+            print("✗ Environment switch requested, but no switch request file was found.")
+            return None
+
+        try:
+            request = json.loads(request_file.read_text(encoding="utf-8"))
+            target_env = request.get("target_env")
+        except Exception as exc:
+            print(f"✗ Could not read environment switch request: {exc}")
+            return None
+
+        if not target_env:
+            print("✗ Environment switch request is missing target_env.")
+            return None
+
+        try:
+            next_env = self.workspace.get_environment(target_env, auto_sync=False)
+        except Exception as exc:
+            print(f"✗ Cannot switch to unknown environment '{target_env}': {exc}")
+            return None
+
+        self._write_switch_status(
+            state="preparing",
+            progress=10,
+            message=f"Preparing to switch from {current_env.name} to {target_env}...",
+            target_env=target_env,
+            source_env=current_env.name,
+        )
+
+        request_file.unlink(missing_ok=True)
+        return next_env
+
+    def _write_switch_status(
+        self,
+        *,
+        state: str,
+        progress: int,
+        message: str,
+        target_env: str,
+        source_env: str,
+    ) -> None:
+        try:
+            write_switch_status(
+                self.workspace.path / ".metadata",
+                state=state,
+                progress=progress,
+                message=message,
+                target_env=target_env,
+                source_env=source_env,
+            )
+        except Exception as exc:
+            logger.debug("Could not write switch status: %s", exc)
+
+    def _release_switch_lock(self) -> None:
+        try:
+            (self.workspace.path / ".metadata" / ".switch.lock").unlink(missing_ok=True)
+        except Exception as exc:
+            logger.debug("Could not release switch lock: %s", exc)
+
+    def _schedule_switch_status_cleanup(self, target_env: str) -> None:
+        metadata_dir = self.workspace.path / ".metadata"
+
+        def cleanup() -> None:
+            status = read_switch_status(metadata_dir)
+            if not status:
+                return
+
+            if status.get("state") == "complete" and status.get("target_env") == target_env:
+                cleanup_switch_status(metadata_dir)
+
+        timer = threading.Timer(8.0, cleanup)
+        timer.daemon = True
+        timer.start()
+
+    @with_env_logging("serve")
+    def serve(self, args: argparse.Namespace, logger=None) -> None:
+        """Serve workflow contracts for the specified environment."""
+        from .serve_runtime import ServeConfig, serve_environment
+
+        env = self._get_env(args)
+        config = ServeConfig(
+            host=args.host,
+            port=args.port,
+            comfy_url=args.comfy_url,
+            max_request_bytes=max(1, args.max_request_mb) * 1024 * 1024,
+            run_timeout_seconds=max(1.0, float(args.run_timeout_seconds)),
+            state=args.state,
+            gallery=args.gallery,
+            state_db=args.state_db,
+            role=args.role,
+            executor=args.executor,
+            proxy_url=args.proxy_url,
+            proxy_token=args.proxy_token,
+            callback_url=args.callback_url,
+            callback_token=args.callback_token,
+            artifact_dir=args.artifact_dir,
+        )
+        try:
+            serve_environment(env, config)
+        except KeyboardInterrupt:
+            print("\nStopped ComfyGit serve.")
+        except OSError as e:
+            if logger:
+                logger.error("Serve failed", exc_info=True)
+            print(f"✗ Failed to start serve: {e}", file=sys.stderr)
+            sys.exit(1)
 
     @with_env_logging("sync")
     def sync(self, args: argparse.Namespace, logger=None) -> None:
@@ -2232,7 +2562,7 @@ packages = []
         if system_uv:
             print("⚙️ Repair: using system uv to reinstall uv into the environment venv")
             install = subprocess.run(
-                [system_uv, "pip", "install", "--python", str(venv_python), "uv>=0.7"],
+                [system_uv, "pip", "install", "--python", str(venv_python), "uv>=0.11.8"],
                 text=True,
                 capture_output=True,
             )
@@ -2263,7 +2593,7 @@ packages = []
                     sys.exit(1)
 
             install = subprocess.run(
-                [str(venv_python), "-m", "pip", "install", "uv>=0.7"],
+                [str(venv_python), "-m", "pip", "install", "uv>=0.11.8"],
                 text=True,
                 capture_output=True,
             )
@@ -3227,7 +3557,7 @@ packages = []
                                 # Try to extract meaningful error
                                 user_msg = error.split(":", 1)[1].strip() if ":" in error else error
                                 print(f"✗ ({user_msg})")
-                            except:
+                            except Exception:
                                 print(f"✗ ({error})")
                         else:
                             print(f"✗ ({error})")

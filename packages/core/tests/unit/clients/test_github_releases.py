@@ -35,6 +35,34 @@ def test_github_client_has_validate_version_exists_method(github_client):
     assert hasattr(github_client, 'validate_version_exists'), "Should have validate_version_exists method"
 
 
+def test_open_json_attaches_bearer_token(monkeypatch):
+    """GitHub API requests should use the configured token when present."""
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(request):
+        captured["authorization"] = request.get_header("Authorization")
+        captured["accept"] = request.get_header("Accept")
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    client = GitHubClient(token="ghp_test")
+    client._open_json("https://api.github.com/repos/example/repo")
+
+    assert captured["authorization"] == "Bearer ghp_test"
+    assert captured["accept"] == "application/vnd.github+json"
+
+
 def test_list_releases_returns_list(github_client, comfyui_repo_url):
     """SHOULD return a list of releases."""
     releases = github_client.list_releases(comfyui_repo_url, limit=5)
@@ -149,5 +177,4 @@ def test_validate_version_exists_returns_false_for_invalid(github_client, comfyu
     """SHOULD return False for non-existent versions."""
     is_valid = github_client.validate_version_exists(comfyui_repo_url, "v999.999.999")
     assert is_valid is False, "Should return False for non-existent version"
-
 

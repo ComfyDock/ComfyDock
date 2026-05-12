@@ -47,7 +47,7 @@ tests/e2e/
 Tests are driven by YAML spec files in `specs/`. Each spec documents:
 - **What** is being tested
 - **Why** it matters (prevents future maintainers from removing "mysterious" tests)
-- **Beads** traceability (links to implementing work items)
+- **Clause references** where the test protects active truth-layer behavior
 
 See `specs/environment-lifecycle.yaml` for an example.
 

@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from packaging.version import InvalidVersion, Version
+
 from comfygit_core.constants import CUSTOM_NODES_BLACKLIST
 
 from ..logging.logging_config import get_logger
@@ -23,6 +25,20 @@ if TYPE_CHECKING:
     from ..managers.uv_project_manager import UVProjectManager
 
 logger = get_logger(__name__)
+
+
+def _versions_match(actual: str | None, expected: str | None) -> bool:
+    """Compare node versions using package-version semantics when possible."""
+    if actual == expected:
+        return True
+
+    if not actual or not expected:
+        return False
+
+    try:
+        return Version(actual) == Version(expected)
+    except InvalidVersion:
+        return False
 
 
 class StatusScanner:
@@ -359,12 +375,16 @@ class StatusScanner:
             if expected_node.source == 'development':
                 continue
 
-            if expected_node.version and current_node.version != expected_node.version:
+            actual_version = current_node.version
+            if expected_node.source == "git" and current_node.git_commit:
+                actual_version = current_node.git_commit
+
+            if expected_node.version and not _versions_match(actual_version, expected_node.version):
                 comparison.version_mismatches.append(
                     {
                         "name": name,
                         "expected": expected_node.version,
-                        "actual": current_node.version,
+                        "actual": actual_version,
                     }
                 )
 

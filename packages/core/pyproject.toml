@@ -1,6 +1,6 @@
 [project]
 name = "comfygit-core"
-version = "0.3.22"
+version = "0.4.0"
 description = "ComfyGit Core - Git-based ComfyUI environment manager"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -8,10 +8,10 @@ dependencies = [
     "blake3>=0.3.3",
     "huggingface_hub>=0.11.0",
     "packaging>=16.2",
-    "requests>=2.28.0",
+    "requests>=2.33.0",
     "requirements-parser>=0.11.0",
     "tomlkit>=0.11.0",
-    "uv>=0.7",
+    "uv>=0.11.8",
     "xxhash>=2.0.0",
 ]
 
@@ -30,5 +30,5 @@ packages = ["src/comfygit_core"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.4.1",
+    "pytest>=9.0.3",
 ]

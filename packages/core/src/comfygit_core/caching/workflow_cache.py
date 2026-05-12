@@ -88,6 +88,20 @@ class WorkflowCacheRepository:
         # Ensure schema exists
         self._ensure_schema()
 
+    def _get_current_models_sync_time(self) -> str | None:
+        """Return the model-index sync timestamp that affects resolution caches."""
+        if not self.workspace_config_manager:
+            return None
+
+        try:
+            config = self.workspace_config_manager.load()
+            if config.global_model_directory and config.global_model_directory.last_sync:
+                return config.global_model_directory.last_sync
+        except Exception as e:
+            logger.warning(f"Failed to check current model sync time: {e}")
+
+        return None
+
     def _ensure_schema(self) -> None:
         """Create database schema if needed."""
         # Create schema info table
@@ -209,10 +223,22 @@ class WorkflowCacheRepository:
             logger.warning(f"Failed to stat workflow file {workflow_path}: {e}")
             return None
 
-        # Phase 1: Check session cache (with mtime in key for auto-invalidation)
-        # This ensures session cache automatically invalidates when file changes,
-        # critical for long-running services where Environment instances persist
-        session_key = f"{env_name}:{workflow_name}:{mtime}"
+        pyproject_mtime_for_session = 0.0
+        if pyproject_path and pyproject_path.exists():
+            try:
+                pyproject_mtime_for_session = pyproject_path.stat().st_mtime
+            except OSError as e:
+                logger.debug(f"Could not stat pyproject for session cache key; using default mtime: {e}")
+        current_models_sync_time = self._get_current_models_sync_time()
+
+        # Phase 1: Check session cache. Include every external state value that
+        # can change resolution while workflow bytes stay the same. Long-running
+        # Manager/serve processes otherwise keep stale model resolutions after
+        # pyproject writes or model-index syncs.
+        session_key = (
+            f"{env_name}:{workflow_name}:{mtime}:{size}:"
+            f"{pyproject_mtime_for_session}:{current_models_sync_time}"
+        )
 
         if session_key in self._session_cache:
             elapsed = (time.perf_counter() - start_time) * 1000
@@ -297,15 +323,7 @@ class WorkflowCacheRepository:
             if pyproject_mtime == cached_pyproject_mtime:
                 # Check if model index has changed since cache was created
                 cached_sync_time = cached_row.get('models_sync_time')
-                current_sync_time = None
-
-                if self.workspace_config_manager:
-                    try:
-                        config = self.workspace_config_manager.load()
-                        if config.global_model_directory and config.global_model_directory.last_sync:
-                            current_sync_time = config.global_model_directory.last_sync
-                    except Exception as e:
-                        logger.warning(f"Failed to check current model sync time: {e}")
+                current_sync_time = current_models_sync_time
 
                 # Compare sync times (both might be None, which is fine)
                 if cached_sync_time != current_sync_time:
@@ -418,8 +436,8 @@ class WorkflowCacheRepository:
         if pyproject_path and pyproject_path.exists():
             try:
                 pyproject_mtime = pyproject_path.stat().st_mtime
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(f"Could not stat pyproject for persistent cache metadata; using default mtime: {e}")
 
         # Compute resolution context hash
         resolution_context_hash = ""
@@ -430,14 +448,7 @@ class WorkflowCacheRepository:
             )
 
         # Get models_sync_time for cache invalidation check
-        models_sync_time = None
-        if self.workspace_config_manager:
-            try:
-                config = self.workspace_config_manager.load()
-                if config.global_model_directory and config.global_model_directory.last_sync:
-                    models_sync_time = config.global_model_directory.last_sync
-            except Exception:
-                pass
+        models_sync_time = self._get_current_models_sync_time()
 
         # Serialize data
         dependencies_json = self._serialize_dependencies(dependencies)
@@ -460,8 +471,11 @@ class WorkflowCacheRepository:
              dependencies_json, resolution_json, cached_at)
         )
 
-        # Update session cache (with mtime in key for auto-invalidation)
-        session_key = f"{env_name}:{workflow_name}:{workflow_mtime}"
+        # Update session cache with all state that can affect resolution.
+        session_key = (
+            f"{env_name}:{workflow_name}:{workflow_mtime}:{workflow_size}:"
+            f"{pyproject_mtime}:{models_sync_time}"
+        )
         self._session_cache[session_key] = CachedWorkflowAnalysis(
             dependencies=dependencies,
             resolution=resolution,

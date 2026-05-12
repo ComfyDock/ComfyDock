@@ -9,8 +9,14 @@ from ..analyzers.node_git_analyzer import get_node_git_info
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
+from ..models.dependency_resolution import (
+    DependencyResolutionAcceptance,
+    DependencyResolutionApplyResult,
+    DependencyResolutionPreview,
+)
 from ..models.exceptions import (
     CDDependencyConflictError,
+    CDDependencyPreviewStaleError,
     CDEnvironmentError,
     CDNodeConflictError,
     CDNodeNotFoundError,
@@ -19,6 +25,7 @@ from ..models.exceptions import (
     NodeConflictContext,
 )
 from ..models.shared import NodeInfo, NodePackage, NodeRemovalResult, UpdateResult
+from ..services.dependency_resolution_preview import DependencyResolutionPreviewService
 from ..services.node_lookup_service import NodeLookupService
 from ..strategies.confirmation import AutoConfirmStrategy, ConfirmationStrategy
 from ..utils.conflict_parser import extract_conflicting_packages
@@ -35,7 +42,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
-SYSTEM_DEPENDENCIES = ["uv>=0.7"]
+SYSTEM_UV_DEPENDENCY = "uv>=0.11.8"
+SYSTEM_DEPENDENCIES = [SYSTEM_UV_DEPENDENCY]
 
 
 class NodeManager:
@@ -79,9 +87,10 @@ class NodeManager:
         This prevents essential tooling (notably `uv`) from being orphaned when
         hash-named node dependency groups are removed during node upgrades.
         """
-        groups = self.pyproject.dependencies.get_groups()
-        if SYSTEM_DEPENDENCY_GROUP not in groups:
-            self.pyproject.dependencies.add_to_group(SYSTEM_DEPENDENCY_GROUP, SYSTEM_DEPENDENCIES)
+        self.pyproject.ensure_system_uv_dependency(
+            dependency=SYSTEM_UV_DEPENDENCY,
+            group=SYSTEM_DEPENDENCY_GROUP,
+        )
 
     def _sync_uv(self, skip_optional_overlays: bool = True, **kwargs) -> None:
         self._ensure_system_group()
@@ -269,6 +278,7 @@ class NodeManager:
         extras: list[str] | None = None,
         all_extras: bool = False,
         skip_optional_overlays: bool = True,
+        allow_reviewed_dependency_changes: bool = False,
     ) -> NodeInfo:
         """Add a custom node to the environment.
 
@@ -282,6 +292,9 @@ class NodeManager:
             extras: Optional list of extras to install during sync
             all_extras: Install all optional extras during sync
             skip_optional_overlays: If True, only inject pytorch overlays during sync
+            allow_reviewed_dependency_changes: If True, apply probe-discovered
+                constraints even when they conflict with the current environment.
+                Callers must guard this with a fresh accepted preview.
 
         Raises:
             CDNodeNotFoundError: If node not found
@@ -478,13 +491,20 @@ class NodeManager:
                         + ", ".join(discovered_constraints)
                     )
 
-                    # Validate constraints don't conflict with existing environment
-                    # This catches issues BEFORE modifying pyproject.toml
-                    self._validate_constraints_against_environment(
-                        node_package.name,
-                        discovered_constraints,
-                        node_package.requirements,
-                    )
+                    if allow_reviewed_dependency_changes:
+                        logger.info(
+                            "Applying reviewed dependency changes for '%s'; "
+                            "skipping constraint conflict block",
+                            node_package.name,
+                        )
+                    else:
+                        # Validate constraints don't conflict with existing environment
+                        # This catches issues BEFORE modifying pyproject.toml
+                        self._validate_constraints_against_environment(
+                            node_package.name,
+                            discovered_constraints,
+                            node_package.requirements,
+                        )
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
@@ -600,6 +620,110 @@ class NodeManager:
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
+
+    def apply_reviewed_dependency_changes(
+        self,
+        identifier: str,
+        acceptance: DependencyResolutionAcceptance,
+    ) -> DependencyResolutionApplyResult:
+        """Apply a node install only if the accepted dependency preview is current."""
+        if acceptance.identifier != identifier:
+            raise CDDependencyPreviewStaleError(
+                "Accepted dependency preview does not match the requested node identifier"
+            )
+
+        preview = self.preview_add_node_dependency_changes(identifier)
+        if not preview.success:
+            raise CDDependencyPreviewStaleError(
+                preview.error or "Unable to regenerate dependency preview before apply"
+            )
+
+        if (
+            preview.baseline_fingerprint != acceptance.baseline_fingerprint
+            or preview.diff_fingerprint != acceptance.diff_fingerprint
+            or (
+                acceptance.proposed_fingerprint
+                and preview.proposed_fingerprint != acceptance.proposed_fingerprint
+            )
+        ):
+            raise CDDependencyPreviewStaleError(
+                "Dependency preview is stale. Regenerate the preview before applying."
+            )
+
+        node_info = self.add_node(
+            identifier,
+            allow_reviewed_dependency_changes=True,
+            skip_optional_overlays=False,
+        )
+
+        return DependencyResolutionApplyResult(
+            success=True,
+            identifier=identifier,
+            node_name=node_info.name,
+            installed=True,
+            needs_restart=True,
+            message=f"Installed {node_info.name}",
+        )
+
+    def preview_add_node_dependency_changes(
+        self,
+        identifier: str,
+    ) -> DependencyResolutionPreview:
+        """Preview dependency changes for adding a node without mutating the environment."""
+        logger.info("Previewing dependency changes for node: %s", identifier)
+
+        registry_id = None
+        github_url = None
+        if is_github_url(identifier):
+            github_url = identifier
+            if resolved := self.node_repository.resolve_github_url(identifier):
+                registry_id = resolved.id
+        else:
+            registry_id = identifier.split('@')[0] if '@' in identifier else identifier
+
+        node_info = self.node_lookup.get_node(identifier)
+        if github_url and registry_id:
+            node_info.registry_id = registry_id
+            node_info.repository = github_url
+
+        existing_entry = self._find_node_by_name(node_info.name)
+        if existing_entry:
+            existing_identifier, existing_node = existing_entry
+            raise CDNodeConflictError(
+                f"Node '{node_info.name}' is already installed (version {existing_node.version})",
+                context=NodeConflictContext(
+                    conflict_type='already_tracked',
+                    node_name=node_info.name,
+                    existing_identifier=existing_identifier,
+                    is_development=(existing_node.version == 'dev'),
+                ),
+            )
+
+        cache_path = self.node_lookup.download_to_cache(node_info)
+        if not cache_path:
+            raise CDEnvironmentError(f"Failed to download node '{node_info.name}'")
+
+        requirements = self.node_lookup.scan_requirements(
+            cache_path,
+            package_config=self.package_config,
+        )
+        node_package = NodePackage(node_info=node_info, requirements=requirements)
+
+        service = DependencyResolutionPreviewService(
+            cec_path=self.pyproject.path.parent,
+            workspace_path=self.resolution_tester.workspace_path,
+            uv_binary=Path(self.uv.binary),
+            torch_backend=self._get_torch_backend_for_preview(),
+        )
+        return service.preview_node_package(node_package)
+
+    def _get_torch_backend_for_preview(self) -> str | None:
+        if self.pytorch_manager is None:
+            return None
+        try:
+            return self.pytorch_manager.get_backend()
+        except Exception:
+            return None
 
     def remove_node(self, identifier: str, untrack_only: bool = False):
         """Remove a custom node by identifier or name (case-insensitive).
@@ -830,6 +954,83 @@ class NodeManager:
 
         logger.info("Finished syncing custom nodes")
 
+    def provision_missing_node_dependencies(self) -> list[str]:
+        """Stage dependency groups for tracked non-dev nodes missing them.
+
+        Thin imports can restore node files to disk before their Python
+        dependency groups exist in pyproject.toml. This method scans installed
+        nodes, stages any missing dependency groups, and defers the actual UV
+        sync so callers can batch everything into one final environment sync.
+        """
+        logger.info("Checking tracked nodes for missing dependency groups...")
+
+        expected_nodes = self.pyproject.nodes.get_existing()
+        existing_groups = self.pyproject.dependencies.get_groups()
+        staged_groups: list[str] = []
+
+        for identifier, node_info in expected_nodes.items():
+            if node_info.source == "development":
+                continue
+
+            group_name = self.pyproject.nodes.generate_group_name(node_info, identifier)
+            if group_name in existing_groups:
+                continue
+
+            node_path = self.custom_nodes_path / node_info.name
+            if not node_path.exists():
+                logger.info(
+                    "Skipping dependency provisioning for '%s' because the node directory is missing",
+                    node_info.name,
+                )
+                continue
+
+            logger.info(
+                "Staging dependency group '%s' for node '%s'",
+                group_name,
+                node_info.name,
+            )
+
+            existing_sources = self.pyproject.uv_config.get_source_names()
+            requirements = self.node_lookup.scan_requirements(
+                node_path,
+                package_config=self.package_config,
+            )
+
+            if requirements:
+                self.uv.add_requirements_with_sources(
+                    requirements,
+                    group=group_name,
+                    no_sync=True,
+                    raw=True,
+                )
+            else:
+                self.pyproject.dependencies.add_to_group(group_name, [])
+                logger.info(
+                    "Recorded empty dependency group '%s' for node '%s'",
+                    group_name,
+                    node_info.name,
+                )
+
+            new_sources = self.pyproject.uv_config.get_source_names() - existing_sources
+            if new_sources:
+                node_info.dependency_sources = sorted(
+                    set(node_info.dependency_sources or []) | new_sources
+                )
+                self.pyproject.nodes.add(node_info, identifier)
+
+            existing_groups[group_name] = requirements
+            staged_groups.append(group_name)
+
+        if staged_groups:
+            logger.info(
+                "Staged missing dependency groups for %d node(s)",
+                len(staged_groups),
+            )
+        else:
+            logger.info("All tracked node dependency groups are already provisioned")
+
+        return staged_groups
+
     def _sync_dev_nodes_from_git(self, expected_nodes: dict, existing_nodes: dict, callbacks=None):
         """Clone missing dev nodes that have repository URLs.
 
@@ -876,8 +1077,12 @@ class NodeManager:
         """
         node_path = self.custom_nodes_path / node_info.name
 
-        # Determine ref: branch takes priority over pinned_commit
-        ref = node_info.branch or node_info.pinned_commit
+        # Prefer exact reconstruction when a development node was exported or
+        # committed with a pinned source revision.
+        ref = node_info.pinned_commit or node_info.branch
+        if not node_info.repository:
+            logger.error(f"Cannot clone dev node '{node_info.name}': missing repository URL")
+            return False
 
         logger.info(f"Cloning dev node '{node_info.name}' from {node_info.repository}")
         if ref:
@@ -889,7 +1094,8 @@ class NodeManager:
                 url=node_info.repository,
                 target_path=node_path,
                 depth=0,
-                ref=ref
+                ref=ref,
+                token=self.node_lookup.get_git_token(),
             )
             logger.info(f"Successfully cloned dev node: {node_info.name}")
             return True
@@ -1718,6 +1924,7 @@ class NodeManager:
         # Create enhanced context
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="resolution_conflict",
             conflicting_packages=conflict_pairs,
             conflict_descriptions=test_result.conflicts,
             raw_stderr=test_result.stderr,
@@ -1788,6 +1995,7 @@ class NodeManager:
 
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="probe_install_failure",
             conflicting_packages=[],
             conflict_descriptions=[
                 f"Probe failed to install requirement: {req}"
@@ -1916,6 +2124,7 @@ class NodeManager:
 
         context = DependencyConflictContext(
             node_name=node_name,
+            conflict_kind="constraint_conflict",
             conflicting_packages=[(pkg_name, requiring_pkg)],
             conflict_descriptions=[
                 f"Node requires {pkg_name}{constraint_spec} but {requiring_pkg} requires {existing_spec}"

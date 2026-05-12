@@ -29,6 +29,7 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.tsbuildinfo
 
 # Environment variables
 .env
@@ -94,5 +95,7 @@ docs/contexts
 # MEOW agent orchestration runtime
 .meow/
 
-# Beads issue tracking - synced via beads-sync branch only
-.beads/issues.jsonl
+# Local/retired agent task systems
+.beads/
+.threads/
+.ctxr/

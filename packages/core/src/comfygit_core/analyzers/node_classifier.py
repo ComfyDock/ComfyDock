@@ -38,7 +38,8 @@ class NodeClassifier:
     def __init__(
         self,
         cec_path: Path | None = None,
-        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None
+        builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None,
+        version_agnostic: bool = False,
     ):
         """
         Initialize node classifier with environment-specific or global builtins.
@@ -48,10 +49,27 @@ class NodeClassifier:
                       If provided, loads from .cec/comfyui_builtins.json.
                       If None or file missing, falls back to global config.
             builtin_versions_repository: Optional repository for version-indexed builtins.
+            version_agnostic: If True, treat ALL known builtins as present regardless
+                              of version. Used for standalone/web analysis where we're
+                              not tied to a specific ComfyUI installation.
         """
         self.builtin_versions_repository = builtin_versions_repository
+        self.version_agnostic = version_agnostic
         self.builtin_nodes, detected_version = self._load_builtin_nodes(cec_path)
         self.comfyui_version = detected_version or self._load_comfyui_version_from_pyproject(cec_path)
+
+        # In version-agnostic mode, expand builtin_nodes to include ALL known builtins
+        # so they classify as "builtin" rather than "version_gated"
+        if self.version_agnostic and self.builtin_versions_repository:
+            db = self.builtin_versions_repository.database
+            if db:
+                extra = set(db.builtins.keys()) - self.builtin_nodes
+                if extra:
+                    logger.debug(
+                        "Version-agnostic mode: adding %d version-indexed builtins to known set",
+                        len(extra),
+                    )
+                    self.builtin_nodes = self.builtin_nodes | extra
 
     def _load_builtin_nodes(self, cec_path: Path | None) -> tuple[set[str], str | None]:
         """Load builtin nodes from environment or global fallback."""

@@ -1,0 +1,51 @@
+"""Lifecycle helpers shared by ComfyGit CLI and manager integrations."""
+
+from .comfyui_readiness import (
+    ComfyUIEndpoint,
+    is_comfyui_ready,
+    readiness_host_for_bind,
+    resolve_comfyui_endpoint,
+    wait_for_comfyui_ready,
+)
+from .switch_observer import (
+    SWITCH_LOGS_ROUTE,
+    SWITCH_STATUS_ROUTE,
+    SUPERVISOR_HEALTH_ROUTE,
+    SUPERVISOR_INFO_FILE,
+    SUPERVISOR_LOG_FILE,
+    SWITCH_STATUS_FILE,
+    SwitchObserverServer,
+    append_switch_log,
+    build_switch_observer_payload,
+    cleanup_supervisor_advertisement,
+    cleanup_switch_status,
+    read_supervisor_advertisement,
+    read_switch_logs,
+    read_switch_status,
+    write_supervisor_advertisement,
+    write_switch_status,
+)
+
+__all__ = [
+    "ComfyUIEndpoint",
+    "SWITCH_LOGS_ROUTE",
+    "SWITCH_STATUS_ROUTE",
+    "SUPERVISOR_HEALTH_ROUTE",
+    "SUPERVISOR_INFO_FILE",
+    "SUPERVISOR_LOG_FILE",
+    "SWITCH_STATUS_FILE",
+    "SwitchObserverServer",
+    "append_switch_log",
+    "build_switch_observer_payload",
+    "cleanup_supervisor_advertisement",
+    "cleanup_switch_status",
+    "is_comfyui_ready",
+    "readiness_host_for_bind",
+    "read_supervisor_advertisement",
+    "read_switch_logs",
+    "read_switch_status",
+    "resolve_comfyui_endpoint",
+    "wait_for_comfyui_ready",
+    "write_supervisor_advertisement",
+    "write_switch_status",
+]

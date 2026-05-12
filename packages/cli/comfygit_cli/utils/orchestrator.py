@@ -7,6 +7,11 @@ import sys
 import time
 from pathlib import Path
 
+from comfygit_core.lifecycle.switch_observer import (
+    SWITCH_STATUS_FILE,
+    read_switch_status as core_read_switch_status,
+)
+
 
 def read_orchestrator_pid(metadata_dir: Path) -> int | None:
     """Read orchestrator PID from file."""
@@ -58,15 +63,7 @@ def is_orchestrator_running(metadata_dir: Path) -> tuple[bool, int | None]:
 
 def read_switch_status(metadata_dir: Path) -> dict | None:
     """Read environment switch status."""
-    status_file = metadata_dir / ".switch_status.json"
-    if not status_file.exists():
-        return None
-
-    try:
-        with open(status_file) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
+    return core_read_switch_status(metadata_dir)
 
 
 def safe_write_command(metadata_dir: Path, command: dict) -> None:
@@ -164,7 +161,7 @@ def cleanup_orchestrator_state(metadata_dir: Path, preserve_config: bool = True)
         ".control_port",
         ".cmd",
         ".switch_request.json",
-        ".switch_status.json",
+        SWITCH_STATUS_FILE,
         ".switch.lock",
         ".startup_state.json",
     ]

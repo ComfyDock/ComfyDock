@@ -241,6 +241,78 @@ def parse_git_url_with_subdir(url: str) -> tuple[str, str | None]:
 
     return base_url, subdir
 
+
+def git_list_remote_refs(
+    url: str,
+    repo_path: Path | None = None,
+) -> dict[str, object]:
+    """List importable remote refs for a Git repository.
+
+    Args:
+        url: Git repository URL. Optional #subdirectory suffix is ignored for
+            remote-ref discovery because refs belong to the repository.
+        repo_path: Working directory for the git command. Defaults to cwd.
+
+    Returns:
+        Dict containing default_branch, head_commit, branches, and tags.
+    """
+    base_url, _ = parse_git_url_with_subdir(url)
+    cwd = repo_path or Path.cwd()
+    result = _git(
+        ["ls-remote", "--symref", base_url, "HEAD", "refs/heads/*", "refs/tags/*"],
+        cwd,
+    )
+
+    default_branch: str | None = None
+    head_commit: str | None = None
+    branches_by_name: dict[str, str] = {}
+    tags_by_name: dict[str, str] = {}
+
+    for raw_line in result.stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if line.startswith("ref:"):
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == "HEAD":
+                ref_name = parts[1]
+                if ref_name.startswith("refs/heads/"):
+                    default_branch = ref_name.removeprefix("refs/heads/")
+            continue
+
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+
+        commit_sha, ref_name = parts[0], parts[1]
+        if ref_name == "HEAD":
+            head_commit = commit_sha
+        elif ref_name.startswith("refs/heads/"):
+            branches_by_name[ref_name.removeprefix("refs/heads/")] = commit_sha
+        elif ref_name.startswith("refs/tags/") and not ref_name.endswith("^{}"):
+            tags_by_name[ref_name.removeprefix("refs/tags/")] = commit_sha
+
+    def branch_sort_key(item: tuple[str, str]) -> tuple[int, str]:
+        name, _ = item
+        return (0 if name == default_branch else 1, name.lower())
+
+    branches = [
+        {"name": name, "commit": commit, "is_default": name == default_branch}
+        for name, commit in sorted(branches_by_name.items(), key=branch_sort_key)
+    ]
+    tags = [
+        {"name": name, "commit": commit}
+        for name, commit in sorted(tags_by_name.items(), key=lambda item: item[0].lower())
+    ]
+
+    return {
+        "default_branch": default_branch,
+        "head_commit": head_commit,
+        "branches": branches,
+        "tags": tags,
+    }
+
 def git_rev_parse(repo_path: Path, ref: str = "HEAD", abbrev_ref: bool = False) -> str | None:
     """Parse a git reference to get its value.
 
@@ -423,6 +495,7 @@ def git_clone(
     depth: int = 1,
     ref: str | None = None,
     timeout: int = 30,
+    token: str | None = None,
 ) -> None:
     """Clone a git repository to a target path.
 
@@ -432,6 +505,7 @@ def git_clone(
         depth: Clone depth (1 for shallow clone)
         ref: Optional specific ref (branch/tag/commit) to checkout
         timeout: Command timeout in seconds
+        token: Optional GitHub/PAT token for HTTPS repository authentication
 
     Raises:
         OSError: If git clone or checkout fails
@@ -442,7 +516,7 @@ def git_clone(
 
     # For commit hashes, we need to clone without --depth and then checkout
     # For branches/tags, we can use --branch with depth
-    is_commit_hash = ref and len(ref) == 40 and all(c in '0123456789abcdef' for c in ref.lower())
+    is_commit_hash = ref and 7 <= len(ref) <= 40 and all(c in '0123456789abcdef' for c in ref.lower())
 
     if depth > 0 and not is_commit_hash:
         cmd.extend(["--depth", str(depth)])
@@ -453,8 +527,23 @@ def git_clone(
 
     cmd.extend([url, str(target_path)])
 
-    # Execute clone
-    _git(cmd, Path.cwd(), not_found_msg=f"Git repository URL '{url}' does not exist")
+    # Execute clone. Keep tokens out of persisted git config and command strings by
+    # using GIT_ASKPASS for HTTPS remotes.
+    if token and url.startswith("https://"):
+        try:
+            _git_with_auth(
+                cmd,
+                Path.cwd(),
+                token,
+                timeout=timeout,
+            )
+        except subprocess.CalledProcessError as e:
+            error_text = (e.stderr or e.stdout or str(e)).lower()
+            if "not found" in error_text or "repository" in error_text:
+                raise ValueError(f"Git repository URL '{url}' does not exist") from e
+            raise OSError(f"Git command failed: {e.stderr or e.stdout or e}") from e
+    else:
+        _git(cmd, Path.cwd(), not_found_msg=f"Git repository URL '{url}' does not exist")
 
     # If a specific commit hash was requested, checkout to it
     if is_commit_hash and ref:
@@ -472,6 +561,7 @@ def git_clone_subdirectory(
     depth: int = 1,
     ref: str | None = None,
     timeout: int = 30,
+    token: str | None = None,
 ) -> None:
     """Clone a git repository and extract a specific subdirectory.
 
@@ -486,6 +576,7 @@ def git_clone_subdirectory(
         depth: Clone depth (1 for shallow clone)
         ref: Optional specific ref (branch/tag/commit) to checkout
         timeout: Command timeout in seconds
+        token: Optional GitHub/PAT token for HTTPS repository authentication
 
     Raises:
         OSError: If git clone fails
@@ -498,7 +589,7 @@ def git_clone_subdirectory(
         temp_repo = Path(temp_dir) / "repo"
 
         logger.info(f"Cloning {url} to temporary location for subdirectory extraction")
-        git_clone(url, temp_repo, depth=depth, ref=ref, timeout=timeout)
+        git_clone(url, temp_repo, depth=depth, ref=ref, timeout=timeout, token=token)
 
         # Validate subdirectory exists
         subdir_path = temp_repo / subdir
@@ -1318,7 +1409,7 @@ def git_revert(repo_path: Path, commit: str, no_commit: bool = False) -> None:
 
 
 # =============================================================================
-# Git Authentication (for cloud deployments)
+# Git Authentication (for remote deployments)
 # =============================================================================
 
 def _create_askpass_script(token: str) -> Path:
@@ -1333,6 +1424,7 @@ def _create_askpass_script(token: str) -> Path:
     Returns:
         Path to temporary script file
     """
+    import shlex
     import stat
     import sys
     import tempfile
@@ -1344,10 +1436,25 @@ def _create_askpass_script(token: str) -> Path:
     try:
         if sys.platform == "win32":
             # Windows batch file
-            script_content = f"@echo {token}\n"
+            escaped_token = token.replace("^", "^^").replace("&", "^&").replace("|", "^|").replace("<", "^<").replace(">", "^>")
+            script_content = (
+                "@echo off\n"
+                "echo %1 | findstr /I \"Username\" >nul\n"
+                "if %errorlevel%==0 (\n"
+                "  echo x-access-token\n"
+                ") else (\n"
+                f"  echo {escaped_token}\n"
+                ")\n"
+            )
         else:
             # Unix shell script
-            script_content = f"#!/bin/sh\necho '{token}'\n"
+            script_content = (
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  *Username*) printf '%s\\n' x-access-token ;;\n"
+                f"  *) printf '%s\\n' {shlex.quote(token)} ;;\n"
+                "esac\n"
+            )
 
         os.write(fd, script_content.encode('utf-8'))
         os.close(fd)
@@ -1367,7 +1474,8 @@ def _git_with_auth(
     cmd: list[str],
     repo_path: Path,
     token: str,
-    check: bool = True
+    check: bool = True,
+    timeout: int | None = None,
 ) -> subprocess.CompletedProcess:
     """Run git command with token authentication via GIT_ASKPASS.
 
@@ -1381,6 +1489,7 @@ def _git_with_auth(
         repo_path: Path to git repository
         token: GitHub PAT or other credential
         check: Whether to raise exception on non-zero exit
+        timeout: Optional command timeout in seconds
 
     Returns:
         CompletedProcess result
@@ -1401,7 +1510,8 @@ def _git_with_auth(
             capture_output=True,
             text=True,
             env=env,
-            check=check
+            check=check,
+            timeout=timeout,
         )
         return result
     finally:

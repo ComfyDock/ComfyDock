@@ -22,7 +22,12 @@ from ..models.exceptions import (
     ComfyDockError,
     UVCommandError,
 )
-from ..models.shared import ModelDetails, ModelWithLocation
+from ..models.materialization import (
+    MaterializeResult,
+    MaterializeSourceType,
+    ModelMaterializationStrategy,
+)
+from ..models.shared import ModelDeleteResult, ModelDetails, ModelWithLocation
 from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
 from ..services.registry_data_manager import RegistryDataManager
@@ -561,15 +566,16 @@ class Workspace:
 
         # Parse URL for subdirectory
         base_url, subdir = parse_git_url_with_subdir(git_url)
+        git_token = self.workspace_config_manager.get_github_token()
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_cec = Path(temp_dir) / ".cec"
 
             # Clone to temp location (with subdirectory extraction if specified)
             if subdir:
-                git_clone_subdirectory(base_url, temp_cec, subdir, ref=branch)
+                git_clone_subdirectory(base_url, temp_cec, subdir, ref=branch, token=git_token)
             else:
-                git_clone(base_url, temp_cec, ref=branch)
+                git_clone(base_url, temp_cec, ref=branch, token=git_token)
 
             # Analyze
             return self.import_analyzer.analyze_import(temp_cec)
@@ -726,6 +732,108 @@ class Workspace:
         finally:
             # Cleanup runs on ANY exit (Exception, KeyboardInterrupt, etc.)
             # Only cleanup if environment wasn't successfully completed
+            cec_path = env_path / ".cec"
+            if not is_environment_complete(cec_path) and env_path.exists():
+                if not cleanup_partial_environment(env_path):
+                    logger.warning(
+                        f"Could not fully remove partial environment at {env_path}. "
+                        f"You may need to delete it manually or reboot to release file locks."
+                    )
+
+    def materialize_environment(
+        self,
+        source: str | Path,
+        name: str,
+        *,
+        branch: str | None = None,
+        models_dir: Path | None = None,
+        model_strategy: ModelMaterializationStrategy = "skip",
+        torch_backend: str = "auto",
+        no_manager: bool = True,
+        replace: bool = False,
+        set_active: bool = False,
+        callbacks: "ImportCallbacks | None" = None,
+    ) -> MaterializeResult:
+        """Hydrate a portable environment source for headless runtime/build use."""
+        from ..utils.git import is_git_url
+
+        _validate_environment_name(name)
+
+        if models_dir is not None:
+            self.set_models_directory(models_dir)
+
+        env_path = self.paths.environments / name
+        if env_path.exists():
+            if not replace:
+                raise CDEnvironmentExistsError(f"Environment '{name}' already exists")
+            self.delete_environment(name, delete_user_data=False)
+
+        source_type: MaterializeSourceType
+
+        try:
+            source_text = str(source)
+            source_path = Path(source_text).expanduser()
+
+            if is_git_url(source_text):
+                source_type = "git"
+                environment = EnvironmentFactory.import_from_git(
+                    git_url=source_text,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    branch=branch,
+                    torch_backend=torch_backend,
+                )
+            elif source_path.exists() and source_path.is_dir():
+                source_type = "directory"
+                environment = EnvironmentFactory.import_from_directory(
+                    source_path=source_path,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    torch_backend=torch_backend,
+                )
+            else:
+                source_type = "bundle"
+                if not source_path.exists():
+                    raise FileNotFoundError(f"Materialize source not found: {source_path}")
+                environment = EnvironmentFactory.import_from_bundle(
+                    tarball_path=source_path,
+                    name=name,
+                    env_path=env_path,
+                    workspace=self,
+                    torch_backend=torch_backend,
+                )
+
+            environment.finalize_import(
+                model_strategy=model_strategy,
+                callbacks=callbacks,
+                no_manager=no_manager,
+                create_import_commit=False,
+                fail_on_sync_errors=True,
+            )
+
+            if set_active:
+                self.set_active_environment(environment.name)
+
+            return MaterializeResult(
+                environment_name=environment.name,
+                workspace_path=self.path,
+                environment_path=environment.path,
+                cec_path=environment.cec_path,
+                comfyui_path=environment.comfyui_path,
+                source_type=source_type,
+                model_strategy=model_strategy,
+                torch_backend=environment.torch_backend,
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to materialize environment: {e}")
+            if isinstance(e, ComfyDockError):
+                raise
+            raise RuntimeError(f"Failed to materialize environment '{name}': {e}") from e
+
+        finally:
             cec_path = env_path / ".cec"
             if not is_environment_complete(cec_path) and env_path.exists():
                 if not cleanup_partial_environment(env_path):
@@ -932,6 +1040,89 @@ class Workspace:
             all_locations=locations,
             sources=sources
         )
+
+    @staticmethod
+    def _path_for_model_location(location: dict) -> Path:
+        """Resolve an indexed model location to a safe filesystem path."""
+        base_directory = location.get("base_directory")
+        relative_path = location.get("relative_path")
+        if not base_directory or not relative_path:
+            raise ValueError("Model location is missing base directory or relative path")
+
+        base_path = Path(base_directory).expanduser()
+        target_path = base_path / str(relative_path).replace("\\", "/")
+        base_resolved = base_path.resolve(strict=False)
+        parent_resolved = target_path.parent.resolve(strict=False)
+
+        try:
+            parent_resolved.relative_to(base_resolved)
+        except ValueError as exc:
+            raise ValueError(f"Refusing to delete model outside indexed base directory: {target_path}") from exc
+
+        return target_path
+
+    def delete_model(self, identifier: str) -> ModelDeleteResult:
+        """Delete every indexed file location for a model and clean index rows.
+
+        Args:
+            identifier: Model hash, hash prefix, filename, or path.
+
+        Returns:
+            Deletion result with deleted, missing, errored, and remaining paths.
+
+        Raises:
+            ValueError: Multiple matches found or an indexed location is unsafe.
+            KeyError: No model found matching identifier.
+        """
+        details = self.get_model_details(identifier)
+        model_repo = self.model_repository
+        result = ModelDeleteResult(
+            model_hash=details.model.hash,
+            filename=details.model.filename,
+        )
+
+        for location in details.all_locations:
+            try:
+                model_path = self._path_for_model_location(location)
+            except ValueError as exc:
+                result.errors.append({
+                    "path": str(location.get("path") or location.get("relative_path") or ""),
+                    "error": str(exc),
+                })
+                continue
+
+            path_str = str(model_path)
+            try:
+                if model_path.exists() or model_path.is_symlink():
+                    if not model_path.is_file() and not model_path.is_symlink():
+                        result.errors.append({
+                            "path": path_str,
+                            "error": "Indexed model location is not a file",
+                        })
+                        continue
+                    model_path.unlink()
+                    result.deleted_paths.append(path_str)
+                else:
+                    result.missing_paths.append(path_str)
+
+                location_id = location.get("id")
+                if location_id is not None:
+                    model_repo.remove_location_by_id(int(location_id))
+                else:
+                    model_repo.remove_location_for_directory(
+                        Path(location["base_directory"]),
+                        location["relative_path"],
+                    )
+            except Exception as exc:
+                result.errors.append({
+                    "path": path_str,
+                    "error": str(exc),
+                })
+
+        model_repo.clear_orphaned_models()
+        model_repo.clear_orphaned_model_sources()
+        result.remaining_locations = len(model_repo.get_locations(details.model.hash))
+        return result
 
     def get_model_stats(self):
         """Get model index statistics for current directory.
