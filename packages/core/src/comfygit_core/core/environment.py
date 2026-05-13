@@ -35,6 +35,7 @@ from ..models.shared import (
     ManagerUpdateResult,
     ModelSourceResult,
     ModelSourceStatus,
+    NodeDevLinkResult,
     NodeInfo,
     NodeRemovalResult,
     UpdateResult,
@@ -666,6 +667,7 @@ class Environment:
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
+        self.git_manager.ensure_gitignore_entry("backups/")
         self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
         self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
         self._untrack_uvlock_if_tracked()
@@ -1506,6 +1508,26 @@ class Environment:
             extras=extras,
             all_extras=all_extras,
             **add_kwargs,
+        )
+
+    @_requires_env_lock
+    def link_development_node(
+        self,
+        identifier: str,
+        source_path: Path | str,
+        *,
+        name: str | None = None,
+        replace_existing: bool = False,
+        force: bool = False,
+    ) -> NodeDevLinkResult:
+        """Convert or add a custom node as a symlinked development checkout."""
+        self.git_manager.ensure_gitignore_entry("backups/")
+        return self.node_manager.link_development_node(
+            identifier,
+            source_path,
+            name=name,
+            replace_existing=replace_existing,
+            force=force,
         )
 
     @_requires_env_lock

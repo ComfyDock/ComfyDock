@@ -20,6 +20,7 @@ class TestGitManagerGitignore:
             content = (repo_path / ".gitignore").read_text(encoding="utf-8")
             assert "comfyui_builtins.json" in content
             assert "comfyui_folder_paths.json" in content
+            assert "backups/" in content
 
     def test_schema_migration_untracks_generated_comfyui_metadata(self, test_env):
         # Simulate an older environment created before generated metadata was ignored.
@@ -48,3 +49,4 @@ class TestGitManagerGitignore:
         gitignore = (test_env.cec_path / ".gitignore").read_text(encoding="utf-8")
         assert "comfyui_builtins.json" in gitignore
         assert "comfyui_folder_paths.json" in gitignore
+        assert "backups/" in gitignore

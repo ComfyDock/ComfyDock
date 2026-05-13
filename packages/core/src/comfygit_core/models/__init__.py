@@ -11,6 +11,7 @@ _EXPORTS: dict[str, str] = {
     "CDNodeNotFoundError": "exceptions",
     "CDRegistryError": "exceptions",
     "NodeInfo": "shared",
+    "NodeDevLinkResult": "shared",
     "ModelInfo": "shared",
     "ModelWithLocation": "shared",
     "NodePackage": "shared",

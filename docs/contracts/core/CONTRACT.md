@@ -306,6 +306,16 @@ authenticate GitHub API calls and git clone/fetch operations for private
 repositories. Those credentials must not be stored in environment manifests,
 export bundles, or committed provider-neutral provenance metadata.
 
+### CGCORE-SYNC-03C [LIVE]: Dev-link conversion preserves workflow package identity
+Validation: TEST
+
+When a tracked registry or git custom node is converted to a local development
+checkout, core must preserve the existing manifest node identifier so workflow
+`nodes` references remain valid. The conversion may replace the materialized
+custom node directory with a symlink to a developer-owned checkout, but any
+backup of the prior materialized node must live outside `custom_nodes` so sync
+and status do not classify the backup as an untracked custom node.
+
 ### CGCORE-SYNC-04 [PLANNED]: Build/runtime materialization fails on sync errors by default
 Validation: TEST
 

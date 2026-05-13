@@ -53,6 +53,9 @@ metadata/
 # logs
 logs/
 
+# Local safety backups
+backups/
+
 # Python cache
 __pycache__/
 *.pyc

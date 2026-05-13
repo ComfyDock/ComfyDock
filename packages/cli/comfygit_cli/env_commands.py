@@ -1799,6 +1799,50 @@ packages = []
 
         print(f"\nRun 'cg -e {env.name} status' to review changes")
 
+    @with_env_logging("node dev-link")
+    def node_dev_link(self, args: argparse.Namespace, logger=None) -> None:
+        """Link a tracked or new custom node to a local development checkout."""
+        env = self._get_env(args)
+
+        print(f"🔗 Linking development node: {args.node_name}")
+
+        try:
+            result = env.link_development_node(
+                args.node_name,
+                args.path,
+                name=getattr(args, "name", None),
+                replace_existing=getattr(args, "replace_existing", False),
+                force=getattr(args, "force", False),
+            )
+        except CDNodeConflictError as e:
+            if logger:
+                logger.error(f"Node dev-link conflict for '{args.node_name}': {e}", exc_info=True)
+            print(f"✗ Cannot link development node '{args.node_name}'", file=sys.stderr)
+            print(f"   {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            if logger:
+                logger.error(f"Node dev-link failed for '{args.node_name}': {e}", exc_info=True)
+            print(f"✗ Failed to link development node '{args.node_name}'", file=sys.stderr)
+            print(f"   {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if result.already_linked and not result.requirements_changed:
+            print(f"✓ Development node '{result.name}' is already linked")
+        else:
+            print(f"✓ Development node '{result.name}' linked and tracked")
+
+        print(f"   Identifier: {result.identifier}")
+        print(f"   Link: {result.link_path} -> {result.source_path}")
+        if result.backup_path:
+            print(f"   Archived previous copy: {result.backup_path}")
+        if result.requirements_changed:
+            print("   Python requirements updated")
+        if result.needs_restart:
+            print("   Restart ComfyUI for Python node changes to load")
+
+        print(f"\nRun 'cg -e {env.name} status' to review changes")
+
     @with_env_logging("node remove")
     def node_remove(self, args: argparse.Namespace, logger=None) -> None:
         """Remove custom node(s) - handles filesystem immediately."""

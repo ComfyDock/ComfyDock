@@ -978,6 +978,37 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     node_add_parser.set_defaults(func=env_cmds.node_add)
 
+    # node dev-link
+    node_dev_link_parser = node_subparsers.add_parser(
+        "dev-link",
+        help="Link a tracked node to a local development checkout",
+    )
+    node_dev_link_parser.add_argument(
+        "node_name",
+        help="Existing node identifier/name, or identifier to use for a new dev node",
+    ).completer = installed_node_completer  # type: ignore[attr-defined]
+    node_dev_link_parser.add_argument(
+        "--path",
+        required=True,
+        type=Path,
+        help="Path to the local custom-node development checkout",
+    )
+    node_dev_link_parser.add_argument(
+        "--name",
+        help="custom_nodes directory/symlink name to use when no tracked node exists",
+    )
+    node_dev_link_parser.add_argument(
+        "--replace-existing",
+        action="store_true",
+        help="Archive an existing materialized node directory and replace it with a symlink",
+    )
+    node_dev_link_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow replacing an existing mismatched symlink or directory",
+    )
+    node_dev_link_parser.set_defaults(func=env_cmds.node_dev_link)
+
     # node remove
     node_remove_parser = node_subparsers.add_parser("remove", help="Remove custom node(s)")
     node_remove_parser.add_argument("node_names", nargs="+", help="Node registry ID(s) or name(s)").completer = installed_node_completer  # type: ignore[attr-defined]

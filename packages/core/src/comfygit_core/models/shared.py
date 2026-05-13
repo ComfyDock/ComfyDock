@@ -219,6 +219,21 @@ class NodeRemovalResult:
     source: str  # 'development', 'registry', 'git'
     filesystem_action: str  # 'disabled', 'deleted'
 
+
+@dataclass
+class NodeDevLinkResult:
+    """Result from linking a custom node to a local development checkout."""
+
+    identifier: str
+    name: str
+    source_path: str
+    link_path: str
+    backup_path: str | None = None
+    already_linked: bool = False
+    requirements_changed: bool = False
+    needs_restart: bool = True
+
+
 # Progress and Utility Models
 
 @dataclass

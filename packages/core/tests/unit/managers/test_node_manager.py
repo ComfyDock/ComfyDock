@@ -1,9 +1,12 @@
 """Tests for NodeManager utilities."""
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import tomlkit
 from comfygit_core.managers.node_manager import NodeManager
+from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.exceptions import (
     CDDependencyConflictError,
     CDEnvironmentError,
@@ -126,6 +129,133 @@ class TestNodeManager:
         # Verify .disabled was removed
         assert not disabled_dir.exists()
         assert not (custom_nodes_dir / "test-node.disabled").exists()
+
+
+class TestNodeManagerDevLink:
+    """Tests for CGCORE-SYNC-03C dev-link conversion behavior."""
+
+    def _create_node_manager(self, tmp_path):
+        pyproject_path = tmp_path / "pyproject.toml"
+        custom_nodes_dir = tmp_path / "custom_nodes"
+        custom_nodes_dir.mkdir()
+
+        initial_config = {
+            "project": {
+                "name": "test-project",
+                "version": "0.1.0",
+                "requires-python": ">=3.11",
+                "dependencies": [],
+            },
+            "tool": {
+                "comfygit": {
+                    "comfyui_version": "v0.3.60",
+                    "python_version": "3.11",
+                    "nodes": {
+                        "registry-node": {
+                            "name": "RegistryNode",
+                            "registry_id": "registry-node",
+                            "repository": "https://github.com/example/registry-node",
+                            "version": "1.2.3",
+                            "download_url": "https://example.invalid/node.zip",
+                            "source": "registry",
+                            "criticality": "required",
+                        }
+                    },
+                    "workflows": {
+                        "workflow": {
+                            "path": "workflows/workflow.json",
+                            "nodes": ["registry-node", "other-node"],
+                        }
+                    },
+                }
+            },
+        }
+
+        with open(pyproject_path, "w") as f:
+            tomlkit.dump(initial_config, f)
+
+        pyproject = PyprojectManager(pyproject_path)
+        mock_uv = Mock()
+        mock_node_lookup = Mock()
+        mock_node_lookup.scan_requirements.return_value = []
+
+        manager = NodeManager(
+            pyproject=pyproject,
+            uv=mock_uv,
+            node_lookup=mock_node_lookup,
+            resolution_tester=Mock(),
+            custom_nodes_path=custom_nodes_dir,
+            node_repository=Mock(),
+        )
+
+        return manager, pyproject, pyproject_path, custom_nodes_dir, mock_uv
+
+    def test_dev_link_converts_registry_node_preserving_workflow_identifier(self, tmp_path):
+        manager, pyproject, _, custom_nodes_dir, mock_uv = self._create_node_manager(tmp_path)
+
+        installed = custom_nodes_dir / "RegistryNode"
+        installed.mkdir()
+        (installed / "old.py").write_text("# old")
+
+        dev_repo = tmp_path / "dev-registry-node"
+        dev_repo.mkdir()
+        (dev_repo / "nodes.py").write_text("# dev")
+
+        result = manager.link_development_node(
+            "registry-node",
+            dev_repo,
+            replace_existing=True,
+        )
+
+        assert result.identifier == "registry-node"
+        assert result.name == "RegistryNode"
+        assert result.backup_path is not None
+        assert custom_nodes_dir not in (Path(result.backup_path), *Path(result.backup_path).parents)
+
+        linked = custom_nodes_dir / "RegistryNode"
+        assert linked.is_symlink()
+        assert linked.resolve() == dev_repo
+        assert (Path(result.backup_path) / "old.py").read_text() == "# old"
+
+        nodes = pyproject.nodes.get_existing()
+        assert set(nodes) == {"registry-node"}
+        node = nodes["registry-node"]
+        assert node.name == "RegistryNode"
+        assert node.version == "dev"
+        assert node.source == "development"
+        assert node.registry_id is None
+        assert node.download_url is None
+
+        workflow = pyproject.workflows.get_workflow("workflow")
+        assert workflow["nodes"] == ["registry-node", "other-node"]
+        mock_uv.sync_project.assert_not_called()
+
+    def test_dev_link_is_idempotent_when_already_linked(self, tmp_path):
+        manager, _, pyproject_path, custom_nodes_dir, _ = self._create_node_manager(tmp_path)
+
+        installed = custom_nodes_dir / "RegistryNode"
+        installed.mkdir()
+
+        dev_repo = tmp_path / "dev-registry-node"
+        dev_repo.mkdir()
+        (dev_repo / "nodes.py").write_text("# dev")
+
+        first = manager.link_development_node(
+            "registry-node",
+            dev_repo,
+            replace_existing=True,
+        )
+        before = pyproject_path.read_bytes()
+        backup_count = len(list((pyproject_path.parent / "backups" / "custom_nodes").iterdir()))
+
+        second = manager.link_development_node("registry-node", dev_repo)
+
+        assert second.already_linked is True
+        assert second.needs_restart is False
+        assert second.backup_path is None
+        assert pyproject_path.read_bytes() == before
+        assert len(list((pyproject_path.parent / "backups" / "custom_nodes").iterdir())) == backup_count
+        assert first.backup_path is not None
 
 
 class TestNodeManagerProbeMode:

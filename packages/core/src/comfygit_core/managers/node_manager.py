@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,13 @@ from ..models.exceptions import (
     NodeAction,
     NodeConflictContext,
 )
-from ..models.shared import NodeInfo, NodePackage, NodeRemovalResult, UpdateResult
+from ..models.shared import (
+    NodeDevLinkResult,
+    NodeInfo,
+    NodePackage,
+    NodeRemovalResult,
+    UpdateResult,
+)
 from ..services.dependency_resolution_preview import DependencyResolutionPreviewService
 from ..services.node_lookup_service import NodeLookupService
 from ..strategies.confirmation import AutoConfirmStrategy, ConfirmationStrategy
@@ -116,6 +123,31 @@ class NodeManager:
             if node_info.name.lower() == name_lower:
                 return identifier, node_info
         return None
+
+    def _find_node_by_identifier_or_name(self, identifier: str) -> tuple[str, NodeInfo] | None:
+        """Find a node by manifest identifier first, then by node directory name."""
+        existing_nodes = self.pyproject.nodes.get_existing()
+        identifier_lower = identifier.lower()
+
+        for key, node_info in existing_nodes.items():
+            if key.lower() == identifier_lower:
+                return key, node_info
+
+        return self._find_node_by_name(identifier)
+
+    def _custom_node_backup_path(self, node_name: str) -> Path:
+        """Return an unused backup path outside custom_nodes for a materialized node copy."""
+        backup_root = self.pyproject.path.parent / "backups" / "custom_nodes"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base_path = backup_root / f"{node_name}.registry-backup-{timestamp}"
+
+        candidate = base_path
+        suffix = 1
+        while candidate.exists() or candidate.is_symlink():
+            candidate = backup_root / f"{base_path.name}.{suffix}"
+            suffix += 1
+
+        return candidate
 
     def _install_node_from_info(self, node_info: NodeInfo, no_test: bool = False) -> NodeInfo:
         """Install a node given a pre-fetched NodeInfo object.
@@ -620,6 +652,171 @@ class NodeManager:
 
         logger.info(f"Successfully added node '{node_package.name}'")
         return node_package.node_info
+
+    def link_development_node(
+        self,
+        identifier: str,
+        source_path: Path | str,
+        *,
+        name: str | None = None,
+        replace_existing: bool = False,
+        force: bool = False,
+    ) -> NodeDevLinkResult:
+        """Convert or add a node as a symlinked local development checkout.
+
+        Unlike ``add_node(..., is_development=True)``, this operation preserves
+        the existing manifest identifier when converting a tracked registry/git
+        node so workflow node package references remain valid.
+        """
+        source = Path(source_path).expanduser().resolve(strict=True)
+        if not source.is_dir():
+            raise CDEnvironmentError(f"Development node path is not a directory: {source}")
+
+        existing_entry = self._find_node_by_identifier_or_name(identifier)
+        actual_identifier = existing_entry[0] if existing_entry else identifier
+        existing_node = existing_entry[1] if existing_entry else None
+        node_name = name or (existing_node.name if existing_node else source.name)
+        target_path = self.custom_nodes_path / node_name
+
+        git_info = get_node_git_info(source)
+        node_info = NodeInfo(
+            name=node_name,
+            repository=git_info.remote_url if git_info and git_info.remote_url else None,
+            version="dev",
+            source="development",
+            dependency_sources=(
+                existing_node.dependency_sources
+                if existing_node and existing_node.source == "development"
+                else None
+            ),
+            criticality=existing_node.criticality if existing_node else "required",
+            branch=git_info.branch if git_info and git_info.branch else None,
+            pinned_commit=git_info.commit if git_info and git_info.commit else None,
+        )
+
+        target_exists = target_path.exists() or target_path.is_symlink()
+        already_linked = False
+        if target_exists:
+            try:
+                already_linked = target_path.resolve(strict=True) == source
+            except FileNotFoundError:
+                already_linked = False
+
+        if target_exists and not already_linked and not (replace_existing or force):
+            raise CDNodeConflictError(
+                f"custom_nodes/{node_name} already exists. "
+                "Use --replace-existing to archive it and create a dev symlink."
+            )
+
+        requirements = self.node_lookup.scan_requirements(source, package_config=self.package_config)
+        dependency_groups = self.pyproject.dependencies.get_groups()
+        old_requirements: list[str] = []
+        if existing_node:
+            old_group_identifier = existing_node.registry_id if existing_node.registry_id else existing_node.name
+            old_group = self.pyproject.nodes.generate_group_name(existing_node, old_group_identifier)
+            old_requirements = dependency_groups.get(old_group, [])
+
+        new_group = self.pyproject.nodes.generate_group_name(node_info, actual_identifier)
+        stored_new_requirements = dependency_groups.get(new_group, [])
+        requirements_changed = set(old_requirements) != set(requirements)
+        requirements_current = set(stored_new_requirements) == set(requirements)
+
+        if (
+            already_linked
+            and existing_node
+            and existing_node.source == "development"
+            and existing_node.name == node_info.name
+            and existing_node.repository == node_info.repository
+            and existing_node.version == node_info.version
+            and existing_node.criticality == node_info.criticality
+            and existing_node.branch == node_info.branch
+            and existing_node.pinned_commit == node_info.pinned_commit
+            and requirements_current
+        ):
+            return NodeDevLinkResult(
+                identifier=actual_identifier,
+                name=node_name,
+                source_path=str(source),
+                link_path=str(target_path),
+                already_linked=True,
+                requirements_changed=False,
+                needs_restart=False,
+            )
+
+        pyproject_snapshot = self.pyproject.snapshot()
+        backup_path: Path | None = None
+
+        try:
+            self.custom_nodes_path.mkdir(parents=True, exist_ok=True)
+
+            if target_exists and not already_linked:
+                backup_path = self._custom_node_backup_path(node_name)
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target_path), str(backup_path))
+                logger.info("Archived existing node '%s' to %s", node_name, backup_path)
+
+            if not target_exists:
+                target_path.symlink_to(source, target_is_directory=True)
+                logger.info("Linked development node '%s' -> %s", node_name, source)
+            elif target_exists and not already_linked:
+                target_path.symlink_to(source, target_is_directory=True)
+                logger.info("Linked development node '%s' -> %s", node_name, source)
+
+            if existing_node:
+                self.pyproject.nodes.remove(actual_identifier)
+
+            existing_sources = self.pyproject.uv_config.get_source_names()
+            if requirements:
+                self.uv.add_requirements_with_sources(
+                    requirements,
+                    group=new_group,
+                    no_sync=True,
+                    raw=True,
+                )
+
+            new_sources = self.pyproject.uv_config.get_source_names() - existing_sources
+            if new_sources:
+                node_info.dependency_sources = sorted(new_sources)
+
+            self.pyproject.nodes.add(node_info, actual_identifier)
+
+            if existing_node and existing_node.dependency_sources:
+                self.pyproject.uv_config.cleanup_orphaned_sources(existing_node.dependency_sources)
+
+            if requirements_changed:
+                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+
+        except Exception:
+            logger.warning("Dev-link failed for '%s', rolling back", node_name, exc_info=True)
+            self.pyproject.restore(pyproject_snapshot)
+
+            if not already_linked and (target_path.exists() or target_path.is_symlink()):
+                try:
+                    if target_path.is_symlink():
+                        target_path.unlink()
+                    else:
+                        rmtree(target_path)
+                except Exception as cleanup_err:
+                    logger.error("Failed to clean up dev-link target during rollback: %s", cleanup_err)
+
+            if backup_path and (backup_path.exists() or backup_path.is_symlink()) and not target_path.exists():
+                try:
+                    shutil.move(str(backup_path), str(target_path))
+                except Exception as restore_err:
+                    logger.error("Failed to restore archived node during rollback: %s", restore_err)
+
+            raise
+
+        return NodeDevLinkResult(
+            identifier=actual_identifier,
+            name=node_name,
+            source_path=str(source),
+            link_path=str(target_path),
+            backup_path=str(backup_path) if backup_path else None,
+            already_linked=already_linked,
+            requirements_changed=requirements_changed,
+            needs_restart=True,
+        )
 
     def apply_reviewed_dependency_changes(
         self,
