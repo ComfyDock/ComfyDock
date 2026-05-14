@@ -9,6 +9,7 @@ import { OutputViewer } from "@/components/OutputViewer";
 import { Button } from "@/components/ui/button";
 import { ApiError, apiJson } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { getStudioRuntimeConfig } from "@/lib/runtime-config";
 import {
   columnCountForWidth,
   galleryItemsFromOutputs,
@@ -16,6 +17,7 @@ import {
   galleryPhoto,
   mergeGalleryItems,
   normalizeGalleryItems,
+  pendingGalleryItemsFromContract,
   reconcileGalleryItems,
   removeRunPendingItems,
   visibleGalleryItems,
@@ -31,6 +33,7 @@ import type {
   HealthResponse,
   RunIssue,
   RunResponse,
+  StudioSessionResponse,
 } from "@/types";
 
 const GALLERY_INITIAL_BATCH = 72;
@@ -51,12 +54,24 @@ export function App() {
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [galleryRenderCount, setGalleryRenderCount] = useState(GALLERY_INITIAL_BATCH);
+  const [studioSession, setStudioSession] = useState<StudioSessionResponse | null>(null);
+  const [studioPasscode, setStudioPasscode] = useState("");
+  const [studioAuthError, setStudioAuthError] = useState("");
+  const [studioAuthBusy, setStudioAuthBusy] = useState(false);
   const galleryScrollRef = useRef<HTMLDivElement | null>(null);
+  const endpointAuthEnabled = getStudioRuntimeConfig().authMode === "endpoint";
 
   const loadGallery = useCallback(async () => {
     const nextGallery = await apiJson<GalleryResponse>("/gallery");
     setGallery((current) => reconcileGalleryItems(nextGallery.items || [], current));
   }, []);
+
+  const loadStudioSession = useCallback(async () => {
+    if (!endpointAuthEnabled) return null;
+    const nextSession = await apiJson<StudioSessionResponse>("/studio-session");
+    setStudioSession(nextSession);
+    return nextSession;
+  }, [endpointAuthEnabled]);
 
   useEffect(() => {
     void refresh();
@@ -94,6 +109,11 @@ export function App() {
   const refresh = useCallback(async () => {
     setStatus("Loading contracts");
     try {
+      const nextSession = await loadStudioSession();
+      if (endpointAuthEnabled && !nextSession?.studio_session.authenticated) {
+        setStatus("Studio locked");
+        return;
+      }
       const [nextContracts, nextHealth] = await Promise.all([
         apiJson<ContractsResponse>("/contracts"),
         apiJson<HealthResponse>("/health"),
@@ -105,7 +125,28 @@ export function App() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not load contracts");
     }
-  }, [loadGallery]);
+  }, [endpointAuthEnabled, loadGallery, loadStudioSession]);
+
+  const submitStudioPasscode = useCallback(async () => {
+    const passcode = studioPasscode.trim();
+    if (!passcode || studioAuthBusy) return;
+    setStudioAuthBusy(true);
+    setStudioAuthError("");
+    try {
+      const nextSession = await apiJson<StudioSessionResponse>("/studio-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passcode }),
+      });
+      setStudioSession(nextSession);
+      setStudioPasscode("");
+      await refresh();
+    } catch (error) {
+      setStudioAuthError(error instanceof Error ? error.message : "Incorrect password.");
+    } finally {
+      setStudioAuthBusy(false);
+    }
+  }, [refresh, studioAuthBusy, studioPasscode]);
 
   const runSelected = useCallback(async () => {
     if (!selected || generationInProgress) return;
@@ -139,7 +180,9 @@ export function App() {
         ? normalizeGalleryItems(result.gallery_items)
         : result.output_slots?.length
           ? galleryItemsFromSlots(result.output_slots, selected, displayInputs)
-        : galleryItemsFromOutputs(result, selected, displayInputs);
+          : result.outputs?.length
+            ? galleryItemsFromOutputs(result, selected, displayInputs)
+            : pendingGalleryItemsFromContract(result, selected, displayInputs);
       if (nextItems.length) {
         setGallery((current) => mergeGalleryItems(nextItems, current));
       } else {
@@ -222,6 +265,9 @@ export function App() {
       : health.comfyui?.available
         ? "ComfyUI online"
         : "ComfyUI unavailable";
+  const studioGate = studioSession?.studio_session;
+  const studioLocked = endpointAuthEnabled && studioGate && !studioGate.authenticated;
+  const studioDisabled = endpointAuthEnabled && studioGate && !studioGate.studio_enabled;
 
   useEffect(() => {
     setGalleryRenderCount((current) =>
@@ -334,7 +380,20 @@ export function App() {
           </Button>
         </div>
 
-        {contracts.length ? (
+        {studioDisabled ? (
+          <section className="runner-card">
+            <p>Studio is disabled.</p>
+          </section>
+        ) : studioLocked ? (
+          <StudioAuthGate
+            mode={studioGate.studio_auth_mode}
+            passcode={studioPasscode}
+            error={studioAuthError}
+            busy={studioAuthBusy}
+            onPasscodeChange={setStudioPasscode}
+            onSubmit={() => void submitStudioPasscode()}
+          />
+        ) : contracts.length ? (
           <section className="contract-picker" aria-label="Select contract">
             <Field label="Workflow contract">
               <StudioSelect
@@ -351,7 +410,7 @@ export function App() {
           </section>
         ) : null}
 
-        {selected ? (
+        {!studioLocked && !studioDisabled && selected ? (
           <section className="runner-card">
             <div className="input-stack">
               {selected.inputs.map((input) => (
@@ -395,11 +454,11 @@ export function App() {
               </Button>
             ) : null}
           </section>
-        ) : (
+        ) : !studioLocked && !studioDisabled ? (
           <section className="runner-card">
             <p>No contracts found in this environment.</p>
           </section>
-        )}
+        ) : null}
 
         {rawResult && !visibleGallery.length ? (
           <section className="raw-card">
@@ -420,6 +479,57 @@ export function App() {
         />
       ) : null}
     </main>
+  );
+}
+
+function StudioAuthGate({
+  mode,
+  passcode,
+  error,
+  busy,
+  onPasscodeChange,
+  onSubmit,
+}: {
+  mode: string;
+  passcode: string;
+  error: string;
+  busy: boolean;
+  onPasscodeChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  if (mode !== "passcode") {
+    return (
+      <section className="runner-card">
+        <p>Studio access requires an owner launch session.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="runner-card">
+      <form
+        className="studio-auth-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSubmit();
+        }}
+      >
+        <div>
+          <p className="eyebrow">Studio Access</p>
+          <h2>Enter password</h2>
+        </div>
+        <input
+          type="password"
+          value={passcode}
+          onChange={(event) => onPasscodeChange(event.target.value)}
+          autoComplete="current-password"
+          autoFocus
+        />
+        {error ? <p className="auth-error">{error}</p> : null}
+        <Button type="submit" className="generate-button" disabled={busy || !passcode.trim()} loading={busy}>
+          Enter Studio
+        </Button>
+      </form>
+    </section>
   );
 }
 

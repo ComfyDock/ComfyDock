@@ -80,6 +80,39 @@ export function galleryItemsFromSlots(
   });
 }
 
+export function pendingGalleryItemsFromContract(
+  result: RunResponse,
+  selected: SelectedContract,
+  displayInputs: Record<string, unknown>,
+) {
+  const runId = result.run_id || result.id;
+  if (!runId) return [];
+  const createdAt = new Date().toISOString();
+  return selected.outputs.map((output, index) => {
+    const declaredType = String(output.type || "").toLowerCase();
+    const type: GalleryItem["type"] =
+      declaredType === "image" || declaredType === "video" || declaredType === "audio"
+        ? declaredType
+        : "json";
+    return {
+      id: `gallery_${runId}_${index}_${output.name}`,
+      run_id: runId,
+      contract: contractTitle(selected),
+      contractWorkflow: selected.workflow,
+      contractName: selected.contract,
+      promptId: result.prompt_id,
+      outputName: output.name,
+      type,
+      status: "pending",
+      width: mediaWidth(type, undefined),
+      height: mediaHeight(type, undefined),
+      inputs: displayInputs,
+      rawResult: result,
+      createdAt,
+    } satisfies GalleryItem;
+  });
+}
+
 export function visibleGalleryItems(items: GalleryItem[]) {
   return items.filter((item) => item.status !== "cancelled" && (item.status !== "error" || item.error));
 }
@@ -120,12 +153,49 @@ export function columnCountForWidth(width: number) {
 }
 
 function normalizeGalleryItem(item: GalleryItem) {
+  const snakeItem = item as GalleryItem & {
+    run_id?: string;
+    slot_id?: string;
+    contract_slug?: string;
+    output_name?: string;
+    prompt_id?: string;
+    created_at?: string;
+    updated_at?: string;
+  };
+  const artifact = item.artifact as
+    | (GalleryItem["artifact"] & { download_url?: string; media_type?: string })
+    | undefined;
   return {
     ...item,
+    run_id: item.run_id || snakeItem.run_id,
+    slotId: item.slotId || snakeItem.slot_id,
+    contract: item.contract || snakeItem.contract_slug || "Contract",
+    contractName: item.contractName || snakeItem.contract_slug,
+    promptId: item.promptId || snakeItem.prompt_id,
+    outputName: item.outputName || snakeItem.output_name,
+    url: item.url || artifact?.download_url || artifact?.url,
+    type: item.type || mediaTypeToOutputType(artifact?.media_type),
+    status: normalizeGalleryStatus(item.status),
     width: Math.max(1, Number(item.width || 1)),
     height: Math.max(1, Number(item.height || 1)),
-    createdAt: item.createdAt || new Date().toISOString(),
+    createdAt: item.createdAt || snakeItem.created_at || new Date().toISOString(),
   };
+}
+
+function mediaTypeToOutputType(mediaType: string | undefined): GalleryItem["type"] | undefined {
+  if (!mediaType) return undefined;
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("video/")) return "video";
+  if (mediaType.startsWith("audio/")) return "audio";
+  return undefined;
+}
+
+function normalizeGalleryStatus(status: GalleryItem["status"] | string): GalleryItem["status"] {
+  if (status === "completed") return "done";
+  if (status === "queued" || status === "submitted" || status === "running") return "pending";
+  if (status === "failed") return "error";
+  if (status === "done" || status === "pending" || status === "error" || status === "cancelled") return status;
+  return "pending";
 }
 
 function galleryStatusForSlot(status: RunOutputSlot["status"]): GalleryItem["status"] {

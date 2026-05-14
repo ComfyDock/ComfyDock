@@ -30,7 +30,6 @@ packages = ["comfygit_cli"]
 [tool.hatch.build.targets.sdist]
 include = [
     "comfygit_cli",
-    "contract-studio",
     "pyproject.toml",
     "README.md",
     "LICENSE.txt",

@@ -1,18 +1,22 @@
 # Contract Studio Agent Notes
 
-This directory is a Vite/React frontend embedded in the ComfyGit CLI package.
-It builds into `packages/cli/comfygit_cli/contract_studio_static/`, which is
-served by `cg serve`.
+This directory is the shared ComfyGit Studio Vite/React frontend package. It is
+consumed by local `cg serve` and by hosted Cloud published endpoints. The CLI
+serves a built static copy from `packages/cli/comfygit_cli/studio_static/`;
+Cloud should import or serve the same package instead of maintaining a parallel
+playground UI.
 
 ## File Layout
 
 - `src/main.tsx`: React bootstrap only. Do not put app logic here.
+- `src/index.tsx`: package entrypoint for hosts embedding Studio.
 - `src/App.tsx`: top-level Studio state and page composition. Keep detailed
   rendering and reusable behavior in components or `src/lib/`.
 - `src/types.ts`: shared API and UI types for contracts, runs, uploads, and
   gallery items.
 - `src/lib/`: pure helpers and frontend service functions.
-  - `api.ts`: `cg serve` API calls and upload transport.
+  - `api.ts`: Studio API calls and upload transport.
+  - `runtime-config.ts`: host-provided API base path and auth configuration.
   - `inputs.ts`: contract input defaults, normalization, and upload prep.
   - `format.ts`: display formatting, output typing, dimensions, and JSON
     redaction helpers.
@@ -33,12 +37,13 @@ served by `cg serve`.
 - Put broadly reusable primitives in `src/components/ui/` only when they are
   genuinely general UI building blocks.
 - Keep generated/static output changes intentional. Running `npm run build`
-  rewrites files under `../comfygit_cli/contract_studio_static/`.
+  rewrites files under `dist/static/`; CLI packaging copies that build into
+  `packages/cli/comfygit_cli/studio_static/`.
 - If changing image/video/gallery behavior, check `GalleryTile`,
   `OutputViewer`, `Media`, and the gallery styles before creating a parallel
   implementation.
-- If changing contract request behavior, check `src/lib/api.ts` and
-  `src/lib/inputs.ts` first.
+- If changing contract request behavior, check `src/lib/api.ts`,
+  `src/lib/runtime-config.ts`, and `src/lib/inputs.ts` first.
 
 ## Validation
 

@@ -576,14 +576,28 @@ def _serve_artifact_dir(env: Environment, config: ServeConfig) -> Path:
 
 
 def _studio_static_dir() -> Path:
-    return Path(str(resources.files("comfygit_cli").joinpath("contract_studio_static")))
+    return Path(str(resources.files("comfygit_cli").joinpath("studio_static")))
 
 
 async def studio_index_handler(request: web.Request) -> web.StreamResponse:
     static_dir = request.app[STUDIO_STATIC_DIR_KEY]
     index_path = static_dir / "index.html"
     if index_path.exists():
-        return web.FileResponse(index_path)
+        html = index_path.read_text(encoding="utf-8")
+        env_name = getattr(_state(request).env, "name", "Environment")
+        config = {
+            "apiBasePath": "",
+            "authMode": "none",
+            "endpointName": env_name if isinstance(env_name, str) else "Environment",
+        }
+        script = f"<script>window.__COMFYGIT_STUDIO_CONFIG__ = {json.dumps(config)};</script>"
+        if "<head>" in html:
+            html = html.replace("<head>", f"<head>{script}", 1)
+        elif "</head>" in html:
+            html = html.replace("</head>", f"{script}</head>", 1)
+        else:
+            html = f"{script}{html}"
+        return web.Response(text=html, content_type="text/html")
     return web.Response(
         text=(
             "<!doctype html><html><head><title>ComfyGit Studio</title></head>"

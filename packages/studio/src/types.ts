@@ -50,6 +50,22 @@ export type HealthResponse = {
   };
 };
 
+export type StudioSessionStatus = {
+  authenticated: boolean;
+  studio_enabled: boolean;
+  studio_auth_required: boolean;
+  studio_auth_mode: "owner_only" | "passcode" | string;
+  studio_auth_configured: boolean;
+};
+
+export type StudioSessionResponse = {
+  published_endpoint?: {
+    name?: string;
+    studio_url?: string | null;
+  };
+  studio_session: StudioSessionStatus;
+};
+
 export type RunIssue = {
   code: string;
   message: string;
@@ -93,6 +109,7 @@ export type RunOutputSlot = {
 };
 
 export type RunResponse = {
+  id?: string;
   status: string;
   run_id?: string;
   prompt_id?: string;

@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
@@ -10,7 +11,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../comfygit_cli/contract_studio_static",
+    outDir: "dist/static",
     emptyOutDir: true,
   },
   server: {
@@ -22,6 +23,7 @@ export default defineConfig({
       "/health": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/outputs": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/runs": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
+      "/studio-session": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
       "/uploads": process.env.CG_STUDIO_API || "http://127.0.0.1:8787",
     },
   },

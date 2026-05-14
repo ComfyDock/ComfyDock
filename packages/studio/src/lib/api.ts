@@ -1,4 +1,5 @@
 import type { FileInputValue, FileRef, UploadPrepareResponse } from "@/types";
+import { studioApiPath } from "@/lib/runtime-config";
 
 const SESSION_STORAGE_KEY = "comfygit_studio_session";
 
@@ -15,7 +16,7 @@ export class ApiError extends Error {
 }
 
 export async function apiJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(studioApiPath(path), {
     ...options,
     headers: requestHeaders(options?.headers),
   });
@@ -74,7 +75,7 @@ export async function uploadInputFile(value: FileInputValue): Promise<FileRef> {
       size: value.size,
     }),
   });
-  const response = await fetch(slot.upload_url, {
+  const response = await fetch(studioApiPath(slot.upload_url), {
     method: slot.method || "PUT",
     headers: slot.headers || { "content-type": value.mime_type },
     body: value.file,

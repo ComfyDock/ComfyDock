@@ -1543,6 +1543,27 @@ textarea::placeholder {
   animation: mediaShimmer 1.1s var(--ease-soft) infinite;
 }
 
+.studio-auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.studio-auth-form h2 {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 660;
+}
+
+.studio-auth-form input {
+  width: 100%;
+}
+
+.auth-error {
+  margin: 0;
+  color: hsl(var(--destructive));
+  font-size: 13px;
+}
+
 @media (max-width: 980px) {
   .studio-shell {
     position: static;
