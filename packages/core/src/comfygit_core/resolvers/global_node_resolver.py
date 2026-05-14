@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from comfygit_core.models.workflow import (
     NodeResolutionContext,
@@ -159,7 +160,7 @@ class GlobalNodeResolver:
                 ]
             assert isinstance(mapping, str)  # Should be Package ID
             logger.debug(f"Custom mapping for {node_type}: {mapping}")
-            return [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping")]
+            return [self._create_resolved_package_from_id(mapping, node_type, "custom_mapping", context)]
 
         # Priority 2: Properties field (cnr_id from ComfyUI)
         raw_cnr_id = node.properties.get('cnr_id') if node.properties else None
@@ -188,7 +189,7 @@ class GlobalNodeResolver:
                 mapping_result = self._prefer_installable_candidates(mapping_result)
                 selected = None
                 if context:
-                    selected = self._auto_select_best_package(mapping_result, context.installed_packages)
+                    selected = self._auto_select_best_package(mapping_result, context)
                 else:
                     selected = min(mapping_result, key=lambda x: x.rank or 999)
 
@@ -231,7 +232,7 @@ class GlobalNodeResolver:
             result = self._prefer_installable_candidates(mapping_result)
             # Apply auto-selection logic if enabled and multiple packages found
             if context and context.auto_select_ambiguous and len(result) > 1:
-                selected = self._auto_select_best_package(result, context.installed_packages)
+                selected = self._auto_select_best_package(result, context)
                 return [selected]
             return result
 
@@ -242,7 +243,7 @@ class GlobalNodeResolver:
     def _auto_select_best_package(
         self,
         packages: list[ResolvedNodePackage],
-        installed_packages: dict
+        context: NodeResolutionContext
     ) -> ResolvedNodePackage:
         """Auto-select best package from ranked list based on installed state.
 
@@ -252,15 +253,20 @@ class GlobalNodeResolver:
 
         Args:
             packages: List of ranked packages from registry
-            installed_packages: Dict of installed packages {package_id: NodeInfo}
+            context: Resolution context with installed packages and aliases
 
         Returns:
             Single best package
         """
+        normalized_packages = [
+            self._normalize_candidate_for_context(pkg, context)
+            for pkg in packages
+        ]
+
         # Find installed packages from the candidates
         installed_candidates = [
-            pkg for pkg in packages
-            if pkg.package_id in installed_packages
+            pkg for pkg in normalized_packages
+            if context.resolve_installed_package_id(pkg.package_id)
         ]
 
         if installed_candidates:
@@ -268,15 +274,15 @@ class GlobalNodeResolver:
             best = min(installed_candidates, key=lambda x: x.rank or 999)
             logger.debug(
                 f"Auto-selected {best.package_id} (rank {best.rank}, installed) "
-                f"over {len(packages)-1} other option(s)"
+                f"over {len(normalized_packages)-1} other option(s)"
             )
             return best
 
         # No installed packages - pick rank 1 (most popular)
-        best = min(packages, key=lambda x: x.rank or 999)
+        best = min(normalized_packages, key=lambda x: x.rank or 999)
         logger.debug(
             f"Auto-selected {best.package_id} (rank {best.rank}, most popular) "
-            f"from {len(packages)} option(s)"
+            f"from {len(normalized_packages)} option(s)"
         )
         return best
 
@@ -284,7 +290,8 @@ class GlobalNodeResolver:
         self,
         pkg_id: str,
         node_type: str,
-        match_type: str
+        match_type: str,
+        context: NodeResolutionContext | None = None,
     ) -> ResolvedNodePackage:
         """Create ResolvedNodePackage from package ID.
 
@@ -296,7 +303,8 @@ class GlobalNodeResolver:
         Returns:
             ResolvedNodePackage instance
         """
-        canonical_pkg_id = self.repository.canonicalize_package_id(pkg_id) or pkg_id
+        installed_pkg_id = context.resolve_installed_package_id(pkg_id) if context else None
+        canonical_pkg_id = installed_pkg_id or self.repository.canonicalize_package_id(pkg_id) or pkg_id
         pkg_data = self.repository.get_package(canonical_pkg_id)
 
         return ResolvedNodePackage(
@@ -307,6 +315,26 @@ class GlobalNodeResolver:
             match_type=match_type,
             match_confidence=1.0,
             source=pkg_data.source if pkg_data else None
+        )
+
+    def _normalize_candidate_for_context(
+        self,
+        candidate: ResolvedNodePackage,
+        context: NodeResolutionContext | None,
+    ) -> ResolvedNodePackage:
+        if not context or not candidate.package_id:
+            return candidate
+
+        installed_pkg_id = context.resolve_installed_package_id(candidate.package_id)
+        if not installed_pkg_id or installed_pkg_id == candidate.package_id:
+            return candidate
+
+        pkg_data = self.repository.get_package(installed_pkg_id) or candidate.package_data
+        return replace(
+            candidate,
+            package_id=installed_pkg_id,
+            package_data=pkg_data,
+            source=pkg_data.source if pkg_data else candidate.source,
         )
 
     def _prefer_installable_candidates(

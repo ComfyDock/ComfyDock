@@ -27,6 +27,7 @@ def workflow_manager(tmp_path):
                 environment_name="test-env",
                 builtin_versions_repository=None,
             )
+            manager.pyproject.nodes.get_existing.return_value = {}
             return manager
 
 
@@ -140,6 +141,82 @@ def test_normalize_package_id_keeps_original_when_alias_unknown(workflow_manager
     normalized = workflow_manager._normalize_package_id("unknown-pkg")
 
     assert normalized == "unknown-pkg"
+
+
+def test_normalize_package_id_uses_exact_installed_alias(workflow_manager):
+    """Installed node names should normalize to their manifest package ID."""
+    from comfygit_core.models.shared import NodeInfo
+
+    workflow_manager.pyproject.nodes.get_existing.return_value = {
+        "comfyui-deforum": NodeInfo(
+            name="ComfyUI-Deforum",
+            registry_id="comfyui-deforum",
+            source="development",
+        )
+    }
+
+    normalized = workflow_manager._normalize_package_id("ComfyUI-Deforum")
+
+    assert normalized == "comfyui-deforum"
+
+
+def test_normalize_package_id_does_not_use_ambiguous_installed_alias(workflow_manager):
+    """Duplicate installed node aliases should not be normalized."""
+    from comfygit_core.models.shared import NodeInfo
+
+    workflow_manager.pyproject.nodes.get_existing.return_value = {
+        "package-a": NodeInfo(name="SharedName", source="development"),
+        "package-b": NodeInfo(name="SharedName", source="development"),
+    }
+    workflow_manager.node_mapping_repository.canonicalize_package_id.return_value = None
+
+    normalized = workflow_manager._normalize_package_id("SharedName")
+
+    assert normalized == "SharedName"
+
+
+def test_consensus_custom_node_map_reuses_installed_mappings(workflow_manager):
+    """New workflows should reuse unambiguous mappings from existing workflows."""
+    from comfygit_core.models.shared import NodeInfo
+
+    workflow_manager.pyproject.nodes.get_existing.return_value = {
+        "comfyui-deforum": NodeInfo(
+            name="ComfyUI-Deforum",
+            registry_id="comfyui-deforum",
+            source="development",
+        )
+    }
+    workflow_manager.pyproject.workflows.get_all_with_resolutions.return_value = {
+        "existing": {
+            "custom_node_map": {
+                "DeforumGetNode": "ComfyUI-Deforum",
+            }
+        },
+        "new_workflow": {},
+    }
+
+    consensus = workflow_manager._get_consensus_custom_node_map("new_workflow")
+
+    assert consensus == {"DeforumGetNode": "comfyui-deforum"}
+
+
+def test_consensus_custom_node_map_ignores_conflicts(workflow_manager):
+    """Conflicting mappings should not be reused across workflows."""
+    from comfygit_core.models.shared import NodeInfo
+
+    workflow_manager.pyproject.nodes.get_existing.return_value = {
+        "package-a": NodeInfo(name="Package A", source="development"),
+        "package-b": NodeInfo(name="Package B", source="development"),
+    }
+    workflow_manager.pyproject.workflows.get_all_with_resolutions.return_value = {
+        "workflow_a": {"custom_node_map": {"SharedNode": "package-a"}},
+        "workflow_b": {"custom_node_map": {"SharedNode": "package-b"}},
+        "new_workflow": {},
+    }
+
+    consensus = workflow_manager._get_consensus_custom_node_map("new_workflow")
+
+    assert consensus == {}
 
 
 def test_apply_resolution_preserves_existing_sources(workflow_manager):

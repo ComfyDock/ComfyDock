@@ -37,6 +37,7 @@ from ..services.workflow_resolution_service import (
     WorkflowResolutionService,
 )
 from ..utils.git import is_git_url
+from ..utils.node_identity import resolve_installed_node_alias
 from ..utils.workflow_hash import normalize_workflow
 
 if TYPE_CHECKING:
@@ -126,6 +127,13 @@ class WorkflowManager:
         Returns:
             Normalized package ID (registry ID if URL matches, otherwise unchanged)
         """
+        installed_id = resolve_installed_node_alias(
+            package_id,
+            self.pyproject.nodes.get_existing(),
+        )
+        if installed_id:
+            return installed_id
+
         # Check if it's a GitHub URL
         if is_git_url(package_id):
             # Try to resolve to registry package
@@ -134,6 +142,38 @@ class WorkflowManager:
 
         # Canonicalize legacy IDs directly
         return self.node_mapping_repository.canonicalize_package_id(package_id) or package_id
+
+    def _get_consensus_custom_node_map(self, workflow_name: str) -> dict[str, str | bool]:
+        """Return unambiguous custom node mappings learned from other workflows."""
+        workflows = self.pyproject.workflows.get_all_with_resolutions()
+        installed_nodes = self.pyproject.nodes.get_existing()
+        candidates: dict[str, set[str | bool]] = {}
+
+        for other_name, workflow_data in workflows.items():
+            if other_name == workflow_name:
+                continue
+
+            custom_map = workflow_data.get("custom_node_map", {})
+            if not isinstance(custom_map, Mapping):
+                continue
+
+            for node_type, package_id in custom_map.items():
+                if isinstance(package_id, bool):
+                    normalized: str | bool = package_id
+                elif isinstance(package_id, str):
+                    normalized = self._normalize_package_id(package_id)
+                    if not resolve_installed_node_alias(normalized, installed_nodes):
+                        continue
+                else:
+                    continue
+
+                candidates.setdefault(str(node_type), set()).add(normalized)
+
+        return {
+            node_type: next(iter(package_ids))
+            for node_type, package_ids in candidates.items()
+            if len(package_ids) == 1
+        }
 
 
     def _write_single_model_resolution(
@@ -385,6 +425,8 @@ class WorkflowManager:
             workflow_name: Workflow being resolved
             node_package_id: Package ID to add to workflow.nodes
         """
+        node_package_id = self._normalize_package_id(node_package_id)
+
         # Get existing workflow node packages from pyproject
         workflows_config = self.pyproject.workflows.get_all_with_resolutions()
         workflow_config = workflows_config.get(workflow_name, {})
@@ -981,9 +1023,12 @@ class WorkflowManager:
         except Exception as e:
             logger.warning(f"Failed to load global models table: {e}")
 
+        current_custom_map = self.pyproject.workflows.get_custom_node_map(workflow_name)
+        consensus_custom_map = self._get_consensus_custom_node_map(workflow_name)
+
         context = ResolutionContext(
             installed_packages=self.pyproject.nodes.get_existing(),
-            custom_node_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
+            custom_node_mappings={**consensus_custom_map, **current_custom_map},
             previous_model_resolutions=previous_resolutions,
             global_models=global_models_dict,
             cec_path=getattr(self, "cec_path", None),
@@ -1058,7 +1103,10 @@ class WorkflowManager:
             # Build context with search function
             node_context = NodeResolutionContext(
                 installed_packages=self.pyproject.nodes.get_existing(),
-                custom_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
+                custom_mappings={
+                    **self._get_consensus_custom_node_map(workflow_name),
+                    **self.pyproject.workflows.get_custom_node_map(workflow_name),
+                },
                 workflow_name=workflow_name,
                 search_fn=self.global_node_resolver.search_packages,
                 auto_select_ambiguous=True  # TODO: Make configurable

@@ -311,6 +311,43 @@ class TestContextHashCustomMappings:
         # Hash should change
         assert hash2 != hash1
 
+    def test_context_hash_includes_consensus_custom_mappings(
+        self,
+        cache_with_mocks,
+        sample_dependencies
+    ):
+        """Mappings from other workflows should affect copied workflow resolution cache."""
+        cache_with_mocks.pyproject_manager.workflows.get_custom_node_map.return_value = {}
+        cache_with_mocks.pyproject_manager.workflows.get_all_with_resolutions.return_value = {
+            "workflow_a": {
+                "nodes": ["pkg-1"],
+            },
+            "workflow_b": {
+                "nodes": ["pkg-1"],
+                "custom_node_map": {"NodeTypeA": "pkg-1"},
+            },
+        }
+        hash1 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a"
+        )
+
+        cache_with_mocks.pyproject_manager.workflows.get_all_with_resolutions.return_value = {
+            "workflow_a": {
+                "nodes": ["pkg-1"],
+            },
+            "workflow_b": {
+                "nodes": ["pkg-1"],
+                "custom_node_map": {"NodeTypeA": "pkg-2"},
+            },
+        }
+        hash2 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a"
+        )
+
+        assert hash2 != hash1
+
 
 class TestContextHashModelFilenameNormalization:
     """Test that model filename extraction handles Windows-style separators."""

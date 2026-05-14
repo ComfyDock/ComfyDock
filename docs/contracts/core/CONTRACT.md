@@ -316,6 +316,22 @@ custom node directory with a symlink to a developer-owned checkout, but any
 backup of the prior materialized node must live outside `custom_nodes` so sync
 and status do not classify the backup as an untracked custom node.
 
+### CGCORE-SYNC-03D [LIVE]: Installed custom-node aliases are exact and local
+Validation: TEST
+
+Core may use installed custom-node metadata to interpret workflow resolver output
+or existing workflow references, but only as an environment-local aid. Alias
+matching must be exact and case-sensitive, and an alias is usable only when it
+points to one installed manifest node identifier. Registry ids, display names,
+repository names, and materialized directory names must remain distinct portable
+identity fields. Ambiguous aliases must not be normalized.
+
+When one workflow has a user-confirmed `custom_node_map`, core may reuse that
+mapping for another workflow only if all other tracked workflows agree for that
+node type and the target package is installed in the manifest. The copied
+workflow should still persist canonical manifest package ids in `nodes` rather
+than display names or materialized directory names.
+
 ### CGCORE-SYNC-04 [PLANNED]: Build/runtime materialization fails on sync errors by default
 Validation: TEST
 

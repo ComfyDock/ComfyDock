@@ -10,6 +10,7 @@ from ..models.node_mapping import (
     GlobalNodePackage,
 )
 from ..services.model_downloader import ModelDownloader
+from ..utils.node_identity import build_installed_node_aliases, resolve_installed_node_alias
 from ..utils.uuid import is_uuid
 
 if TYPE_CHECKING:
@@ -52,6 +53,17 @@ class NodeResolutionContext:
 
     # Auto-selection configuration (post-MVP: make this configurable via config file)
     auto_select_ambiguous: bool = True  # Auto-select best package from registry mappings
+
+    @cached_property
+    def installed_package_aliases(self) -> dict[str, str]:
+        return build_installed_node_aliases(self.installed_packages)
+
+    def resolve_installed_package_id(self, package_id: str | None) -> str | None:
+        return resolve_installed_node_alias(
+            package_id,
+            self.installed_packages,
+            self.installed_package_aliases,
+        )
 
 @dataclass
 class WorkflowModelNodeMapping:

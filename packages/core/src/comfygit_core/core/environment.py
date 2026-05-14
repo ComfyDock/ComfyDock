@@ -45,6 +45,7 @@ from ..strategies.confirmation import ConfirmationStrategy
 from ..utils.common import run_command
 from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
+from ..utils.node_identity import resolve_installed_node_alias
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
@@ -1790,8 +1791,14 @@ class Environment:
         installed_node_ids = set(installed_nodes.keys())
         logger.debug(f"Installed nodes: {installed_node_ids}")
 
-        # Find nodes referenced in workflows but not installed
-        uninstalled_ids = list(workflow_node_ids - installed_node_ids)
+        # Find nodes referenced in workflows but not installed. Existing
+        # manifests may contain exact installed aliases such as custom_nodes
+        # directory names, so resolve those before reporting missing packages.
+        uninstalled_ids = [
+            node_id
+            for node_id in workflow_node_ids
+            if not resolve_installed_node_alias(node_id, installed_nodes)
+        ]
         logger.debug(f"Uninstalled nodes: {uninstalled_ids}")
 
         return uninstalled_ids

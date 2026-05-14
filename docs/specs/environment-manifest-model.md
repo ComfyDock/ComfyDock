@@ -131,6 +131,22 @@ record its repository URL and pinned commit in the manifest. Branch metadata may
 describe the author's current development branch, but exact import,
 materialization, and deployment should prefer the pinned commit when available.
 
+### CGSPEC-NODE-02B [LIVE]: Workflow node references use canonical manifest ids
+Validation: TEST
+
+Workflow `nodes` entries should reference the canonical package identifier used
+under `[tool.comfygit.nodes]`. Resolver and status code may accept exact,
+case-sensitive aliases from installed node metadata, including the materialized
+custom-node directory name, registry id, or repository URL, but those aliases are
+not portable workflow package identities. If an alias matches more than one
+installed node, core must leave it unresolved rather than guessing.
+
+Per-workflow `custom_node_map` entries are workflow-local resolution hints. Core
+may derive a consensus fallback from other tracked workflows when all existing
+mappings for a node type agree and resolve to an installed node. That fallback is
+used for resolution and cache invalidation, but persisted workflow dependencies
+remain canonical manifest node ids.
+
 ### CGSPEC-NODE-03 [LIVE]: Node criticality defaults to required
 Validation: TEST
 
