@@ -120,6 +120,6 @@ def clone_comfyui(target_path: Path, version: str | None = None) -> str | None:
         target_path,
         depth=1,
         ref=version,
-        timeout=60,
+        timeout=5 * 60,
     )
     return get_comfyui_version(target_path)
