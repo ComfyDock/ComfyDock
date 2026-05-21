@@ -1,8 +1,8 @@
 # ComfyGit Core Contract
 
 ComfyGit Core owns environment state, dependency metadata, local runtime
-materialization, and library APIs used by the CLI, manager, deploy tooling, and
-future runtime adapters.
+materialization, and library APIs used by the CLI, manager, Cloud, and future
+runtime adapters.
 
 ## Library Boundary
 
@@ -11,7 +11,7 @@ Validation: STATIC
 
 Core library code must not depend on a specific frontend, terminal UI, or ComfyUI
 panel implementation. User interaction belongs behind callback protocols,
-strategies, or callers in CLI/manager/deploy packages.
+strategies, or callers in CLI/manager/Cloud surfaces.
 
 ### CGCORE-LIB-02 [LIVE]: Core should avoid direct print/input interaction
 Validation: STATIC
@@ -30,9 +30,9 @@ internal composition, tests, and advanced package-local behavior.
 Validation: MIXED
 
 Environment readiness, portable provenance classification, and dependency source
-candidate discovery should live in core services. CLI, manager UI, deploy
-tooling, and runtime planners should adapt those results for presentation
-instead of carrying parallel policy implementations.
+candidate discovery should live in core services. CLI, manager UI, Cloud, and
+runtime planners should adapt those results for presentation instead of carrying
+parallel policy implementations.
 
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
