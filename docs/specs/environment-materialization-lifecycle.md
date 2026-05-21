@@ -143,6 +143,20 @@ Important behavioral switches:
 - `no_manager=false` for normal import unless requested, `true` for
   materialize unless `--with-manager` is used.
 
+### CGMAT-API-04 [PLANNED]: Built-in extraction captures model-loader metadata
+Validation: MIXED
+
+Create, import, repair, and materialization flows should refresh local derived
+metadata from the active ComfyUI checkout before workflow dependency analysis is
+treated as complete. This derived metadata should include the current built-in
+node inventory, active ComfyUI model folder paths, and generated built-in
+model-loader mappings used by core workflow parsing.
+
+These extraction artifacts belong in local runtime state, not in the portable
+environment manifest. If extraction fails or ComfyUI is unavailable, callers may
+continue with static fallback metadata, but should not silently rewrite manifest
+model dependencies based on incomplete extraction.
+
 ## Failure And Cleanup
 
 ### CGMAT-FAIL-01 [LIVE]: Materialization exits nonzero on dependency sync failure

@@ -203,6 +203,26 @@ The initial supported flow is local-first: the model must already exist in the
 workspace model index before it can be attached to a workflow. Declaring a
 missing model by URL and target path remains future download-intent behavior.
 
+### CGCORE-DEP-02B [PLANNED]: Built-in model-loader detection uses generated ComfyUI metadata
+Validation: MIXED
+
+Core should not rely only on a hand-maintained list of built-in ComfyUI model
+loader node types. When a materialized environment has an installed ComfyUI
+checkout, core should be able to derive model-loader metadata from that checkout
+and use it during workflow dependency analysis.
+
+Generated loader metadata should describe the node type, model widget name, model
+widget index when derivable, and ComfyUI model directory or directories used by
+the loader. Extraction should support both classic `INPUT_TYPES` definitions and
+newer schema-style definitions that expose `folder_paths.get_filename_list(...)`
+or equivalent folder-backed combo inputs.
+
+Generated metadata is local derived state, not portable manifest truth. If
+generation is unavailable or a loader is too dynamic to classify safely, core may
+fall back to conservative static mappings and manual workflow model declarations.
+Manual declarations remain the required escape hatch for custom nodes and opaque
+runtime behavior.
+
 ### CGCORE-DEP-03 [LIVE]: Model criticality affects reproducibility gates
 Validation: TEST
 
@@ -251,6 +271,11 @@ scoring candidate source matches, deduplicating candidates, and filtering alread
 known model sources are dependency-domain behavior. Core should expose this as
 UI-agnostic source-candidate services so manager, CLI, and build planning
 can share the same logic.
+
+Source candidate discovery should consume the same workflow model dependency
+surface used by graph parsing, generated ComfyUI loader metadata, and manual
+workflow model declarations. It should not invent a separate model identity model
+for source enrichment.
 
 ### CGCORE-DEP-07 [LIVE]: Sync may repair ComfyGit-managed tool floors
 Validation: TEST

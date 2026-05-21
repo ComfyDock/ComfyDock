@@ -186,6 +186,22 @@ Optional models may be unresolved without blocking every operation. Callers shou
 still surface the missing metadata clearly so the user understands the environment
 may behave differently.
 
+### CGSPEC-MODEL-03A [PLANNED]: Model categories follow active ComfyUI folder paths
+Validation: MIXED
+
+Model category classification should be environment-aware. When an environment's
+active ComfyUI checkout declares model folders such as `frame_interpolation`,
+`optical_flow`, `background_removal`, or future built-in directories, scanner and
+manifest presentation code should treat those folders as first-class categories
+instead of collapsing them to `unknown` only because they are absent from an older
+static list.
+
+Static category tables remain a conservative fallback for bootstrapping,
+materialization without a ComfyUI checkout, and folders that ComfyUI or user
+configuration does not declare. Unknown/custom categories remain valid, but they
+should mean "not known to the active environment" rather than "not in a stale
+ComfyGit table."
+
 ### CGSPEC-MODEL-04 [PARTIAL]: Workflow model dependencies may be manually declared
 Validation: TEST
 
@@ -201,6 +217,28 @@ should store the model hash, filename, category, criticality, resolved status,
 and expected `relative_path` under the configured models directory. The relative
 path remains meaningful for resolved manual dependencies because custom node
 loaders may require the file to exist at a specific location.
+
+### CGSPEC-MODEL-04A [PLANNED]: Built-in model-loader discovery is generated from the active ComfyUI checkout
+Validation: MIXED
+
+Workflow dependency analysis should use generated model-loader metadata from the
+environment's installed ComfyUI checkout when available. The generated metadata
+should identify ComfyUI built-in nodes that select files from `folder_paths`
+model directories, including newer loader forms such as frame interpolation,
+optical flow, background removal, latent upscale, and model patch loaders.
+
+Generated loader metadata should record enough structure for callers to resolve a
+workflow widget value without guessing from display names alone: node type, widget
+name, widget index when derivable, and one or more expected model directories.
+The parser should prefer explicit `properties.models` source metadata when it is
+present, then use generated folder-backed widget metadata, then fall back to
+manual workflow declarations for loaders core cannot infer safely.
+
+Static multi-model widget configuration should become a fallback and review aid,
+not the only source of truth for built-in model loaders. Structurally discovered
+loaders may still need classification when a node reads a model folder for
+training, hook construction, optional enhancement, or another behavior that is
+not a required runtime model dependency.
 
 ### CGSPEC-MODEL-05 [PLANNED]: Missing manual model declarations become download intents
 Validation: MIXED
