@@ -3468,6 +3468,90 @@ packages = []
 
             print(f"\n✓ Updated {updated_count}/{len(models)} model(s)")
 
+    @with_env_logging("workflow model list", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_list(self, args: argparse.Namespace, logger=None) -> None:
+        """List models declared for a workflow."""
+        env = self._get_env(args)
+        workflow_name = getattr(args, "workflow_name", None)
+        if not workflow_name:
+            workflow_name = self._select_workflow_interactive(env)
+            if not workflow_name:
+                print("✗ No workflow selected")
+                return
+
+        models = env.pyproject.workflows.get_workflow_models(workflow_name)
+        if not models:
+            print(f"✗ No models found in workflow '{workflow_name}'")
+            return
+
+        print(f"\n📦 Models for workflow: {workflow_name}")
+        for model in models:
+            manual = getattr(model, "declared_by", None) == "manual" or not getattr(model, "nodes", None)
+            print(f"\n  • {model.filename}")
+            if model.hash:
+                print(f"    hash:       {model.hash}")
+            if model.relative_path:
+                print(f"    path:       {model.relative_path}")
+            print(f"    category:   {model.category}")
+            print(f"    importance: {model.criticality}")
+            print(f"    status:     {model.status}")
+            print(f"    declared:   {'manual' if manual else 'workflow graph'}")
+
+    @with_env_logging("workflow model add", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_add(self, args: argparse.Namespace, logger=None) -> None:
+        """Declare an indexed local model as a manual workflow dependency."""
+        env = self._get_env(args)
+        model_hash = getattr(args, "model_hash", None)
+        relative_path = getattr(args, "relative_path", None)
+        importance = getattr(args, "importance", "required")
+
+        if not model_hash and not relative_path:
+            print("✗ Provide --hash or --path for the indexed model to add")
+            sys.exit(1)
+
+        try:
+            model = env.workflow_manager.add_existing_model_to_workflow(
+                workflow_name=args.workflow_name,
+                model_hash=model_hash,
+                relative_path=relative_path,
+                criticality=importance,
+            )
+        except ValueError as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        identifier = model.relative_path or model.hash or model.filename
+        print(f"✓ Added manual model dependency to '{args.workflow_name}': {identifier}")
+        print(f"  importance: {model.criticality}")
+
+    @with_env_logging("workflow model remove", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_remove(self, args: argparse.Namespace, logger=None) -> None:
+        """Remove a manually declared workflow model dependency."""
+        env = self._get_env(args)
+        model_hash = getattr(args, "model_hash", None)
+        relative_path = getattr(args, "relative_path", None)
+
+        if not model_hash and not relative_path:
+            print("✗ Provide --hash or --path for the manual model to remove")
+            sys.exit(1)
+
+        try:
+            removed = env.workflow_manager.remove_manual_model_from_workflow(
+                workflow_name=args.workflow_name,
+                model_hash=model_hash,
+                relative_path=relative_path,
+            )
+        except ValueError as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        if not removed:
+            print(f"✗ Manual model not found in workflow '{args.workflow_name}'")
+            sys.exit(1)
+
+        identifier = relative_path or model_hash
+        print(f"✓ Removed manual model dependency from '{args.workflow_name}': {identifier}")
+
     def _select_workflow_interactive(self, env) -> str | None:
         """Interactive workflow selection from available workflows.
 

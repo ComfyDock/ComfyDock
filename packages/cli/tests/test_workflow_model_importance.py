@@ -1,11 +1,14 @@
 """Integration test for workflow model importance command."""
 
+import argparse
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "core" / "tests"))
+from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
@@ -208,3 +211,58 @@ class TestWorkflowModelImportanceCommand:
                 model_identifier="model.safetensors",
                 new_criticality="super_important"
             )
+
+
+class TestWorkflowModelManualCommands:
+    """Test CLI handlers for manually declared workflow model dependencies."""
+
+    def _commands_for_env(self, test_env):
+        workspace = Mock()
+        workspace.get_active_environment.return_value = test_env
+
+        commands = EnvironmentCommands()
+        commands.__dict__["workspace"] = workspace
+        return commands
+
+    def test_add_list_and_remove_manual_model_dependency(self, test_env, test_workspace, capsys):
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model("custom_loader_model.safetensors", "diffusion_models")
+        model_builder.index_all()
+
+        commands = self._commands_for_env(test_env)
+        add_args = argparse.Namespace(
+            target_env=None,
+            workflow_name="custom_loader_workflow",
+            model_hash=None,
+            relative_path="diffusion_models/custom_loader_model.safetensors",
+            importance="required",
+        )
+
+        commands.workflow_model_add(add_args)
+        add_output = capsys.readouterr().out
+        assert "Added manual model dependency" in add_output
+
+        models = test_env.pyproject.workflows.get_workflow_models("custom_loader_workflow")
+        assert len(models) == 1
+        assert models[0].filename == "custom_loader_model.safetensors"
+        assert models[0].criticality == "required"
+        assert models[0].declared_by == "manual"
+        assert models[0].nodes == []
+
+        list_args = argparse.Namespace(target_env=None, workflow_name="custom_loader_workflow")
+        commands.workflow_model_list(list_args)
+        list_output = capsys.readouterr().out
+        assert "custom_loader_model.safetensors" in list_output
+        assert "declared:   manual" in list_output
+
+        remove_args = argparse.Namespace(
+            target_env=None,
+            workflow_name="custom_loader_workflow",
+            model_hash=None,
+            relative_path="diffusion_models/custom_loader_model.safetensors",
+        )
+
+        commands.workflow_model_remove(remove_args)
+        remove_output = capsys.readouterr().out
+        assert "Removed manual model dependency" in remove_output
+        assert test_env.pyproject.workflows.get_workflow_models("custom_loader_workflow") == []
