@@ -189,6 +189,20 @@ Model files are tracked by metadata such as filename, category, relative path,
 hash, sources, and workflow references. The model bytes themselves stay external
 to the Python package and environment manifest.
 
+### CGCORE-DEP-02A [PARTIAL]: Workflows may declare indexed models without graph references
+Validation: TEST
+
+Core should let callers attach an already-indexed local model to a workflow even
+when workflow graph analysis cannot identify a model-loading widget. This manual
+workflow dependency must record the content hash and expected model-relative path
+and must not invent a fake workflow node reference. Resolver, cache, readiness,
+and missing-model checks should preserve and evaluate these entries alongside
+graph-derived model dependencies.
+
+The initial supported flow is local-first: the model must already exist in the
+workspace model index before it can be attached to a workflow. Declaring a
+missing model by URL and target path remains future download-intent behavior.
+
 ### CGCORE-DEP-03 [LIVE]: Model criticality affects reproducibility gates
 Validation: TEST
 

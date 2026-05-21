@@ -120,6 +120,72 @@ def test_normalize_package_id_canonicalizes_alias(workflow_manager):
     workflow_manager.node_mapping_repository.canonicalize_package_id.assert_called_once_with("legacy-pkg")
 
 
+def test_add_existing_model_to_workflow_records_manual_dependency(workflow_manager):
+    """Indexed local models can be attached to a workflow without node refs."""
+    from comfygit_core.models.shared import ModelWithLocation
+
+    indexed_model = ModelWithLocation(
+        hash="abc123",
+        filename="custom-model.safetensors",
+        file_size=1024,
+        relative_path="custom_loader/custom-model.safetensors",
+        mtime=0,
+        last_seen=0,
+    )
+    workflow_manager.model_repository.find_by_exact_path.return_value = indexed_model
+    workflow_manager.model_repository.get_sources.return_value = [
+        {"type": "huggingface", "url": "https://huggingface.co/org/repo/resolve/main/custom-model.safetensors"}
+    ]
+    workflow_manager.pyproject.workflows.get_workflow_models.return_value = []
+    workflow_manager.pyproject.workflows.set_workflow_models = Mock()
+    workflow_manager.pyproject.models.add_model = Mock()
+
+    result = workflow_manager.add_existing_model_to_workflow(
+        "manual_workflow",
+        model_hash="abc123",
+        relative_path="custom_loader/custom-model.safetensors",
+        criticality="required",
+    )
+
+    assert result.hash == "abc123"
+    assert result.status == "resolved"
+    assert result.relative_path == "custom_loader/custom-model.safetensors"
+    assert result.nodes == []
+    assert result.declared_by == "manual"
+    assert result.category == "custom_loader"
+
+    global_model = workflow_manager.pyproject.models.add_model.call_args.args[0]
+    assert global_model.hash == "abc123"
+    assert global_model.relative_path == "custom_loader/custom-model.safetensors"
+    assert global_model.sources == [
+        "https://huggingface.co/org/repo/resolve/main/custom-model.safetensors"
+    ]
+
+    written_models = workflow_manager.pyproject.workflows.set_workflow_models.call_args.args[1]
+    assert written_models == [result]
+
+
+def test_add_existing_model_to_workflow_rejects_path_hash_mismatch(workflow_manager):
+    """A manual dependency path must point at the selected indexed hash."""
+    from comfygit_core.models.shared import ModelWithLocation
+
+    workflow_manager.model_repository.find_by_exact_path.return_value = ModelWithLocation(
+        hash="actual-hash",
+        filename="custom-model.safetensors",
+        file_size=1024,
+        relative_path="custom_loader/custom-model.safetensors",
+        mtime=0,
+        last_seen=0,
+    )
+
+    with pytest.raises(ValueError, match="not expected-hash"):
+        workflow_manager.add_existing_model_to_workflow(
+            "manual_workflow",
+            model_hash="expected-hash",
+            relative_path="custom_loader/custom-model.safetensors",
+        )
+
+
 def test_normalize_package_id_git_url_resolves_and_canonicalizes(workflow_manager):
     """Git URLs should resolve to registry package then canonicalize alias."""
     registry_pkg = Mock()
@@ -664,6 +730,42 @@ class TestOptionalUnresolvedModelPersistence:
         assert model.hash is None
         assert len(model.nodes) == 1
         assert model.nodes[0] == model_ref
+
+    def test_manual_model_survives_apply_resolution(self, workflow_manager):
+        """Manual manifest-only model dependencies are not dropped by graph resolution."""
+        from comfygit_core.models.manifest import ManifestWorkflowModel
+        from comfygit_core.models.workflow import ResolutionResult
+
+        manual_model = ManifestWorkflowModel(
+            hash="manual_hash",
+            filename="manual.safetensors",
+            category="custom_loader",
+            criticality="required",
+            status="resolved",
+            nodes=[],
+            relative_path="custom_loader/manual.safetensors",
+            declared_by="manual",
+        )
+        resolution = ResolutionResult(workflow_name="test_workflow")
+
+        written_models = []
+
+        def mock_set_workflow_models(workflow_name, models, config=None):
+            written_models.extend(models)
+
+        workflow_manager.pyproject.workflows.set_workflow_models = mock_set_workflow_models
+        workflow_manager.pyproject.workflows.set_node_packs = Mock()
+        workflow_manager.pyproject.workflows.get_custom_node_map = Mock(return_value={})
+        workflow_manager.pyproject.workflows.get_workflow_models = Mock(return_value=[manual_model])
+        workflow_manager.pyproject.workflows.remove_custom_node_mapping = Mock()
+        workflow_manager.pyproject.workflows.remove_workflows = Mock(return_value=0)
+        workflow_manager.pyproject.load = Mock(return_value={'tool': {'comfygit': {'workflows': {'test_workflow': {}}}}})
+        workflow_manager.pyproject.models.cleanup_orphans = Mock()
+
+        with patch.object(workflow_manager, 'update_workflow_model_paths'):
+            workflow_manager.apply_resolution(resolution)
+
+        assert written_models == [manual_model]
 
     def test_mixed_model_types_all_preserved(self, workflow_manager):
         """Test all three model types are preserved: resolved, optional resolved, optional unresolved."""

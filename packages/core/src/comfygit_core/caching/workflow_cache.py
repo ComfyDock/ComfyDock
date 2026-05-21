@@ -815,7 +815,25 @@ class WorkflowCacheRepository:
         workflow_models = self.pyproject_manager.workflows.get_workflow_models(workflow_name)
         model_pyproject_data = {}
         for manifest_model in workflow_models:
-            for ref in manifest_model.nodes:
+            nodes = getattr(manifest_model, "nodes", None) or []
+            if not nodes:
+                key_source = (
+                    getattr(manifest_model, "relative_path", None)
+                    or getattr(manifest_model, "hash", None)
+                    or getattr(manifest_model, "filename", None)
+                    or "unknown"
+                )
+                model_pyproject_data[f"manual:{key_source}"] = {
+                    "hash": manifest_model.hash,
+                    "status": manifest_model.status,
+                    "criticality": manifest_model.criticality,
+                    "sources": manifest_model.sources,
+                    "relative_path": manifest_model.relative_path,
+                    "declared_by": getattr(manifest_model, "declared_by", None),
+                }
+                continue
+
+            for ref in nodes:
                 ref_key = f"{ref.node_id}_{ref.widget_index}"
                 model_pyproject_data[ref_key] = {
                     "hash": manifest_model.hash,

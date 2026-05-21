@@ -567,6 +567,30 @@ class TestNodeHandlerFormatting:
 class TestWorkflowModelDeduplication:
     """Test that workflow model entries don't duplicate when resolving to different filenames."""
 
+    def test_manual_workflow_model_round_trips_without_nodes(self, temp_pyproject):
+        """Manual workflow models can be stored without fake node references."""
+        from comfygit_core.models.manifest import ManifestWorkflowModel
+
+        manager = PyprojectManager(temp_pyproject)
+        manual_model = ManifestWorkflowModel(
+            hash="abc123hash",
+            filename="custom-model.safetensors",
+            category="custom_loader",
+            criticality="required",
+            status="resolved",
+            nodes=[],
+            relative_path="custom_loader/custom-model.safetensors",
+            declared_by="manual",
+        )
+
+        manager.workflows.set_workflow_models("test_workflow", [manual_model])
+
+        models = manager.workflows.get_workflow_models("test_workflow")
+        assert len(models) == 1
+        assert models[0].nodes == []
+        assert models[0].relative_path == "custom_loader/custom-model.safetensors"
+        assert models[0].declared_by == "manual"
+
     def test_resolving_unresolved_to_different_filename_replaces(self, temp_pyproject):
         """Test that resolving a model to a different filename replaces the unresolved entry."""
         from comfygit_core.models.manifest import ManifestWorkflowModel

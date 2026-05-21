@@ -186,6 +186,30 @@ Optional models may be unresolved without blocking every operation. Callers shou
 still surface the missing metadata clearly so the user understands the environment
 may behave differently.
 
+### CGSPEC-MODEL-04 [PARTIAL]: Workflow model dependencies may be manually declared
+Validation: TEST
+
+Workflow model entries are not limited to references discovered from workflow
+JSON widgets. A workflow may include a user-declared model dependency with an
+empty `nodes` list when a custom node loads the model through behavior core
+cannot infer from the graph. Such entries should be treated as workflow
+dependencies, not as global model inventory.
+
+Manual workflow model dependencies should initially be created only from models
+that already exist in the current workspace model index. The manifest entry
+should store the model hash, filename, category, criticality, resolved status,
+and expected `relative_path` under the configured models directory. The relative
+path remains meaningful for resolved manual dependencies because custom node
+loaders may require the file to exist at a specific location.
+
+### CGSPEC-MODEL-05 [PLANNED]: Missing manual model declarations become download intents
+Validation: MIXED
+
+Future tooling may let users declare a required workflow model by target path and
+source URL before the model exists locally. That flow should reuse workflow model
+download-intent semantics, but it is not part of the initial local-first manual
+dependency workflow.
+
 ## Local Configuration
 
 ### CGSPEC-LOCAL-01 [LIVE]: PyTorch backend selection is machine-local
