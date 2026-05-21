@@ -456,10 +456,11 @@ class Environment:
         # Check if already tracked
         nodes = self.pyproject.nodes.get_existing()
         if MANAGER_NODE_ID in nodes and not was_migration:
-            # Standard update flow - update_node always updates to latest
+            # Standard update flow, optionally pinned to a caller-selected version.
             result = self.node_manager.update_node(
                 MANAGER_NODE_ID,
                 confirmation_strategy=confirmation_strategy,
+                target_version=None if version == "latest" else version,
             )
 
             # Cleanup legacy dependency group if present
