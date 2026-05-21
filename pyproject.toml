@@ -17,7 +17,6 @@ dev-dependencies = [
 members = [
     "packages/core",
     "packages/cli",
-    "packages/deploy",
 ]
 
 # Package index configuration (moved out of workspace section)
@@ -55,7 +54,6 @@ ignore = [
 testpaths = [
     "packages/core/tests",
     "packages/cli/tests",
-    "packages/deploy/tests",
 ]
 # Ensure core conftest is importable from cli/integration tests
 pythonpath = [

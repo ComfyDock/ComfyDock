@@ -13,7 +13,7 @@ work.
 | --- | --- |
 | `packages/core/` | UI-agnostic library for workspaces, environments, manifests, sync, models, nodes, git, and resolution. |
 | `packages/cli/` | `comfygit` / `cg` command-line interface over core behavior. |
-| `packages/deploy/` | Remote deployment experiments and deployment-facing package code. |
+| `packages/studio/` | Shared React/Vite Studio frontend bundled into CLI static assets and reused by hosted Cloud surfaces. |
 | `docs/contracts/` | Active truth-layer contracts. Highest-precedence behavioral guarantees. |
 | `docs/specs/` | Active truth-layer lifecycle, manifest, and dependency semantics. |
 | `docs/comfygit-docs/` | Public user documentation site. Do not treat as active architecture truth. |
@@ -52,7 +52,7 @@ For implementation work, start with the package architecture docs:
 
 - `packages/core/docs/architecture.md`
 - `packages/cli/docs/architecture.md`
-- `packages/deploy/docs/architecture.md`
+- `packages/studio/AGENTS.md`
 
 Then inspect concrete symbols with `rg` first. `pyast` is useful when available:
 
@@ -79,12 +79,12 @@ protocols, strategies, and return values so callers own UX.
 CLI code should translate user commands into core calls and render output. Avoid
 moving core policy into CLI handlers unless it is truly command-specific.
 
-Deploy code should consume manifest/core semantics rather than inventing parallel
-environment metadata.
+Hosted deployment code should consume manifest/core semantics rather than
+inventing parallel environment metadata.
 
 ## Core Type Boundaries
 
-Core is consumed by Manager, CLI, Deploy, and future runtime adapters. Stable
+Core is consumed by Manager, CLI, Cloud, and future runtime adapters. Stable
 domain results that cross package or repo boundaries should use typed
 dataclasses, protocols, or explicit model objects instead of anonymous nested
 dictionaries.
@@ -145,18 +145,52 @@ make test
 make lint
 uv run pytest packages/core/tests/ -v
 uv run pytest packages/cli/tests/ -v
-uv run pytest packages/deploy/tests/ -v
+npm --prefix packages/studio run build
 uv run ruff check --fix
 uv run ty check packages/core/src/comfygit_core/models/readiness.py packages/core/src/comfygit_core/services/environment_readiness.py
 ```
 
-All packages use lockstep versioning:
+Core, CLI, and bundled Studio release artifacts use lockstep versioning:
 
 ```bash
 make show-versions
 make bump-version VERSION=<version>
 make check-versions
 ```
+
+`packages/studio` is not a Python package, but it is versioned with the Python
+packages because the CLI release ships its built static output.
+
+Release setup for a new ComfyGit version:
+
+1. Pick one version for `comfygit-core`, `comfygit`, and
+   `@comfygit/studio`.
+2. Run `make bump-version VERSION=<version>`.
+3. Run `uv lock` from the repo root so `uv.lock` reflects the Python package
+   graph.
+4. Run `make check-versions` and `make build-all`. `make build-all` builds
+   Studio, syncs `packages/studio/dist/static/` into
+   `packages/cli/comfygit_cli/studio_static/`, then builds the Python
+   packages.
+5. Run focused tests for the changed areas, plus truth-layer validation when
+   contracts/specs changed.
+6. Commit the version bump, lockfile, bundled Studio static assets, and release
+   tooling/doc updates together.
+
+The publish workflow on `main` publishes `comfygit-core` first, waits until that
+version is visible on PyPI, then publishes the CLI package. This ordering
+matters because `comfygit` pins `comfygit-core==<version>`.
+
+`packages/deploy`/`comfygit-deploy` has been retired and deleted. Do not add it
+back to workspace members, lockstep versioning, tests, build targets, or publish
+workflows. Hosted deployment belongs to ComfyGit Cloud; local/manual serving
+belongs to `cg serve`.
+
+Manager release ordering is separate and dependent on this repo. After
+`comfygit-core==<version>` is published on PyPI, the sibling
+`comfygit-manager` repo can pin that exact core version, rebuild its panel, and
+publish its ComfyUI registry release. Do not publish Manager against an
+unpublished core pin.
 
 ## Validation
 
@@ -174,7 +208,7 @@ Repo validation:
 ```bash
 uv run pytest packages/core/tests/ -v
 uv run pytest packages/cli/tests/ -v
-uv run pytest packages/deploy/tests/ -v
+npm --prefix packages/studio run build
 ```
 
 Type validation for new/changed core library boundaries:

@@ -44,7 +44,8 @@ def _git(cmd: list[str], repo_path: Path,
          check: bool = True,
          not_found_msg: str | None = None,
          capture_output: bool = True,
-         text: bool = True) -> subprocess.CompletedProcess:
+         text: bool = True,
+         timeout: int | None = 30) -> subprocess.CompletedProcess:
     """Run git command with consistent error handling.
 
     Args:
@@ -68,7 +69,8 @@ def _git(cmd: list[str], repo_path: Path,
             cwd=repo_path,
             check=check,
             capture_output=capture_output,
-            text=text
+            text=text,
+            timeout=timeout,
         )
     except CDProcessError as e:
         if _is_not_found_error(e):
@@ -494,7 +496,7 @@ def git_clone(
     target_path: Path,
     depth: int = 1,
     ref: str | None = None,
-    timeout: int = 30,
+    timeout: int = 300,
     token: str | None = None,
 ) -> None:
     """Clone a git repository to a target path.
@@ -543,14 +545,19 @@ def git_clone(
                 raise ValueError(f"Git repository URL '{url}' does not exist") from e
             raise OSError(f"Git command failed: {e.stderr or e.stdout or e}") from e
     else:
-        _git(cmd, Path.cwd(), not_found_msg=f"Git repository URL '{url}' does not exist")
+        _git(
+            cmd,
+            Path.cwd(),
+            not_found_msg=f"Git repository URL '{url}' does not exist",
+            timeout=timeout,
+        )
 
     # If a specific commit hash was requested, checkout to it
     if is_commit_hash and ref:
-        _git(["checkout", ref], target_path, not_found_msg=f"Commit '{ref}' does not exist")
+        _git(["checkout", ref], target_path, not_found_msg=f"Commit '{ref}' does not exist", timeout=timeout)
     elif ref and ref.startswith("refs/"):
         # Handle refs/ style references
-        _git(["checkout", ref], target_path, not_found_msg=f"Reference '{ref}' does not exist")
+        _git(["checkout", ref], target_path, not_found_msg=f"Reference '{ref}' does not exist", timeout=timeout)
 
     logger.info(f"Successfully cloned {url} to {target_path}")
 

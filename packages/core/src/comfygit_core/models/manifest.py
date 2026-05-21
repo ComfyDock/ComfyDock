@@ -60,7 +60,8 @@ class ManifestWorkflowModel:
     nodes: list[WorkflowNodeWidgetRef]
     hash: str | None = None  # Only present if resolved
     sources: list[str] = field(default_factory=list)  # Download URLs
-    relative_path: str | None = None  # Target path for download intents
+    relative_path: str | None = None  # Target path for download intents or manual resolved deps
+    declared_by: str | None = None  # "manual" for user-declared non-graph dependencies
 
     def to_toml_dict(self) -> dict[str, Any]:
         """Serialize to TOML-compatible dict with inline table formatting."""
@@ -91,6 +92,8 @@ class ManifestWorkflowModel:
             result["sources"] = self.sources
         if self.relative_path is not None:
             result["relative_path"] = self.relative_path
+        if self.declared_by is not None:
+            result["declared_by"] = self.declared_by
 
         return result
 
@@ -115,7 +118,8 @@ class ManifestWorkflowModel:
             nodes=nodes,
             hash=data.get("hash"),
             sources=data.get("sources", []),
-            relative_path=data.get("relative_path")
+            relative_path=data.get("relative_path"),
+            declared_by=data.get("declared_by")
         )
 
 

@@ -18,6 +18,43 @@ logger = get_logger(__name__)
 # v10: Switch from blake3 to xxhash for short hash (7x faster)
 SCHEMA_VERSION = 10
 
+MODEL_SHORT_HASH_ALGORITHM = "xxh3_128_sample_v1"
+MODEL_SHORT_HASH_CHUNK_SIZE = 5 * 1024 * 1024
+MODEL_SHORT_HASH_LARGE_FILE_THRESHOLD = 30 * 1024 * 1024
+
+
+def calculate_model_short_hash(file_path: Path) -> str:
+    """Calculate ComfyGit's primary model identity hash.
+
+    This is the fast sampled hash stored in the model index `models.hash`
+    column. Full Blake3/SHA256 hashes are separate verification metadata.
+    """
+    try:
+        if not file_path.exists() or not file_path.is_file():
+            raise ComfyDockError(f"File does not exist or is not a regular file: {file_path}")
+
+        file_size = file_path.stat().st_size
+        hasher = xxhash.xxh3_128()
+
+        # Include file size as discriminator.
+        hasher.update(str(file_size).encode())
+
+        with open(file_path, "rb") as f:
+            hasher.update(f.read(MODEL_SHORT_HASH_CHUNK_SIZE))
+
+            if file_size > MODEL_SHORT_HASH_LARGE_FILE_THRESHOLD:
+                f.seek(file_size // 2 - MODEL_SHORT_HASH_CHUNK_SIZE // 2)
+                hasher.update(f.read(MODEL_SHORT_HASH_CHUNK_SIZE))
+
+                f.seek(-MODEL_SHORT_HASH_CHUNK_SIZE, 2)
+                hasher.update(f.read(MODEL_SHORT_HASH_CHUNK_SIZE))
+
+        return hasher.hexdigest()[:16]
+
+    except Exception as e:
+        raise ComfyDockError(f"Failed to calculate short hash for {file_path}: {e}")
+
+
 # Models table: One entry per unique model file (by hash)
 CREATE_MODELS_TABLE = """
 CREATE TABLE IF NOT EXISTS models (
@@ -705,36 +742,7 @@ class ModelRepository:
         Raises:
             ComfyDockError: If hash calculation fails
         """
-        try:
-            if not file_path.exists() or not file_path.is_file():
-                raise ComfyDockError(f"File does not exist or is not a regular file: {file_path}")
-
-            file_size = file_path.stat().st_size
-            hasher = xxhash.xxh3_128()
-
-            # Include file size as discriminator
-            hasher.update(str(file_size).encode())
-
-            chunk_size = 5 * 1024 * 1024  # 5MB chunks
-
-            with open(file_path, 'rb') as f:
-                # Start chunk
-                hasher.update(f.read(chunk_size))
-
-                # Middle and end chunks for files > 30MB
-                if file_size > 30 * 1024 * 1024:
-                    # Middle chunk
-                    f.seek(file_size // 2 - chunk_size // 2)
-                    hasher.update(f.read(chunk_size))
-
-                    # End chunk
-                    f.seek(-chunk_size, 2)
-                    hasher.update(f.read(chunk_size))
-
-            return hasher.hexdigest()[:16]
-
-        except Exception as e:
-            raise ComfyDockError(f"Failed to calculate short hash for {file_path}: {e}")
+        return calculate_model_short_hash(file_path)
 
     def compute_blake3(self, file_path: Path, chunk_size: int = 8192 * 1024) -> str:
         """Calculate full Blake3 hash for model file.

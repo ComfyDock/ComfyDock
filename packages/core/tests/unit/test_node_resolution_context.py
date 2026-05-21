@@ -73,6 +73,67 @@ class TestPropertiesFieldResolution:
         assert result[0].match_confidence == 1.0
         assert "abc123def456" in result[0].versions
 
+    def test_custom_mapping_installed_alias_resolves_to_manifest_key(self, tmp_path):
+        """Custom maps using installed node names should resolve to manifest IDs."""
+        # ARRANGE
+        import json
+
+        mappings_file = tmp_path / "node_mappings.json"
+        global_data = {
+            "version": "test",
+            "generated_at": "2024-01-01",
+            "stats": {},
+            "mappings": {},
+            "packages": {
+                "comfyui-deforum": {
+                    "id": "comfyui-deforum",
+                    "display_name": "ComfyUI-Deforum",
+                    "description": "Test package",
+                    "repository": "https://github.com/deforum/deforum-comfy-nodes",
+                    "versions": {},
+                }
+            },
+        }
+        with open(mappings_file, 'w') as f:
+            json.dump(global_data, f)
+
+        mock_data_manager = Mock()
+        mock_data_manager.get_mappings_path.return_value = mappings_file
+        repository = NodeMappingsRepository(data_manager=mock_data_manager)
+        resolver = GlobalNodeResolver(repository)
+        node = WorkflowNode(
+            id="1",
+            type="DeforumGetNode",
+            pos=[0, 0],
+            size=[100, 100],
+            flags={},
+            order=0,
+            mode=0,
+            inputs=[],
+            outputs=[],
+            properties={},
+            widgets_values=[],
+        )
+        context = NodeResolutionContext(
+            installed_packages={
+                "comfyui-deforum": NodeInfo(
+                    name="ComfyUI-Deforum",
+                    registry_id="comfyui-deforum",
+                    source="development",
+                )
+            },
+            custom_mappings={"DeforumGetNode": "ComfyUI-Deforum"},
+        )
+
+        # ACT
+        result = resolver.resolve_single_node_with_context(node, context)
+
+        # ASSERT
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].package_id == "comfyui-deforum"
+        assert result[0].match_type == "custom_mapping"
+
     def test_properties_with_invalid_cnr_id_falls_through(self, tmp_path):
         """Properties with cnr_id not in registry should fall through to next strategy."""
         # ARRANGE: Empty global mappings (package doesn't exist)

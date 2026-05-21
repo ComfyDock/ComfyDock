@@ -127,3 +127,32 @@ class TestGetUninstalledNodes:
 
         # ASSERT
         assert len(uninstalled) == 0, "Should return empty when no workflows exist"
+
+    def test_installed_alias_is_not_reported_uninstalled(self):
+        """Workflow refs using an installed node name should count as installed."""
+        # ARRANGE
+        from comfygit_core.core.environment import Environment
+
+        env = Mock(spec=Environment)
+        env.pyproject = Mock()
+
+        env.pyproject.workflows.get_all_with_resolutions.return_value = {
+            "workflow1": {
+                "nodes": ["ComfyUI-Deforum"]
+            }
+        }
+        env.pyproject.nodes.get_existing.return_value = {
+            "comfyui-deforum": NodeInfo(
+                name="ComfyUI-Deforum",
+                registry_id="comfyui-deforum",
+                source="development",
+            )
+        }
+
+        env.get_uninstalled_nodes = Environment.get_uninstalled_nodes.__get__(env, Environment)
+
+        # ACT
+        uninstalled = env.get_uninstalled_nodes()
+
+        # ASSERT
+        assert uninstalled == []

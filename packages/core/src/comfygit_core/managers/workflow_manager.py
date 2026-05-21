@@ -37,6 +37,7 @@ from ..services.workflow_resolution_service import (
     WorkflowResolutionService,
 )
 from ..utils.git import is_git_url
+from ..utils.node_identity import resolve_installed_node_alias
 from ..utils.workflow_hash import normalize_workflow
 
 if TYPE_CHECKING:
@@ -114,6 +115,191 @@ class WorkflowManager:
         # Use injected model downloader from workspace
         self.downloader = model_downloader
 
+    @staticmethod
+    def _normalize_model_relative_path(relative_path: str) -> str:
+        """Normalize and validate a path relative to the configured models directory."""
+        normalized = relative_path.replace("\\", "/").strip()
+        path = PurePosixPath(normalized)
+        if not normalized or path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"Model path must be relative to the models directory: {relative_path}")
+        return path.as_posix()
+
+    @staticmethod
+    def _category_for_indexed_model(model: ModelWithLocation) -> str:
+        """Return the manifest category for an indexed model location."""
+        if model.category and model.category != "unknown":
+            return model.category
+        parts = PurePosixPath(model.relative_path.replace("\\", "/")).parts
+        if len(parts) > 1 and parts[0]:
+            return parts[0]
+        return model.category or "unknown"
+
+    @staticmethod
+    def _is_manual_workflow_model(model) -> bool:
+        """Return whether a workflow model was manually declared outside graph analysis."""
+        return getattr(model, "declared_by", None) == "manual" or not getattr(model, "nodes", None)
+
+    @classmethod
+    def _manual_workflow_model_key(cls, model) -> tuple[str, str] | None:
+        relative_path = getattr(model, "relative_path", None)
+        if relative_path:
+            return ("path", cls._normalize_model_relative_path(relative_path))
+        model_hash = getattr(model, "hash", None)
+        if model_hash:
+            return ("hash", str(model_hash))
+        return None
+
+    def _source_urls_for_model_hash(self, model_hash: str) -> list[str]:
+        """Return source URLs currently known in the workspace model index."""
+        try:
+            sources = self.model_repository.get_sources(model_hash)
+        except Exception as exc:
+            logger.debug(f"Unable to load sources for model {model_hash}: {exc}")
+            return []
+
+        urls: list[str] = []
+        seen: set[str] = set()
+        for source in sources or []:
+            if not isinstance(source, dict):
+                continue
+            url = source.get("url") or source.get("source_url")
+            if isinstance(url, str) and url and url not in seen:
+                urls.append(url)
+                seen.add(url)
+        return urls
+
+    def _resolve_indexed_model_for_workflow_dependency(
+        self,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+    ) -> ModelWithLocation:
+        """Resolve an existing indexed model for a manual workflow dependency."""
+        if not model_hash and not relative_path:
+            raise ValueError("Provide model_hash or relative_path")
+
+        if relative_path:
+            normalized_path = self._normalize_model_relative_path(relative_path)
+            model = self.model_repository.find_by_exact_path(normalized_path)
+            if not model:
+                raise ValueError(f"Model is not indexed at path: {normalized_path}")
+            if model_hash and model.hash != model_hash:
+                raise ValueError(
+                    f"Indexed model at {normalized_path} has hash {model.hash}, not {model_hash}"
+                )
+            return model
+
+        assert model_hash is not None
+        matches = self.model_repository.find_model_by_hash(model_hash)
+        if not matches:
+            raise ValueError(f"Model is not indexed with hash: {model_hash}")
+        unique_hashes = {m.hash for m in matches}
+        if len(unique_hashes) > 1:
+            raise ValueError(f"Model hash prefix is ambiguous: {model_hash}")
+        if len(matches) > 1:
+            raise ValueError(
+                "Model has multiple indexed locations; provide relative_path to choose one"
+            )
+        return matches[0]
+
+    def _upsert_manual_workflow_model(self, workflow_name: str, manual_model) -> None:
+        manual_key = self._manual_workflow_model_key(manual_model)
+        models = self.pyproject.workflows.get_workflow_models(workflow_name)
+
+        for idx, existing in enumerate(models):
+            if not self._is_manual_workflow_model(existing):
+                continue
+            if self._manual_workflow_model_key(existing) == manual_key:
+                models[idx] = manual_model
+                self.pyproject.workflows.set_workflow_models(workflow_name, models)
+                return
+
+        models.append(manual_model)
+        self.pyproject.workflows.set_workflow_models(workflow_name, models)
+
+    def add_existing_model_to_workflow(
+        self,
+        workflow_name: str,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+        criticality: str = "required",
+    ):
+        """Attach an already-indexed local model as a manual workflow dependency."""
+        if criticality not in ("required", "flexible", "optional"):
+            raise ValueError(f"Invalid criticality: {criticality}")
+
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+
+        model = self._resolve_indexed_model_for_workflow_dependency(
+            model_hash=model_hash,
+            relative_path=relative_path,
+        )
+        normalized_path = self._normalize_model_relative_path(model.relative_path)
+        sources = self._source_urls_for_model_hash(model.hash)
+
+        global_model = ManifestModel(
+            hash=model.hash,
+            filename=model.filename,
+            size=model.file_size,
+            relative_path=normalized_path,
+            category=self._category_for_indexed_model(model),
+            sources=sources,
+        )
+        self.pyproject.models.add_model(global_model)
+
+        workflow_model = ManifestWorkflowModel(
+            hash=model.hash,
+            filename=model.filename,
+            category=global_model.category,
+            criticality=criticality,
+            status="resolved",
+            nodes=[],
+            sources=[],
+            relative_path=normalized_path,
+            declared_by="manual",
+        )
+        self._upsert_manual_workflow_model(workflow_name, workflow_model)
+        return workflow_model
+
+    def remove_manual_model_from_workflow(
+        self,
+        workflow_name: str,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+    ) -> bool:
+        """Remove a manually declared workflow model dependency."""
+        if not model_hash and not relative_path:
+            raise ValueError("Provide model_hash or relative_path")
+
+        target_path = (
+            self._normalize_model_relative_path(relative_path)
+            if relative_path
+            else None
+        )
+        models = self.pyproject.workflows.get_workflow_models(workflow_name)
+        kept = []
+        removed = False
+
+        for model in models:
+            if not self._is_manual_workflow_model(model):
+                kept.append(model)
+                continue
+
+            model_path = (
+                self._normalize_model_relative_path(model.relative_path)
+                if model.relative_path
+                else None
+            )
+            path_matches = bool(target_path and model_path == target_path)
+            hash_matches = bool(model_hash and model.hash == model_hash)
+            if path_matches or hash_matches:
+                removed = True
+                continue
+            kept.append(model)
+
+        if removed:
+            self.pyproject.workflows.set_workflow_models(workflow_name, kept)
+        return removed
+
     def _normalize_package_id(self, package_id: str) -> str:
         """Normalize GitHub URLs to registry IDs if they exist in the registry.
 
@@ -126,6 +312,13 @@ class WorkflowManager:
         Returns:
             Normalized package ID (registry ID if URL matches, otherwise unchanged)
         """
+        installed_id = resolve_installed_node_alias(
+            package_id,
+            self.pyproject.nodes.get_existing(),
+        )
+        if installed_id:
+            return installed_id
+
         # Check if it's a GitHub URL
         if is_git_url(package_id):
             # Try to resolve to registry package
@@ -134,6 +327,38 @@ class WorkflowManager:
 
         # Canonicalize legacy IDs directly
         return self.node_mapping_repository.canonicalize_package_id(package_id) or package_id
+
+    def _get_consensus_custom_node_map(self, workflow_name: str) -> dict[str, str | bool]:
+        """Return unambiguous custom node mappings learned from other workflows."""
+        workflows = self.pyproject.workflows.get_all_with_resolutions()
+        installed_nodes = self.pyproject.nodes.get_existing()
+        candidates: dict[str, set[str | bool]] = {}
+
+        for other_name, workflow_data in workflows.items():
+            if other_name == workflow_name:
+                continue
+
+            custom_map = workflow_data.get("custom_node_map", {})
+            if not isinstance(custom_map, Mapping):
+                continue
+
+            for node_type, package_id in custom_map.items():
+                if isinstance(package_id, bool):
+                    normalized: str | bool = package_id
+                elif isinstance(package_id, str):
+                    normalized = self._normalize_package_id(package_id)
+                    if not resolve_installed_node_alias(normalized, installed_nodes):
+                        continue
+                else:
+                    continue
+
+                candidates.setdefault(str(node_type), set()).add(normalized)
+
+        return {
+            node_type: next(iter(package_ids))
+            for node_type, package_ids in candidates.items()
+            if len(package_ids) == 1
+        }
 
 
     def _write_single_model_resolution(
@@ -385,6 +610,8 @@ class WorkflowManager:
             workflow_name: Workflow being resolved
             node_package_id: Package ID to add to workflow.nodes
         """
+        node_package_id = self._normalize_package_id(node_package_id)
+
         # Get existing workflow node packages from pyproject
         workflows_config = self.pyproject.workflows.get_all_with_resolutions()
         workflow_config = workflows_config.get(workflow_name, {})
@@ -981,9 +1208,12 @@ class WorkflowManager:
         except Exception as e:
             logger.warning(f"Failed to load global models table: {e}")
 
+        current_custom_map = self.pyproject.workflows.get_custom_node_map(workflow_name)
+        consensus_custom_map = self._get_consensus_custom_node_map(workflow_name)
+
         context = ResolutionContext(
             installed_packages=self.pyproject.nodes.get_existing(),
-            custom_node_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
+            custom_node_mappings={**consensus_custom_map, **current_custom_map},
             previous_model_resolutions=previous_resolutions,
             global_models=global_models_dict,
             cec_path=getattr(self, "cec_path", None),
@@ -1058,7 +1288,10 @@ class WorkflowManager:
             # Build context with search function
             node_context = NodeResolutionContext(
                 installed_packages=self.pyproject.nodes.get_existing(),
-                custom_mappings=self.pyproject.workflows.get_custom_node_map(workflow_name),
+                custom_mappings={
+                    **self._get_consensus_custom_node_map(workflow_name),
+                    **self.pyproject.workflows.get_custom_node_map(workflow_name),
+                },
                 workflow_name=workflow_name,
                 search_fn=self.global_node_resolver.search_packages,
                 auto_select_ambiguous=True  # TODO: Make configurable
@@ -1312,6 +1545,12 @@ class WorkflowManager:
             if node_type not in target_node_types:
                 self.pyproject.workflows.remove_custom_node_mapping(workflow_name, node_type, config=config)
 
+        existing_workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name, config=config)
+        manual_workflow_models = [
+            model for model in existing_workflow_models
+            if self._is_manual_workflow_model(model)
+        ]
+
         # Phase 2: Build ManifestWorkflowModel entries with smart defaults
         manifest_models: list[ManifestWorkflowModel] = []
 
@@ -1389,8 +1628,6 @@ class WorkflowManager:
             )
             self.pyproject.models.add_model(global_model, config=config)
 
-        # Load existing workflow models to preserve download intents from previous sessions
-        existing_workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name, config=config)
         existing_by_filename = {m.filename: m for m in existing_workflow_models}
 
         # Add unresolved models
@@ -1418,6 +1655,18 @@ class WorkflowManager:
                 relative_path=relative_path
             )
             manifest_models.append(manifest_model)
+
+        existing_keys = {
+            self._manual_workflow_model_key(model)
+            for model in manifest_models
+            if self._manual_workflow_model_key(model) is not None
+        }
+        for manual_model in manual_workflow_models:
+            manual_key = self._manual_workflow_model_key(manual_model)
+            if manual_key is None or manual_key in existing_keys:
+                continue
+            manifest_models.append(manual_model)
+            existing_keys.add(manual_key)
 
         # Write all models to workflow
         self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
@@ -1556,7 +1805,10 @@ class WorkflowManager:
 
         # Next check if widget value path can be converted to category:
         from ..utils.model_categories import get_model_category
-        category = get_model_category(node_ref.widget_value)
+        category = get_model_category(
+            node_ref.widget_value,
+            model_config=self.model_resolver.model_config,
+        )
         logger.debug(f"Found directory mapping for widget value '{node_ref.widget_value}': {category}")
         return category
 

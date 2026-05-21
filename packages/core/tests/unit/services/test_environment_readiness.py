@@ -3,13 +3,13 @@
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from comfygit_core.models.readiness import ModelSourceWarning, NodeProvenanceWarning
 from comfygit_core.services.environment_readiness import (
     build_environment_readiness,
     collect_contract_artifact_blockers,
     collect_model_source_warnings,
     collect_node_provenance_warnings,
 )
-from comfygit_core.models.readiness import ModelSourceWarning, NodeProvenanceWarning
 
 
 @dataclass
@@ -166,6 +166,28 @@ def test_model_without_manifest_or_repository_source_is_reported_once():
             workflows=["simple"],
         )
     ]
+
+
+def test_model_source_warning_uses_workflow_criticality():
+    model = FakeModel(filename="manual.safetensors", hash="abc123", sources=[])
+    env = make_env(
+        models=[model],
+        workflows={"simple": object()},
+        workflow_models={
+            "simple": [
+                FakeModel(
+                    filename="manual.safetensors",
+                    hash="abc123",
+                    criticality="optional",
+                )
+            ]
+        },
+    )
+
+    warnings = collect_model_source_warnings(env)
+
+    assert len(warnings) == 1
+    assert warnings[0].criticality == "optional"
 
 
 def test_model_repository_sources_are_reported_as_repair_candidates():

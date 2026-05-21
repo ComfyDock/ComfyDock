@@ -1,8 +1,8 @@
 # ComfyGit Core Contract
 
 ComfyGit Core owns environment state, dependency metadata, local runtime
-materialization, and library APIs used by the CLI, manager, deploy tooling, and
-future runtime adapters.
+materialization, and library APIs used by the CLI, manager, Cloud, and future
+runtime adapters.
 
 ## Library Boundary
 
@@ -11,7 +11,7 @@ Validation: STATIC
 
 Core library code must not depend on a specific frontend, terminal UI, or ComfyUI
 panel implementation. User interaction belongs behind callback protocols,
-strategies, or callers in CLI/manager/deploy packages.
+strategies, or callers in CLI/manager/Cloud surfaces.
 
 ### CGCORE-LIB-02 [LIVE]: Core should avoid direct print/input interaction
 Validation: STATIC
@@ -30,9 +30,9 @@ internal composition, tests, and advanced package-local behavior.
 Validation: MIXED
 
 Environment readiness, portable provenance classification, and dependency source
-candidate discovery should live in core services. CLI, manager UI, deploy
-tooling, and runtime planners should adapt those results for presentation
-instead of carrying parallel policy implementations.
+candidate discovery should live in core services. CLI, manager UI, Cloud, and
+runtime planners should adapt those results for presentation instead of carrying
+parallel policy implementations.
 
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
@@ -189,6 +189,40 @@ Model files are tracked by metadata such as filename, category, relative path,
 hash, sources, and workflow references. The model bytes themselves stay external
 to the Python package and environment manifest.
 
+### CGCORE-DEP-02A [PARTIAL]: Workflows may declare indexed models without graph references
+Validation: TEST
+
+Core should let callers attach an already-indexed local model to a workflow even
+when workflow graph analysis cannot identify a model-loading widget. This manual
+workflow dependency must record the content hash and expected model-relative path
+and must not invent a fake workflow node reference. Resolver, cache, readiness,
+and missing-model checks should preserve and evaluate these entries alongside
+graph-derived model dependencies.
+
+The initial supported flow is local-first: the model must already exist in the
+workspace model index before it can be attached to a workflow. Declaring a
+missing model by URL and target path remains future download-intent behavior.
+
+### CGCORE-DEP-02B [PLANNED]: Built-in model-loader detection uses generated ComfyUI metadata
+Validation: MIXED
+
+Core should not rely only on a hand-maintained list of built-in ComfyUI model
+loader node types. When a materialized environment has an installed ComfyUI
+checkout, core should be able to derive model-loader metadata from that checkout
+and use it during workflow dependency analysis.
+
+Generated loader metadata should describe the node type, model widget name, model
+widget index when derivable, and ComfyUI model directory or directories used by
+the loader. Extraction should support both classic `INPUT_TYPES` definitions and
+newer schema-style definitions that expose `folder_paths.get_filename_list(...)`
+or equivalent folder-backed combo inputs.
+
+Generated metadata is local derived state, not portable manifest truth. If
+generation is unavailable or a loader is too dynamic to classify safely, core may
+fall back to conservative static mappings and manual workflow model declarations.
+Manual declarations remain the required escape hatch for custom nodes and opaque
+runtime behavior.
+
 ### CGCORE-DEP-03 [LIVE]: Model criticality affects reproducibility gates
 Validation: TEST
 
@@ -237,6 +271,11 @@ scoring candidate source matches, deduplicating candidates, and filtering alread
 known model sources are dependency-domain behavior. Core should expose this as
 UI-agnostic source-candidate services so manager, CLI, and build planning
 can share the same logic.
+
+Source candidate discovery should consume the same workflow model dependency
+surface used by graph parsing, generated ComfyUI loader metadata, and manual
+workflow model declarations. It should not invent a separate model identity model
+for source enrichment.
 
 ### CGCORE-DEP-07 [LIVE]: Sync may repair ComfyGit-managed tool floors
 Validation: TEST
@@ -305,6 +344,32 @@ Core may use local workspace credentials or runtime environment variables to
 authenticate GitHub API calls and git clone/fetch operations for private
 repositories. Those credentials must not be stored in environment manifests,
 export bundles, or committed provider-neutral provenance metadata.
+
+### CGCORE-SYNC-03C [LIVE]: Dev-link conversion preserves workflow package identity
+Validation: TEST
+
+When a tracked registry or git custom node is converted to a local development
+checkout, core must preserve the existing manifest node identifier so workflow
+`nodes` references remain valid. The conversion may replace the materialized
+custom node directory with a symlink to a developer-owned checkout, but any
+backup of the prior materialized node must live outside `custom_nodes` so sync
+and status do not classify the backup as an untracked custom node.
+
+### CGCORE-SYNC-03D [LIVE]: Installed custom-node aliases are exact and local
+Validation: TEST
+
+Core may use installed custom-node metadata to interpret workflow resolver output
+or existing workflow references, but only as an environment-local aid. Alias
+matching must be exact and case-sensitive, and an alias is usable only when it
+points to one installed manifest node identifier. Registry ids, display names,
+repository names, and materialized directory names must remain distinct portable
+identity fields. Ambiguous aliases must not be normalized.
+
+When one workflow has a user-confirmed `custom_node_map`, core may reuse that
+mapping for another workflow only if all other tracked workflows agree for that
+node type and the target package is installed in the manifest. The copied
+workflow should still persist canonical manifest package ids in `nodes` rather
+than display names or materialized directory names.
 
 ### CGCORE-SYNC-04 [PLANNED]: Build/runtime materialization fails on sync errors by default
 Validation: TEST

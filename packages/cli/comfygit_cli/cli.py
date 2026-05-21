@@ -978,6 +978,37 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     node_add_parser.set_defaults(func=env_cmds.node_add)
 
+    # node dev-link
+    node_dev_link_parser = node_subparsers.add_parser(
+        "dev-link",
+        help="Link a tracked node to a local development checkout",
+    )
+    node_dev_link_parser.add_argument(
+        "node_name",
+        help="Existing node identifier/name, or identifier to use for a new dev node",
+    ).completer = installed_node_completer  # type: ignore[attr-defined]
+    node_dev_link_parser.add_argument(
+        "--path",
+        required=True,
+        type=Path,
+        help="Path to the local custom-node development checkout",
+    )
+    node_dev_link_parser.add_argument(
+        "--name",
+        help="custom_nodes directory/symlink name to use when no tracked node exists",
+    )
+    node_dev_link_parser.add_argument(
+        "--replace-existing",
+        action="store_true",
+        help="Archive an existing materialized node directory and replace it with a symlink",
+    )
+    node_dev_link_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow replacing an existing mismatched symlink or directory",
+    )
+    node_dev_link_parser.set_defaults(func=env_cmds.node_dev_link)
+
     # node remove
     node_remove_parser = node_subparsers.add_parser("remove", help="Remove custom node(s)")
     node_remove_parser.add_argument("node_names", nargs="+", help="Node registry ID(s) or name(s)").completer = installed_node_completer  # type: ignore[attr-defined]
@@ -1029,6 +1060,65 @@ def _add_env_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Model management commands"
     )
     workflow_importance_parser.set_defaults(func=_make_help_func(workflow_importance_parser))
+
+    model_list_parser = workflow_model_subparsers.add_parser(
+        "list",
+        help="List models declared for a workflow"
+    )
+    model_list_parser.add_argument(
+        "workflow_name",
+        nargs="?",
+        help="Workflow name (interactive if omitted)"
+    ).completer = workflow_completer  # type: ignore[attr-defined]
+    model_list_parser.set_defaults(func=env_cmds.workflow_model_list)
+
+    model_add_parser = workflow_model_subparsers.add_parser(
+        "add",
+        help="Declare an indexed local model as required by a workflow"
+    )
+    model_add_parser.add_argument(
+        "workflow_name",
+        help="Workflow name"
+    ).completer = workflow_completer  # type: ignore[attr-defined]
+    model_add_parser.add_argument(
+        "--hash",
+        dest="model_hash",
+        help="Indexed model hash to attach"
+    )
+    model_add_parser.add_argument(
+        "--path",
+        dest="relative_path",
+        help="Model path relative to the models directory, e.g. checkpoints/model.safetensors"
+    )
+    model_add_parser.add_argument(
+        "--importance",
+        "--criticality",
+        dest="importance",
+        default="required",
+        choices=["required", "flexible", "optional"],
+        help="Workflow dependency importance (default: required)"
+    )
+    model_add_parser.set_defaults(func=env_cmds.workflow_model_add)
+
+    model_remove_parser = workflow_model_subparsers.add_parser(
+        "remove",
+        help="Remove a manually declared workflow model"
+    )
+    model_remove_parser.add_argument(
+        "workflow_name",
+        help="Workflow name"
+    ).completer = workflow_completer  # type: ignore[attr-defined]
+    model_remove_parser.add_argument(
+        "--hash",
+        dest="model_hash",
+        help="Manual model hash to remove"
+    )
+    model_remove_parser.add_argument(
+        "--path",
+        dest="relative_path",
+        help="Manual model path relative to the models directory"
+    )
+    model_remove_parser.set_defaults(func=env_cmds.workflow_model_remove)
 
     importance_parser = workflow_model_subparsers.add_parser(
         "importance",

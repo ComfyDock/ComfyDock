@@ -131,6 +131,22 @@ record its repository URL and pinned commit in the manifest. Branch metadata may
 describe the author's current development branch, but exact import,
 materialization, and deployment should prefer the pinned commit when available.
 
+### CGSPEC-NODE-02B [LIVE]: Workflow node references use canonical manifest ids
+Validation: TEST
+
+Workflow `nodes` entries should reference the canonical package identifier used
+under `[tool.comfygit.nodes]`. Resolver and status code may accept exact,
+case-sensitive aliases from installed node metadata, including the materialized
+custom-node directory name, registry id, or repository URL, but those aliases are
+not portable workflow package identities. If an alias matches more than one
+installed node, core must leave it unresolved rather than guessing.
+
+Per-workflow `custom_node_map` entries are workflow-local resolution hints. Core
+may derive a consensus fallback from other tracked workflows when all existing
+mappings for a node type agree and resolve to an installed node. That fallback is
+used for resolution and cache invalidation, but persisted workflow dependencies
+remain canonical manifest node ids.
+
 ### CGSPEC-NODE-03 [LIVE]: Node criticality defaults to required
 Validation: TEST
 
@@ -169,6 +185,68 @@ Validation: TEST
 Optional models may be unresolved without blocking every operation. Callers should
 still surface the missing metadata clearly so the user understands the environment
 may behave differently.
+
+### CGSPEC-MODEL-03A [PLANNED]: Model categories follow active ComfyUI folder paths
+Validation: MIXED
+
+Model category classification should be environment-aware. When an environment's
+active ComfyUI checkout declares model folders such as `frame_interpolation`,
+`optical_flow`, `background_removal`, or future built-in directories, scanner and
+manifest presentation code should treat those folders as first-class categories
+instead of collapsing them to `unknown` only because they are absent from an older
+static list.
+
+Static category tables remain a conservative fallback for bootstrapping,
+materialization without a ComfyUI checkout, and folders that ComfyUI or user
+configuration does not declare. Unknown/custom categories remain valid, but they
+should mean "not known to the active environment" rather than "not in a stale
+ComfyGit table."
+
+### CGSPEC-MODEL-04 [PARTIAL]: Workflow model dependencies may be manually declared
+Validation: TEST
+
+Workflow model entries are not limited to references discovered from workflow
+JSON widgets. A workflow may include a user-declared model dependency with an
+empty `nodes` list when a custom node loads the model through behavior core
+cannot infer from the graph. Such entries should be treated as workflow
+dependencies, not as global model inventory.
+
+Manual workflow model dependencies should initially be created only from models
+that already exist in the current workspace model index. The manifest entry
+should store the model hash, filename, category, criticality, resolved status,
+and expected `relative_path` under the configured models directory. The relative
+path remains meaningful for resolved manual dependencies because custom node
+loaders may require the file to exist at a specific location.
+
+### CGSPEC-MODEL-04A [PLANNED]: Built-in model-loader discovery is generated from the active ComfyUI checkout
+Validation: MIXED
+
+Workflow dependency analysis should use generated model-loader metadata from the
+environment's installed ComfyUI checkout when available. The generated metadata
+should identify ComfyUI built-in nodes that select files from `folder_paths`
+model directories, including newer loader forms such as frame interpolation,
+optical flow, background removal, latent upscale, and model patch loaders.
+
+Generated loader metadata should record enough structure for callers to resolve a
+workflow widget value without guessing from display names alone: node type, widget
+name, widget index when derivable, and one or more expected model directories.
+The parser should prefer explicit `properties.models` source metadata when it is
+present, then use generated folder-backed widget metadata, then fall back to
+manual workflow declarations for loaders core cannot infer safely.
+
+Static multi-model widget configuration should become a fallback and review aid,
+not the only source of truth for built-in model loaders. Structurally discovered
+loaders may still need classification when a node reads a model folder for
+training, hook construction, optional enhancement, or another behavior that is
+not a required runtime model dependency.
+
+### CGSPEC-MODEL-05 [PLANNED]: Missing manual model declarations become download intents
+Validation: MIXED
+
+Future tooling may let users declare a required workflow model by target path and
+source URL before the model exists locally. That flow should reuse workflow model
+download-intent semantics, but it is not part of the initial local-first manual
+dependency workflow.
 
 ## Local Configuration
 

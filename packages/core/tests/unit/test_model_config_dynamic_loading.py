@@ -19,6 +19,8 @@ class TestModelConfigCecPathLoading:
         # Should have known model loader nodes
         assert "CheckpointLoaderSimple" in config.node_directory_mappings
         assert "LoraLoader" in config.node_directory_mappings
+        assert "FrameInterpolationModelLoader" in config.node_directory_mappings
+        assert "frame_interpolation" in config.standard_directories
 
     def test_load_with_cec_path_none_uses_static_config(self):
         """Test that load(cec_path=None) uses static config."""
@@ -58,6 +60,52 @@ class TestModelConfigCecPathLoading:
         clip_dirs = config.get_directories_for_node("CLIPLoader")
         assert "text_encoders" in clip_dirs
         assert "clip" in clip_dirs
+
+    def test_load_with_cec_path_loads_generated_model_loaders(self, tmp_path):
+        """Test generated model loader metadata adds loader nodes and widgets."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+
+        folder_paths_data = {
+            "metadata": {},
+            "folder_mappings": {
+                "frame_interpolation": ["frame_interpolation"],
+            },
+            "legacy_aliases": {},
+        }
+        with open(cec_path / "comfyui_folder_paths.json", "w") as f:
+            json.dump(folder_paths_data, f)
+
+        model_loaders_data = {
+            "metadata": {},
+            "model_loaders": {
+                "FrameInterpolationModelLoader": [
+                    {
+                        "widget_name": "model_name",
+                        "widget_index": 0,
+                        "directories": ["frame_interpolation"],
+                        "source": "generated",
+                    }
+                ]
+            },
+        }
+        with open(cec_path / "comfyui_model_loaders.json", "w") as f:
+            json.dump(model_loaders_data, f)
+
+        config = ModelConfig.load(cec_path=cec_path)
+
+        assert config.is_model_loader_node("FrameInterpolationModelLoader")
+        assert config.get_directories_for_node("FrameInterpolationModelLoader") == [
+            "frame_interpolation",
+        ]
+        assert "frame_interpolation" in config.standard_directories
+
+        widgets = config.get_model_loader_widgets("FrameInterpolationModelLoader")
+        assert len(widgets) == 1
+        assert widgets[0].widget_name == "model_name"
+        assert widgets[0].widget_index == 0
+        assert widgets[0].directories == ["frame_interpolation"]
+        assert widgets[0].source == "generated"
 
     def test_load_expands_clip_loader_directories(self, tmp_path):
         """Test CLIPLoader gets ["text_encoders", "clip"] from merged config."""

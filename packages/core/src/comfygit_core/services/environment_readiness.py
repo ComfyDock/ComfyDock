@@ -138,7 +138,7 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
                     or _safe_str(filename)
                     or "unknown",
                     hash=_safe_str(getattr(model_data, "hash", None)),
-                    criticality=_safe_str(getattr(model_data, "criticality", None))
+                    criticality=_safe_str(getattr(workflow_model, "criticality", None))
                     or "required",
                     workflows=[],
                     source_candidates=model_source_candidates(env, model_data),

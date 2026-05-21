@@ -35,6 +35,7 @@ from ..models.shared import (
     ManagerUpdateResult,
     ModelSourceResult,
     ModelSourceStatus,
+    NodeDevLinkResult,
     NodeInfo,
     NodeRemovalResult,
     UpdateResult,
@@ -44,6 +45,7 @@ from ..strategies.confirmation import ConfirmationStrategy
 from ..utils.common import run_command
 from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
+from ..utils.node_identity import resolve_installed_node_alias
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
@@ -666,8 +668,10 @@ class Environment:
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
+        self.git_manager.ensure_gitignore_entry("backups/")
         self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
         self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
+        self.git_manager.ensure_gitignore_entry("comfyui_model_loaders.json")
         self._untrack_uvlock_if_tracked()
         self._untrack_generated_metadata_if_tracked()
 
@@ -1509,6 +1513,26 @@ class Environment:
         )
 
     @_requires_env_lock
+    def link_development_node(
+        self,
+        identifier: str,
+        source_path: Path | str,
+        *,
+        name: str | None = None,
+        replace_existing: bool = False,
+        force: bool = False,
+    ) -> NodeDevLinkResult:
+        """Convert or add a custom node as a symlinked development checkout."""
+        self.git_manager.ensure_gitignore_entry("backups/")
+        return self.node_manager.link_development_node(
+            identifier,
+            source_path,
+            name=name,
+            replace_existing=replace_existing,
+            force=force,
+        )
+
+    @_requires_env_lock
     def preview_add_node_dependency_changes(self, identifier: str) -> DependencyResolutionPreview:
         """Preview lockfile dependency changes for adding a node."""
         return self.node_manager.preview_add_node_dependency_changes(identifier)
@@ -1768,8 +1792,14 @@ class Environment:
         installed_node_ids = set(installed_nodes.keys())
         logger.debug(f"Installed nodes: {installed_node_ids}")
 
-        # Find nodes referenced in workflows but not installed
-        uninstalled_ids = list(workflow_node_ids - installed_node_ids)
+        # Find nodes referenced in workflows but not installed. Existing
+        # manifests may contain exact installed aliases such as custom_nodes
+        # directory names, so resolve those before reporting missing packages.
+        uninstalled_ids = [
+            node_id
+            for node_id in workflow_node_ids
+            if not resolve_installed_node_alias(node_id, installed_nodes)
+        ]
         logger.debug(f"Uninstalled nodes: {uninstalled_ids}")
 
         return uninstalled_ids
@@ -2472,6 +2502,17 @@ class Environment:
             logger.warning(f"Failed to extract folder paths: {e}")
             logger.warning("Model category validation will fall back to static config")
 
+        # Extract model loader widget metadata from ComfyUI installation
+        from ..utils.model_loader_extractor import extract_comfyui_model_loaders
+
+        try:
+            model_loaders_json = self.cec_path / "comfyui_model_loaders.json"
+            extract_comfyui_model_loaders(self.comfyui_path, model_loaders_json)
+            logger.info(f"Extracted model loaders to {model_loaders_json.name}")
+        except Exception as e:
+            logger.warning(f"Failed to extract model loader metadata: {e}")
+            logger.warning("Model loader detection will fall back to static config")
+
         # Remove ComfyUI's default models directory (will be replaced with symlink)
         models_dir = self.comfyui_path / "models"
         if models_dir.exists() and not models_dir.is_symlink():
@@ -2749,7 +2790,11 @@ class Environment:
         """Untrack generated ComfyUI metadata files if previously committed."""
         from ..utils.git import _git
 
-        for filename in ("comfyui_builtins.json", "comfyui_folder_paths.json"):
+        for filename in (
+            "comfyui_builtins.json",
+            "comfyui_folder_paths.json",
+            "comfyui_model_loaders.json",
+        ):
             result = _git(
                 ["ls-files", filename],
                 self.cec_path,
@@ -2766,7 +2811,7 @@ class Environment:
     def refresh_metadata(self) -> dict:
         """Refresh extracted metadata from ComfyUI installation.
 
-        Re-extracts builtins and folder paths for the current environment.
+        Re-extracts builtins, folder paths, and model loader metadata for the current environment.
         Useful after upgrading ComfyUI or to fix missing metadata files
         for environments created before v0.3.12.
 
@@ -2774,14 +2819,17 @@ class Environment:
             dict with keys:
                 - builtins_refreshed: bool
                 - folder_paths_refreshed: bool
+                - model_loaders_refreshed: bool
                 - builtins_count: int (number of builtin nodes)
                 - folder_mappings_count: int (number of folder mappings)
+                - model_loaders_count: int (number of generated model loader nodes)
 
         Raises:
             ValueError: If ComfyUI installation is missing or invalid
         """
         from ..utils.builtin_extractor import extract_comfyui_builtins
         from ..utils.folder_paths_extractor import extract_folder_paths
+        from ..utils.model_loader_extractor import extract_comfyui_model_loaders
 
         if not self.comfyui_path.exists():
             raise ValueError(f"ComfyUI not found at {self.comfyui_path}")
@@ -2789,8 +2837,10 @@ class Environment:
         result = {
             "builtins_refreshed": False,
             "folder_paths_refreshed": False,
+            "model_loaders_refreshed": False,
             "builtins_count": 0,
             "folder_mappings_count": 0,
+            "model_loaders_count": 0,
         }
 
         # Re-extract builtins
@@ -2812,5 +2862,18 @@ class Environment:
             logger.info(f"Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
         except Exception as e:
             logger.warning(f"Failed to refresh folder paths: {e}", exc_info=True)
+
+        # Re-extract model loaders
+        model_loaders_path = self.cec_path / "comfyui_model_loaders.json"
+        try:
+            output = extract_comfyui_model_loaders(self.comfyui_path, model_loaders_path)
+            result["model_loaders_refreshed"] = True
+            result["model_loaders_count"] = output.get("metadata", {}).get("total_model_loaders", 0)
+            logger.info(
+                f"Refreshed comfyui_model_loaders.json "
+                f"({result['model_loaders_count']} model loaders)"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to refresh model loaders: {e}", exc_info=True)
 
         return result

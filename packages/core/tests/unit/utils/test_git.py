@@ -100,6 +100,16 @@ class TestGitCloneCommitDetection:
             "https://github.com/example/repo.git",
             str(target_path),
         ]
+        assert mock_git.call_args.kwargs["timeout"] == 300
+
+    @patch("comfygit_core.utils.git._git")
+    def test_clone_passes_explicit_timeout_to_git_runner(self, mock_git):
+        """Clone-specific timeouts should reach the subprocess runner."""
+        target_path = Path("/tmp/repo")
+
+        git_clone("https://github.com/example/repo.git", target_path, depth=1, ref="main", timeout=900)
+
+        assert mock_git.call_args.kwargs["timeout"] == 900
 
     @patch("comfygit_core.utils.git._git")
     def test_full_commit_hash_still_uses_full_clone_then_checkout(self, mock_git):

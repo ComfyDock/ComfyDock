@@ -1,7 +1,11 @@
 """Unit tests for ModelRepository.calculate_short_hash using xxhash."""
 
 import xxhash
-from comfygit_core.repositories.model_repository import ModelRepository
+from comfygit_core.repositories.model_repository import (
+    MODEL_SHORT_HASH_ALGORITHM,
+    calculate_model_short_hash,
+    ModelRepository,
+)
 
 
 def test_calculate_short_hash_uses_xxhash(tmp_path):
@@ -16,6 +20,7 @@ def test_calculate_short_hash_uses_xxhash(tmp_path):
 
     # Calculate hash using our implementation
     result = repo.calculate_short_hash(test_file)
+    helper_result = calculate_model_short_hash(test_file)
 
     # Calculate expected hash using xxhash directly (same algorithm)
     file_size = test_file.stat().st_size
@@ -24,6 +29,8 @@ def test_calculate_short_hash_uses_xxhash(tmp_path):
     hasher.update(test_content)  # File is < 30MB, so only start chunk
     expected = hasher.hexdigest()[:16]
 
+    assert MODEL_SHORT_HASH_ALGORITHM == "xxh3_128_sample_v1"
+    assert result == helper_result
     assert result == expected, f"Expected xxhash result {expected}, got {result}"
 
 
@@ -57,6 +64,7 @@ def test_calculate_short_hash_samples_large_files(tmp_path):
         f.write(b"C" * chunk_size)
 
     result = repo.calculate_short_hash(test_file)
+    helper_result = calculate_model_short_hash(test_file)
 
     # Compute expected hash manually using xxhash
     hasher = xxhash.xxh3_128()
@@ -74,6 +82,7 @@ def test_calculate_short_hash_samples_large_files(tmp_path):
 
     expected = hasher.hexdigest()[:16]
 
+    assert result == helper_result
     assert result == expected, f"Expected {expected}, got {result}"
 
 

@@ -5,6 +5,7 @@ Handles source management, missing model detection, and import preparation.
 """
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
 from ..logging.logging_config import get_logger
@@ -38,6 +39,34 @@ class EnvironmentModelManager:
         self.pyproject = pyproject
         self.model_repository = model_repository
         self.model_downloader = model_downloader
+
+    @staticmethod
+    def _normalize_model_relative_path(relative_path: str) -> str:
+        normalized = relative_path.replace("\\", "/").strip()
+        path = PurePosixPath(normalized)
+        if not normalized or path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"Model path must be relative to the models directory: {relative_path}")
+        return path.as_posix()
+
+    def _get_available_workflow_model(self, workflow_model):
+        """Return the indexed model only if the workflow's required location is present."""
+        model_hash = getattr(workflow_model, "hash", None)
+        if not model_hash:
+            return None
+
+        relative_path = getattr(workflow_model, "relative_path", None)
+        if relative_path:
+            try:
+                indexed = self.model_repository.find_by_exact_path(
+                    self._normalize_model_relative_path(relative_path)
+                )
+            except ValueError:
+                return None
+            if indexed and indexed.hash == model_hash:
+                return indexed
+            return None
+
+        return self.model_repository.get_model(model_hash)
 
     def add_model_source(self, identifier: str, url: str) -> ModelSourceResult:
         """Add a download source URL to a model.
@@ -236,7 +265,7 @@ class EnvironmentModelManager:
                 model_hash = wf_model.hash
 
                 # If model has a hash, check if it exists WITH a valid location
-                if model_hash and not self.model_repository.get_model(model_hash):
+                if model_hash and not self._get_available_workflow_model(wf_model):
                     if model_hash not in missing_by_hash:
                         global_model = self.pyproject.models.get_by_hash(model_hash)
                         if global_model:
@@ -325,7 +354,7 @@ class EnvironmentModelManager:
 
                 # Check if model exists locally
                 if model.hash:
-                    existing = self.model_repository.get_model(model.hash)
+                    existing = self._get_available_workflow_model(model)
                     if existing:
                         # Enrich SQLite with sources from pyproject
                         global_model = self.pyproject.models.get_by_hash(model.hash)

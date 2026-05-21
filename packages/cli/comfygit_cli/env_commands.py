@@ -1799,6 +1799,50 @@ packages = []
 
         print(f"\nRun 'cg -e {env.name} status' to review changes")
 
+    @with_env_logging("node dev-link")
+    def node_dev_link(self, args: argparse.Namespace, logger=None) -> None:
+        """Link a tracked or new custom node to a local development checkout."""
+        env = self._get_env(args)
+
+        print(f"🔗 Linking development node: {args.node_name}")
+
+        try:
+            result = env.link_development_node(
+                args.node_name,
+                args.path,
+                name=getattr(args, "name", None),
+                replace_existing=getattr(args, "replace_existing", False),
+                force=getattr(args, "force", False),
+            )
+        except CDNodeConflictError as e:
+            if logger:
+                logger.error(f"Node dev-link conflict for '{args.node_name}': {e}", exc_info=True)
+            print(f"✗ Cannot link development node '{args.node_name}'", file=sys.stderr)
+            print(f"   {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            if logger:
+                logger.error(f"Node dev-link failed for '{args.node_name}': {e}", exc_info=True)
+            print(f"✗ Failed to link development node '{args.node_name}'", file=sys.stderr)
+            print(f"   {e}", file=sys.stderr)
+            sys.exit(1)
+
+        if result.already_linked and not result.requirements_changed:
+            print(f"✓ Development node '{result.name}' is already linked")
+        else:
+            print(f"✓ Development node '{result.name}' linked and tracked")
+
+        print(f"   Identifier: {result.identifier}")
+        print(f"   Link: {result.link_path} -> {result.source_path}")
+        if result.backup_path:
+            print(f"   Archived previous copy: {result.backup_path}")
+        if result.requirements_changed:
+            print("   Python requirements updated")
+        if result.needs_restart:
+            print("   Restart ComfyUI for Python node changes to load")
+
+        print(f"\nRun 'cg -e {env.name} status' to review changes")
+
     @with_env_logging("node remove")
     def node_remove(self, args: argparse.Namespace, logger=None) -> None:
         """Remove custom node(s) - handles filesystem immediately."""
@@ -3424,6 +3468,90 @@ packages = []
 
             print(f"\n✓ Updated {updated_count}/{len(models)} model(s)")
 
+    @with_env_logging("workflow model list", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_list(self, args: argparse.Namespace, logger=None) -> None:
+        """List models declared for a workflow."""
+        env = self._get_env(args)
+        workflow_name = getattr(args, "workflow_name", None)
+        if not workflow_name:
+            workflow_name = self._select_workflow_interactive(env)
+            if not workflow_name:
+                print("✗ No workflow selected")
+                return
+
+        models = env.pyproject.workflows.get_workflow_models(workflow_name)
+        if not models:
+            print(f"✗ No models found in workflow '{workflow_name}'")
+            return
+
+        print(f"\n📦 Models for workflow: {workflow_name}")
+        for model in models:
+            manual = getattr(model, "declared_by", None) == "manual" or not getattr(model, "nodes", None)
+            print(f"\n  • {model.filename}")
+            if model.hash:
+                print(f"    hash:       {model.hash}")
+            if model.relative_path:
+                print(f"    path:       {model.relative_path}")
+            print(f"    category:   {model.category}")
+            print(f"    importance: {model.criticality}")
+            print(f"    status:     {model.status}")
+            print(f"    declared:   {'manual' if manual else 'workflow graph'}")
+
+    @with_env_logging("workflow model add", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_add(self, args: argparse.Namespace, logger=None) -> None:
+        """Declare an indexed local model as a manual workflow dependency."""
+        env = self._get_env(args)
+        model_hash = getattr(args, "model_hash", None)
+        relative_path = getattr(args, "relative_path", None)
+        importance = getattr(args, "importance", "required")
+
+        if not model_hash and not relative_path:
+            print("✗ Provide --hash or --path for the indexed model to add")
+            sys.exit(1)
+
+        try:
+            model = env.workflow_manager.add_existing_model_to_workflow(
+                workflow_name=args.workflow_name,
+                model_hash=model_hash,
+                relative_path=relative_path,
+                criticality=importance,
+            )
+        except ValueError as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        identifier = model.relative_path or model.hash or model.filename
+        print(f"✓ Added manual model dependency to '{args.workflow_name}': {identifier}")
+        print(f"  importance: {model.criticality}")
+
+    @with_env_logging("workflow model remove", get_env_name=lambda self, args: self._get_env(args).name)
+    def workflow_model_remove(self, args: argparse.Namespace, logger=None) -> None:
+        """Remove a manually declared workflow model dependency."""
+        env = self._get_env(args)
+        model_hash = getattr(args, "model_hash", None)
+        relative_path = getattr(args, "relative_path", None)
+
+        if not model_hash and not relative_path:
+            print("✗ Provide --hash or --path for the manual model to remove")
+            sys.exit(1)
+
+        try:
+            removed = env.workflow_manager.remove_manual_model_from_workflow(
+                workflow_name=args.workflow_name,
+                model_hash=model_hash,
+                relative_path=relative_path,
+            )
+        except ValueError as e:
+            print(f"✗ {e}")
+            sys.exit(1)
+
+        if not removed:
+            print(f"✗ Manual model not found in workflow '{args.workflow_name}'")
+            sys.exit(1)
+
+        identifier = relative_path or model_hash
+        print(f"✓ Removed manual model dependency from '{args.workflow_name}': {identifier}")
+
     def _select_workflow_interactive(self, env) -> str | None:
         """Interactive workflow selection from available workflows.
 
@@ -3782,7 +3910,7 @@ packages = []
     def metadata_refresh(self, args: argparse.Namespace, logger: Any = None) -> None:
         """Refresh extracted metadata from ComfyUI installation.
 
-        Re-extracts builtins and folder paths for the current environment.
+        Re-extracts builtins, folder paths, and model loader metadata for the current environment.
         Useful after upgrading ComfyUI or to fix missing metadata files.
         """
         env = self._get_env(args)
@@ -3792,17 +3920,32 @@ packages = []
         try:
             result = env.refresh_metadata()
 
-            if result["builtins_refreshed"]:
-                print(f"   Refreshed comfyui_builtins.json ({result['builtins_count']} nodes)")
+            if result.get("builtins_refreshed"):
+                print(f"   Refreshed comfyui_builtins.json ({result.get('builtins_count', 0)} nodes)")
             else:
                 print("   Failed to refresh comfyui_builtins.json")
 
-            if result["folder_paths_refreshed"]:
-                print(f"   Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
+            if result.get("folder_paths_refreshed"):
+                print(
+                    f"   Refreshed comfyui_folder_paths.json "
+                    f"({result.get('folder_mappings_count', 0)} folder types)"
+                )
             else:
                 print("   Failed to refresh comfyui_folder_paths.json")
 
-            if result["builtins_refreshed"] or result["folder_paths_refreshed"]:
+            if result.get("model_loaders_refreshed"):
+                print(
+                    f"   Refreshed comfyui_model_loaders.json "
+                    f"({result.get('model_loaders_count', 0)} model loaders)"
+                )
+            elif "model_loaders_refreshed" in result:
+                print("   Failed to refresh comfyui_model_loaders.json")
+
+            if (
+                result.get("builtins_refreshed")
+                or result.get("folder_paths_refreshed")
+                or result.get("model_loaders_refreshed")
+            ):
                 print("\nMetadata refreshed successfully")
             else:
                 print("\nNo metadata was refreshed", file=sys.stderr)

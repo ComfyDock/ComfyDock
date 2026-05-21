@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 # - Resolution: Change node ID format (e.g., subgraph scoping), WorkflowNodeWidgetRef structure, etc.
 # - Model index: Hash algorithm changes (blake3 -> xxhash)
 # Migration: Wipes cache and rebuilds (cache is ephemeral)
-SCHEMA_VERSION = 5  # Invalidate after model hash algorithm change (blake3 -> xxhash)
+SCHEMA_VERSION = 6  # Invalidate after custom-node consensus mapping context change
 
 
 class CachedWorkflowAnalysis:
@@ -766,6 +766,24 @@ class WorkflowCacheRepository:
             for node_type in node_types
             if node_type in custom_map
         }
+        workflow_configs = self.pyproject_manager.workflows.get_all_with_resolutions()
+        consensus_candidates: dict[str, set[str | bool]] = {}
+        for other_name, workflow_data in workflow_configs.items():
+            if other_name == workflow_name:
+                continue
+
+            other_custom_map = workflow_data.get("custom_node_map", {})
+            for node_type in node_types:
+                if node_type in other_custom_map:
+                    package_id = other_custom_map[node_type]
+                    if isinstance(package_id, (str, bool)):
+                        consensus_candidates.setdefault(node_type, set()).add(package_id)
+
+        context["consensus_custom_mappings"] = {
+            node_type: next(iter(package_ids))
+            for node_type, package_ids in consensus_candidates.items()
+            if node_type not in custom_map and len(package_ids) == 1
+        }
         step_elapsed = (time.perf_counter() - step_start) * 1000
         logger.debug(f"[CONTEXT] Step 1 (custom mappings) took {step_elapsed:.2f}ms")
 
@@ -774,7 +792,7 @@ class WorkflowCacheRepository:
         step_start = time.perf_counter()
 
         # Read nodes list from workflow config (written by apply_resolution)
-        workflow_config = self.pyproject_manager.workflows.get_all_with_resolutions().get(workflow_name, {})
+        workflow_config = workflow_configs.get(workflow_name, {})
         relevant_packages = set(workflow_config.get('nodes', []))
 
         # Get global package metadata
@@ -797,7 +815,25 @@ class WorkflowCacheRepository:
         workflow_models = self.pyproject_manager.workflows.get_workflow_models(workflow_name)
         model_pyproject_data = {}
         for manifest_model in workflow_models:
-            for ref in manifest_model.nodes:
+            nodes = getattr(manifest_model, "nodes", None) or []
+            if not nodes:
+                key_source = (
+                    getattr(manifest_model, "relative_path", None)
+                    or getattr(manifest_model, "hash", None)
+                    or getattr(manifest_model, "filename", None)
+                    or "unknown"
+                )
+                model_pyproject_data[f"manual:{key_source}"] = {
+                    "hash": manifest_model.hash,
+                    "status": manifest_model.status,
+                    "criticality": manifest_model.criticality,
+                    "sources": manifest_model.sources,
+                    "relative_path": manifest_model.relative_path,
+                    "declared_by": getattr(manifest_model, "declared_by", None),
+                }
+                continue
+
+            for ref in nodes:
                 ref_key = f"{ref.node_id}_{ref.widget_index}"
                 model_pyproject_data[ref_key] = {
                     "hash": manifest_model.hash,

@@ -194,20 +194,31 @@ image outputs returned by the same API response. Unsupported input or output
 types should degrade to plain fields or raw JSON instead of blocking the whole
 contract.
 
-### CGSERVE-RUN-01B [PLANNED]: Studio frontend is a packaged static asset
+### CGSERVE-RUN-01B [PARTIAL]: Studio frontend is a shared packaged static asset
 Validation: STATIC
 
-The contract studio source should live in the CLI package as a normal
-React/Vite frontend project for local development ergonomics. Release builds
-should emit static assets into the Python package so `cg serve` can serve them
-without requiring Node.js at runtime. The packaged UI may use design patterns
-inspired by J AI Studio, but ComfyGit's UI remains contract-driven rather than
+The contract Studio source should live in a first-class frontend package that
+can be consumed by both `cg serve` and hosted Cloud published endpoints. The
+CLI is one host for Studio, not the owner of the Studio source.
+
+Release builds should emit static assets that can be copied into the Python CLI
+package so `cg serve` can serve Studio without requiring Node.js at runtime.
+Cloud may consume the same package source or published bundle and should
+implement the same endpoint-first Studio API surface instead of maintaining a
+parallel playground UI. The packaged UI may use design patterns inspired by J
+AI Studio, but ComfyGit's UI remains contract-driven rather than
 model/profile-driven.
 
 During local development, the frontend may be built independently and served by
 the CLI `aiohttp` adapter from its emitted asset directory. The serve adapter
 owns static file routing, SPA fallback, and output proxy URLs; core continues to
 own only contract interpretation and prompt/output semantics.
+
+Studio must receive host-specific runtime configuration instead of hard-coding
+one deployment context. Local `cg serve` should configure an empty API base
+path, while Cloud should configure the published endpoint path such as
+`/e/{environment_public_id}/{endpoint_slug}`. Studio request, upload, gallery,
+run, and output URLs should be derived from that API base path.
 
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED

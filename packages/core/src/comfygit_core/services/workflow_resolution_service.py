@@ -134,7 +134,7 @@ class WorkflowResolutionService:
             elif len(resolved_packages) == 1:
                 candidate = resolved_packages[0]
                 is_installed_candidate = bool(
-                    candidate.package_id and candidate.package_id in context.installed_packages
+                    candidate.package_id and node_context.resolve_installed_package_id(candidate.package_id)
                 )
                 if is_installed_candidate:
                     logger.debug(

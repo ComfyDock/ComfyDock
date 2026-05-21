@@ -7,7 +7,7 @@ on:
     paths:
       - "packages/core/pyproject.toml"
       - "packages/cli/pyproject.toml"
-      - "packages/deploy/pyproject.toml"
+      - "packages/studio/package.json"
 
 permissions:
   contents: write
@@ -31,15 +31,15 @@ jobs:
         run: |
           CORE_VERSION=$(grep -m1 '^version' packages/core/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
           CLI_VERSION=$(grep -m1 '^version' packages/cli/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
-          DEPLOY_VERSION=$(grep -m1 '^version' packages/deploy/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
+          STUDIO_VERSION=$(grep -m1 '"version"' packages/studio/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
           echo "Core version: $CORE_VERSION"
           echo "CLI version: $CLI_VERSION"
-          echo "Deploy version: $DEPLOY_VERSION"
+          echo "Studio version: $STUDIO_VERSION"
 
-          if [ "$CORE_VERSION" != "$CLI_VERSION" ] || [ "$CORE_VERSION" != "$DEPLOY_VERSION" ]; then
-            echo "::error::Version mismatch! core=$CORE_VERSION cli=$CLI_VERSION deploy=$DEPLOY_VERSION"
-            echo "Lockstep versioning requires all packages to have the same version."
+          if [ "$CORE_VERSION" != "$CLI_VERSION" ] || [ "$CORE_VERSION" != "$STUDIO_VERSION" ]; then
+            echo "::error::Version mismatch! core=$CORE_VERSION cli=$CLI_VERSION studio=$STUDIO_VERSION"
+            echo "Lockstep versioning requires all release artifacts to have the same version."
             echo "Run: make bump-version VERSION=X.Y.Z"
             exit 1
           fi
@@ -52,9 +52,9 @@ jobs:
         run: |
           VERSION="${{ steps.extract.outputs.version }}"
 
-          # Check if ALL three packages exist on PyPI (not just core)
+          # Check if both Python packages exist on PyPI (not just core).
           ALL_PUBLISHED=true
-          for PKG in comfygit-core comfygit comfygit-deploy; do
+          for PKG in comfygit-core comfygit; do
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PKG/$VERSION/json")
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "$PKG $VERSION not found on PyPI"
@@ -131,6 +131,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/studio/package-lock.json
+
+      - name: Build bundled Studio
+        run: |
+          npm --prefix packages/studio ci
+          npm --prefix packages/studio run build
+          python3 dev/scripts/sync-studio-static.py
+
       - name: Build comfygit (CLI)
         run: uv build --package comfygit --no-sources
 
@@ -165,28 +178,10 @@ jobs:
           echo "::error::Timeout waiting for comfygit $VERSION on PyPI after $((MAX_ATTEMPTS * SLEEP_SECONDS))s"
           exit 1
 
-  publish-deploy:
-    name: Publish Deploy to PyPI
-    needs: [check-versions, wait-for-cli]
-    runs-on: ubuntu-latest
-    environment: pypi
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build comfygit-deploy
-        run: uv build --package comfygit-deploy --no-sources
-
-      - name: Publish to PyPI
-        run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
-
   create-release:
     name: Create GitHub Release
-    needs: [check-versions, publish-core, publish-cli, publish-deploy]
-    if: always() && needs.publish-core.result == 'success' && needs.publish-cli.result == 'success' && needs.publish-deploy.result == 'success'
+    needs: [check-versions, publish-core, publish-cli]
+    if: always() && needs.publish-core.result == 'success' && needs.publish-cli.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -218,7 +213,7 @@ jobs:
             echo "Generating AI summary with Claude Haiku..."
 
             # Build the prompt
-            PROMPT="You are writing release notes for ComfyGit, a git-based environment manager for ComfyUI. This release includes comfygit-core (the library), comfygit (the CLI), and comfygit-deploy (remote deployment CLI). Given these git commits, write a brief 2-3 sentence summary of the key changes in this release. Be concise and focus on user-facing improvements. Do not use bullet points, just prose. Commits:
+            PROMPT="You are writing release notes for ComfyGit, a git-based environment manager for ComfyUI. This release includes comfygit-core (the library), comfygit (the CLI), and the bundled ComfyGit Studio frontend served by the CLI. Given these git commits, write a brief 2-3 sentence summary of the key changes in this release. Be concise and focus on user-facing improvements. Do not use bullet points, just prose. Commits:
 
             $COMMITS"
 
@@ -256,7 +251,7 @@ jobs:
             echo ""
             echo "- \`comfygit-core==${{ needs.check-versions.outputs.version }}\`"
             echo "- \`comfygit==${{ needs.check-versions.outputs.version }}\`"
-            echo "- \`comfygit-deploy==${{ needs.check-versions.outputs.version }}\`"
+            echo "- bundled \`@comfygit/studio@${{ needs.check-versions.outputs.version }}\`"
             echo ""
             if [ -n "$AI_SUMMARY" ]; then
               echo "## Summary"

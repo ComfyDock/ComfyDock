@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Check version compatibility across workspace packages (lockstep versioning)."""
+"""Check version compatibility across release artifacts (lockstep versioning)."""
 
+import json
 import sys
 from pathlib import Path
 import tomllib
@@ -13,20 +14,27 @@ def get_version(pyproject_path):
         return data["project"]["version"]
 
 
+def get_package_json_version(package_json_path):
+    """Extract version from package.json."""
+    with open(package_json_path, encoding="utf-8") as f:
+        data = json.load(f)
+        return data["version"]
+
+
 def check_compatibility():
-    """Check if all packages have identical versions (lockstep)."""
+    """Check if all release artifacts have identical versions (lockstep)."""
     root = Path(__file__).parent.parent.parent
 
-    packages = {
-        "core": root / "packages/core/pyproject.toml",
-        "cli": root / "packages/cli/pyproject.toml",
-        "deploy": root / "packages/deploy/pyproject.toml",
+    artifacts = {
+        "core": (root / "packages/core/pyproject.toml", get_version),
+        "cli": (root / "packages/cli/pyproject.toml", get_version),
+        "studio": (root / "packages/studio/package.json", get_package_json_version),
     }
 
     versions = {}
-    for name, path in packages.items():
+    for name, (path, reader) in artifacts.items():
         if path.exists():
-            versions[name] = get_version(path)
+            versions[name] = reader(path)
             print(f"{name:10} {versions[name]}")
 
     # Lockstep: all versions must be exactly equal
@@ -34,11 +42,11 @@ def check_compatibility():
 
     if len(unique_versions) > 1:
         print("\n❌ ERROR: Version mismatch detected!")
-        print("Lockstep versioning requires all packages to have the same version.")
+        print("Lockstep versioning requires all release artifacts to have the same version.")
         print("Run: make bump-version VERSION=X.Y.Z")
         return False
 
-    print(f"\n✅ All packages at version {list(unique_versions)[0]} (lockstep)")
+    print(f"\n✅ All release artifacts at version {list(unique_versions)[0]} (lockstep)")
     return True
 
 

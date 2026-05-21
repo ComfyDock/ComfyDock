@@ -61,6 +61,11 @@ reproducibility issues before export, push, or build planning. Manager
 surfaces this today for local handoff flows; the reusable core readiness service
 and build planner integration are still planned.
 
+Required manually declared workflow models also require their expected local
+model-relative path to be present. A matching content hash at a different path is
+not enough to prove the workflow can run when the custom loader expects a
+specific location.
+
 ### CGCRIT-READY-02 [PARTIAL]: Optional custom node gaps are not portable build inputs
 Validation: MIXED
 
