@@ -1,11 +1,16 @@
 """Utility functions for determining model categories from filesystem paths."""
+from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..configs.comfyui_models import COMFYUI_MODELS_CONFIG
 
+if TYPE_CHECKING:
+    from ..configs.model_config import ModelConfig
 
-def get_model_category(relative_path: str) -> str:
+
+def get_model_category(relative_path: str, model_config: ModelConfig | None = None) -> str:
     """Determine model category from relative path.
 
     Extracts the first directory component from the relative path and checks
@@ -14,6 +19,7 @@ def get_model_category(relative_path: str) -> str:
 
     Args:
         relative_path: Path relative to models directory (e.g., "checkpoints/sd_xl.safetensors")
+        model_config: Optional environment-aware model config to use for category lookup
 
     Returns:
         Category name (e.g., "checkpoints", "loras", "vae") or "unknown"
@@ -42,7 +48,11 @@ def get_model_category(relative_path: str) -> str:
     first_dir = parts[0].lower()
 
     # Check against standard directories
-    standard_dirs = COMFYUI_MODELS_CONFIG.get('standard_directories', [])
+    standard_dirs = (
+        model_config.standard_directories
+        if model_config is not None
+        else COMFYUI_MODELS_CONFIG.get('standard_directories', [])
+    )
 
     # Case-insensitive match
     for std_dir in standard_dirs:

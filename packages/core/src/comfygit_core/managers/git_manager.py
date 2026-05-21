@@ -80,6 +80,7 @@ uv.lock
 # Generated ComfyUI metadata (recreated from the selected ComfyUI version)
 comfyui_builtins.json
 comfyui_folder_paths.json
+comfyui_model_loaders.json
 """
 
     def ensure_git_identity(self) -> None:

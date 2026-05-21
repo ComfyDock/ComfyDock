@@ -3910,7 +3910,7 @@ packages = []
     def metadata_refresh(self, args: argparse.Namespace, logger: Any = None) -> None:
         """Refresh extracted metadata from ComfyUI installation.
 
-        Re-extracts builtins and folder paths for the current environment.
+        Re-extracts builtins, folder paths, and model loader metadata for the current environment.
         Useful after upgrading ComfyUI or to fix missing metadata files.
         """
         env = self._get_env(args)
@@ -3920,17 +3920,32 @@ packages = []
         try:
             result = env.refresh_metadata()
 
-            if result["builtins_refreshed"]:
-                print(f"   Refreshed comfyui_builtins.json ({result['builtins_count']} nodes)")
+            if result.get("builtins_refreshed"):
+                print(f"   Refreshed comfyui_builtins.json ({result.get('builtins_count', 0)} nodes)")
             else:
                 print("   Failed to refresh comfyui_builtins.json")
 
-            if result["folder_paths_refreshed"]:
-                print(f"   Refreshed comfyui_folder_paths.json ({result['folder_mappings_count']} folder types)")
+            if result.get("folder_paths_refreshed"):
+                print(
+                    f"   Refreshed comfyui_folder_paths.json "
+                    f"({result.get('folder_mappings_count', 0)} folder types)"
+                )
             else:
                 print("   Failed to refresh comfyui_folder_paths.json")
 
-            if result["builtins_refreshed"] or result["folder_paths_refreshed"]:
+            if result.get("model_loaders_refreshed"):
+                print(
+                    f"   Refreshed comfyui_model_loaders.json "
+                    f"({result.get('model_loaders_count', 0)} model loaders)"
+                )
+            elif "model_loaders_refreshed" in result:
+                print("   Failed to refresh comfyui_model_loaders.json")
+
+            if (
+                result.get("builtins_refreshed")
+                or result.get("folder_paths_refreshed")
+                or result.get("model_loaders_refreshed")
+            ):
                 print("\nMetadata refreshed successfully")
             else:
                 print("\nNo metadata was refreshed", file=sys.stderr)

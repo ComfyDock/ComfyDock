@@ -96,6 +96,116 @@ class TestMultiModelExtraction:
         assert values == {"model.safetensors", "v1-inference.yaml"}
 
 
+class TestGeneratedModelLoaderExtraction:
+    """Tests for generated model loader metadata from .cec."""
+
+    def _write_cec_metadata(self, tmp_path: Path) -> Path:
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        (cec_path / "comfyui_folder_paths.json").write_text(
+            json.dumps({
+                "metadata": {},
+                "folder_mappings": {
+                    "frame_interpolation": ["frame_interpolation"],
+                    "text_encoders": ["text_encoders", "clip"],
+                },
+                "legacy_aliases": {},
+            }),
+            encoding="utf-8",
+        )
+        (cec_path / "comfyui_model_loaders.json").write_text(
+            json.dumps({
+                "metadata": {},
+                "model_loaders": {
+                    "FrameInterpolationModelLoader": [
+                        {
+                            "widget_name": "model_name",
+                            "widget_index": 0,
+                            "directories": ["frame_interpolation"],
+                            "source": "generated",
+                        }
+                    ],
+                    "DualCLIPLoader": [
+                        {
+                            "widget_name": "clip_name1",
+                            "widget_index": None,
+                            "directories": ["text_encoders"],
+                            "source": "generated",
+                        },
+                        {
+                            "widget_name": "clip_name2",
+                            "widget_index": None,
+                            "directories": ["text_encoders"],
+                            "source": "generated",
+                        },
+                    ],
+                },
+            }),
+            encoding="utf-8",
+        )
+        return cec_path
+
+    def _create_workflow_file(self, tmp_path: Path, nodes: list[dict]) -> Path:
+        workflow = {
+            "nodes": nodes,
+            "links": [],
+            "groups": [],
+            "version": 0.4,
+        }
+        wf_path = tmp_path / "test_workflow.json"
+        wf_path.write_text(json.dumps(workflow), encoding="utf-8")
+        return wf_path
+
+    def test_frame_interpolation_loader_from_generated_metadata(self, tmp_path):
+        """Generated metadata should make new folder-backed loaders visible."""
+        cec_path = self._write_cec_metadata(tmp_path)
+        wf_path = self._create_workflow_file(tmp_path, [{
+            "id": 1,
+            "type": "FrameInterpolationModelLoader",
+            "widgets_values": ["film_net_fp16.safetensors"],
+            "inputs": [
+                {
+                    "name": "model_name",
+                    "type": "COMBO",
+                    "widget": {"name": "model_name"},
+                }
+            ],
+        }])
+
+        parser = WorkflowDependencyParser(wf_path, cec_path=cec_path)
+        deps = parser.analyze_dependencies()
+
+        assert len(deps.found_models) == 1
+        ref = deps.found_models[0]
+        assert ref.node_type == "FrameInterpolationModelLoader"
+        assert ref.widget_index == 0
+        assert ref.widget_value == "film_net_fp16.safetensors"
+        assert ref.property_directory == "frame_interpolation"
+
+    def test_generated_widget_names_resolve_from_input_metadata(self, tmp_path):
+        """Generated widget names should map to widgets_values through inputs metadata."""
+        cec_path = self._write_cec_metadata(tmp_path)
+        wf_path = self._create_workflow_file(tmp_path, [{
+            "id": 1,
+            "type": "DualCLIPLoader",
+            "widgets_values": ["clip_l.safetensors", "t5xxl.safetensors", "flux"],
+            "inputs": [
+                {"name": "clip_name1", "type": "COMBO", "widget": {"name": "clip_name1"}},
+                {"name": "clip_name2", "type": "COMBO", "widget": {"name": "clip_name2"}},
+                {"name": "type", "type": "COMBO", "widget": {"name": "type"}},
+            ],
+        }])
+
+        parser = WorkflowDependencyParser(wf_path, cec_path=cec_path)
+        deps = parser.analyze_dependencies()
+
+        assert len(deps.found_models) == 2
+        refs_by_value = {ref.widget_value: ref for ref in deps.found_models}
+        assert refs_by_value["clip_l.safetensors"].widget_index == 0
+        assert refs_by_value["t5xxl.safetensors"].widget_index == 1
+        assert refs_by_value["clip_l.safetensors"].property_directory == "text_encoders"
+
+
 class TestPropertiesModelsExtraction:
     """Tests for properties.models extraction with URL metadata."""
 

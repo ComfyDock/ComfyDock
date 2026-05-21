@@ -7,9 +7,10 @@ from typing import TYPE_CHECKING
 from comfygit_core.repositories.workflow_repository import WorkflowRepository
 
 from ..configs.comfyui_models import MULTI_MODEL_WIDGET_CONFIGS
-from ..configs.model_config import ModelConfig
+from ..configs.model_config import ModelConfig, ModelLoaderWidgetMapping
 from ..logging.logging_config import get_logger
 from ..models.workflow import (
+    NodeInput,
     Workflow,
     WorkflowDependencies,
     WorkflowNode,
@@ -37,7 +38,7 @@ class WorkflowDependencyParser:
         builtin_versions_repository: ComfyUIBuiltinVersionsRepository | None = None,
         version_agnostic: bool = False,
     ):
-        self.model_config = model_config or ModelConfig.load()
+        self.model_config = model_config or ModelConfig.load(cec_path=cec_path)
         self.cec_path = cec_path
         self.builtin_versions_repository = builtin_versions_repository
         self.version_agnostic = version_agnostic
@@ -115,8 +116,7 @@ class WorkflowDependencyParser:
 
         Uses explicit extraction strategies:
         1. Extract from properties.models (preferred - has URLs for auto-download)
-        2. Extract from known multi-model node widget configs
-        3. Extract from known single-model loader widget config
+        2. Extract from configured/generated model-loader widget metadata
 
         Args:
             node_id: Scoped node ID from workflow.nodes dict key (e.g., "uuid:12" for subgraph nodes)
@@ -129,14 +129,11 @@ class WorkflowDependencyParser:
         if property_models:
             refs.extend(self._extract_from_properties_models(node_id, node_info, property_models))
 
-        # Strategy 2: Multi-model nodes (explicit widget indices from config)
-        if node_info.type in MULTI_MODEL_WIDGET_CONFIGS:
-            widget_refs = self._extract_multi_model_widgets(node_id, node_info)
-            refs = self._merge_model_refs(refs, widget_refs)
-
-        # Strategy 3: Standard single-model loaders
-        elif self.model_config.is_model_loader_node(node_info.type):
-            widget_refs = self._extract_single_model_widget(node_id, node_info)
+        # Strategy 2: Generated/static model loader widget metadata
+        if self.model_config.is_model_loader_node(node_info.type):
+            widget_refs = self._extract_model_loader_widgets(node_id, node_info)
+            if not widget_refs:
+                widget_refs = self._extract_static_fallback_widgets(node_id, node_info)
             refs = self._merge_model_refs(refs, widget_refs)
 
         return refs
@@ -181,42 +178,117 @@ class WorkflowDependencyParser:
                 return idx
         return None
 
-    def _extract_multi_model_widgets(self, node_id: str, node_info: WorkflowNode) -> list[WorkflowNodeWidgetRef]:
-        """Extract models from multi-model nodes using MULTI_MODEL_WIDGET_CONFIGS.
+    def _find_widget_index_for_input_name(
+        self,
+        inputs: list[NodeInput],
+        widget_name: str,
+    ) -> int | None:
+        """Find frontend widget index from ComfyUI input metadata."""
+        widget_idx = 0
+        for input_info in inputs:
+            if input_info.link is not None:
+                continue
 
-        Note: Unlike pattern matching, multi-model configs explicitly define which
-        widgets contain models, so we trust them without extension filtering.
-        This allows CheckpointLoader to capture both .safetensors and .yaml configs.
-        """
-        refs = []
-        widget_indices = MULTI_MODEL_WIDGET_CONFIGS.get(node_info.type, [])
+            widget_metadata = input_info.widget or {}
+            if widget_metadata:
+                candidate_names = {input_info.name}
+                metadata_name = widget_metadata.get("name")
+                if isinstance(metadata_name, str):
+                    candidate_names.add(metadata_name)
+
+                if widget_name in candidate_names:
+                    return widget_idx
+
+                widget_idx += 1
+
+        return None
+
+    def _resolve_model_widget_index(
+        self,
+        node_info: WorkflowNode,
+        mapping: ModelLoaderWidgetMapping,
+        mapping_count: int,
+    ) -> int | None:
+        if mapping.widget_name:
+            index = self._find_widget_index_for_input_name(
+                node_info.inputs,
+                mapping.widget_name,
+            )
+            if index is not None:
+                return index
+
+        if mapping.widget_index is not None:
+            return mapping.widget_index
+
+        widgets = node_info.widgets_values or []
+        if mapping_count == 1 and len(widgets) == 1:
+            return 0
+
+        return None
+
+    def _extract_model_loader_widgets(
+        self,
+        node_id: str,
+        node_info: WorkflowNode,
+    ) -> list[WorkflowNodeWidgetRef]:
+        """Extract model refs from configured/generated model loader widgets."""
+        refs: list[WorkflowNodeWidgetRef] = []
+        mappings = self.model_config.get_model_loader_widgets(node_info.type)
         widgets = node_info.widgets_values or []
 
-        for widget_idx in widget_indices:
-            if widget_idx < len(widgets) and widgets[widget_idx]:
-                value = widgets[widget_idx]
-                if isinstance(value, str) and value.strip():
-                    refs.append(WorkflowNodeWidgetRef(
-                        node_id=node_id,
-                        node_type=node_info.type,
-                        widget_index=widget_idx,
-                        widget_value=value
-                    ))
-        return refs
+        for mapping in mappings:
+            widget_idx = self._resolve_model_widget_index(
+                node_info,
+                mapping,
+                len(mappings),
+            )
+            if widget_idx is None or widget_idx >= len(widgets):
+                continue
 
-    def _extract_single_model_widget(self, node_id: str, node_info: WorkflowNode) -> list[WorkflowNodeWidgetRef]:
-        """Extract model from standard single-model loader nodes."""
-        refs = []
-        widget_idx = self.model_config.get_widget_index_for_node(node_info.type)
-        widgets = node_info.widgets_values or []
+            value = widgets[widget_idx]
+            if not isinstance(value, str) or not value.strip():
+                continue
 
-        if widget_idx < len(widgets) and widgets[widget_idx]:
             refs.append(WorkflowNodeWidgetRef(
                 node_id=node_id,
                 node_type=node_info.type,
                 widget_index=widget_idx,
-                widget_value=widgets[widget_idx]
+                widget_value=value,
+                property_directory=mapping.directories[0] if mapping.directories else None,
             ))
+
+        return refs
+
+    def _extract_static_fallback_widgets(
+        self,
+        node_id: str,
+        node_info: WorkflowNode,
+    ) -> list[WorkflowNodeWidgetRef]:
+        """Fallback for workflows without frontend input widget metadata."""
+        refs: list[WorkflowNodeWidgetRef] = []
+        widgets = node_info.widgets_values or []
+        widget_indices = MULTI_MODEL_WIDGET_CONFIGS.get(
+            node_info.type,
+            [self.model_config.get_widget_index_for_node(node_info.type)],
+        )
+        directories = self.model_config.get_directories_for_node(node_info.type)
+
+        for widget_idx in widget_indices:
+            if widget_idx >= len(widgets):
+                continue
+            value = widgets[widget_idx]
+            if not isinstance(value, str) or not value.strip():
+                continue
+            refs.append(
+                WorkflowNodeWidgetRef(
+                    node_id=node_id,
+                    node_type=node_info.type,
+                    widget_index=widget_idx,
+                    widget_value=value,
+                    property_directory=directories[0] if directories else None,
+                )
+            )
+
         return refs
 
     def _merge_model_refs(

@@ -1805,7 +1805,10 @@ class WorkflowManager:
 
         # Next check if widget value path can be converted to category:
         from ..utils.model_categories import get_model_category
-        category = get_model_category(node_ref.widget_value)
+        category = get_model_category(
+            node_ref.widget_value,
+            model_config=self.model_resolver.model_config,
+        )
         logger.debug(f"Found directory mapping for widget value '{node_ref.widget_value}': {category}")
         return category
 

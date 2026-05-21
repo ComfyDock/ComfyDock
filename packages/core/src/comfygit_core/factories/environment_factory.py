@@ -215,6 +215,17 @@ class EnvironmentFactory:
             logger.warning(f"Failed to extract folder paths: {e}")
             logger.warning("Model category validation will fall back to static config")
 
+        # Extract model loader widget metadata from ComfyUI installation
+        from ..utils.model_loader_extractor import extract_comfyui_model_loaders
+
+        try:
+            model_loaders_json = env.cec_path / "comfyui_model_loaders.json"
+            extract_comfyui_model_loaders(env.comfyui_path, model_loaders_json)
+            logger.info(f"Extracted model loaders to {model_loaders_json.name}")
+        except Exception as e:
+            logger.warning(f"Failed to extract model loader metadata: {e}")
+            logger.warning("Model loader detection will fall back to static config")
+
         # Remove ComfyUI's default models directory (will be replaced with symlink)
         models_dir = env.comfyui_path / "models"
         if models_dir.exists() and not models_dir.is_symlink():
