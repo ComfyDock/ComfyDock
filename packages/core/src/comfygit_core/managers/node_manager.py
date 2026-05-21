@@ -149,24 +149,12 @@ class NodeManager:
 
         return candidate
 
-    def _install_node_from_info(self, node_info: NodeInfo, no_test: bool = False) -> NodeInfo:
-        """Install a node given a pre-fetched NodeInfo object.
-
-        This bypasses the lookup/cache layer and directly installs the node
-        using the provided node info. Useful for update operations where we've
-        already fetched fresh data from the API.
-
-        Args:
-            node_info: Pre-fetched node information from API
-            no_test: Skip dependency resolution testing
-
-        Returns:
-            NodeInfo of the installed node
-
-        Raises:
-            CDEnvironmentError: If installation fails
-            CDNodeConflictError: If dependency conflicts detected
-        """
+    def _prepare_node_installation(
+        self,
+        node_info: NodeInfo,
+        no_test: bool = False,
+    ) -> tuple[Path, NodePackage]:
+        """Download, scan, and validate a node before mutating the environment."""
         # Download to cache
         cache_path = self.node_lookup.download_to_cache(node_info)
         if not cache_path:
@@ -186,6 +174,28 @@ class NodeManager:
                 # Pass first requirement as package_spec for conflict analysis
                 pkg_spec = node_package.requirements[0] if node_package.requirements else None
                 self._raise_dependency_conflict(node_package.name, test_result, package_spec=pkg_spec)
+
+        return cache_path, node_package
+
+    def _install_node_from_info(self, node_info: NodeInfo, no_test: bool = False) -> NodeInfo:
+        """Install a node given a pre-fetched NodeInfo object.
+
+        This bypasses the lookup/cache layer and directly installs the node
+        using the provided node info. Useful for update operations where we've
+        already fetched fresh data from the API.
+
+        Args:
+            node_info: Pre-fetched node information from API
+            no_test: Skip dependency resolution testing
+
+        Returns:
+            NodeInfo of the installed node
+
+        Raises:
+            CDEnvironmentError: If installation fails
+            CDNodeConflictError: If dependency conflicts detected
+        """
+        cache_path, node_package = self._prepare_node_installation(node_info, no_test=no_test)
 
         # === BEGIN TRANSACTIONAL SECTION ===
         # Snapshot state before any modifications for rollback
@@ -1619,7 +1629,8 @@ class NodeManager:
         self,
         identifier: str,
         confirmation_strategy: ConfirmationStrategy | None = None,
-        no_test: bool = False
+        no_test: bool = False,
+        target_version: str | None = None,
     ) -> UpdateResult:
         """Update a node based on its source type.
 
@@ -1627,6 +1638,8 @@ class NodeManager:
             identifier: Node identifier or name
             confirmation_strategy: Strategy for confirming updates (None = auto-confirm)
             no_test: Skip resolution testing (dev nodes only)
+            target_version: Optional exact registry version to install. Registry
+                nodes default to the registry's latest version when omitted.
 
         Returns:
             UpdateResult with details of what changed
@@ -1661,7 +1674,13 @@ class NodeManager:
         if node_info.source == 'development':
             return self._update_development_node(actual_identifier, node_info, no_test)
         elif node_info.source == 'registry':
-            return self._update_registry_node(actual_identifier, node_info, confirmation_strategy, no_test)
+            return self._update_registry_node(
+                actual_identifier,
+                node_info,
+                confirmation_strategy,
+                no_test,
+                target_version=target_version,
+            )
         elif node_info.source == 'git':
             return self._update_git_node(actual_identifier, node_info, confirmation_strategy, no_test)
         else:
@@ -1785,7 +1804,8 @@ class NodeManager:
         identifier: str,
         node_info: NodeInfo,
         confirmation_strategy: ConfirmationStrategy,
-        no_test: bool
+        no_test: bool,
+        target_version: str | None = None,
     ) -> UpdateResult:
         """Update registry node to latest version with atomic rollback on failure."""
         result = UpdateResult(node_name=node_info.name, source='registry')
@@ -1804,7 +1824,7 @@ class NodeManager:
             result.message = "No updates available (registry unavailable)"
             return result
 
-        latest_version = registry_node.latest_version.version
+        latest_version = target_version or registry_node.latest_version.version
         current_version = node_info.version or "unknown"
 
         if latest_version == current_version:
@@ -1815,6 +1835,24 @@ class NodeManager:
         if not confirmation_strategy.confirm_update(node_info.name, current_version, latest_version):
             result.message = "Update cancelled by user"
             return result
+
+        # Fetch complete install metadata and prepare the replacement before
+        # removing the old manifest entry. This is especially important for
+        # comfygit-manager because removing its dependency group can uninstall
+        # the running comfygit-core package from disk mid-update.
+        complete_version = self.node_lookup.registry_client.install_node(
+            node_info.registry_id,
+            latest_version
+        )
+
+        if not complete_version:
+            raise CDEnvironmentError(
+                f"Failed to get install metadata for '{node_info.name}' version {latest_version}"
+            )
+
+        registry_node.latest_version = complete_version
+        fresh_node_info = NodeInfo.from_registry_node(registry_node)
+        cache_path, node_package = self._prepare_node_installation(fresh_node_info, no_test=no_test)
 
         # === ATOMIC UPDATE WITH ROLLBACK ===
         # Preserve old node by disabling it instead of removing
@@ -1831,27 +1869,18 @@ class NodeManager:
                 shutil.move(node_path, disabled_path)
                 logger.debug(f"Disabled old version of '{node_info.name}'")
 
-            # STEP 2: Remove old node from tracking
+            # STEP 2: Remove old node from tracking. Do not sync here; the
+            # replacement package has already been prepared and will be synced
+            # in the same transaction after the new manifest entry is written.
             self.pyproject.nodes.remove(identifier)
+
+            # STEP 3: Install the prepared replacement and sync once.
+            shutil.copytree(cache_path, node_path, dirs_exist_ok=True)
+            logger.info(f"Installed node '{fresh_node_info.name}' to {node_path}")
+            self.add_node_package(node_package)
             self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
 
-            # STEP 3: Get complete version data with downloadUrl from install endpoint
-            complete_version = self.node_lookup.registry_client.install_node(
-                node_info.registry_id,
-                latest_version
-            )
-
-            if complete_version:
-                # Replace incomplete version data with complete version
-                registry_node.latest_version = complete_version
-
-            # Create fresh node info from API response with complete data
-            fresh_node_info = NodeInfo.from_registry_node(registry_node)
-
-            # STEP 4: Install the new version
-            self._install_node_from_info(fresh_node_info, no_test=no_test)
-
-            # STEP 5: Success - delete old disabled version
+            # STEP 4: Success - delete old disabled version
             if disabled_path.exists():
                 rmtree(disabled_path)
                 logger.debug(f"Deleted old version of '{node_info.name}'")

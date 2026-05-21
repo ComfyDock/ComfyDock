@@ -230,6 +230,103 @@ class TestUpdateManager:
         updated = test_env.pyproject.load()
         assert "headless" not in updated.get("tool", {}).get("comfygit", {})
 
+    def test_update_manager_prepares_replacement_before_removing_manifest(
+        self, test_env, tmp_path, monkeypatch
+    ):
+        """Manager updates must not uninstall core before staging the replacement."""
+        from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
+        from comfygit_core.models.shared import NodeInfo
+
+        current = NodeInfo(
+            name="comfygit-manager",
+            version="0.1.1",
+            source="registry",
+            registry_id="comfygit-manager",
+            repository="https://github.com/comfygit-ai/comfygit-manager",
+            download_url="https://cdn.comfy.org/akatz/comfygit-manager/0.1.1/node.zip",
+        )
+        group_name = test_env.pyproject.nodes.generate_group_name(current, "comfygit-manager")
+
+        config = test_env.pyproject.load()
+        config.setdefault("tool", {}).setdefault("comfygit", {}).setdefault("nodes", {})
+        config["tool"]["comfygit"]["nodes"]["comfygit-manager"] = {
+            "name": current.name,
+            "version": current.version,
+            "source": current.source,
+            "registry_id": current.registry_id,
+            "repository": current.repository,
+            "download_url": current.download_url,
+        }
+        config.setdefault("dependency-groups", {})[group_name] = ["comfygit-core==0.4.0"]
+        test_env.pyproject.save(config)
+
+        manager_path = test_env.comfyui_path / "custom_nodes" / "comfygit-manager"
+        manager_path.mkdir(parents=True)
+        (manager_path / "__init__.py").write_text("# manager 0.1.1")
+
+        cache_path = tmp_path / "cache" / "comfygit-manager-0.1.2"
+        cache_path.mkdir(parents=True)
+        (cache_path / "__init__.py").write_text("# manager 0.1.2")
+
+        registry_node = RegistryNodeInfo(
+            id="comfygit-manager",
+            name="comfygit-manager",
+            description="ComfyGit Manager",
+            repository="https://github.com/comfygit-ai/comfygit-manager",
+            latest_version=RegistryNodeVersion(
+                changelog="",
+                dependencies=[],
+                deprecated=False,
+                id="manager-v0.1.2",
+                version="0.1.2",
+                download_url="",
+            ),
+        )
+        install_version = RegistryNodeVersion(
+            changelog="",
+            dependencies=[],
+            deprecated=False,
+            id="manager-v0.1.2",
+            version="0.1.2",
+            download_url="https://cdn.comfy.org/akatz/comfygit-manager/0.1.2/node.zip",
+        )
+
+        def assert_manifest_still_present(_node_info):
+            nodes = test_env.pyproject.nodes.get_existing()
+            groups = test_env.pyproject.load().get("dependency-groups", {})
+            assert "comfygit-manager" in nodes
+            assert group_name in groups
+            return cache_path
+
+        monkeypatch.setattr(test_env.pytorch_manager, "ensure_backend", lambda *_args, **_kwargs: "cu121")
+        monkeypatch.setattr(
+            test_env.node_lookup,
+            "get_node",
+            lambda _identifier: NodeInfo(
+                name="comfygit-manager",
+                version="0.1.2",
+                source="registry",
+                registry_id="comfygit-manager",
+            ),
+        )
+        monkeypatch.setattr(test_env.node_lookup.registry_client, "get_node", lambda _node_id: registry_node)
+        monkeypatch.setattr(
+            test_env.node_lookup.registry_client,
+            "install_node",
+            lambda _node_id, _version: install_version,
+        )
+        monkeypatch.setattr(test_env.node_lookup, "download_to_cache", assert_manifest_still_present)
+        monkeypatch.setattr(test_env.node_lookup, "scan_requirements", lambda _path, **_kwargs: [])
+        monkeypatch.setattr(test_env.node_manager, "_sync_uv", lambda **_kwargs: None)
+
+        result = test_env.update_manager(version="0.1.2")
+
+        assert result.changed is True
+        assert result.old_version == "0.1.1"
+        assert result.new_version == "0.1.2"
+        assert test_env.pyproject.nodes.get_existing()["comfygit-manager"].version == "0.1.2"
+        assert (manager_path / "__init__.py").read_text() == "# manager 0.1.2"
+
 
 class TestEnvironmentCreation:
     """Tests for new environment creation with per-environment manager."""

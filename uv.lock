@@ -398,7 +398,7 @@ wheels = [
 
 [[package]]
 name = "comfygit"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "aiohttp" },
@@ -417,7 +417,7 @@ requires-dist = [
 
 [[package]]
 name = "comfygit-core"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "blake3" },

@@ -21,15 +21,12 @@ from comfygit_core.strategies.confirmation import AutoConfirmStrategy
 class TestRegistryNodeUpdateEmptyDownloadUrl:
     """Test registry node updates when API returns empty downloadUrl."""
 
-    def test_update_fails_when_registry_api_returns_empty_download_url(self, test_env):
-        """Test update fails when registry API returns empty downloadUrl.
+    def test_update_fails_clearly_when_install_metadata_is_unavailable(self, test_env):
+        """Test update fails clearly when complete install metadata is unavailable.
 
         Given: Node v1.8.0 is installed with valid downloadUrl
-        When: User updates and registry API returns v2.1.0 with empty downloadUrl
-        Then: Update should fail with clear error (current behavior - will be fixed)
-
-        This test documents the BUG - it expects failure.
-        After fix, this test will need to be updated to expect success.
+        When: User updates and the registry install endpoint has no v2.1.0 payload
+        Then: Update should fail before mutating the installed node.
         """
         # ARRANGE: Install initial version 1.8.0 with valid downloadUrl
         node_info_v1_8_0 = NodeInfo(
@@ -81,14 +78,10 @@ class TestRegistryNodeUpdateEmptyDownloadUrl:
 
             strategy = AutoConfirmStrategy()
 
-            # ACT & ASSERT: Update should fail because downloadUrl is empty
-            # The current implementation will try to fall back to git clone with version "2.1.0" as tag
-            # which will fail if the repo has no tags
             with pytest.raises(CDEnvironmentError) as exc_info:
                 test_env.node_manager.update_node("test-node", confirmation_strategy=strategy, no_test=True)
 
-            # Verify error message mentions the failure
-            assert "Failed to update node" in str(exc_info.value)
+            assert "Failed to get install metadata" in str(exc_info.value)
 
         # Verify old node is preserved after failed update (atomic rollback)
         nodes = test_env.pyproject.nodes.get_existing()
