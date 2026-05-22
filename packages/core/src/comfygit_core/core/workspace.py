@@ -192,6 +192,50 @@ class Workspace:
         """
         self.paths = paths
 
+    @classmethod
+    def open(cls, path: Path | None = None) -> "Workspace":
+        """Open an existing workspace.
+
+        This is the public discovery entry point for callers. It delegates to
+        the current factory implementation while keeping factory internals out
+        of adapter code.
+        """
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.find(path)
+
+    @classmethod
+    def create(cls, path: Path | None = None) -> "Workspace":
+        """Create a new workspace on disk and return it."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.create(path)
+
+    @classmethod
+    def open_or_create(cls, path: Path | None = None) -> "Workspace":
+        """Open an existing workspace, or create it if it does not exist."""
+        from ..factories.workspace_factory import WorkspaceFactory
+        from ..models.exceptions import CDWorkspaceNotFoundError
+
+        try:
+            return WorkspaceFactory.find(path)
+        except CDWorkspaceNotFoundError:
+            return WorkspaceFactory.create(path)
+
+    @classmethod
+    def default_root(cls, path: Path | None = None) -> Path:
+        """Return the workspace root that would be used for ``path``."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.get_paths(path).root
+
+    @classmethod
+    def exists(cls, path: Path | None = None) -> bool:
+        """Return whether a workspace exists at the resolved root."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.get_paths(path).exists()
+
     def get_schema_version(self) -> int:
         """Get workspace schema version.
 

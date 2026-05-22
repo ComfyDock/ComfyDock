@@ -1,7 +1,6 @@
 """ModelScanner - Model file discovery, hashing, and indexing operations."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..configs.model_config import ModelConfig
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
+from ..models.model_scan import ModelScanProgress, ScanResult
 
 if TYPE_CHECKING:
     from ..repositories.model_repository import ModelRepository
@@ -42,34 +42,6 @@ EXCLUDED_EXTENSIONS = {
 MIN_MODEL_SIZE = 8
 
 # Minimum file size for model files (8 bytes)
-
-
-@dataclass
-class ScanResult:
-    """Result of model scanning operation."""
-    scanned_count: int
-    added_count: int
-    updated_count: int
-    skipped_count: int
-    error_count: int
-    errors: list[str]
-    removed_count: int = 0
-
-
-class ModelScanProgress:
-    """Callback protocol for model scan progress updates."""
-
-    def on_scan_start(self, total_files: int) -> None:
-        """Called when scan starts with total file count."""
-        pass
-
-    def on_file_processed(self, current: int, total: int, filename: str) -> None:
-        """Called after each file is processed."""
-        pass
-
-    def on_scan_complete(self, result: ScanResult) -> None:
-        """Called when scan completes."""
-        pass
 
 
 class ModelScanner:

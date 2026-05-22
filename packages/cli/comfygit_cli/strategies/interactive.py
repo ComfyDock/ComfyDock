@@ -1,14 +1,12 @@
 """Interactive resolution strategies for CLI."""
 
 
-from comfygit_core.models.protocols import (
-    ModelResolutionStrategy,
-    NodeResolutionStrategy,
-)
-from comfygit_core.models.shared import ModelWithLocation
-from comfygit_core.models.workflow import (
+from comfygit_core.models import (
     ModelResolutionContext,
+    ModelResolutionStrategy,
+    ModelWithLocation,
     NodeResolutionContext,
+    NodeResolutionStrategy,
     ResolvedModel,
     ResolvedNodePackage,
     ScoredMatch,
@@ -837,5 +835,4 @@ class InteractiveModelStrategy(ModelResolutionStrategy):
                     print("  Invalid number")
             else:
                 print("  Invalid choice")
-
 

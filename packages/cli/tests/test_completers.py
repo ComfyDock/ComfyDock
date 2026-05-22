@@ -13,8 +13,7 @@ from comfygit_cli.completers import (
     ref_completer,
     workflow_completer,
 )
-from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-from comfygit_core.models.workflow import WorkflowSyncStatus
+from comfygit_core.models import CDWorkspaceNotFoundError, WorkflowSyncStatus
 
 
 class TestSharedUtilities:
@@ -38,19 +37,19 @@ class TestSharedUtilities:
         result = filter_by_prefix(items, "xyz")
         assert result == []
 
-    @patch('comfygit_cli.completers.WorkspaceFactory.find')
-    def test_get_workspace_safe_success(self, mock_find):
+    @patch("comfygit_cli.completers.Workspace.open")
+    def test_get_workspace_safe_success(self, mock_open):
         """Test getting workspace successfully."""
         mock_workspace = Mock()
-        mock_find.return_value = mock_workspace
+        mock_open.return_value = mock_workspace
 
         result = get_workspace_safe()
         assert result == mock_workspace
 
-    @patch('comfygit_cli.completers.WorkspaceFactory.find')
-    def test_get_workspace_safe_not_found(self, mock_find):
+    @patch("comfygit_cli.completers.Workspace.open")
+    def test_get_workspace_safe_not_found(self, mock_open):
         """Test get_workspace_safe returns None when not found."""
-        mock_find.side_effect = CDWorkspaceNotFoundError("Not found")
+        mock_open.side_effect = CDWorkspaceNotFoundError("Not found")
 
         result = get_workspace_safe()
         assert result is None

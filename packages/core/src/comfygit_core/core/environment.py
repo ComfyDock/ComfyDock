@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     )
     from ..models.manifest import EnvironmentManifestSnapshot
     from ..models.merge_plan import MergeResult, MergeValidation
+    from ..models.readiness import EnvironmentReadiness
     from ..models.workflow import (
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,
@@ -132,6 +133,30 @@ class Environment:
 
         # Guard against concurrent mutations of this environment.
         self._operation_lock = EnvironmentOperationLock(self.path / ".comfygit.lock")
+
+    @classmethod
+    def from_path(
+        cls,
+        path: Path,
+        workspace: Workspace,
+        *,
+        name: str | None = None,
+        torch_backend: str | None = None,
+    ) -> Environment:
+        """Construct an environment object when the caller already has a path.
+
+        Normal callers should prefer ``workspace.get_environment(name)`` or
+        ``workspace.create_environment(name)``. This classmethod exists for
+        advanced embedding and tests that already resolved the environment
+        directory.
+        """
+        resolved_path = path.resolve()
+        return cls(
+            name=name or resolved_path.name,
+            path=resolved_path,
+            workspace=workspace,
+            torch_backend=torch_backend,
+        )
 
     ## Cached properties ##
     #
@@ -1995,6 +2020,25 @@ class Environment:
     def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
         """Return a typed read-only projection of the current manifest."""
         return self.pyproject.get_manifest_snapshot()
+
+    @_requires_env_lock
+    def get_readiness(self, *, include_blocking: bool = True) -> EnvironmentReadiness:
+        """Return reusable readiness and provenance checks for this environment."""
+        from ..services.environment_readiness import build_environment_readiness
+
+        return build_environment_readiness(self, include_blocking=include_blocking)
+
+    def get_remote_url(self, remote: str = "origin") -> str | None:
+        """Return the configured URL for a git remote, if present."""
+        from ..utils.git import git_remote_get_url
+
+        return git_remote_get_url(self.cec_path, remote)
+
+    def get_venv_python(self) -> Path | None:
+        """Return this environment's virtualenv Python executable, if present."""
+        from ..utils.filesystem import get_venv_python
+
+        return get_venv_python(self.path)
 
     @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:

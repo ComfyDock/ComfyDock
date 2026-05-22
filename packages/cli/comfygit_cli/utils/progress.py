@@ -2,10 +2,14 @@
 
 from collections.abc import Callable
 
-from comfygit_core.analyzers.model_scanner import ModelScanProgress, ScanResult
-from comfygit_core.models.shared import ModelWithLocation
-from comfygit_core.models.workflow import BatchDownloadCallbacks
-from comfygit_core.utils.common import format_size
+from comfygit_core.models import (
+    BatchDownloadCallbacks,
+    ModelScanProgress,
+    ModelWithLocation,
+    ScanResult,
+)
+
+from .formatting import format_size
 
 
 def create_progress_callback() -> Callable[[int, int | None], None]:

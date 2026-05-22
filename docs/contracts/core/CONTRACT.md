@@ -35,6 +35,36 @@ Callers should enter core behavior through Workspace and Environment APIs rather
 than directly orchestrating manager internals. Manager classes may be used for
 internal composition, tests, and advanced package-local behavior.
 
+Public workspace discovery and creation should be exposed as Workspace
+classmethods such as `Workspace.open()`, `Workspace.create()`, and
+`Workspace.open_or_create()`. Consumers should not need to import
+WorkspaceFactory for normal setup flows.
+
+### CGCORE-LIB-03A [LIVE]: Public API is defined by documented facade exports
+Validation: STATIC
+
+The stable import surface is defined by `comfygit_core`, `comfygit_core.models`,
+and other deliberately documented facade modules such as readiness, workflow,
+runtime, and assets. Importable implementation packages such as managers,
+repositories, analyzers, resolvers, integrations, configs, caching, and generic
+utils are internal unless they are re-exported through a public facade.
+
+Model files may contain both public and internal dataclasses. A model type is
+public only when it is exported from `comfygit_core.models` or another documented
+public facade. Adapter packages should not depend on deep model-module imports
+for stable contracts.
+
+### CGCORE-LIB-03B [PARTIAL]: Adapters should not reach through facade objects into managers
+Validation: MIXED
+
+CLI, Manager, Cloud, and future runtime adapters should call Workspace and
+Environment methods for reusable behavior instead of touching cached manager,
+repository, or utility attributes such as `env.pyproject`,
+`env.workflow_manager`, `env.git_manager`, `env.uv_manager`, or
+`workspace.workspace_config_manager`. Existing adapters still contain legacy
+reach-throughs; new adapter needs should be served by typed facade methods and
+public result models.
+
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
 

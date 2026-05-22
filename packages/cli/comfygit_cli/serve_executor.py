@@ -14,8 +14,8 @@ from typing import Any, Protocol
 from urllib.parse import quote, urlencode
 
 import aiohttp
-from comfygit_core.models.workflow_contract import WorkflowContractOutput
-from comfygit_core.services.workflow_execution import extract_contract_outputs
+from comfygit_core.models import WorkflowContractOutput
+from comfygit_core.workflow import extract_contract_outputs
 
 OUTPUT_RESPONSE_HEADERS = (
     "accept-ranges",

@@ -1,6 +1,6 @@
 # formatters/error_formatter.py
 
-from comfygit_core.models.exceptions import (
+from comfygit_core.models import (
     CDDependencyConflictError,
     CDNodeConflictError,
     CDRegistryDataError,

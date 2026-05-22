@@ -7,8 +7,10 @@ import sys
 import time
 from pathlib import Path
 
-from comfygit_core.lifecycle.switch_observer import (
+from comfygit_core.runtime import (
     SWITCH_STATUS_FILE,
+)
+from comfygit_core.runtime import (
     read_switch_status as core_read_switch_status,
 )
 

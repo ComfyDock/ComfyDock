@@ -17,9 +17,9 @@ from urllib.parse import quote
 
 import aiohttp
 from aiohttp import web
-from comfygit_core.core.environment import Environment
-from comfygit_core.models.workflow_contract import NamedWorkflowContract
-from comfygit_core.services.workflow_execution import build_manifest_contract_prompt
+from comfygit_core import Environment
+from comfygit_core.models import NamedWorkflowContract
+from comfygit_core.workflow import build_manifest_contract_prompt
 
 from .serve_executor import (
     PROXY_AUTH_HEADER,

@@ -5,16 +5,26 @@ import sys
 from functools import cached_property
 from pathlib import Path
 
-from comfygit_core.core.workspace import Workspace
-from comfygit_core.factories.workspace_factory import WorkspaceFactory
-from comfygit_core.models.protocols import ImportCallbacks
+from comfygit_core import Workspace
+from comfygit_core.models import CDWorkspaceNotFoundError, ImportCallbacks
 
 from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
 from .logging.logging_config import get_logger
-from .utils import create_progress_callback, paginate, show_civitai_auth_help, show_download_stats
+from .utils import (
+    create_progress_callback,
+    format_size,
+    paginate,
+    show_civitai_auth_help,
+    show_download_stats,
+)
 
 logger = get_logger(__name__)
+
+
+def _is_git_url(value: str) -> bool:
+    """Return whether a command argument looks like a git URL."""
+    return value.startswith(("https://", "http://", "git@", "ssh://"))
 
 
 
@@ -38,11 +48,8 @@ class GlobalCommands:
         Returns:
             Workspace instance (existing or newly created)
         """
-        from comfygit_core.factories.workspace_factory import WorkspaceFactory
-        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-
         try:
-            workspace = WorkspaceFactory.find()
+            workspace = Workspace.open()
             WorkspaceLogger.set_workspace_path(workspace.path)
             return workspace
 
@@ -70,7 +77,7 @@ class GlobalCommands:
             self.init(init_args)
 
             # Get the newly created workspace
-            workspace = WorkspaceFactory.find()
+            workspace = Workspace.open()
             WorkspaceLogger.set_workspace_path(workspace.path)
 
             print("\n✓ Workspace initialized! Continuing with command...\n")
@@ -78,12 +85,10 @@ class GlobalCommands:
 
     def _get_or_create_workspace_at(self, workspace_path: Path | None, models_dir: Path | None = None) -> Workspace:
         """Get or create a workspace at an explicit path for non-interactive commands."""
-        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-
         try:
-            workspace = WorkspaceFactory.find(workspace_path)
+            workspace = Workspace.open(workspace_path)
         except CDWorkspaceNotFoundError:
-            workspace = WorkspaceFactory.create(workspace_path)
+            workspace = Workspace.create(workspace_path)
 
         WorkspaceLogger.set_workspace_path(workspace.path)
 
@@ -116,13 +121,13 @@ class GlobalCommands:
         # Determine workspace path
         path = args.path if (hasattr(args, "path") and args.path) else None
 
-        workspace_paths = WorkspaceFactory.get_paths(path)
+        workspace_root = Workspace.default_root(path)
 
-        print(f"\n🎯 Initializing ComfyGit workspace at: {workspace_paths.root}")
+        print(f"\n🎯 Initializing ComfyGit workspace at: {workspace_root}")
 
         try:
             # Create workspace
-            workspace = WorkspaceFactory.create(workspace_paths.root)
+            workspace = Workspace.create(workspace_root)
 
             # Set workspace path for logging after creation
             WorkspaceLogger.set_workspace_path(workspace.path)
@@ -288,8 +293,6 @@ class GlobalCommands:
             workspace: The workspace instance
             models_path: Path to the models directory to scan
         """
-        from comfygit_core.utils.common import format_size
-
         from comfygit_cli.utils.progress import create_model_sync_progress
 
         try:
@@ -349,7 +352,7 @@ class GlobalCommands:
         import json
 
         import tomlkit
-        from comfygit_core.services.workflow_analysis_service import WorkflowAnalysisService
+        from comfygit_core.workflow import WorkflowAnalysisService
 
         workspace = get_workspace_optional()
         if workspace:
@@ -562,8 +565,6 @@ class GlobalCommands:
         """Import a ComfyGit environment from a tarball or git repository."""
         from pathlib import Path
 
-        from comfygit_core.utils.git import is_git_url
-
         # Ensure workspace exists, creating it if necessary
         workspace = self._get_or_create_workspace(args)
 
@@ -573,7 +574,7 @@ class GlobalCommands:
             sys.exit(1)
 
         # Detect if this is a git URL or local tarball
-        is_git = is_git_url(args.path)
+        is_git = _is_git_url(args.path)
 
         if is_git:
             print("📦 Importing environment from git repository")
@@ -902,9 +903,7 @@ class GlobalCommands:
         print(f"📦 Exporting environment: {env.name}")
         print()
 
-        from comfygit_core.services.environment_readiness import build_environment_readiness
-
-        readiness = build_environment_readiness(env, include_blocking=True)
+        readiness = env.get_readiness(include_blocking=True)
         blocking_issues = [
             issue
             for issue in readiness.blocking_issues
@@ -982,7 +981,7 @@ class GlobalCommands:
 
         except Exception as e:
             # Handle CDExportError with rich context
-            from comfygit_core.models.exceptions import CDExportError
+            from comfygit_core.models import CDExportError
 
             if isinstance(e, CDExportError):
                 print(f"✗ {str(e)}")
@@ -1016,8 +1015,6 @@ class GlobalCommands:
         """List all indexed models."""
         from collections import defaultdict
         from pathlib import Path
-
-        from comfygit_core.utils.common import format_size
 
         logger.info("Listing all indexed models")
 
@@ -1091,8 +1088,6 @@ class GlobalCommands:
     @with_workspace_logging("model index find")
     def model_index_find(self, args: argparse.Namespace) -> None:
         """Search for models by hash or filename."""
-        from comfygit_core.utils.common import format_size
-
         query = args.query
         logger.info(f"Searching models for query: '{query}'")
 
@@ -1156,8 +1151,6 @@ class GlobalCommands:
     def model_index_show(self, args: argparse.Namespace) -> None:
         """Show detailed information about a specific model."""
         from datetime import datetime
-
-        from comfygit_core.utils.common import format_size
 
         identifier = args.identifier
         logger.info(f"Showing details for model: '{identifier}'")
@@ -1386,7 +1379,7 @@ class GlobalCommands:
     @with_workspace_logging("model download")
     def model_download(self, args: argparse.Namespace) -> None:
         """Download model from URL with interactive path confirmation."""
-        from comfygit_core.services.model_downloader import DownloadRequest
+        from comfygit_core.assets import DownloadRequest
 
         url = args.url
         logger.info(f"Downloading model from: {url}")
@@ -1489,8 +1482,6 @@ class GlobalCommands:
     @with_workspace_logging("model delete")
     def model_delete(self, args: argparse.Namespace) -> None:
         """Delete model files from disk and clean their index entries."""
-        from comfygit_core.utils.common import format_size
-
         identifier = args.identifier
         logger.info(f"Deleting model: '{identifier}'")
 
@@ -1979,7 +1970,7 @@ class GlobalCommands:
 
     def orch_clean(self, args: argparse.Namespace) -> None:
         """Clean orchestrator state files."""
-        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
+        from comfygit_core.runtime import SWITCH_STATUS_FILE
 
         from .utils.orchestrator import (
             cleanup_orchestrator_state,

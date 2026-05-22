@@ -12,32 +12,28 @@ import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from comfygit_core.lifecycle.comfyui_readiness import (
-    resolve_comfyui_endpoint,
-    wait_for_comfyui_ready,
-)
-from comfygit_core.lifecycle.switch_observer import (
-    SwitchObserverServer,
-    cleanup_supervisor_advertisement,
-    cleanup_switch_status,
-    read_switch_status,
-    write_switch_status,
-)
-from comfygit_core.models.exceptions import (
+from comfygit_core.models import (
     CDDependencyConflictError,
     CDNodeConflictError,
     CDRegistryDataError,
     UVCommandError,
+)
+from comfygit_core.runtime import (
+    SwitchObserverServer,
+    cleanup_supervisor_advertisement,
+    cleanup_switch_status,
+    read_switch_status,
+    resolve_comfyui_endpoint,
+    wait_for_comfyui_ready,
+    write_switch_status,
 )
 
 from .formatters.error_formatter import NodeErrorFormatter
 from .strategies.interactive import InteractiveModelStrategy, InteractiveNodeStrategy
 
 if TYPE_CHECKING:
-    from comfygit_core.core.environment import Environment
-    from comfygit_core.core.workspace import Workspace
-    from comfygit_core.models.environment import EnvironmentStatus
-    from comfygit_core.models.workflow import WorkflowAnalysisStatus
+    from comfygit_core import Environment, Workspace
+    from comfygit_core.models import EnvironmentStatus, WorkflowAnalysisStatus
 
 from .cli_utils import get_workspace_or_exit
 from .logging.environment_logger import with_env_logging
@@ -168,7 +164,7 @@ class EnvironmentCommands:
 
     def _display_diff_preview(self, diff: Any) -> None:
         """Display a RefDiff to the user."""
-        from comfygit_core.models.ref_diff import RefDiff
+        from comfygit_core.models import RefDiff
 
         if not isinstance(diff, RefDiff):
             return
@@ -600,7 +596,7 @@ class EnvironmentCommands:
     @with_env_logging("overlay create")
     def overlay_create(self, args: argparse.Namespace, logger=None) -> None:
         """Create an overlay template file."""
-        from comfygit_core.models.overlay import OverlayConfig
+        from comfygit_core.models import OverlayConfig
 
         env = self._get_env(args)
         local = getattr(args, "local", False)
@@ -1711,7 +1707,7 @@ packages = []
                 else:
                     print(f"✗ ({error})")
 
-            from comfygit_core.models.workflow import NodeInstallCallbacks
+            from comfygit_core.models import NodeInstallCallbacks
             callbacks = NodeInstallCallbacks(
                 on_node_start=on_node_start,
                 on_node_complete=on_node_complete
@@ -1862,7 +1858,7 @@ packages = []
                 else:
                     print(f"✗ ({error})")
 
-            from comfygit_core.models.workflow import NodeInstallCallbacks
+            from comfygit_core.models import NodeInstallCallbacks
             callbacks = NodeInstallCallbacks(
                 on_node_start=on_node_start,
                 on_node_complete=on_node_complete
@@ -1970,7 +1966,7 @@ packages = []
             else:
                 print(f"✗ ({error})")
 
-        from comfygit_core.models.workflow import NodeInstallCallbacks
+        from comfygit_core.models import NodeInstallCallbacks
         callbacks = NodeInstallCallbacks(
             on_node_start=on_node_start,
             on_node_complete=on_node_complete
@@ -2471,7 +2467,7 @@ packages = []
         print(f"⚙️ Applying changes to: {env.name}")
 
         # Create callbacks for node and model progress
-        from comfygit_core.models.workflow import BatchDownloadCallbacks, NodeInstallCallbacks
+        from comfygit_core.models import BatchDownloadCallbacks, NodeInstallCallbacks
 
         from .utils.progress import create_progress_callback
 
@@ -2553,12 +2549,10 @@ packages = []
 
         Initial scope: ensure `uv` is importable in the environment's `.venv`.
         """
-        from comfygit_core.utils.filesystem import get_venv_python
-
         env = self._get_env(args)
         check_only = bool(getattr(args, "check_only", False))
 
-        venv_python = get_venv_python(env.path)
+        venv_python = env.get_venv_python()
         if not venv_python or not venv_python.exists():
             system_uv = shutil.which("uv")
             if system_uv and not check_only:
@@ -2574,7 +2568,7 @@ packages = []
                     if result.stderr:
                         print(result.stderr.strip(), file=sys.stderr)
                     sys.exit(1)
-                venv_python = get_venv_python(env.path)
+                venv_python = env.get_venv_python()
 
             if not venv_python or not venv_python.exists():
                 print(f"✗ No environment venv python found for: {env.name}", file=sys.stderr)
@@ -3090,7 +3084,7 @@ packages = []
                 print(f"🔧 Using PyTorch backend: {torch_backend}")
 
             # Create callbacks for node and model progress (reuse repair command patterns)
-            from comfygit_core.models.workflow import BatchDownloadCallbacks, NodeInstallCallbacks
+            from comfygit_core.models import BatchDownloadCallbacks, NodeInstallCallbacks
 
             from .utils.progress import create_progress_callback
 
@@ -3257,8 +3251,7 @@ packages = []
                 print(f"   ✓ Pushed commits to {args.remote}")
 
             # Show remote URL
-            from comfygit_core.utils.git import git_remote_get_url
-            remote_url = git_remote_get_url(env.cec_path, args.remote)
+            remote_url = env.get_remote_url(args.remote)
             if remote_url:
                 print()
                 print(f"💾 Remote: {remote_url}")
@@ -3667,7 +3660,7 @@ packages = []
                     should_install = False
 
             if should_install:
-                from comfygit_core.models.workflow import NodeInstallCallbacks
+                from comfygit_core.models import NodeInstallCallbacks
 
                 print("\n⬇️  Installing nodes...")
 
