@@ -23,6 +23,23 @@ def test_workspace_public_constructors_are_available():
     assert callable(Workspace.open_or_create)
     assert callable(Workspace.default_root)
     assert callable(Workspace.exists)
+    assert callable(Workspace.list_remote_refs)
+
+
+def test_environment_public_git_facade_methods_are_available():
+    """Consumers should not need GitManager for remote operations."""
+    from comfygit_core import Environment
+
+    assert callable(Environment.list_remotes)
+    assert callable(Environment.add_remote)
+    assert callable(Environment.remove_remote)
+    assert callable(Environment.set_remote_url)
+    assert callable(Environment.get_tracking_remote)
+    assert callable(Environment.fetch_remote)
+    assert callable(Environment.get_remote_sync_status)
+    assert callable(Environment.pull_remote)
+    assert callable(Environment.push_remote)
+    assert callable(Environment.check_remote_auth)
 
 
 def test_factory_and_path_internals_are_not_root_public_api():
@@ -43,6 +60,7 @@ def test_public_facade_modules_export_declared_symbols():
     public_modules = [
         "comfygit_core",
         "comfygit_core.core",
+        "comfygit_core.git",
         "comfygit_core.models",
         "comfygit_core.readiness",
         "comfygit_core.runtime",
@@ -73,6 +91,9 @@ def test_common_adapter_model_types_are_public():
         EnvironmentManifestSnapshot,
         EnvironmentReadiness,
         EnvironmentStatus,
+        GitRemoteBranch,
+        GitRemoteRefs,
+        GitRemoteTag,
         ImportCallbacks,
         ManifestModel,
         ManifestWorkflowModel,
@@ -96,6 +117,9 @@ def test_common_adapter_model_types_are_public():
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
+    assert GitRemoteBranch.__name__ == "GitRemoteBranch"
+    assert GitRemoteRefs.__name__ == "GitRemoteRefs"
+    assert GitRemoteTag.__name__ == "GitRemoteTag"
     assert ManifestModel.__name__ == "ManifestModel"
     assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
     assert ImportCallbacks.__name__ == "ImportCallbacks"
@@ -108,3 +132,36 @@ def test_common_adapter_model_types_are_public():
     assert WorkflowAnalysisStatus.__name__ == "WorkflowAnalysisStatus"
     assert WorkflowExecutionContract.__name__ == "WorkflowExecutionContract"
     assert WorkflowSyncStatus.__name__ == "WorkflowSyncStatus"
+
+
+def test_git_remote_refs_model_round_trips_to_public_json_shape():
+    """Git facade results should stay typed until JSON/API edges serialize them."""
+    from comfygit_core.models import GitRemoteRefs
+
+    refs = GitRemoteRefs.from_dict(
+        {
+            "default_branch": "main",
+            "head_commit": "abc123",
+            "branches": [
+                {"name": "main", "commit": "abc123", "is_default": True},
+                {"name": "dev", "commit": "def456", "is_default": False},
+            ],
+            "tags": [
+                {"name": "v1.0.0", "commit": "abc123"},
+            ],
+        }
+    )
+
+    assert refs.default_branch == "main"
+    assert refs.branches[0].is_default is True
+    assert refs.to_dict() == {
+        "default_branch": "main",
+        "head_commit": "abc123",
+        "branches": [
+            {"name": "main", "commit": "abc123", "is_default": True},
+            {"name": "dev", "commit": "def456", "is_default": False},
+        ],
+        "tags": [
+            {"name": "v1.0.0", "commit": "abc123"},
+        ],
+    }

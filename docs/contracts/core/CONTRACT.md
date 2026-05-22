@@ -45,7 +45,7 @@ Validation: STATIC
 
 The stable import surface is defined by `comfygit_core`, `comfygit_core.models`,
 and other deliberately documented facade modules such as readiness, workflow,
-runtime, and assets. Importable implementation packages such as managers,
+runtime, assets, and git. Importable implementation packages such as managers,
 repositories, analyzers, resolvers, integrations, configs, caching, and generic
 utils are internal unless they are re-exported through a public facade.
 
@@ -53,6 +53,10 @@ Model files may contain both public and internal dataclasses. A model type is
 public only when it is exported from `comfygit_core.models` or another documented
 public facade. Adapter packages should not depend on deep model-module imports
 for stable contracts.
+
+Git facade helpers should return typed public models for stable domain shapes
+such as remote ref discovery, and adapters should serialize those models only at
+JSON/API boundaries.
 
 ### CGCORE-LIB-03B [PARTIAL]: Adapters should not reach through facade objects into managers
 Validation: MIXED

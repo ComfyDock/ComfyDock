@@ -1032,6 +1032,7 @@ class Environment:
         strategy_option: str | None = None,
         force: bool = False,
         backend_override: str | None = None,
+        token: str | None = None,
     ) -> dict:
         """Pull from remote and auto-repair environment (atomic operation).
 
@@ -1047,6 +1048,7 @@ class Environment:
             strategy_option: Optional git merge strategy (e.g., "ours" or "theirs")
             force: If True, discard uncommitted changes and allow unrelated histories
             backend_override: Override PyTorch backend for sync (e.g., "cu128")
+            token: Optional HTTPS token for authenticated fetch/pull operations
 
         Returns:
             Dict with pull results and sync_result
@@ -1092,7 +1094,12 @@ class Environment:
             if force:
                 # Force mode: completely replace local with remote (no merge, no conflicts)
                 logger.info(f"Force pulling - resetting to {target_ref}...")
-                git_fetch(self.cec_path, remote)
+                if token:
+                    from ..utils.git import git_fetch_with_auth
+
+                    git_fetch_with_auth(self.cec_path, remote, token)
+                else:
+                    git_fetch(self.cec_path, remote)
                 git_reset_hard(self.cec_path, target_ref)
                 pull_result = {
                     'fetch_output': '',
@@ -1102,7 +1109,18 @@ class Environment:
             else:
                 # Normal pull (fetch + merge)
                 logger.info("Pulling from remote...")
-                pull_result = self.git_manager.pull(remote, branch, strategy_option=strategy_option)
+                if token:
+                    from ..utils.git import git_pull_with_auth
+
+                    pull_result = git_pull_with_auth(
+                        self.cec_path,
+                        remote,
+                        token,
+                        branch,
+                        strategy_option=strategy_option,
+                    )
+                else:
+                    pull_result = self.git_manager.pull(remote, branch, strategy_option=strategy_option)
 
             # Auto-repair (restores workflows, installs nodes, downloads models)
             logger.info("Syncing environment after pull...")
@@ -1136,23 +1154,8 @@ class Environment:
                 git_reset_hard(self.cec_path, pre_pull_commit)
             raise
 
-    @_requires_env_lock
-    def push_commits(self, remote: str = "origin", branch: str | None = None, force: bool = False) -> str:
-        """Push commits to remote (requires clean working directory).
-
-        Args:
-            remote: Remote name (default: origin)
-            branch: Branch to push (default: current)
-            force: Use --force-with-lease for force push (default: False)
-
-        Returns:
-            Push output
-
-        Raises:
-            CDEnvironmentError: If uncommitted changes exist
-            ValueError: If no remote or detached HEAD
-            OSError: If push fails
-        """
+    def _ensure_push_allowed(self) -> None:
+        """Validate that this environment can push committed state."""
         from ..models.exceptions import CDEnvironmentError
 
         # Check for uncommitted git changes (not workflow sync state)
@@ -1182,6 +1185,25 @@ class Environment:
         # Note: Workflow issue validation happens during commit (execute_commit checks is_commit_safe).
         # By the time we reach push, all committed changes have already been validated.
         # No need to re-check workflow issues here.
+
+    @_requires_env_lock
+    def push_commits(self, remote: str = "origin", branch: str | None = None, force: bool = False) -> str:
+        """Push commits to remote (requires clean working directory).
+
+        Args:
+            remote: Remote name (default: origin)
+            branch: Branch to push (default: current)
+            force: Use --force-with-lease for force push (default: False)
+
+        Returns:
+            Push output
+
+        Raises:
+            CDEnvironmentError: If uncommitted changes exist
+            ValueError: If no remote or detached HEAD
+            OSError: If push fails
+        """
+        self._ensure_push_allowed()
 
         # Push
         logger.info("Pushing commits to remote...")
@@ -1294,6 +1316,94 @@ class Environment:
             Branch name or None if detached HEAD
         """
         return self.git_manager.get_current_branch()
+
+    def list_remotes(self) -> list[tuple[str, str, str]]:
+        """List configured Git remotes as ``(name, url, type)`` tuples."""
+        return self.git_manager.list_remotes()
+
+    @_requires_env_lock
+    def add_remote(self, name: str, url: str) -> None:
+        """Add a Git remote to the environment repository."""
+        self.git_manager.add_remote(name, url)
+
+    @_requires_env_lock
+    def remove_remote(self, name: str) -> None:
+        """Remove a Git remote from the environment repository."""
+        self.git_manager.remove_remote(name)
+
+    @_requires_env_lock
+    def set_remote_url(self, name: str, url: str, *, is_push: bool = False) -> None:
+        """Set the fetch or push URL for an existing Git remote."""
+        self.git_manager.set_remote_url(name, url, is_push=is_push)
+
+    def get_tracking_remote(self, branch: str | None = None) -> str | None:
+        """Return the remote tracked by a branch, if configured."""
+        branch = branch or self.get_current_branch()
+        if not branch:
+            return None
+
+        from ..utils.git import git_config_get
+
+        remote = git_config_get(self.cec_path, f"branch.{branch}.remote")
+        return remote if remote else None
+
+    @_requires_env_lock
+    def fetch_remote(self, remote: str = "origin", *, token: str | None = None) -> None:
+        """Fetch a remote, optionally using an HTTPS token for authentication."""
+        if token:
+            from ..utils.git import git_fetch_with_auth
+
+            git_fetch_with_auth(self.cec_path, remote, token)
+            return
+
+        self.git_manager.fetch(remote)
+
+    def get_remote_sync_status(self, remote: str = "origin", branch: str | None = None) -> dict:
+        """Return ahead/behind information for a remote branch."""
+        return self.git_manager.get_sync_status(remote, branch)
+
+    def get_remote_url(self, remote: str = "origin") -> str | None:
+        """Return the configured URL for a git remote, if present."""
+        from ..utils.git import git_remote_get_url
+
+        return git_remote_get_url(self.cec_path, remote)
+
+    @_requires_env_lock
+    def pull_remote(
+        self,
+        remote: str = "origin",
+        branch: str | None = None,
+        model_strategy: str = "skip",
+        *,
+        token: str | None = None,
+    ) -> dict:
+        """Pull a remote branch and repair the environment after the pull."""
+        return self.pull_and_repair(remote, branch, model_strategy, token=token)
+
+    @_requires_env_lock
+    def push_remote(
+        self,
+        remote: str = "origin",
+        branch: str | None = None,
+        *,
+        force: bool = False,
+        token: str | None = None,
+    ) -> str:
+        """Push commits to a remote, optionally using an HTTPS token."""
+        if token:
+            from ..utils.git import git_push_with_auth
+
+            self._ensure_push_allowed()
+            branch = branch or self.get_current_branch()
+            return git_push_with_auth(self.cec_path, remote, token, branch, force)
+
+        return self.push_commits(remote, branch, force)
+
+    def check_remote_auth(self, remote_url: str, token: str) -> bool:
+        """Return whether a token can access a remote URL from this environment."""
+        from comfygit_core.git import check_remote_auth
+
+        return check_remote_auth(self.cec_path, remote_url, token)
 
     @_requires_env_lock
     def merge_branch(
@@ -1422,16 +1532,17 @@ class Environment:
         """
         self.git_orchestrator.revert_commit(commit)
 
-    def get_commit_history(self, limit: int = 10) -> list[dict]:
+    def get_commit_history(self, limit: int = 10, rev_range: str | None = None) -> list[dict]:
         """Get commit history for this environment.
 
         Args:
             limit: Maximum number of commits to return
+            rev_range: Optional Git revision range (e.g. ``origin/main..HEAD``)
 
         Returns:
             List of commit dicts with keys: hash, message, date, date_relative
         """
-        return self.git_manager.get_version_history(limit)
+        return self.git_manager.get_version_history(limit, rev_range)
 
     def sync_model_paths(self) -> dict | None:
         """Ensure model symlink is configured for this environment.
@@ -2013,7 +2124,7 @@ class Environment:
         self.commit(message)
 
     # =====================================================
-    # Workflow Contract Management
+    # Public Snapshots and Readiness
     # =====================================================
 
     @_requires_env_lock
@@ -2028,17 +2139,19 @@ class Environment:
 
         return build_environment_readiness(self, include_blocking=include_blocking)
 
-    def get_remote_url(self, remote: str = "origin") -> str | None:
-        """Return the configured URL for a git remote, if present."""
-        from ..utils.git import git_remote_get_url
-
-        return git_remote_get_url(self.cec_path, remote)
+    # =====================================================
+    # Runtime Helpers
+    # =====================================================
 
     def get_venv_python(self) -> Path | None:
         """Return this environment's virtualenv Python executable, if present."""
         from ..utils.filesystem import get_venv_python
 
         return get_venv_python(self.path)
+
+    # =====================================================
+    # Workflow Contract Management
+    # =====================================================
 
     @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:

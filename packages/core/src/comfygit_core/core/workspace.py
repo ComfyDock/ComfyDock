@@ -39,6 +39,7 @@ from ..utils.environment_cleanup import (
 from .environment import Environment
 
 if TYPE_CHECKING:
+    from ..models.git import GitRemoteRefs
     from ..models.protocols import EnvironmentCreateProgress, ImportCallbacks
     from ..models.shared import LegacyCleanupResult
 
@@ -494,6 +495,12 @@ class Workspace:
             path=env_path,
             workspace=self
         )
+
+    def list_remote_refs(self, url: str) -> "GitRemoteRefs":
+        """List importable refs for a remote Git environment URL."""
+        from comfygit_core.git import list_remote_refs
+
+        return list_remote_refs(url, self.path)
 
     def create_environment(
         self,

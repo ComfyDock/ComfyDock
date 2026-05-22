@@ -1,4 +1,5 @@
 """Public model types for ComfyGit Core."""
+# pyright: reportUnsupportedDunderAll=false
 
 from importlib import import_module
 from typing import Any
@@ -39,6 +40,9 @@ _EXPORTS: dict[str, str] = {
     "EnvironmentStatus": "environment",
     "GitStatus": "environment",
     "GitInfo": "environment",
+    "GitRemoteBranch": "git",
+    "GitRemoteRefs": "git",
+    "GitRemoteTag": "git",
     "EnvironmentComparison": "environment",
     "MissingModelInfo": "environment",
     "ChangesSummary": "environment",
