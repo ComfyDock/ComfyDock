@@ -164,6 +164,40 @@ graph analysis must not set this field automatically. Core and manager can now
 persist this intent; centralized core readiness and build planner consumption are
 still in progress.
 
+### CGSPEC-NODE-05 [LIVE]: Node replacement is explicit and version-aware
+Validation: TEST
+
+Adding an already installed node without an explicit version should not silently
+upgrade or replace it. Same-version adds fail as already installed. Different
+version adds may replace regular nodes, while replacing development nodes
+requires explicit force or caller confirmation.
+
+### CGSPEC-NODE-06 [LIVE]: Node removal distinguishes untrack, development, tracked, and untracked filesystem modes
+Validation: TEST
+
+Removing a node should distinguish manifest untracking from filesystem removal.
+Development nodes are untracked without deleting developer-owned files. Tracked
+registry/git nodes remove the materialized directory and clean manifest workflow
+references and orphaned uv sources. Explicit removal of an untracked filesystem
+node may delete that directory, but normal sync without confirmed cleanup should
+warn rather than delete untracked nodes.
+
+### CGSPEC-NODE-07 [LIVE]: Development node links preserve portable manifest identity
+Validation: TEST
+
+Converting a tracked registry/git node to a local development checkout should
+preserve the existing manifest node identifier so workflow references remain
+valid. The materialized checkout may be replaced by a symlink to a
+developer-owned path, and any archived previous copy should live outside
+`custom_nodes` so status/sync do not classify it as an active untracked node.
+
+### CGSPEC-NODE-08 [LIVE]: Batch node operations are sequential and per-item
+Validation: TEST
+
+CLI batch add/remove operations report per-node success and failure while
+preserving already-completed operations. A batch failure does not imply an
+automatic rollback of earlier successful node operations.
+
 ## Models
 
 ### CGSPEC-MODEL-01 [LIVE]: Models use content-oriented metadata
@@ -186,7 +220,7 @@ Optional models may be unresolved without blocking every operation. Callers shou
 still surface the missing metadata clearly so the user understands the environment
 may behave differently.
 
-### CGSPEC-MODEL-03A [PLANNED]: Model categories follow active ComfyUI folder paths
+### CGSPEC-MODEL-03A [PARTIAL]: Model categories follow active ComfyUI folder paths
 Validation: MIXED
 
 Model category classification should be environment-aware. When an environment's
@@ -200,9 +234,10 @@ Static category tables remain a conservative fallback for bootstrapping,
 materialization without a ComfyUI checkout, and folders that ComfyUI or user
 configuration does not declare. Unknown/custom categories remain valid, but they
 should mean "not known to the active environment" rather than "not in a stale
-ComfyGit table."
+ComfyGit table." This remains partial while all model index presentation and
+query paths are not yet consistently environment-aware.
 
-### CGSPEC-MODEL-04 [PARTIAL]: Workflow model dependencies may be manually declared
+### CGSPEC-MODEL-04 [LIVE]: Workflow model dependencies may be manually declared
 Validation: TEST
 
 Workflow model entries are not limited to references discovered from workflow
@@ -218,7 +253,7 @@ and expected `relative_path` under the configured models directory. The relative
 path remains meaningful for resolved manual dependencies because custom node
 loaders may require the file to exist at a specific location.
 
-### CGSPEC-MODEL-04A [PLANNED]: Built-in model-loader discovery is generated from the active ComfyUI checkout
+### CGSPEC-MODEL-04A [PARTIAL]: Built-in model-loader discovery is generated from the active ComfyUI checkout
 Validation: MIXED
 
 Workflow dependency analysis should use generated model-loader metadata from the
@@ -247,6 +282,57 @@ Future tooling may let users declare a required workflow model by target path an
 source URL before the model exists locally. That flow should reuse workflow model
 download-intent semantics, but it is not part of the initial local-first manual
 dependency workflow.
+
+### CGSPEC-MODEL-06 [LIVE]: The model index is local derived state
+Validation: TEST
+
+The workspace model index is machine-local runtime state, not portable manifest
+truth. It may record multiple locations for one model hash, filter queries to
+the configured current models directory by default, and keep download/source
+hints that help repair manifest state without satisfying portable source proof
+by themselves.
+
+### CGSPEC-MODEL-07 [LIVE]: Model scan errors are per-file and nonfatal
+Validation: TEST
+
+Scanning a models directory should continue when an individual candidate file
+cannot be inspected or hashed. Processing-time errors should be counted and
+surfaced in scan results; the unreadable file must not be indexed as a valid
+model.
+
+### CGSPEC-MODEL-08 [LIVE]: Manifest sources are source proof; index sources are repair hints
+Validation: TEST
+
+Readiness and handoff checks should treat source URLs recorded in the manifest
+global model table as portable source proof. Source URLs found only in the local
+model index may be presented as repair candidates, but should not by themselves
+satisfy manifest source readiness.
+
+### CGSPEC-MODEL-09 [PARTIAL]: Download intents preserve target path and source until resolution
+Validation: TEST
+
+Workflow model entries may represent pending downloads with `status =
+"unresolved"`, `sources`, and `relative_path`. Resolution should resume existing
+intents without reprompting, batch downloads when requested, and convert
+successful downloads into resolved hash-backed workflow/global model entries.
+Failed downloads should leave the intent available for retry. This remains
+partial because declaring missing manual models by URL is still planned.
+
+### CGSPEC-MODEL-10 [LIVE]: Workflow path sync mutates only known built-in loader widgets
+Validation: TEST
+
+When syncing resolved model paths back into workflow JSON, core should update
+only known built-in model-loader widget values. It should strip the built-in base
+directory prefix expected by ComfyUI loaders, preserve subdirectories, normalize
+path separators, and skip custom or unknown node widgets.
+
+### CGSPEC-MODEL-11 [LIVE]: Category mismatch is a functional workflow issue for known loaders
+Validation: TEST
+
+For known built-in loaders, a resolved model whose indexed locations do not
+include one of the loader's expected directories should be reported as a
+functional category mismatch. Custom nodes should be skipped because core does
+not know their model search paths.
 
 ## Local Configuration
 

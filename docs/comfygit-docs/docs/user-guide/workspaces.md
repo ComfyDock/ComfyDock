@@ -1,249 +1,197 @@
-# Managing Workspaces
+# Workspaces
 
-> Learn how to initialize, configure, and manage your ComfyGit workspace.
+A workspace is the local home for ComfyGit on one machine. It contains your
+environments, shared model index, registry cache, logs, and machine-specific
+configuration.
 
-## What is a workspace?
+Most users should keep one workspace per machine. Environments inside that
+workspace are the portable units you commit, push, pull, import, export, and
+materialize.
 
-A **workspace** is the top-level container for all your ComfyGit environments and shared resources. Typically, you have one workspace per machine located at `~/comfygit/`.
+!!! info "Media placeholder"
+    Add a screenshot here showing `cg config --show` beside the workspace tree.
 
-See [Core Concepts](../getting-started/concepts.md#workspace) for architectural details.
+## Create A Workspace
 
-## Initializing a workspace
-
-### Basic initialization
+Initialize the default workspace at `~/comfygit`:
 
 ```bash
 cg init
 ```
 
-Creates workspace at `~/comfygit/` with:
-
-- `environments/` - Your ComfyUI environments
-- `models/` - Shared models directory
-- `comfygit_cache/` - Registry cache and model index
-- `logs/` - Application logs
-- `.metadata/` - Workspace configuration
-
-### Custom location
+If you already have a ComfyUI model directory, point ComfyGit at it during
+initialization:
 
 ```bash
-cg init /path/to/workspace
+cg init --models-dir ~/ComfyUI/models --yes
 ```
 
-Creates workspace at custom path. You'll need to set `COMFYGIT_HOME` environment variable:
+You can also create a workspace at a custom path:
+
+```bash
+cg init /path/to/workspace --models-dir /path/to/models
+```
+
+When you use a custom path, set `COMFYGIT_HOME` before running other commands:
 
 ```bash
 export COMFYGIT_HOME=/path/to/workspace
 ```
 
-Add to `~/.bashrc` or `~/.zshrc` to persist across sessions.
+Add that export to your shell profile if this should be your normal workspace.
 
-### With existing models
+## What Lives There
 
-```bash
-cg init --models-dir /path/to/existing/models
+A typical workspace looks like this:
+
+```text
+~/comfygit/
+├── environments/
+│   ├── deforum-testing/
+│   └── production/
+├── models/
+│   ├── checkpoints/
+│   ├── loras/
+│   └── ...
+├── comfygit_cache/
+│   ├── model_index.db
+│   ├── registry_cache.db
+│   └── workflow_cache.db
+├── logs/
+└── .metadata/
 ```
 
-Points workspace to existing models directory and indexes them automatically.
+The important distinction is portability:
 
-### Non-interactive mode
+- Environment repositories contain the tracked `pyproject.toml` manifest.
+- Model bytes stay outside git and are resolved through hashes, sources, and
+  paths.
+- Workspace metadata, logs, caches, local source overrides, and virtual
+  environments are local runtime state.
 
-```bash
-cg init --yes
-```
+This is why you can push an environment repo without pushing your whole machine
+state.
 
-Uses all defaults without prompts. Useful for scripting.
+## Inspect Configuration
 
-## Configuration management
-
-### View configuration
+Use `cg config --show` to see which workspace and shared settings are active:
 
 ```bash
 cg config --show
 ```
 
-Shows current workspace configuration including:
+The config output includes the workspace path, Civitai API key state, GitHub
+token state, and uv cache location.
 
-- Active environment
-- Models directory path
-- CivitAI API key (masked)
-
-### Set CivitAI API key
+Set optional credentials with:
 
 ```bash
 cg config --civitai-key YOUR_API_KEY
+cg config --github-token YOUR_GITHUB_TOKEN
 ```
 
-Required for downloading models from CivitAI. Get your key from [https://civitai.com/user/account](https://civitai.com/user/account).
-
-!!! tip "Why CivitAI API key?"
-    ComfyGit uses the CivitAI API to resolve model hashes and find download URLs. Without an API key, you can still use CivitAI URLs directly but automatic resolution won't work.
-
-### Clear CivitAI key
+Use an empty string to clear a value:
 
 ```bash
 cg config --civitai-key ""
 ```
 
-## Registry management
-
-ComfyGit uses the official ComfyUI registry to look up custom nodes.
-
-### Check registry status
+An external uv cache can reduce repeated downloads across environments:
 
 ```bash
-cg registry status
+cg config --uv-cache /path/to/uv-cache
 ```
 
-Shows:
+## Model Index
 
-- Last update time
-- Number of cached nodes
-- Registry data location
+The workspace has one shared model index. It scans the configured models
+directory and records local paths, categories, filenames, sizes, and hashes.
 
-### Update registry data
+Check the index:
 
 ```bash
-cg registry update
+cg model index status
+cg model index list
 ```
 
-Downloads latest registry data from GitHub. Run this periodically to get newly published nodes.
-
-!!! note "When to update"
-    - After installing ComfyGit (done automatically during `cg init`)
-    - When a node isn't found (registry might be outdated)
-    - Monthly maintenance
-
-## Logging and debugging
-
-### View logs
+Point the workspace at a different models directory:
 
 ```bash
-# Show last 200 lines (default)
-cg debug
-
-# Show last 50 lines
-cg debug -n 50
-
-# Show all logs
-cg debug --full
-
-# Filter by level
-cg debug --level ERROR
-
-# Show workspace logs instead of environment logs
-cg debug --workspace
-```
-
-Logs are stored in `workspace/logs/` and include:
-
-- Environment operations (create, delete, sync)
-- Node installations
-- Model operations
-- Error stack traces
-
-!!! tip "Debugging workflow"
-    1. Run failing command
-    2. Check logs: `cg debug -n 100`
-    3. Look for ERROR or WARNING entries
-    4. Include relevant log lines in bug reports
-
-## Workspace structure
-
-After initialization, your workspace looks like:
-
-```
-~/comfygit/
-├── environments/
-│   ├── my-project/           # Environment 1
-│   ├── testing/              # Environment 2
-│   └── production/           # Environment 3
-├── models/
-│   ├── checkpoints/          # SD checkpoints
-│   ├── loras/                # LoRA files
-│   ├── vae/                  # VAE models
-│   └── ...                   # Other model types
-├── comfygit_cache/
-│   ├── registry_cache.db     # Registry data
-│   ├── model_index.db        # Model index
-│   └── workflow_cache.db     # Workflow analysis cache
-├── logs/
-│   ├── workspace.log         # Workspace-level logs
-│   └── environments/         # Per-environment logs
-└── .metadata/
-    └── workspace.json        # Workspace config
-```
-
-## Multiple workspaces
-
-You can have multiple workspaces by using `COMFYGIT_HOME`:
-
-```bash
-# Work workspace
-export COMFYGIT_HOME=~/comfygit-work
-cg init
-cg create client-project
-
-# Personal workspace
-export COMFYGIT_HOME=~/comfygit-personal
-cg init
-cg create experiments
-```
-
-Switch between them by changing the environment variable.
-
-## Best practices
-
-!!! success "Recommended"
-    - **One workspace per machine** - Simplifies management
-    - **Point to existing models** - Avoid duplicating large files
-    - **Update registry monthly** - Get latest node information
-    - **Set CivitAI key early** - Enable automatic model resolution
-
-!!! warning "Avoid"
-    - **Multiple workspaces** - Unless you have specific isolation needs
-    - **Nested workspaces** - Don't create workspace inside another workspace
-    - **Manual .metadata edits** - Use `cg config` commands instead
-
-## Troubleshooting
-
-### "Workspace not initialized"
-
-**Problem**: Running commands shows workspace not found error
-
-**Solution**:
-```bash
-# Initialize workspace
-cg init
-
-# Or set COMFYGIT_HOME to existing workspace
-export COMFYGIT_HOME=/path/to/workspace
-```
-
-### Registry data missing
-
-**Problem**: Node resolution fails, workflow resolve doesn't work
-
-**Solution**:
-```bash
-cg registry update
-```
-
-### Models directory not found
-
-**Problem**: Models aren't being indexed
-
-**Solution**:
-```bash
-# Point to correct directory
 cg model index dir /path/to/models
+```
 
-# Sync index
+Rescan after adding files outside ComfyGit:
+
+```bash
 cg model index sync
 ```
 
-## Next steps
+The index is local. Workflow manifests decide which indexed models are required
+for a particular environment or workflow.
 
-- [Create environments](environments/creating-environments.md) (Coming soon)
-- [Model management](models/model-index.md) (Coming soon)
-- [Environment version control](environments/version-control.md) (Coming soon)
+## Registry Cache
+
+ComfyGit uses the ComfyUI registry cache to resolve published custom nodes.
+
+```bash
+cg registry status
+cg registry update
+```
+
+Update the registry when a recently published node cannot be found, or when you
+are preparing an environment for someone else to materialize.
+
+## Logs And Diagnostics
+
+`cg debug` shows recent workspace or environment logs:
+
+```bash
+cg debug
+cg debug -n 50
+cg debug --level ERROR
+cg debug --workspace
+```
+
+For orchestrator state and logs:
+
+```bash
+cg orch status
+cg orch logs -n 100
+```
+
+Use these commands before deleting local state. Most sync, node install, model
+index, and manager update problems leave useful context in the logs.
+
+## Multiple Workspaces
+
+Multiple workspaces are useful for hard isolation, but they add overhead. Prefer
+one workspace unless you have a specific reason to separate model directories,
+caches, or environment sets.
+
+Switch workspaces by changing `COMFYGIT_HOME`:
+
+```bash
+export COMFYGIT_HOME=~/comfygit-work
+cg list
+
+export COMFYGIT_HOME=~/comfygit-personal
+cg list
+```
+
+Each workspace has its own environment list, model index, cache, logs, and
+configuration.
+
+## Practical Rules
+
+- Put large model files in the shared models directory, not in environment git
+  repos.
+- Commit environment changes from inside the environment with `cg commit`.
+- Use `cg model index sync` after manually adding models to the filesystem.
+- Use `cg registry update` when a node lookup looks stale.
+- Avoid editing `.metadata` files directly; use CLI commands instead.
+
+## Next Steps
+
+- [Create an environment](environments/creating-environments.md)
+- [Understand the model index](models/model-index.md)
+- [Repair sync drift](environments/sync-and-repair.md)

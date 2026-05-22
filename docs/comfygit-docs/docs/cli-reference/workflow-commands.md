@@ -1,70 +1,51 @@
 # Workflow Commands
 
-> Commands for managing and resolving workflow dependencies.
+Workflow commands inspect saved ComfyUI workflows, resolve dependencies, and
+manage workflow-level model declarations.
 
-
-## `workflow`
-
-**Usage:**
+## List And Resolve
 
 ```bash
-cg workflow [-h] {list,resolve,model} ...
+cg workflow list
+cg workflow resolve WORKFLOW [--auto] [--install] [--no-install]
 ```
 
-### Subcommands
+`resolve` analyzes workflow JSON, maps custom nodes to packages, matches model
+references to the model index, and records dependency metadata in the manifest.
 
+## Workflow Models
 
-### `list`
-
-**Usage:**
+List models declared for a workflow:
 
 ```bash
-cg workflow list [-h]
+cg workflow model list [WORKFLOW]
 ```
 
-
-### `resolve`
-
-**Usage:**
+Declare an already-indexed local model as a workflow dependency:
 
 ```bash
-cg workflow resolve [-h] [--auto] [--install] [--no-install] name
+cg workflow model add WORKFLOW --path RELATIVE_MODEL_PATH [--importance required|flexible|optional]
+cg workflow model add WORKFLOW --hash HASH [--importance required|flexible|optional]
 ```
 
-**Arguments:**
-
-- `name` - Workflow name to resolve
-
-**Options:**
-
-- `--auto` - Auto-resolve without interaction (default: `False`)
-- `--install` - Auto-install missing nodes without prompting (default: `False`)
-- `--no-install` - Skip node installation prompt (default: `False`)
-
-
-### `model`
-
-**Usage:**
+Remove a manually declared workflow model:
 
 ```bash
-cg workflow model [-h] {importance} ...
+cg workflow model remove WORKFLOW --path RELATIVE_MODEL_PATH
+cg workflow model remove WORKFLOW --hash HASH
 ```
 
-#### Subcommands
-
-
-#### `importance`
-
-**Usage:**
+Change model importance:
 
 ```bash
-cg workflow model importance [-h]
-                                    [workflow_name] [model_identifier]
-                                    [{required,flexible,optional}]
+cg workflow model importance [WORKFLOW] [MODEL] [required|flexible|optional]
 ```
 
-**Arguments:**
+Use `importance` in user-facing docs. It maps to model criticality in the
+manifest.
 
-- `workflow_name` - Workflow name (interactive if omitted) (optional)
-- `model_identifier` - Model filename or hash (interactive if omitted) (optional)
-- `importance` - Importance level (optional)
+## Related Guides
+
+- [Workflow resolution](../user-guide/workflows/workflow-resolution.md)
+- [Workflow model dependencies](../user-guide/workflows/model-dependencies.md)
+- [Workflow contracts](../user-guide/workflows/workflow-contracts.md)

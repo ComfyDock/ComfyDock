@@ -179,20 +179,18 @@ with binary media must upload first and submit an upload reference.
 This adapter should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.
 
-### CGSERVE-RUN-01A [PLANNED]: `cg serve` root hosts the contract studio UI
-Validation: MIXED
+### CGSERVE-RUN-01A [PARTIAL]: `cg serve` root hosts the contract studio UI
+Validation: TEST
 
-The `cg serve` root path should render a browser UI for the served environment,
-not a blank or API-only landing. This hosted contract studio is a thin client
-over the same contract metadata and run endpoints that external callers use. It
-must not introduce a second execution path or workflow-specific graph builder.
+The `cg serve` root path renders a browser UI for the served environment, not a
+blank or API-only landing. This hosted contract studio is a thin client over the
+same contract metadata and run endpoints that external callers use. It must not
+introduce a second execution path or workflow-specific graph builder.
 
-The first studio slice should list available contracts as cards, open a
-contract-specific generation view, render controls from contract input schema,
-submit generation requests to the matching contract run endpoint, and display
-image outputs returned by the same API response. Unsupported input or output
-types should degrade to plain fields or raw JSON instead of blocking the whole
-contract.
+Current local serve hosts the packaged Studio SPA from the CLI wheel, injects
+host-specific runtime configuration, and falls back to the same API surface used
+by non-browser clients. This remains partial while the UI and runtime endpoint
+surface continue to evolve.
 
 ### CGSERVE-RUN-01B [PARTIAL]: Studio frontend is a shared packaged static asset
 Validation: STATIC
@@ -219,6 +217,10 @@ one deployment context. Local `cg serve` should configure an empty API base
 path, while Cloud should configure the published endpoint path such as
 `/e/{environment_public_id}/{endpoint_slug}`. Studio request, upload, gallery,
 run, and output URLs should be derived from that API base path.
+
+The CLI release artifact should contain the synced static output from the same
+Studio source version as the release. Installed users should not need Node.js or
+the Studio source tree available for `cg serve` to host the packaged UI.
 
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED
@@ -279,16 +281,18 @@ implementation detail of the local executor; the public serve API should expose
 file refs, run refs, artifact refs, and contract result objects rather than
 local filesystem paths or raw ComfyUI assumptions.
 
-Current implementation: `cg serve` has a serve-owned `RunExecutor` seam and a
-`LocalComfyExecutor` that submits prepared contract prompts to the configured
-ComfyUI HTTP API with a generated ComfyUI `client_id`, waits for history when
-requested, and normalizes ComfyUI outputs back into contract output payloads.
-The generated `client_id` keeps ComfyUI's execution context populated for
-progress and preview-aware nodes even when the run is initiated by the headless
-serve API instead of the ComfyUI frontend. Request routing, sessions, upload
-refs, run records, gallery state, and output delivery remain owned by the serve
-runtime. Executor selection is not yet exposed as a user-facing configuration
-surface, and proxy execution is not implemented.
+Current implementation: `cg serve` has a serve-owned `RunExecutor` seam,
+user-facing executor selection for local and proxy execution, and separate
+studio/front-door and proxy runtime roles. `LocalComfyExecutor` submits prepared
+contract prompts to the configured ComfyUI HTTP API with a generated ComfyUI
+`client_id`, waits for history when requested, and normalizes ComfyUI outputs
+back into contract output payloads. The generated `client_id` keeps ComfyUI's
+execution context populated for progress and preview-aware nodes even when the
+run is initiated by the headless serve API instead of the ComfyUI frontend.
+Request routing, sessions, upload refs, run records, gallery state, and output
+delivery remain owned by the serve runtime. This remains partial because event
+streams, stronger remote auth policy, remote object storage delivery, and
+provider launch integration remain future work.
 
 ### CGSERVE-RUN-05A [PLANNED]: Contract runs should be asynchronous by default
 Validation: MIXED
@@ -354,14 +358,13 @@ In ephemeral mode, active runs may remain recoverable only while the same
 identity or UI preferences, but it must not be the source of truth for run
 completion, output extraction, cancellation, or gallery records.
 
-Current implementation: serve records submitted/running runs and pending gallery
-items, exposes active runs through `/runs?active=true`, and schedules
-best-effort completion watchers for active runs at startup and when gallery/run
-state is queried. In local persistent state mode, a restarted `cg serve` process
-can resume polling ComfyUI history by persisted `prompt_id` and update the
-stored run/gallery rows when the prompt completes or fails. Recovery still uses
-one pending gallery item per run; declared output slots and lifecycle events are
-separate planned slices.
+Current implementation: serve records submitted/running runs and output slots,
+exposes active runs through `/runs?active=true`, and schedules best-effort
+completion watchers for active runs at startup and when gallery/run state is
+queried. In local persistent state mode, a restarted `cg serve` process can
+resume polling ComfyUI history by persisted `prompt_id` and update the stored
+run, slot, and gallery rows when the prompt completes or fails. Lifecycle event
+streaming remains a separate planned slice.
 
 ### CGSERVE-RUN-05D [PLANNED]: Serve should stream run lifecycle events
 Validation: MIXED
@@ -646,6 +649,18 @@ URLs to front-door `/outputs/view?serve_artifact=...`, and persists those
 localized refs in run, output-slot, and gallery records. Polling mode still
 downloads completed artifacts from `/proxy/artifacts/{artifact_id}`. Remote
 object-storage artifact refs remain planned.
+
+### CGSERVE-RUN-07 [PARTIAL]: `cg serve` is the local/manual deployment replacement for the retired deploy package
+Validation: HUMAN_REVIEW
+
+The open-source ComfyGit monorepo should expose local and manually hosted
+runtime execution through `cg serve`. Provider-specific hosted deployment
+orchestration belongs to ComfyGit Cloud or external adapters, not to a revived
+`packages/deploy` package in this workspace.
+
+`packages/deploy` and `comfygit-deploy` are retired. They must not be restored
+as workspace members, release artifacts, build targets, publish targets, or
+maintained package APIs unless the truth layer is intentionally revised first.
 
 ## Runtime State And Gallery Persistence
 

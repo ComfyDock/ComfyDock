@@ -19,6 +19,15 @@ Validation: STATIC
 Core code should not use `print()` or `input()` for normal behavior. Callers own
 rendering, prompting, progress display, and cancellation UX.
 
+### CGCORE-LIB-02A [PARTIAL]: Legacy core migration notices are temporary presentation exceptions
+Validation: HUMAN_REVIEW
+
+Existing legacy migration paths may still emit a direct stderr notice from core
+while repairing old environment metadata. Those notices are temporary exceptions
+to the normal no-print boundary and should move behind caller-owned presentation
+callbacks or structured migration results when the surrounding migration path is
+reworked.
+
 ### CGCORE-LIB-03 [LIVE]: Workspace and Environment are the primary public API
 Validation: MIXED
 
@@ -107,7 +116,7 @@ read/write APIs through Environment. The legacy core-side UI-workflow conversion
 path is no longer a supported contract authoring or runtime dependency; runtime
 execution should consume Manager-captured API prompt artifacts.
 
-### CGCORE-EXEC-02 [PLANNED]: Core contract execution stays transport-agnostic
+### CGCORE-EXEC-02 [LIVE]: Core contract execution stays transport-agnostic
 Validation: STATIC
 
 Core should not own HTTP routing, websocket proxying, ComfyUI process
@@ -119,25 +128,25 @@ results that those packages can adapt to their transports. Browser UI assets
 for `cg serve` are also adapter-owned; core must not depend on React, Vite,
 `aiohttp`, SQLite runtime state, or any hosted studio runtime.
 
-### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over stored contract semantics
+### CGCORE-EXEC-03 [PARTIAL]: `cg serve` is a runtime adapter over stored contract semantics
 Validation: MIXED
 
-A future ComfyGit serve runtime should expose contract-shaped workflow endpoints
-for a ComfyGit environment by loading manifest state, captured API prompt
-artifacts, calling core contract execution services, and communicating with a
-local ComfyUI server or another serve-owned execution adapter. The serve
-runtime may provide HTTP endpoints, progress streams, upload-slot endpoints,
-output retrieval, static browser UI assets, state/session adapters, storage
-adapters, and `RunExecutor` strategies, but it must not redefine the manifest
-or contract semantics. The CLI serve adapter may depend on concrete runtime
-tooling such as `aiohttp` for HTTP, SQLite for local serve state, and React/Vite
-for packaged browser assets; core must not depend on or expose those transport,
-persistence, execution-host, or presentation stacks.
+The CLI serve runtime exposes contract-shaped workflow endpoints for a ComfyGit
+environment by loading manifest state, using captured API prompt artifacts where
+available, and communicating with a local ComfyUI server or another serve-owned
+execution adapter. The serve runtime may provide HTTP endpoints, upload-slot
+endpoints, output retrieval, static browser UI assets, state/session adapters,
+storage adapters, and `RunExecutor` strategies, but it must not redefine the
+manifest or contract semantics. The CLI serve adapter may depend on concrete
+runtime tooling such as `aiohttp` for HTTP, SQLite for local serve state, and
+React/Vite for packaged browser assets; core must not depend on or expose those
+transport, persistence, execution-host, or presentation stacks.
 
 Direct local ComfyUI execution, local proxy execution, remote proxy execution,
 and serverless-provider execution are serve/deployment adapter choices. Core
 should remain limited to preparing contract prompts and interpreting typed
-execution results in a transport-agnostic way.
+execution results in a transport-agnostic way. This remains partial until all
+runtime paths consume the same stable typed core execution services.
 
 ### CGCORE-EXEC-04 [PARTIAL]: API prompts are captured execution artifacts
 Validation: TEST
@@ -203,7 +212,7 @@ The initial supported flow is local-first: the model must already exist in the
 workspace model index before it can be attached to a workflow. Declaring a
 missing model by URL and target path remains future download-intent behavior.
 
-### CGCORE-DEP-02B [PLANNED]: Built-in model-loader detection uses generated ComfyUI metadata
+### CGCORE-DEP-02B [PARTIAL]: Built-in model-loader detection uses generated ComfyUI metadata
 Validation: MIXED
 
 Core should not rely only on a hand-maintained list of built-in ComfyUI model
@@ -221,7 +230,9 @@ Generated metadata is local derived state, not portable manifest truth. If
 generation is unavailable or a loader is too dynamic to classify safely, core may
 fall back to conservative static mappings and manual workflow model declarations.
 Manual declarations remain the required escape hatch for custom nodes and opaque
-runtime behavior.
+runtime behavior. The current implementation extracts and consumes conservative
+local metadata for folder-backed built-in loaders, but broad dynamic loader
+coverage remains partial.
 
 ### CGCORE-DEP-03 [LIVE]: Model criticality affects reproducibility gates
 Validation: TEST
@@ -262,6 +273,17 @@ Manager, serve, or provider runtimes may surface live import failures as
 runtime health warnings. Those warnings may use core manifest identity and
 workflow-usage metadata, but the live import signal itself is not core portable
 state and must not mutate custom-node criticality.
+
+### CGCORE-NODE-01 [LIVE]: Manager self-update prepares replacement metadata before mutating current Manager state
+Validation: TEST
+
+Because the Manager custom node depends on the running ComfyGit core package,
+Manager install/update may use the generic node lifecycle but has an additional
+ordering invariant: it must resolve replacement metadata and cached install
+contents before removing the currently tracked Manager node or its dependency
+group. Failed update preparation should leave the existing Manager manifest
+entry and dependency group intact so users can recover by retrying or manually
+updating the node.
 
 ### CGCORE-DEP-06 [PLANNED]: Model source candidate discovery is reusable core logic
 Validation: MIXED

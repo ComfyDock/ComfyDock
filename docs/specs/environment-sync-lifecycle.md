@@ -137,6 +137,93 @@ Process-specific lifecycle authorities, such as `cg run` and the Manager
 orchestrator, may still decide when to stop, sync, and restart ComfyUI. They
 should not duplicate the status/log schema or observer server implementation.
 
+### CGSYNC-LIFE-10 [LIVE]: Environment mutations are serialized by an environment-local operation lock
+Validation: TEST
+
+Mutating environment operations should run under the environment operation lock
+so concurrent CLI, Manager, or runtime calls do not interleave writes to
+manifest, lockfiles, node checkouts, workflow copies, symlinks, and git state.
+The lock should cover sync, manager update, model/node/workflow mutations, git
+handoff operations, import finalization where practical, and destructive
+operations that reconcile runtime state.
+
+### CGSYNC-LIFE-11 [LIVE]: Incomplete environments are hidden and cleaned up
+Validation: TEST
+
+Create, import, and materialization should mark an environment complete only
+after tracked source state and derived runtime state are sufficiently
+initialized. Workspace listing should exclude environments without the
+completion marker. Failure paths should attempt to remove incomplete
+environment directories while preserving completed environments and explicit
+user-data deletion semantics.
+
+## Import
+
+### CGSYNC-IMPORT-01 [LIVE]: Import is an authoring setup flow
+Validation: MIXED
+
+Normal import should prepare an editable local environment for a human user:
+preserve git identity/remotes for git imports, initialize or restore tracked
+source state for bundle and directory imports, restore workflows into ComfyUI,
+install/register Manager unless headless mode is requested, and permit
+import-specific commits and softer sync failure handling. Materialization remains
+the runtime hydration flow with stricter defaults described in
+`docs/specs/environment-materialization-lifecycle.md`.
+
+## Custom Node Lifecycle
+
+### CGSYNC-NODE-01 [LIVE]: Node install and update mutate manifest, filesystem, and uv as one lifecycle
+Validation: TEST
+
+Adding or updating a registry/git custom node should prepare lookup metadata,
+cached source contents, requirement metadata, manifest changes, filesystem
+changes, and uv sync as one guarded operation. On install/update failure, core
+should restore the previous manifest state and best-effort restore the previous
+materialized node directory.
+
+### CGSYNC-NODE-02 [LIVE]: Core reviewed dependency apply is fingerprint-guarded
+Validation: TEST
+
+Applying a reviewed node dependency change must regenerate the preview under the
+environment operation lock and verify the accepted baseline, diff, and proposed
+fingerprints before mutating the environment. Stale accepted previews must fail
+instead of applying to a changed environment.
+
+### CGSYNC-NODE-03 [PARTIAL]: CLI reviewed dependency apply remains future work
+Validation: HUMAN_REVIEW
+
+Core and Manager support reviewed dependency apply. CLI may detect and display
+dependency conflicts and dependency previews, but it does not yet expose the
+same first-class reviewed apply flow.
+
+## Local Configuration And Overlays
+
+### CGSYNC-LOCAL-01 [LIVE]: Overlay injection is temporary local dependency configuration
+Validation: TEST
+
+Local, shared, stock, and PyTorch overlays may temporarily inject dependencies,
+sources, indexes, constraints, and uv settings during uv resolution. Injection
+must restore the tracked `pyproject.toml` afterward. `overlays/.local.toml` and
+`.overlay-config.toml` are machine-local activation state; shared non-local
+overlays may be portable source files.
+
+### CGSYNC-LOCAL-02 [LIVE]: Overlay collection order is deterministic and PyTorch wins last
+Validation: TEST
+
+Overlay collection should apply in deterministic order: local overlay first,
+active overlays sorted canonically, CLI one-time overlays, then generated
+PyTorch overlay. Platform-incompatible overlays should be skipped rather than
+forcing invalid local dependency state.
+
+### CGSYNC-LOCAL-03 [LIVE]: Operation commands do not persist PyTorch backend overrides
+Validation: TEST
+
+Create/import/materialize may auto-detect and save a backend in
+`.pytorch-backend`. Runtime operation commands such as sync, run, and pull
+should read or auto-probe the environment-local backend when no override is
+given. A `--torch-backend` override on those commands is a one-time sync input
+and should not rewrite the saved backend file.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes
@@ -157,6 +244,37 @@ Validation: TEST
 
 When git operations change tracked environment state, sync/repair should reconcile
 the derived runtime so the local environment matches the checked-out commit.
+
+### CGSYNC-GIT-04 [LIVE]: Git handoff operations reconcile node, package, and workflow state after tree changes
+Validation: TEST
+
+Checkout, hard reset, branch switch, merge, revert, and pull should reconcile
+derived environment state after changing tracked `.cec` state. Reconciliation
+should reset manifest readers, reconcile custom-node filesystem state, sync uv
+with local PyTorch/overlay injection, and restore tracked workflows into ComfyUI.
+Branch switch may preserve uncommitted workflow edits only when the target branch
+does not overwrite them.
+
+## Run Supervision
+
+### CGSYNC-RUN-01 [LIVE]: `cg run` supervises sync, restart, and environment switch lifecycle
+Validation: MIXED
+
+`cg run` should sync before launching ComfyUI unless explicitly bypassed,
+forward ComfyUI arguments, set ComfyGit runtime environment variables, and honor
+well-known child exit codes for restart and environment switch. Restart should
+force a fresh sync before relaunch. Environment switch should consume the target
+request, sync the target environment, start target ComfyUI, and update shared
+switch status/logs.
+
+### CGSYNC-RUN-02 [LIVE]: Environment switch completion requires ComfyUI HTTP readiness
+Validation: TEST
+
+During supervisor-managed environment switching, the observer must not report
+`complete` merely because the target process was started. It should move through
+startup/validation states and only publish `complete` after the target ComfyUI
+HTTP endpoint responds, mapping wildcard listen addresses to a local readiness
+probe host.
 
 ## Readiness And Handoff
 
@@ -212,6 +330,14 @@ inside the currently running ComfyUI process.
 Live import health is process-local runtime evidence. Manager and serve
 runtimes may layer that evidence into their own status surfaces, but they must
 not treat it as a core sync input or rewrite manifest criticality from it.
+
+### CGSYNC-READY-05 [LIVE]: Handoff readiness blocks invalid or missing workflow API prompt artifacts
+Validation: TEST
+
+If a workflow execution contract references a `workflow_api/*.api.json` artifact,
+export and push-readiness flows must treat missing or invalid artifact paths as
+handoff blockers. Relative artifact paths must resolve inside the manifest
+directory; absolute paths or path traversal should be invalid.
 
 ## Build Compatibility
 
