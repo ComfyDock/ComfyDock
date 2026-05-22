@@ -19,6 +19,7 @@ def test_workspace_public_constructors_are_available():
 
     assert callable(Workspace.open)
     assert callable(Workspace.create)
+    assert callable(Workspace.from_path)
     assert callable(Workspace.open_or_create)
     assert callable(Workspace.default_root)
     assert callable(Workspace.exists)
@@ -73,6 +74,8 @@ def test_common_adapter_model_types_are_public():
         EnvironmentReadiness,
         EnvironmentStatus,
         ImportCallbacks,
+        ManifestModel,
+        ManifestWorkflowModel,
         ModelResolutionContext,
         NodeInstallCallbacks,
         NodeResolutionContext,
@@ -93,6 +96,8 @@ def test_common_adapter_model_types_are_public():
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
+    assert ManifestModel.__name__ == "ManifestModel"
+    assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
     assert ImportCallbacks.__name__ == "ImportCallbacks"
     assert ModelResolutionContext.__name__ == "ModelResolutionContext"
     assert NodeInstallCallbacks.__name__ == "NodeInstallCallbacks"

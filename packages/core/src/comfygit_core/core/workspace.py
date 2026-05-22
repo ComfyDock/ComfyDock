@@ -212,6 +212,17 @@ class Workspace:
         return WorkspaceFactory.create(path)
 
     @classmethod
+    def from_path(cls, path: Path) -> "Workspace":
+        """Construct a workspace object when the caller already has a root path.
+
+        Normal callers should prefer ``Workspace.open(path)`` or
+        ``Workspace.create(path)``. This classmethod exists for embedding
+        contexts that infer the workspace root from runtime state and need to
+        wrap that resolved root without exposing ``WorkspacePaths``.
+        """
+        return cls(WorkspacePaths(path))
+
+    @classmethod
     def open_or_create(cls, path: Path | None = None) -> "Workspace":
         """Open an existing workspace, or create it if it does not exist."""
         from ..factories.workspace_factory import WorkspaceFactory
