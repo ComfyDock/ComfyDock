@@ -26,8 +26,7 @@ class TestEnvironmentCheckout:
 
         # Get commits (get_commit_history returns newest-first)
         history = test_env.get_commit_history(limit=2)
-        history[0]["hash"]  # Newest = v2 with test.txt
-        v1_hash = history[1]["hash"]  # Older = fixture's initial commit
+        v1_hash = history[1].hash  # Older = fixture's initial commit
 
         # ACT: Checkout v1 (should NOT create v3)
         test_env.checkout(v1_hash, force=True)
@@ -45,7 +44,7 @@ class TestEnvironmentCheckout:
         """checkout() to commit should create detached HEAD."""
         # ARRANGE: Create commit
         test_env.git_manager.commit_all("v1")
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         # ACT: Checkout specific commit
         test_env.checkout(v1_hash, force=True)
@@ -60,7 +59,7 @@ class TestEnvironmentCheckout:
         test_env.git_manager.commit_all("v1")
         (test_env.cec_path / "uncommitted.txt").write_text("new")
 
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         # ACT & ASSERT: Should raise without force or strategy
         with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
@@ -74,7 +73,7 @@ class TestEnvironmentCheckout:
         uncommitted_file.write_text("new")
         assert uncommitted_file.exists()
 
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         # ACT: Checkout with force
         test_env.checkout(v1_hash, force=True)
@@ -103,7 +102,7 @@ class TestEnvironmentReset:
         """reset(mode='hard') to previous commit should move HEAD and discard changes."""
         # ARRANGE: Create v1 and v2
         test_env.git_manager.commit_all("v1")
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         (test_env.cec_path / "v2.txt").write_text("v2")
         test_env.git_manager.commit_all("v2")
@@ -113,7 +112,7 @@ class TestEnvironmentReset:
 
         # ASSERT: Back at v1, v2.txt gone
         assert not (test_env.cec_path / "v2.txt").exists()
-        assert test_env.get_commit_history(limit=1)[0]["hash"] == v1_hash
+        assert test_env.get_commit_history(limit=1)[0].hash == v1_hash
 
     def test_reset_mixed_keeps_changes_unstaged(self, test_env):
         """reset(mode='mixed') should keep changes but unstage them."""
@@ -140,7 +139,7 @@ class TestEnvironmentReset:
         """reset(mode='soft') should keep changes staged."""
         # ARRANGE: Create v1, then v2 with a file
         test_env.git_manager.commit_all("v1")
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         new_file = test_env.cec_path / "v2.txt"
         new_file.write_text("v2")
@@ -169,7 +168,7 @@ class TestEnvironmentBranchManagement:
 
         # ASSERT: Branch exists
         branches = test_env.list_branches()
-        branch_names = [name for name, _ in branches]
+        branch_names = [branch.name for branch in branches]
         assert "feature" in branch_names
 
     def test_delete_branch(self, test_env):
@@ -183,7 +182,7 @@ class TestEnvironmentBranchManagement:
 
         # ASSERT: Branch gone
         branches = test_env.list_branches()
-        branch_names = [name for name, _ in branches]
+        branch_names = [branch.name for branch in branches]
         assert "temp" not in branch_names
 
     def test_switch_branch(self, test_env):
@@ -222,7 +221,7 @@ class TestEnvironmentBranchManagement:
         branches = test_env.list_branches()
 
         # ASSERT: All branches present
-        branch_names = [name for name, _ in branches]
+        branch_names = [branch.name for branch in branches]
         assert "main" in branch_names
         assert "feature1" in branch_names
         assert "feature2" in branch_names
@@ -295,7 +294,7 @@ class TestEnvironmentSyncAfterGitOperations:
         config["tool"]["comfygit"]["test_value"] = "v1"
         test_env.pyproject.save(config)
         test_env.git_manager.commit_all("v1")
-        v1_hash = test_env.get_commit_history(limit=10)[0]["hash"]  # Newest commit
+        v1_hash = test_env.get_commit_history(limit=10)[0].hash  # Newest commit
 
         config = test_env.pyproject.load(force_reload=True)
         config["tool"]["comfygit"]["test_value"] = "v2"
@@ -366,7 +365,7 @@ class TestEnvironmentMerge:
 
         # Latest commit should be merge commit
         history = test_env.get_commit_history(limit=1)
-        assert "Merge" in history[0]["message"]  # [0] gets newest (newest-first order)
+        assert "Merge" in history[0].message  # [0] gets newest (newest-first order)
 
 
 class TestMergeWithDirtyUvLock:
@@ -413,7 +412,7 @@ class TestEnvironmentRevert:
         test_file2 = test_env.cec_path / "file2.txt"
         test_file2.write_text("v2")
         test_env.git_manager.commit_all("v2: add file2")
-        v2_hash = test_env.get_commit_history(limit=10)[0]["hash"]  # Get latest (v2)
+        v2_hash = test_env.get_commit_history(limit=10)[0].hash  # Get latest (v2)
 
         # ACT: Revert v2 (should undo file2 addition)
         test_env.revert_commit(v2_hash)
@@ -425,4 +424,4 @@ class TestEnvironmentRevert:
         # Should have created new commit (Initial, v1, v2, Revert = 4 total)
         history = test_env.get_commit_history(limit=10)
         assert len(history) == 4
-        assert "Revert" in history[0]["message"]  # Newest commit is the revert
+        assert "Revert" in history[0].message  # Newest commit is the revert

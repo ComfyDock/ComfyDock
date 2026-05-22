@@ -1652,16 +1652,16 @@ packages = []
             if not args.verbose:
                 # Compact: hash + refs + message + relative date
                 for commit in history:  # Already newest first
-                    refs_display = f" ({commit['refs']})" if commit['refs'] else ""
-                    print(f"{commit['hash']}{refs_display}  {commit['message']} ({commit['date_relative']})")
+                    refs_display = f" ({commit.refs})" if commit.refs else ""
+                    print(f"{commit.hash}{refs_display}  {commit.message} ({commit.date_relative})")
                 print()
             else:
                 # Verbose: multi-line with full info
                 for commit in history:
-                    refs_display = f" ({commit['refs']})" if commit['refs'] else ""
-                    print(f"Commit:  {commit['hash']}{refs_display}")
-                    print(f"Date:    {commit['date'][:19]}")
-                    print(f"Message: {commit['message']}")
+                    refs_display = f" ({commit.refs})" if commit.refs else ""
+                    print(f"Commit:  {commit.hash}{refs_display}")
+                    print(f"Date:    {commit.date[:19]}")
+                    print(f"Message: {commit.message}")
                     print()
 
             # Show detached HEAD status if applicable
@@ -2706,10 +2706,10 @@ packages = []
 
                 print("Branches:")
                 is_detached = False
-                for name, is_current in branches:
-                    marker = "* " if is_current else "  "
-                    print(f"{marker}{name}")
-                    if is_current and 'detached' in name.lower():
+                for branch in branches:
+                    marker = "* " if branch.is_current else "  "
+                    print(f"{marker}{branch.name}")
+                    if branch.is_current and 'detached' in branch.name.lower():
                         is_detached = True
 
                 # Show help if in detached HEAD
@@ -2979,15 +2979,14 @@ packages = []
         env = self._get_env(args)
 
         # Check remote exists
-        if not env.git_manager.has_remote(args.remote):
+        if not env.get_remote_url(args.remote):
             print(f"✗ Remote '{args.remote}' not configured")
             print()
             # Check if other remotes exist
-            remotes = env.git_manager.list_remotes()
+            remotes = env.list_remotes()
             if remotes:
-                remote_names = list({r[0] for r in remotes})  # Unique names
                 print("💡 Use an existing remote:")
-                print(f"   cg pull -r {remote_names[0]}")
+                print(f"   cg pull -r {remotes[0].name}")
             else:
                 print("💡 Set up a remote first:")
                 print(f"   cg remote add {args.remote} <url>")
@@ -3220,15 +3219,14 @@ packages = []
             sys.exit(1)
 
         # Check remote exists
-        if not env.git_manager.has_remote(args.remote):
+        if not env.get_remote_url(args.remote):
             print(f"✗ Remote '{args.remote}' not configured")
             print()
             # Check if other remotes exist
-            remotes = env.git_manager.list_remotes()
+            remotes = env.list_remotes()
             if remotes:
-                remote_names = list({r[0] for r in remotes})  # Unique names
                 print("💡 Use an existing remote:")
-                print(f"   cg push -r {remote_names[0]}")
+                print(f"   cg push -r {remotes[0].name}")
             else:
                 print("💡 Set up a remote first:")
                 print(f"   cg remote add {args.remote} <url>")
@@ -3288,7 +3286,7 @@ packages = []
                     print("✗ Usage: cg remote add <name> <url>")
                     sys.exit(1)
 
-                env.git_manager.add_remote(args.name, args.url)
+                env.add_remote(args.name, args.url)
                 print(f"✓ Added remote '{args.name}': {args.url}")
 
             elif subcommand == "remove":
@@ -3297,12 +3295,12 @@ packages = []
                     print("✗ Usage: cg remote remove <name>")
                     sys.exit(1)
 
-                env.git_manager.remove_remote(args.name)
+                env.remove_remote(args.name)
                 print(f"✓ Removed remote '{args.name}'")
 
             elif subcommand == "list":
                 # List remotes
-                remotes = env.git_manager.list_remotes()
+                remotes = env.list_remotes()
 
                 if not remotes:
                     print("No remotes configured")
@@ -3311,8 +3309,10 @@ packages = []
                     print("   cg remote add origin <url>")
                 else:
                     print("Remotes:")
-                    for name, url, remote_type in remotes:
-                        print(f"  {name}\t{url} ({remote_type})")
+                    for remote in remotes:
+                        print(f"  {remote.name}\t{remote.fetch_url} (fetch)")
+                        if remote.push_url != remote.fetch_url:
+                            print(f"  {remote.name}\t{remote.push_url} (push)")
 
             else:
                 print(f"✗ Unknown remote command: {subcommand}")

@@ -434,7 +434,7 @@ class TestWorkflowReset:
 
         # Get hash of first commit
         history = test_env.get_commit_history(limit=5)
-        first_commit_hash = history[0]['hash']  # Newest first
+        first_commit_hash = history[0].hash  # Newest first
 
         # Second user commit: Modify and commit
         v2_workflow = copy.deepcopy(v1_workflow)
@@ -486,9 +486,9 @@ class TestWorkflowReset:
         history = test_env.get_commit_history()
         assert len(history) == initial_count + 1, \
             f"Should have {initial_count + 1} commits. Found: {len(history)}"
-        assert history[0]['message'] == "Add workflow"  # Newest first
-        assert 'hash' in history[0]
-        assert len(history[0]['hash']) == 7  # Short hash
+        assert history[0].message == "Add workflow"  # Newest first
+        assert history[0].hash
+        assert len(history[0].hash) == 7  # Short hash
 
     def test_reset_removes_workflow_added_after_target(
         self,
@@ -517,7 +517,7 @@ class TestWorkflowReset:
 
         # Get hash of first commit
         history = test_env.get_commit_history(limit=5)
-        first_commit = history[0]['hash']
+        first_commit = history[0].hash
 
         # Commit 2: Add second workflow
         workflow_b = load_workflow_fixture(workflow_fixtures, "simple_txt2img")
@@ -671,7 +671,7 @@ class TestWorkflowReset:
 
         # Get current commit hash
         history = test_env.get_commit_history(limit=5)
-        current_commit = history[0]['hash']
+        current_commit = history[0].hash
 
         # Verify clean state
         status = test_env.status()
@@ -737,7 +737,7 @@ class TestWorkflowReset:
 
         # Get current commit hash
         history = test_env.get_commit_history(limit=5)
-        current_commit = history[0]['hash']
+        current_commit = history[0].hash
 
         # Make uncommitted changes
         modified_workflow = copy.deepcopy(first_workflow)

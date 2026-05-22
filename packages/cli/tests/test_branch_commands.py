@@ -4,6 +4,7 @@ Tests for: checkout, branch, switch, reset, merge, revert commands.
 Following TDD approach - these tests should FAIL initially.
 """
 from argparse import Namespace
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -137,7 +138,10 @@ class TestBranchCommand:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.list_branches.return_value = [("main", True), ("feature", False)]
+        mock_env.list_branches.return_value = [
+            SimpleNamespace(name="main", is_current=True),
+            SimpleNamespace(name="feature", is_current=False),
+        ]
 
         cmd = EnvironmentCommands()
         args = Namespace(

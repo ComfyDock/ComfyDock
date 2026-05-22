@@ -91,9 +91,13 @@ def test_common_adapter_model_types_are_public():
         EnvironmentManifestSnapshot,
         EnvironmentReadiness,
         EnvironmentStatus,
+        GitBranch,
+        GitCommitSummary,
+        GitRemote,
         GitRemoteBranch,
         GitRemoteRefs,
         GitRemoteTag,
+        GitSyncStatus,
         ImportCallbacks,
         ManifestModel,
         ManifestWorkflowModel,
@@ -117,9 +121,13 @@ def test_common_adapter_model_types_are_public():
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
+    assert GitBranch.__name__ == "GitBranch"
+    assert GitCommitSummary.__name__ == "GitCommitSummary"
+    assert GitRemote.__name__ == "GitRemote"
     assert GitRemoteBranch.__name__ == "GitRemoteBranch"
     assert GitRemoteRefs.__name__ == "GitRemoteRefs"
     assert GitRemoteTag.__name__ == "GitRemoteTag"
+    assert GitSyncStatus.__name__ == "GitSyncStatus"
     assert ManifestModel.__name__ == "ManifestModel"
     assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
     assert ImportCallbacks.__name__ == "ImportCallbacks"

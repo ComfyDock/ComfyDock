@@ -50,6 +50,12 @@ from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
+    from comfygit_core.models.git import (
+        GitBranch,
+        GitCommitSummary,
+        GitRemote,
+        GitSyncStatus,
+    )
     from comfygit_core.models.protocols import (
         ExportCallbacks,
         ImportCallbacks,
@@ -1301,13 +1307,18 @@ class Environment:
         """
         self.git_orchestrator.switch_branch(branch, create)
 
-    def list_branches(self) -> list[tuple[str, bool]]:
+    def list_branches(self) -> list[GitBranch]:
         """List all branches with current branch marked.
 
         Returns:
-            List of (branch_name, is_current) tuples
+            List of typed branch summaries.
         """
-        return self.git_manager.list_branches()
+        from ..models.git import GitBranch
+
+        return [
+            GitBranch(name=name, is_current=is_current)
+            for name, is_current in self.git_manager.list_branches()
+        ]
 
     def get_current_branch(self) -> str | None:
         """Get current branch name.
@@ -1317,9 +1328,17 @@ class Environment:
         """
         return self.git_manager.get_current_branch()
 
-    def list_remotes(self) -> list[tuple[str, str, str]]:
-        """List configured Git remotes as ``(name, url, type)`` tuples."""
-        return self.git_manager.list_remotes()
+    def list_remotes(self) -> list[GitRemote]:
+        """List configured Git remotes as typed consolidated fetch/push entries."""
+        from ..models.git import GitRemote
+
+        default_remote = self.get_tracking_remote()
+        return list(
+            GitRemote.from_remote_entries(
+                self.git_manager.list_remotes(),
+                default_remote=default_remote,
+            )
+        )
 
     @_requires_env_lock
     def add_remote(self, name: str, url: str) -> None:
@@ -1358,9 +1377,11 @@ class Environment:
 
         self.git_manager.fetch(remote)
 
-    def get_remote_sync_status(self, remote: str = "origin", branch: str | None = None) -> dict:
+    def get_remote_sync_status(self, remote: str = "origin", branch: str | None = None) -> GitSyncStatus:
         """Return ahead/behind information for a remote branch."""
-        return self.git_manager.get_sync_status(remote, branch)
+        from ..models.git import GitSyncStatus
+
+        return GitSyncStatus.from_dict(self.git_manager.get_sync_status(remote, branch))
 
     def get_remote_url(self, remote: str = "origin") -> str | None:
         """Return the configured URL for a git remote, if present."""
@@ -1532,7 +1553,7 @@ class Environment:
         """
         self.git_orchestrator.revert_commit(commit)
 
-    def get_commit_history(self, limit: int = 10, rev_range: str | None = None) -> list[dict]:
+    def get_commit_history(self, limit: int = 10, rev_range: str | None = None) -> list[GitCommitSummary]:
         """Get commit history for this environment.
 
         Args:
@@ -1540,9 +1561,14 @@ class Environment:
             rev_range: Optional Git revision range (e.g. ``origin/main..HEAD``)
 
         Returns:
-            List of commit dicts with keys: hash, message, date, date_relative
+            List of typed commit summaries.
         """
-        return self.git_manager.get_version_history(limit, rev_range)
+        from ..models.git import GitCommitSummary
+
+        return [
+            GitCommitSummary.from_dict(commit)
+            for commit in self.git_manager.get_version_history(limit, rev_range)
+        ]
 
     def sync_model_paths(self) -> dict | None:
         """Ensure model symlink is configured for this environment.

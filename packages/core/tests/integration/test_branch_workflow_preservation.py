@@ -276,7 +276,7 @@ class TestRollbackStillDestructive:
         """checkout(ref) should still delete uncommitted workflows."""
         # ARRANGE: Create v1 and v2
         commit_workflow_to_cec(test_env, "v1_workflow", create_simple_workflow())
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         # Create uncommitted workflow
         save_workflow_to_comfyui(test_env, "uncommitted", create_simple_workflow())
@@ -394,7 +394,7 @@ class TestEdgeCases:
         """Creating branch from specific commit should preserve uncommitted."""
         # ARRANGE: Create commits
         test_env.git_manager.commit_all("v1")
-        v1_hash = test_env.get_commit_history(limit=1)[0]["hash"]
+        v1_hash = test_env.get_commit_history(limit=1)[0].hash
 
         (test_env.cec_path / "file.txt").write_text("v2")
         test_env.git_manager.commit_all("v2")
