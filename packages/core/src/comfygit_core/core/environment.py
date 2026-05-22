@@ -9,7 +9,7 @@ import subprocess
 from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import tomlkit
 
@@ -1163,6 +1163,7 @@ class Environment:
     def _ensure_push_allowed(self) -> None:
         """Validate that this environment can push committed state."""
         from ..models.exceptions import CDEnvironmentError
+        from ..models.readiness import ReadinessEnvironment
 
         # Check for uncommitted git changes (not workflow sync state)
         # Push only cares about git state in .cec/, not whether workflows are synced to ComfyUI
@@ -1174,7 +1175,9 @@ class Environment:
 
         from ..services.environment_readiness import collect_contract_artifact_blockers
 
-        contract_artifact_issues = collect_contract_artifact_blockers(self)
+        contract_artifact_issues = collect_contract_artifact_blockers(
+            cast(ReadinessEnvironment, self)
+        )
         if contract_artifact_issues:
             details = [
                 detail
@@ -2161,9 +2164,13 @@ class Environment:
     @_requires_env_lock
     def get_readiness(self, *, include_blocking: bool = True) -> EnvironmentReadiness:
         """Return reusable readiness and provenance checks for this environment."""
+        from ..models.readiness import ReadinessEnvironment
         from ..services.environment_readiness import build_environment_readiness
 
-        return build_environment_readiness(self, include_blocking=include_blocking)
+        return build_environment_readiness(
+            cast(ReadinessEnvironment, self),
+            include_blocking=include_blocking,
+        )
 
     # =====================================================
     # Runtime Helpers
@@ -2450,9 +2457,8 @@ class Environment:
         from ..managers.export_import_manager import ExportImportManager
         from ..models.exceptions import CDExportError, ExportErrorContext
         from ..models.shared import ModelWithoutSourceInfo
-        from ..services.environment_readiness import build_environment_readiness
 
-        readiness = build_environment_readiness(self, include_blocking=True)
+        readiness = self.get_readiness(include_blocking=True)
 
         for issue in readiness.blocking_issues:
             if issue.type == "uncommitted_workflows":

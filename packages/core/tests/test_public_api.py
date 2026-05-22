@@ -30,6 +30,7 @@ def test_environment_public_git_facade_methods_are_available():
     """Consumers should not need GitManager for remote operations."""
     from comfygit_core import Environment
 
+    assert callable(Environment.get_readiness)
     assert callable(Environment.list_remotes)
     assert callable(Environment.add_remote)
     assert callable(Environment.remove_remote)
@@ -88,6 +89,7 @@ def test_common_adapter_model_types_are_public():
         CDNodeConflictError,
         CDRegistryDataError,
         CDWorkspaceNotFoundError,
+        DependencyCriticality,
         EnvironmentManifestSnapshot,
         EnvironmentReadiness,
         EnvironmentStatus,
@@ -102,8 +104,13 @@ def test_common_adapter_model_types_are_public():
         ManifestModel,
         ManifestWorkflowModel,
         ModelResolutionContext,
+        ModelSourceCandidate,
         NodeInstallCallbacks,
         NodeResolutionContext,
+        ReadinessBlockingIssueType,
+        ReadinessEnvironment,
+        ReadinessGitStatusReader,
+        ReadinessWorkflowStatusReader,
         RefDiff,
         ResolutionResult,
         UVCommandError,
@@ -118,6 +125,7 @@ def test_common_adapter_model_types_are_public():
     assert CDNodeConflictError.__name__ == "CDNodeConflictError"
     assert CDRegistryDataError.__name__ == "CDRegistryDataError"
     assert CDWorkspaceNotFoundError.__name__ == "CDWorkspaceNotFoundError"
+    assert DependencyCriticality is not None
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
@@ -132,9 +140,14 @@ def test_common_adapter_model_types_are_public():
     assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
     assert ImportCallbacks.__name__ == "ImportCallbacks"
     assert ModelResolutionContext.__name__ == "ModelResolutionContext"
+    assert ModelSourceCandidate.__name__ == "ModelSourceCandidate"
     assert NodeInstallCallbacks.__name__ == "NodeInstallCallbacks"
     assert NodeResolutionContext.__name__ == "NodeResolutionContext"
     assert RefDiff.__name__ == "RefDiff"
+    assert ReadinessBlockingIssueType is not None
+    assert ReadinessEnvironment.__name__ == "ReadinessEnvironment"
+    assert ReadinessGitStatusReader.__name__ == "ReadinessGitStatusReader"
+    assert ReadinessWorkflowStatusReader.__name__ == "ReadinessWorkflowStatusReader"
     assert ResolutionResult.__name__ == "ResolutionResult"
     assert UVCommandError.__name__ == "UVCommandError"
     assert WorkflowAnalysisStatus.__name__ == "WorkflowAnalysisStatus"

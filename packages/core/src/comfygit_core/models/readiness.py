@@ -3,16 +3,69 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal, Protocol
+
+ReadinessBlockingIssueType = Literal[
+    "uncommitted_workflows",
+    "uncommitted_git_changes",
+    "unresolved_issues",
+    "missing_contract_api_prompts",
+    "invalid_contract_api_prompt_paths",
+]
+
+DependencyCriticality = Literal["required", "optional"]
+
+
+class ReadinessWorkflowStatusReader(Protocol):
+    """Minimal workflow status reader needed by readiness checks."""
+
+    def get_workflow_status(self) -> Any: ...
+
+
+class ReadinessGitStatusReader(Protocol):
+    """Minimal git status reader needed by readiness checks."""
+
+    def has_uncommitted_changes(self) -> bool: ...
+
+
+class ReadinessEnvironment(Protocol):
+    """Environment-shaped object accepted by lower-level readiness builders."""
+
+    @property
+    def cec_path(self) -> Path: ...
+
+    @property
+    def pyproject(self) -> Any: ...
+
+    @property
+    def workspace(self) -> Any: ...
+
+    @property
+    def workflow_manager(self) -> ReadinessWorkflowStatusReader: ...
+
+    @property
+    def git_manager(self) -> ReadinessGitStatusReader: ...
 
 
 @dataclass
 class ReadinessBlockingIssue:
     """A source-state issue that blocks an immediate handoff action."""
 
-    type: str
+    type: ReadinessBlockingIssueType
     message: str
     details: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ModelSourceCandidate:
+    """A known source hint for a model missing manifest source metadata."""
+
+    type: str
+    url: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -24,9 +77,9 @@ class ModelSourceWarning:
 
     filename: str
     hash: str | None = None
-    criticality: str = "required"
+    criticality: DependencyCriticality = "required"
     workflows: list[str] = field(default_factory=list)
-    source_candidates: list[dict[str, Any]] = field(default_factory=list)
+    source_candidates: list[ModelSourceCandidate] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

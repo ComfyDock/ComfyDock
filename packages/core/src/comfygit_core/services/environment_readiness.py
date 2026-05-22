@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from ..models.readiness import (
+    DependencyCriticality,
     EnvironmentReadiness,
+    ModelSourceCandidate,
     ModelSourceWarning,
     NodeProvenanceWarning,
     ReadinessBlockingIssue,
+    ReadinessEnvironment,
     ReadinessWarnings,
 )
 
@@ -29,7 +32,7 @@ def _safe_list(value: Any) -> list[Any]:
         return list(value.values())
     if isinstance(value, list):
         return value
-    if isinstance(value, (tuple, set)):
+    if isinstance(value, tuple | set):
         return list(value)
     if isinstance(value, Iterable) and not isinstance(value, str):
         try:
@@ -43,7 +46,11 @@ def _safe_str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def node_criticality(node: Any) -> str:
+def _dependency_criticality(value: Any) -> DependencyCriticality:
+    return "optional" if value == "optional" else "required"
+
+
+def node_criticality(node: Any) -> DependencyCriticality:
     return "optional" if getattr(node, "criticality", None) == "optional" else "required"
 
 
@@ -80,7 +87,7 @@ def node_provenance_reason(node: Any) -> str:
     return "Node source is unknown."
 
 
-def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
+def collect_model_source_warnings(env: ReadinessEnvironment) -> list[ModelSourceWarning]:
     """Collect manifest models that do not have a known download source."""
     pyproject = getattr(env, "pyproject", None)
     models_manager = getattr(pyproject, "models", None)
@@ -138,8 +145,9 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
                     or _safe_str(filename)
                     or "unknown",
                     hash=_safe_str(getattr(model_data, "hash", None)),
-                    criticality=_safe_str(getattr(workflow_model, "criticality", None))
-                    or "required",
+                    criticality=_dependency_criticality(
+                        getattr(workflow_model, "criticality", None)
+                    ),
                     workflows=[],
                     source_candidates=model_source_candidates(env, model_data),
                 )
@@ -157,7 +165,7 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
         warnings_by_key[key] = ModelSourceWarning(
             filename=_safe_str(getattr(model_data, "filename", None)) or "unknown",
             hash=_safe_str(getattr(model_data, "hash", None)),
-            criticality=_safe_str(getattr(model_data, "criticality", None)) or "required",
+            criticality=_dependency_criticality(getattr(model_data, "criticality", None)),
             workflows=[],
             source_candidates=model_source_candidates(env, model_data),
         )
@@ -165,12 +173,12 @@ def collect_model_source_warnings(env: Any) -> list[ModelSourceWarning]:
     return list(warnings_by_key.values())
 
 
-def model_has_sources(env: Any, model: Any) -> bool:
+def model_has_sources(env: ReadinessEnvironment, model: Any) -> bool:
     """Return whether the environment manifest itself records a model source."""
     return bool(getattr(model, "sources", None))
 
 
-def model_source_candidates(env: Any, model: Any) -> list[dict[str, Any]]:
+def model_source_candidates(env: ReadinessEnvironment, model: Any) -> list[ModelSourceCandidate]:
     """Return workspace-index source hints without satisfying manifest readiness."""
     model_hash = _safe_str(getattr(model, "hash", None))
     if not model_hash:
@@ -186,7 +194,7 @@ def model_source_candidates(env: Any, model: Any) -> list[dict[str, Any]]:
     except Exception:
         return []
 
-    candidates: list[dict[str, Any]] = []
+    candidates: list[ModelSourceCandidate] = []
     seen_urls: set[str] = set()
     for source in sources:
         if not isinstance(source, dict):
@@ -196,15 +204,15 @@ def model_source_candidates(env: Any, model: Any) -> list[dict[str, Any]]:
             continue
         seen_urls.add(url)
         candidates.append(
-            {
-                "type": _safe_str(source.get("type")) or "custom",
-                "url": url,
-            }
+            ModelSourceCandidate(
+                type=_safe_str(source.get("type")) or "custom",
+                url=url,
+            )
         )
     return candidates
 
 
-def collect_node_provenance_warnings(env: Any) -> list[NodeProvenanceWarning]:
+def collect_node_provenance_warnings(env: ReadinessEnvironment) -> list[NodeProvenanceWarning]:
     """Collect required custom nodes that do not have portable provenance."""
     nodes_manager = getattr(getattr(env, "pyproject", None), "nodes", None)
     if not nodes_manager:
@@ -234,7 +242,7 @@ def collect_node_provenance_warnings(env: Any) -> list[NodeProvenanceWarning]:
     return warnings
 
 
-def collect_contract_artifact_blockers(env: Any) -> list[ReadinessBlockingIssue]:
+def collect_contract_artifact_blockers(env: ReadinessEnvironment) -> list[ReadinessBlockingIssue]:
     """Collect workflow contracts whose referenced API prompt artifact is unavailable."""
     pyproject = getattr(env, "pyproject", None)
     workflows_manager = getattr(pyproject, "workflows", None)
@@ -306,7 +314,7 @@ def collect_contract_artifact_blockers(env: Any) -> list[ReadinessBlockingIssue]
 
 
 def build_environment_readiness(
-    env: Any, *, include_blocking: bool = True
+    env: ReadinessEnvironment, *, include_blocking: bool = True
 ) -> EnvironmentReadiness:
     """Validate local environment handoff readiness.
 

@@ -2,8 +2,13 @@
 
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
 
-from comfygit_core.models.readiness import ModelSourceWarning, NodeProvenanceWarning
+from comfygit_core.models.readiness import (
+    ModelSourceCandidate,
+    ModelSourceWarning,
+    NodeProvenanceWarning,
+)
 from comfygit_core.services.environment_readiness import (
     build_environment_readiness,
     collect_contract_artifact_blockers,
@@ -95,7 +100,7 @@ def make_env(
     model_sources=None,
     execution_contracts=None,
     cec_path=None,
-):
+) -> Any:
     return SimpleNamespace(
         cec_path=cec_path,
         pyproject=SimpleNamespace(
@@ -213,10 +218,10 @@ def test_model_repository_sources_are_reported_as_repair_candidates():
             criticality="required",
             workflows=["simple"],
             source_candidates=[
-                {
-                    "type": "huggingface",
-                    "url": "https://example.test/model.safetensors",
-                }
+                ModelSourceCandidate(
+                    type="huggingface",
+                    url="https://example.test/model.safetensors",
+                )
             ],
         )
     ]
