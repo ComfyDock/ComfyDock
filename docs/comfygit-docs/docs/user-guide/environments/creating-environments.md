@@ -83,7 +83,3 @@ cg repair
 
 If an environment does not appear in `cg list`, it did not become a completed
 managed environment.
-
-!!! note "Media placeholder"
-    Add a short clip of creating an environment, opening ComfyUI, and seeing the
-    Manager panel.

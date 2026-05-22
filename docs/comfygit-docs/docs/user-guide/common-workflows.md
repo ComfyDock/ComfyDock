@@ -174,7 +174,3 @@ cg serve --port 8190 --comfy-url http://127.0.0.1:8188
 Open `http://127.0.0.1:8190` to use the packaged Studio UI.
 
 Read more: [Serve workflows](serve-studio/serving-workflows.md)
-
-!!! note "Media placeholder"
-    Add a short clip showing `cg run`, `cg serve`, and a Studio run from one
-    saved workflow contract.

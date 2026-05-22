@@ -96,7 +96,3 @@ or, for a served contract runtime:
 cg -e runtime run -- --listen 127.0.0.1 --port 8188
 cg -e runtime serve --host 0.0.0.0 --port 8190 --comfy-url http://127.0.0.1:8188
 ```
-
-!!! note "Media placeholder"
-    Add a diagram showing Git/bundle/directory sources feeding
-    `cg materialize`, then `cg run` and `cg serve` as separate launch steps.

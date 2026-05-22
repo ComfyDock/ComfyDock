@@ -76,7 +76,3 @@ cg run
 
 If required models were skipped or could not be downloaded, resolve them before
 claiming the workflow is reproducible.
-
-!!! note "Media placeholder"
-    Add a diagram showing export/import carrying manifest and workflow artifacts,
-    while model bytes remain external.

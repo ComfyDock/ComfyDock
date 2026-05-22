@@ -62,6 +62,3 @@ If the workflow has a saved contract and you changed mapped inputs, outputs, or
 the graph behind them, re-save the contract in Manager.
 
 Read more: [Workflow contracts](workflow-contracts.md).
-
-!!! note "Media placeholder"
-    Add a screenshot of Manager showing tracked workflows and sync status.

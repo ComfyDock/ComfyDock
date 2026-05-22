@@ -143,7 +143,3 @@ Git does not track:
 - local overlays
 - caches
 - logs
-
-!!! note "Media placeholder"
-    Add a before/after diff screenshot showing a workflow model dependency and a
-    source URL added to the manifest.

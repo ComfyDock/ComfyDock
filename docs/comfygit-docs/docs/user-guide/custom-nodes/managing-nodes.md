@@ -75,7 +75,3 @@ cg status
 ```
 
 Prefer ComfyGit commands over deleting node folders or symlinks manually.
-
-!!! note "Media placeholder"
-    Add a Manager screenshot showing installed nodes, update status, and
-    optional/required criticality.

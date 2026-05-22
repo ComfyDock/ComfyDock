@@ -7,27 +7,6 @@ Some dependencies are discovered automatically from loader nodes. Others must be
 declared by the user because a custom node loads a file in a way ComfyGit cannot
 infer safely.
 
-## The Local-First Flow
-
-For the current workflow, manual model dependencies start from a model that
-already exists on your machine.
-
-1. Put the model in the right folder under your configured models directory.
-2. Sync the model index.
-3. Attach the indexed model to the workflow.
-4. Add source information before sharing.
-
-```bash
-cg model index sync
-cg model index show frame_interpolation/film_net_fp16.safetensors
-cg workflow model add my-workflow \
-  --path frame_interpolation/film_net_fp16.safetensors \
-  --importance required
-```
-
-This deliberately proves that the workflow can see the file locally before the
-dependency is committed.
-
 ## Automatic Dependencies
 
 ComfyGit can detect many built-in loader nodes and folder-backed model widgets.
@@ -80,6 +59,9 @@ Remove a manually declared model:
 cg workflow model remove my-workflow \
   --path loras/style-helper.safetensors
 ```
+
+Add a manual dependency only after the model exists locally and appears in the
+model index.
 
 Manual dependencies do not create fake workflow node references. They are
 manifest-declared workflow requirements.
@@ -135,7 +117,3 @@ warnings.
 cg status
 cg commit -m "Declare workflow model dependencies"
 ```
-
-!!! note "Media placeholder"
-    Add a Manager screenshot showing a custom model in workflow details, its
-    importance, and a missing-source warning.

@@ -27,9 +27,6 @@ The editable workflow remains in `workflows/`. The executable API prompt
 artifact for the saved contract lives in `workflow_api/`. Both are portable
 tracked state when a workflow contract references them.
 
-!!! note "Media placeholder"
-    Add a diagram showing editable workflow JSON, contract metadata, and
-    `workflow_api/*.api.json` as separate but connected artifacts.
 
 Read more: [Workflow tracking](../user-guide/workflows/workflow-tracking.md),
 [model dependencies](../user-guide/workflows/model-dependencies.md), and

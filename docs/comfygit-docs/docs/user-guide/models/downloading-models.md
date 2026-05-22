@@ -59,7 +59,3 @@ cg config --civitai-key "$CIVITAI_API_KEY"
 Private Hugging Face or direct-download access depends on the URL and your local
 environment. Use URLs that the runtime can fetch non-interactively before relying
 on them for handoff.
-
-!!! note "Media placeholder"
-    Add a short clip of downloading a model, seeing it appear in the model
-    index, and attaching it to a workflow.

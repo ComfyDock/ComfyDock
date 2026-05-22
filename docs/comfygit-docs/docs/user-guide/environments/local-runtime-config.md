@@ -77,9 +77,6 @@ Use local overlays for machine-specific package indexes, editable package paths,
 or temporary dependency changes. Use shared overlays only when the whole team
 should have the same optional dependency layer.
 
-!!! note "Media placeholder"
-    Add a diagram showing manifest dependencies, local PyTorch backend, active
-    overlays, and the final uv sync input.
 
 ## What Not To Do
 

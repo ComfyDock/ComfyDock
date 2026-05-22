@@ -14,9 +14,6 @@ The core idea is simple:
 - Use workflow contracts when a workflow should become a stable Studio/API
   surface.
 
-!!! note "Media placeholder"
-    Add a diagram showing ComfyUI, ComfyGit environment manifests, the model
-    index, Manager, and `cg serve` as connected pieces.
 
 ## Start With These Concepts
 

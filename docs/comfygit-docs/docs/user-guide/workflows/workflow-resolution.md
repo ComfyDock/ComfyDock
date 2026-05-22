@@ -85,7 +85,3 @@ understand safely.
 cg status
 cg commit -m "Resolve workflow dependencies"
 ```
-
-!!! note "Media placeholder"
-    Add a before/after screenshot showing an unresolved workflow becoming clean
-    after node resolution and manual model declaration.

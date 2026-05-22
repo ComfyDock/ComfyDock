@@ -83,9 +83,6 @@ http://127.0.0.1:8188
 If you bind to `0.0.0.0`, make sure the port is reachable from the browser or
 machine that needs it.
 
-!!! note "Media placeholder"
-    Add a screenshot of a ComfyGit-managed ComfyUI window with the ComfyGit
-    Manager panel visible.
 
 ## Run Vs Serve
 

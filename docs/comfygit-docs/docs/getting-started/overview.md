@@ -1,94 +1,97 @@
 # ComfyGit Overview
 
-ComfyGit helps you turn a working ComfyUI setup into a reproducible
-environment, a tracked workflow, and, when you are ready, a local Studio or API
-surface for running that workflow.
+ComfyGit turns a working ComfyUI setup into a reproducible environment you can
+inspect, commit, share, repair, and run again.
 
-ComfyUI is flexible because everything can change: custom nodes, Python
-packages, model files, workflow JSON, and runtime settings. ComfyGit gives those
-moving parts a shape you can inspect, commit, share, repair, and run again.
+It records the pieces that make a workflow runnable: custom nodes, Python
+packages, model metadata, workflow files, runtime settings, and optional
+workflow contracts for Studio or API serving.
 
-!!! note "Media placeholder"
-    Add a short hero video showing a workflow moving from ComfyUI to ComfyGit
-    Manager to `cg serve` Studio.
 
 ## Start Here
 
-If you are new to ComfyGit, follow the quickstart first:
+If you are new to ComfyGit, start with the quickstart. The whole first run looks
+like this:
 
 ```bash
 uv tool install comfygit --upgrade
-cg init --models-dir ~/ComfyUI/models --yes
-cg create demo --torch-backend auto --use
+cg init
+cg create demo --use
 cg run
 ```
 
-The quickstart walks through installing the CLI, creating an environment, using
-the Manager panel, indexing models, tracking a workflow, and committing the
-environment.
+The full quickstart explains each step, including the Manager panel, model
+indexing, workflow tracking, and the first environment commit.
 
-[Continue with the quickstart](quickstart.md)
+[Continue with the quickstart](quickstart.md){ .md-button .md-button--primary }
 
 ## What ComfyGit Tracks
 
-ComfyGit separates portable environment truth from local runtime state.
+ComfyGit separates the portable recipe from local runtime state.
 
-Portable truth lives in the environment repository: the manifest, workflows,
-model metadata, custom node metadata, workflow contracts, and Git history. This
-is what you commit, push, export, import, and materialize.
+| Portable and committed | Local and recreated |
+| --- | --- |
+| Environment manifest | Python virtualenv |
+| Workflow JSON files | ComfyUI checkout |
+| Custom node metadata | Installed node directories |
+| Python dependency metadata | Model file symlinks |
+| Model metadata and source proof | Caches and logs |
+| Workflow contract artifacts | Local overlays and hardware settings |
+| Git history | Selected PyTorch backend |
 
-Local runtime state is everything ComfyGit can recreate or adapt for the current
-machine: the virtual environment, ComfyUI checkout, installed node directories,
-model symlinks, caches, local overlays, and selected PyTorch backend.
+This split lets ComfyGit answer the questions that matter when a workflow needs
+to survive beyond one machine:
 
-That split is the reason ComfyGit can answer practical questions:
-
-- Which custom nodes does this workflow need?
-- Which models are required, optional, or missing a source?
-- Can another machine recreate this environment?
 - What changed since the last working commit?
-- Can this workflow be served as a small Studio or API?
+- Which custom nodes and Python packages does the environment need?
+- Which models are required, optional, or missing a source?
+- Can another machine recreate the environment?
+- Can a saved workflow become a small Studio or HTTP API?
 
-## Common Paths
+## Choose Your Path
 
-### I want to run ComfyUI safely
+<div class="grid cards" markdown>
 
-Create an isolated environment, install nodes, sync dependencies, and run
-ComfyUI without mutating a global install.
+- :material-play-circle-outline: **Run ComfyUI safely**
 
-[Create and run environments](../user-guide/environments/creating-environments.md)
+    Create an isolated ComfyUI environment, sync dependencies, and run without
+    mutating a global install.
 
-### I want to share a workflow
+    [Create and run environments](../user-guide/environments/creating-environments.md)
 
-Track the workflow, resolve node and model dependencies, add missing model
-sources, commit the result, then push or export it.
+- :material-share-variant-outline: **Share a workflow**
 
-[Track workflow dependencies](../user-guide/workflows/workflow-resolution.md)
+    Track workflow files, resolve node and model dependencies, add model
+    sources, then commit and push or export the result.
 
-### I need a model ComfyGit did not detect
+    [Track workflow dependencies](../user-guide/workflows/workflow-resolution.md)
 
-Index the model locally, attach it to the workflow as a manual dependency, and
-add a source before handoff.
+- :material-cube-outline: **Declare a missing model**
 
-[Declare workflow model dependencies](../user-guide/workflows/model-dependencies.md)
+    Attach an already-indexed local model to a workflow when ComfyGit cannot
+    infer it from the graph.
 
-### I want a workflow-specific UI or API
+    [Declare workflow model dependencies](../user-guide/workflows/model-dependencies.md)
 
-Use ComfyGit Manager to save a workflow contract, then run `cg serve` to host the
-packaged Studio and contract-shaped endpoints.
+- :material-application-brackets-outline: **Serve a Studio or API**
 
-[Serve workflows with Studio](../user-guide/serve-studio/serving-workflows.md)
+    Save a workflow contract in Manager, then use `cg serve` to host the
+    packaged Studio and contract-shaped endpoints.
 
-### I need a headless runtime
+    [Serve workflows with Studio](../user-guide/serve-studio/serving-workflows.md)
 
-Use `cg materialize` to hydrate a committed environment in Docker, CI, a remote
-machine, or a runtime container without authoring prompts.
+- :material-package-down: **Hydrate a headless runtime**
 
-[Materialize runtime environments](../user-guide/collaboration/materialize.md)
+    Materialize a committed environment in Docker, CI, a remote machine, or a
+    runtime container without opening ComfyUI.
 
-## Next Steps
+    [Materialize runtime environments](../user-guide/collaboration/materialize.md)
 
-- [Core concepts](../concepts/what-comfygit-manages.md) explains the mental model.
-- [Common workflows](../user-guide/common-workflows.md) gives task-oriented recipes.
-- [CLI reference](../cli-reference/global-commands.md) lists command syntax.
-- [Troubleshooting](../troubleshooting/common-issues.md) covers common failure modes.
+</div>
+
+## Learn The Model
+
+Read [what ComfyGit manages](../concepts/what-comfygit-manages.md) next if you
+want the mental model before running commands. Jump to
+[common workflows](../user-guide/common-workflows.md) if you already know what
+you want to do.

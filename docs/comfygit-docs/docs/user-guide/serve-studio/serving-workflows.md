@@ -53,9 +53,6 @@ Open:
 http://127.0.0.1:8190
 ```
 
-!!! note "Media placeholder"
-    Add a screenshot of the Studio home screen showing available workflow
-    contracts.
 
 ## Run From HTTP
 

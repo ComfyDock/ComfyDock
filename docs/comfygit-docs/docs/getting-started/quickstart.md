@@ -49,9 +49,6 @@ Use any path that contains, or should contain, ComfyUI model subfolders such as
 `checkpoints`, `loras`, `vae`, `controlnet`, or newer folders such as
 `frame_interpolation`.
 
-!!! note "Media placeholder"
-    Add a screenshot of the first `cg init` output and the resulting workspace
-    layout.
 
 ## 3. Create An Environment
 
@@ -116,8 +113,6 @@ cg workflow model add my-workflow \
   --importance required
 ```
 
-!!! note "Media placeholder"
-    Add a screenshot of Manager workflow details with the Add Model action.
 
 ## 7. Save The Environment
 

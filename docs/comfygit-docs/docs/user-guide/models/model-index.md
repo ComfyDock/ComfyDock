@@ -114,7 +114,3 @@ cg model add-source film_net_fp16.safetensors \
 ```
 
 Read more: [Adding sources](adding-sources.md).
-
-!!! note "Media placeholder"
-    Add a screenshot of `cg model index status` plus a Manager model index view
-    showing categories including `frame_interpolation`.

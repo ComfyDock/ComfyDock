@@ -27,9 +27,6 @@ Manager can inspect the loaded graph and capture ComfyUI's native API prompt for
 that exact workflow state. Core stores the contract in the manifest and writes
 the captured API prompt under `workflow_api/`.
 
-!!! note "Media placeholder"
-    Add a sequence of screenshots showing Manager I/O mapping: select workflow,
-    choose inputs, choose outputs, save contract.
 
 ## What To Commit
 

@@ -81,7 +81,3 @@ cg repair
 ```
 
 when the runtime needs to be reconciled.
-
-!!! note "Media placeholder"
-    Add a before/after diagram showing a tracked registry node converted to a
-    symlinked development checkout while preserving the manifest ID.

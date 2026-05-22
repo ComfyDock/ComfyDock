@@ -367,15 +367,32 @@ html {
   margin: 1.5rem 0;
 }
 
-.grid.cards > * {
+.grid.cards > *,
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: 0.2rem;
   padding: 1rem;
-  transition: box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.grid.cards > *:hover {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+.md-typeset .grid.cards > *:focus-within,
+.md-typeset .grid.cards > *:hover,
+.md-typeset .grid.cards > ol > li:focus-within,
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:focus-within,
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-default-fg-color--light);
+  box-shadow: 0 0 0 1px var(--md-default-fg-color--lightest);
+}
+
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > *:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > *:hover,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ol > li:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ol > li:hover,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ul > li:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--cd-canvas);
 }
 
 

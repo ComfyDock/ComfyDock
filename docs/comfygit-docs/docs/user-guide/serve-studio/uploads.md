@@ -64,9 +64,6 @@ The packaged Studio UI uses the same upload endpoints. When a user chooses a
 file, Studio uploads it first and submits the resulting file ref in the run
 request.
 
-!!! note "Media placeholder"
-    Add a screenshot or short clip of selecting an image input in Studio and
-    seeing it attached to a workflow run.
 
 ## Related Guides
 

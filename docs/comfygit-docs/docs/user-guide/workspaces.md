@@ -8,8 +8,6 @@ Most users should keep one workspace per machine. Environments inside that
 workspace are the portable units you commit, push, pull, import, export, and
 materialize.
 
-!!! info "Media placeholder"
-    Add a screenshot here showing `cg config --show` beside the workspace tree.
 
 ## Create A Workspace
 
