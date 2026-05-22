@@ -65,7 +65,7 @@ class TestModelHandlerFormatting:
 
         # Verify inline table format (all on one line)
         lines = content.split('\n')
-        model_line = [l for l in lines if 'abc123' in l][0]
+        model_line = [line for line in lines if 'abc123' in line][0]
         assert 'filename' in model_line
         assert 'size' in model_line
         assert 'relative_path' in model_line
@@ -98,7 +98,9 @@ class TestWorkflowExecutionContractLoading:
     """Test workflow execution contracts load through the canonical model."""
 
     def test_get_execution_contract_loads_workflow_contract_model(self, temp_pyproject):
-        from comfygit_core.models import WorkflowExecutionContract as PublicWorkflowExecutionContract
+        from comfygit_core.models import (
+            WorkflowExecutionContract as PublicWorkflowExecutionContract,
+        )
         from comfygit_core.models.workflow_contract import WorkflowExecutionContract
 
         manager = PyprojectManager(temp_pyproject)
@@ -192,7 +194,6 @@ class TestWorkflowExecutionContractLoading:
 
     def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
         import tomllib
-
         from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
@@ -386,10 +387,17 @@ class TestWorkflowExecutionContractLoading:
         assert snapshot.models["modelhash"].relative_path == "checkpoints/model.safetensors"
 
         workflow = snapshot.workflows["simple_txt2img"]
+        assert snapshot.get_node("demo-node") == snapshot.nodes["demo-node"]
+        assert snapshot.get_model("modelhash") == snapshot.models["modelhash"]
+        assert snapshot.get_workflow("simple_txt2img") == workflow
         assert workflow.path == "workflows/simple_txt2img.json"
         assert workflow.node_packs == ("demo-node",)
         assert workflow.custom_node_map["DemoNodeType"] == "demo-node"
         assert workflow.models[0].hash == "modelhash"
+        assert snapshot.get_workflow_models("simple_txt2img") == workflow.models
+        assert snapshot.get_workflow_custom_node_map("simple_txt2img") == workflow.custom_node_map
+        assert snapshot.get_workflow_models("missing") == ()
+        assert snapshot.get_workflow_custom_node_map("missing") == {}
         assert workflow.has_execution_contract is True
         assert workflow.execution_contract is not None
         assert workflow.execution_contract.active_contract is not None

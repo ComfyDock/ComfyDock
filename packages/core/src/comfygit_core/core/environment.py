@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
@@ -71,7 +72,12 @@ if TYPE_CHECKING:
         DependencyResolutionApplyResult,
         DependencyResolutionPreview,
     )
-    from ..models.manifest import EnvironmentManifestSnapshot
+    from ..models.manifest import (
+        EnvironmentManifestSnapshot,
+        ManifestModel,
+        ManifestWorkflowEntry,
+        ManifestWorkflowModel,
+    )
     from ..models.merge_plan import MergeResult, MergeValidation
     from ..models.readiness import EnvironmentReadiness
     from ..models.workflow import (
@@ -2160,6 +2166,38 @@ class Environment:
     def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
         """Return a typed read-only projection of the current manifest."""
         return self.pyproject.get_manifest_snapshot()
+
+    def list_manifest_nodes(self) -> Mapping[str, NodeInfo]:
+        """Return tracked manifest nodes without exposing the manifest manager."""
+        return self.get_manifest_snapshot().nodes
+
+    def get_manifest_node(self, identifier: str) -> NodeInfo | None:
+        """Return one tracked manifest node by package identifier."""
+        return self.get_manifest_snapshot().get_node(identifier)
+
+    def list_manifest_workflows(self) -> Mapping[str, ManifestWorkflowEntry]:
+        """Return tracked manifest workflows without exposing the manifest manager."""
+        return self.get_manifest_snapshot().workflows
+
+    def get_manifest_workflow(self, name: str) -> ManifestWorkflowEntry | None:
+        """Return one tracked manifest workflow entry by name."""
+        return self.get_manifest_snapshot().get_workflow(name)
+
+    def list_manifest_models(self) -> Mapping[str, ManifestModel]:
+        """Return tracked manifest models without exposing the manifest manager."""
+        return self.get_manifest_snapshot().models
+
+    def get_manifest_model(self, model_hash: str) -> ManifestModel | None:
+        """Return one tracked manifest model by hash."""
+        return self.get_manifest_snapshot().get_model(model_hash)
+
+    def get_workflow_manifest_models(self, workflow_name: str) -> tuple[ManifestWorkflowModel, ...]:
+        """Return models declared for a workflow in the manifest."""
+        return self.get_manifest_snapshot().get_workflow_models(workflow_name)
+
+    def get_workflow_custom_node_map(self, workflow_name: str) -> Mapping[str, str | bool]:
+        """Return custom-node mappings declared for a workflow in the manifest."""
+        return self.get_manifest_snapshot().get_workflow_custom_node_map(workflow_name)
 
     @_requires_env_lock
     def get_readiness(self, *, include_blocking: bool = True) -> EnvironmentReadiness:

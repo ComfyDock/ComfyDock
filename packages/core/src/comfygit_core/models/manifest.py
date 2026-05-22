@@ -293,6 +293,30 @@ class EnvironmentManifestSnapshot:
     workflows: Mapping[str, ManifestWorkflowEntry]
     models: Mapping[str, ManifestModel]
 
+    def get_node(self, identifier: str) -> NodeInfo | None:
+        """Return one manifest node by package identifier."""
+        return self.nodes.get(identifier)
+
+    def get_workflow(self, name: str) -> ManifestWorkflowEntry | None:
+        """Return one manifest workflow entry by workflow name."""
+        return self.workflows.get(name)
+
+    def get_model(self, model_hash: str) -> ManifestModel | None:
+        """Return one global manifest model by hash."""
+        return self.models.get(model_hash)
+
+    def get_workflow_models(self, workflow_name: str) -> tuple[ManifestWorkflowModel, ...]:
+        """Return models declared for a workflow, or an empty tuple."""
+        workflow = self.get_workflow(workflow_name)
+        return workflow.models if workflow is not None else ()
+
+    def get_workflow_custom_node_map(self, workflow_name: str) -> Mapping[str, str | bool]:
+        """Return workflow-specific custom-node mappings, or an empty mapping."""
+        workflow = self.get_workflow(workflow_name)
+        if workflow is None:
+            return MappingProxyType({})
+        return workflow.custom_node_map
+
     @classmethod
     def from_toml_dict(cls, data: dict[str, Any]) -> "EnvironmentManifestSnapshot":
         tool = _plain_mapping(data.get("tool", {}))

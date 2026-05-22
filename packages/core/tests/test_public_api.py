@@ -30,6 +30,15 @@ def test_environment_public_git_facade_methods_are_available():
     """Consumers should not need GitManager for remote operations."""
     from comfygit_core import Environment
 
+    assert callable(Environment.get_manifest_snapshot)
+    assert callable(Environment.list_manifest_nodes)
+    assert callable(Environment.get_manifest_node)
+    assert callable(Environment.list_manifest_workflows)
+    assert callable(Environment.get_manifest_workflow)
+    assert callable(Environment.list_manifest_models)
+    assert callable(Environment.get_manifest_model)
+    assert callable(Environment.get_workflow_manifest_models)
+    assert callable(Environment.get_workflow_custom_node_map)
     assert callable(Environment.get_readiness)
     assert callable(Environment.list_remotes)
     assert callable(Environment.add_remote)
