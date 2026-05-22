@@ -6,7 +6,7 @@ ComfyGit CLI is a **library-first thin shell** wrapping comfygit-core. It provid
 
 - **Zero domain logic** - CLI is presentation layer only
 - **Protocol-driven** - Uses core's callback protocols (ConfirmationStrategy, ModelResolutionStrategy, etc.) for interactive behavior
-- **Factory pattern** - Discovers and initializes Workspace via WorkspaceFactory from core
+- **Public core facade** - Discovers and initializes Workspace through the documented core API
 - **Decorator-based logging** - Environment context attached via @with_env_logging / @with_workspace_logging
 
 ## Architecture Pattern
@@ -83,7 +83,7 @@ $ cg -e production node add comfygit-manager
 - `CompletionCommands` - Shell completion setup (bash, zsh, fish)
 
 **Core Integration**:
-- `WorkspaceFactory.find()` - Discovers workspace from env vars or filesystem
+- `Workspace.open()` / `Workspace.open_or_create()` - Discovers or initializes workspace state through the public core API
 - `Environment.add_node()` / `remove_node()` / `sync_workflow()` / etc. - Delegated operations
 
 ## Dependencies
@@ -140,6 +140,13 @@ MVP-focused testing with main happy paths covered:
 - **Never import from formatters/logging into commands** - Use dependency injection via logger parameter
 - **Never add domain logic to CLI** - If it's not user interaction, it belongs in core
 - **Never print in strategies** - Use return values; calling code handles output
-- **Never call git/subprocess directly** - Use core managers
+- **Never call git or domain subprocesses directly** - Use core managers for
+  environment behavior; narrow CLI adapters such as container engines may own
+  their external process boundary
 - **Always use Protocol types from core** - No custom interfaces in CLI
 
+## Package-Local Deltas
+
+- [Container Runtime Command Delta](specs/container-runtime-delta.md) - planned
+  direction for `cg container ...`, Docker/Podman engine abstraction, UID/GID
+  defaults, GPU option mapping, and container lifecycle commands.
