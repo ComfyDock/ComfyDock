@@ -314,6 +314,7 @@ class TestResolveWorkflowDeduplication:
         manager.pyproject.workflows = Mock()
         manager.pyproject.workflows.get_custom_node_map.return_value = {}
         manager.pyproject.workflows.get_workflow_models.return_value = []
+        manager._get_consensus_custom_node_map = Mock(return_value={})
         manager.pyproject_manager = Mock()
         manager.pyproject_manager.models = Mock()
         manager.pyproject_manager.models.get_all.return_value = {}
@@ -380,6 +381,7 @@ class TestResolveWorkflowDeduplication:
         manager.pyproject.workflows = Mock()
         manager.pyproject.workflows.get_custom_node_map.return_value = {}
         manager.pyproject.workflows.get_workflow_models.return_value = []
+        manager._get_consensus_custom_node_map = Mock(return_value={})
         manager.pyproject_manager = Mock()
         manager.pyproject_manager.models = Mock()
         manager.pyproject_manager.models.get_all.return_value = {}

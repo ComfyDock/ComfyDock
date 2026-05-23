@@ -130,9 +130,13 @@ def test_common_adapter_types_are_public():
         OverlayActivationResult,
         OverlayTemplateResult,
         ReadinessBlockingIssueType,
+        ReadinessContext,
         ReadinessEnvironment,
         ReadinessGitStatusReader,
+        ReadinessModelSourceReader,
+        ReadinessWorkflowStatus,
         ReadinessWorkflowStatusReader,
+        ReadinessWorkflowSyncStatus,
         RefDiff,
         ResolutionResult,
         TorchBackendDetection,
@@ -176,8 +180,12 @@ def test_common_adapter_types_are_public():
     assert ConfirmationStrategy.__name__ == "ConfirmationStrategy"
     assert RefDiff.__name__ == "RefDiff"
     assert ReadinessBlockingIssueType is not None
+    assert ReadinessContext.__name__ == "ReadinessContext"
     assert ReadinessEnvironment.__name__ == "ReadinessEnvironment"
     assert ReadinessGitStatusReader.__name__ == "ReadinessGitStatusReader"
+    assert ReadinessModelSourceReader.__name__ == "ReadinessModelSourceReader"
+    assert ReadinessWorkflowStatus.__name__ == "ReadinessWorkflowStatus"
+    assert ReadinessWorkflowSyncStatus.__name__ == "ReadinessWorkflowSyncStatus"
     assert ReadinessWorkflowStatusReader.__name__ == "ReadinessWorkflowStatusReader"
     assert ResolutionResult.__name__ == "ResolutionResult"
     assert TorchBackendDetection.__name__ == "TorchBackendDetection"

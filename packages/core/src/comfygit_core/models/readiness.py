@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
+
+from .manifest import EnvironmentManifestSnapshot
 
 ReadinessBlockingIssueType = Literal[
     "uncommitted_workflows",
@@ -20,7 +23,7 @@ DependencyCriticality = Literal["required", "optional"]
 class ReadinessWorkflowStatusReader(Protocol):
     """Minimal workflow status reader needed by readiness checks."""
 
-    def get_workflow_status(self) -> Any: ...
+    def get_workflow_status(self) -> ReadinessWorkflowStatus: ...
 
 
 class ReadinessGitStatusReader(Protocol):
@@ -29,14 +32,37 @@ class ReadinessGitStatusReader(Protocol):
     def has_uncommitted_changes(self) -> bool: ...
 
 
+class ReadinessWorkflowSyncStatus(Protocol):
+    """Minimal workflow sync-state shape needed by readiness blockers."""
+
+    @property
+    def has_changes(self) -> bool: ...
+
+    @property
+    def new(self) -> Iterable[str]: ...
+
+    @property
+    def modified(self) -> Iterable[str]: ...
+
+    @property
+    def deleted(self) -> Iterable[str]: ...
+
+
+class ReadinessWorkflowStatus(Protocol):
+    """Minimal workflow status shape needed by readiness blockers."""
+
+    @property
+    def sync_status(self) -> ReadinessWorkflowSyncStatus: ...
+
+    @property
+    def is_commit_safe(self) -> bool: ...
+
+
 class ReadinessEnvironment(Protocol):
-    """Environment-shaped object accepted by lower-level readiness builders."""
+    """Environment-shaped object accepted by readiness context adapters."""
 
     @property
     def cec_path(self) -> Path: ...
-
-    @property
-    def pyproject(self) -> Any: ...
 
     @property
     def workspace(self) -> Any: ...
@@ -46,6 +72,8 @@ class ReadinessEnvironment(Protocol):
 
     @property
     def git_manager(self) -> ReadinessGitStatusReader: ...
+
+    def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot: ...
 
 
 @dataclass
@@ -69,6 +97,30 @@ class ModelSourceCandidate:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class ReadinessModelSourceReader(Protocol):
+    """Reader for workspace-index model source hints."""
+
+    def get_model_source_candidates(
+        self,
+        model_hash: str,
+    ) -> Iterable[ModelSourceCandidate]: ...
+
+
+@dataclass(frozen=True)
+class ReadinessContext:
+    """Typed input context for environment readiness checks.
+
+    The context separates reusable readiness policy from concrete Environment,
+    Workspace, PyprojectManager, and repository implementations.
+    """
+
+    manifest: EnvironmentManifestSnapshot
+    manifest_dir: Path
+    workflow_status: ReadinessWorkflowStatus | None = None
+    has_uncommitted_git_changes: bool = False
+    model_source_reader: ReadinessModelSourceReader | None = None
 
 
 @dataclass
