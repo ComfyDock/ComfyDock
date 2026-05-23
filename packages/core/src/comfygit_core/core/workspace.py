@@ -373,6 +373,38 @@ class Workspace:
             default_models_path=self.paths.models
         )
 
+    def get_civitai_token(self) -> str | None:
+        """Return the configured Civitai token, honoring environment overrides."""
+        return self.workspace_config_manager.get_civitai_token()
+
+    def set_civitai_token(self, token: str | None) -> None:
+        """Set or clear the persisted Civitai token."""
+        self.workspace_config_manager.set_civitai_token(token)
+
+    def get_huggingface_token(self) -> str | None:
+        """Return the configured Hugging Face token, honoring environment overrides."""
+        return self.workspace_config_manager.get_huggingface_token()
+
+    def set_huggingface_token(self, token: str | None) -> None:
+        """Set or clear the persisted Hugging Face token."""
+        self.workspace_config_manager.set_huggingface_token(token)
+
+    def get_github_token(self) -> str | None:
+        """Return the configured GitHub token, honoring environment overrides."""
+        return self.workspace_config_manager.get_github_token()
+
+    def set_github_token(self, token: str | None) -> None:
+        """Set or clear the persisted GitHub token."""
+        self.workspace_config_manager.set_github_token(token)
+
+    def get_external_uv_cache(self) -> Path | None:
+        """Return the configured external UV cache path, if one is set."""
+        return self.workspace_config_manager.get_external_uv_cache()
+
+    def set_external_uv_cache(self, path: Path | None) -> None:
+        """Set or clear the external UV cache path."""
+        self.workspace_config_manager.set_external_uv_cache(path)
+
     @cached_property
     def registry_data_manager(self) -> RegistryDataManager:
         return RegistryDataManager(self.paths.cache)

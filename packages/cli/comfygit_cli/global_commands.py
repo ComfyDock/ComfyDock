@@ -1642,6 +1642,10 @@ class GlobalCommands:
             self._set_civitai_key(args.civitai_key)
             return
 
+        if hasattr(args, 'huggingface_token') and args.huggingface_token is not None:
+            self._set_huggingface_token(args.huggingface_token)
+            return
+
         if hasattr(args, 'github_token') and args.github_token is not None:
             self._set_github_token(args.github_token)
             return
@@ -1660,19 +1664,28 @@ class GlobalCommands:
     def _set_civitai_key(self, key: str):
         """Set Civitai API key."""
         if key == "":
-            self.workspace.workspace_config_manager.set_civitai_token(None)
+            self.workspace.set_civitai_token(None)
             print("✓ Civitai API key cleared")
         else:
-            self.workspace.workspace_config_manager.set_civitai_token(key)
+            self.workspace.set_civitai_token(key)
             print("✓ Civitai API key saved")
+
+    def _set_huggingface_token(self, token: str):
+        """Set Hugging Face token."""
+        if token == "":
+            self.workspace.set_huggingface_token(None)
+            print("✓ Hugging Face token cleared")
+        else:
+            self.workspace.set_huggingface_token(token)
+            print("✓ Hugging Face token saved")
 
     def _set_github_token(self, token: str):
         """Set GitHub token."""
         if token == "":
-            self.workspace.workspace_config_manager.set_github_token(None)
+            self.workspace.set_github_token(None)
             print("✓ GitHub token cleared")
         else:
-            self.workspace.workspace_config_manager.set_github_token(token)
+            self.workspace.set_github_token(token)
             print("✓ GitHub token saved")
 
     def _set_uv_cache(self, path_str: str):
@@ -1680,7 +1693,7 @@ class GlobalCommands:
         from pathlib import Path
 
         if path_str == "":
-            self.workspace.workspace_config_manager.set_external_uv_cache(None)
+            self.workspace.set_external_uv_cache(None)
             print("✓ External UV cache cleared (using workspace-local cache)")
         else:
             path = Path(path_str).expanduser().resolve()
@@ -1690,7 +1703,7 @@ class GlobalCommands:
             if not path.is_dir():
                 print(f"Error: Path is not a directory: {path}")
                 return
-            self.workspace.workspace_config_manager.set_external_uv_cache(path)
+            self.workspace.set_external_uv_cache(path)
             print(f"✓ External UV cache set to: {path}")
 
     def _show_config(self):
@@ -1701,7 +1714,7 @@ class GlobalCommands:
         print(f"  Workspace Path:  {self.workspace.paths.root}")
 
         # Civitai API Key
-        token = self.workspace.workspace_config_manager.get_civitai_token()
+        token = self.workspace.get_civitai_token()
         if token:
             # Mask key showing last 4 chars
             masked = f"••••••••{token[-4:]}" if len(token) > 4 else "••••"
@@ -1709,8 +1722,16 @@ class GlobalCommands:
         else:
             print("  Civitai API Key: Not set")
 
+        # Hugging Face token
+        huggingface_token = self.workspace.get_huggingface_token()
+        if huggingface_token:
+            masked = f"••••••••{huggingface_token[-4:]}" if len(huggingface_token) > 4 else "••••"
+            print(f"  Hugging Face:    {masked}")
+        else:
+            print("  Hugging Face:    Not set")
+
         # GitHub token
-        github_token = self.workspace.workspace_config_manager.get_github_token()
+        github_token = self.workspace.get_github_token()
         if github_token:
             masked = f"••••••••{github_token[-4:]}" if len(github_token) > 4 else "••••"
             print(f"  GitHub Token:    {masked}")
@@ -1718,7 +1739,7 @@ class GlobalCommands:
             print("  GitHub Token:    Not set")
 
         # External UV cache
-        uv_cache = self.workspace.workspace_config_manager.get_external_uv_cache()
+        uv_cache = self.workspace.get_external_uv_cache()
         if uv_cache:
             print(f"  UV Cache:        {uv_cache}")
         else:
@@ -1728,7 +1749,7 @@ class GlobalCommands:
         """Interactive configuration menu."""
         while True:
             # Get current config
-            civitai_token = self.workspace.workspace_config_manager.get_civitai_token()
+            civitai_token = self.workspace.get_civitai_token()
 
             # Display menu
             print("\nComfyGit Configuration\n")
@@ -1763,7 +1784,7 @@ class GlobalCommands:
             print("  Cancelled")
             return
 
-        self.workspace.workspace_config_manager.set_civitai_token(key)
+        self.workspace.set_civitai_token(key)
         print("✓ API key saved")
 
     def _interactive_clear_setting(self):
@@ -1775,7 +1796,7 @@ class GlobalCommands:
         choice = input("Choice: ").strip().lower()
 
         if choice == "1":
-            self.workspace.workspace_config_manager.set_civitai_token(None)
+            self.workspace.set_civitai_token(None)
             print("✓ Civitai API key cleared")
         elif choice == "c" or choice == "":
             print("  Cancelled")

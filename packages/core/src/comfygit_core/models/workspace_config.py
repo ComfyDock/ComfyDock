@@ -5,7 +5,6 @@ from dataclasses import dataclass
 class APICredentials:
     """Secure storage for external API credentials."""
     civitai_token: str | None = None
-    runpod_api_key: str | None = None
     huggingface_token: str | None = None
     github_token: str | None = None
 
@@ -15,7 +14,6 @@ class APICredentials:
             return None
         return cls(
             civitai_token=data.get("civitai_token"),
-            runpod_api_key=data.get("runpod_api_key"),
             huggingface_token=data.get("huggingface_token"),
             github_token=data.get("github_token"),
         )
@@ -24,8 +22,6 @@ class APICredentials:
         result = {}
         if self.civitai_token:
             result["civitai_token"] = self.civitai_token
-        if self.runpod_api_key:
-            result["runpod_api_key"] = self.runpod_api_key
         if self.huggingface_token:
             result["huggingface_token"] = self.huggingface_token
         if self.github_token:
@@ -37,8 +33,6 @@ class APICredentials:
         parts = []
         if self.civitai_token:
             parts.append(f"civitai_token='***{self.civitai_token[-4:]}'")
-        if self.runpod_api_key:
-            parts.append(f"runpod_api_key='***{self.runpod_api_key[-4:]}'")
         if self.huggingface_token:
             parts.append(f"huggingface_token='***{self.huggingface_token[-4:]}'")
         if self.github_token:

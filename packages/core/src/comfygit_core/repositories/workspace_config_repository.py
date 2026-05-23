@@ -131,36 +131,6 @@ class WorkspaceConfigRepository:
 
         return None
 
-    def set_runpod_token(self, token: str | None):
-        """Set or clear RunPod API key."""
-        data = self.config_file
-        if token:
-            if not data.api_credentials:
-                data.api_credentials = APICredentials(runpod_api_key=token)
-            else:
-                data.api_credentials.runpod_api_key = token
-            logger.info("RunPod API key configured")
-        else:
-            if data.api_credentials:
-                data.api_credentials.runpod_api_key = None
-            logger.info("RunPod API key cleared")
-        self.save(data)
-
-    def get_runpod_token(self) -> str | None:
-        """Get RunPod API key from config or environment."""
-        # Priority: environment variable > config file
-        env_token = os.environ.get("RUNPOD_API_KEY")
-        if env_token:
-            logger.debug("Using RunPod API key from environment")
-            return env_token
-
-        data = self.config_file
-        if data.api_credentials and data.api_credentials.runpod_api_key:
-            logger.debug("Using RunPod API key from config")
-            return data.api_credentials.runpod_api_key
-
-        return None
-
     def set_huggingface_token(self, token: str | None):
         """Set or clear HuggingFace API token."""
         data = self.config_file

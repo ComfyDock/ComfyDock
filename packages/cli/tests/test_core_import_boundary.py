@@ -75,3 +75,10 @@ def test_env_commands_use_environment_facades_instead_of_manager_reach_throughs(
             violations.append(f"{path.name}:{node.lineno}: env.{node.attr}")
 
     assert not violations, "env_commands reached through Environment facade:\n" + "\n".join(violations)
+
+
+def test_cli_config_commands_use_workspace_facades_instead_of_config_repository():
+    path = Path(__file__).resolve().parents[1] / "comfygit_cli" / "global_commands.py"
+    source = path.read_text(encoding="utf-8")
+
+    assert "workspace_config_manager" not in source

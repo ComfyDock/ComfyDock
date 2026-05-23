@@ -24,6 +24,14 @@ def test_workspace_public_constructors_are_available():
     assert callable(Workspace.default_root)
     assert callable(Workspace.exists)
     assert callable(Workspace.list_remote_refs)
+    assert callable(Workspace.get_civitai_token)
+    assert callable(Workspace.set_civitai_token)
+    assert callable(Workspace.get_huggingface_token)
+    assert callable(Workspace.set_huggingface_token)
+    assert callable(Workspace.get_github_token)
+    assert callable(Workspace.set_github_token)
+    assert callable(Workspace.get_external_uv_cache)
+    assert callable(Workspace.set_external_uv_cache)
 
 
 def test_environment_public_git_facade_methods_are_available():

@@ -70,7 +70,11 @@ public result models.
 Environment command adapters now use facade methods for local PyTorch backend
 selection, overlays, runtime Python lookup, manifest display, dependency group
 mutation, and workflow model dependency edits. Workspace-level config/download
-and serve-runtime adapter reach-throughs remain follow-on work.
+configuration now uses Workspace facade methods for Civitai, Hugging Face,
+GitHub, and external UV cache settings. Provider-specific deployment
+credentials such as retired RunPod keys are not part of core workspace
+configuration. Workspace model-index/download and serve-runtime adapter
+reach-throughs remain follow-on work.
 
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
