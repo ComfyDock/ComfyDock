@@ -108,6 +108,54 @@ class UVCommand:
 
         return env
 
+    @property
+    def project_env(self) -> Path | None:
+        """Virtualenv target configured through UV_PROJECT_ENVIRONMENT."""
+        return self._project_env
+
+    @property
+    def cache_dir(self) -> Path | None:
+        """UV cache directory configured for this command wrapper."""
+        return self._cache_dir
+
+    @property
+    def python_install_dir(self) -> Path | None:
+        """UV managed Python install directory configured for this wrapper."""
+        return self._python_install_dir
+
+    @property
+    def link_mode(self) -> str | None:
+        """UV link mode configured for this command wrapper."""
+        return self._link_mode
+
+    @property
+    def cwd(self) -> Path | None:
+        """Working directory used for uv project commands."""
+        return self._cwd
+
+    @property
+    def torch_backend(self) -> str | None:
+        """Optional UV_TORCH_BACKEND configured for this wrapper."""
+        return self._torch_backend
+
+    def for_cwd(self, cwd: Path, *, project_env: Path | None = None) -> "UVCommand":
+        """Return a command wrapper with the same uv settings and a new cwd.
+
+        Disposable project resolution needs uv to read a copied pyproject.toml
+        while still syncing the real managed virtualenv. This helper keeps that
+        configuration explicit and avoids reaching into private attributes from
+        higher-level managers.
+        """
+        return UVCommand(
+            binary_path=Path(self._binary),
+            project_env=self._project_env if project_env is None else project_env,
+            cache_dir=self._cache_dir,
+            python_install_dir=self._python_install_dir,
+            link_mode=self._link_mode,
+            cwd=cwd,
+            torch_backend=self._torch_backend,
+        )
+
     def _build_command(self, base: list[str], **options) -> list[str]:
         cmd = [self._binary] + base
 
@@ -180,8 +228,8 @@ class UVCommand:
                     stdout=result.stdout,
                     returncode=result.returncode
                 )
-        except subprocess.TimeoutExpired:
-            raise TimeoutError(f"UV command timed out after {self.timeout}s: {' '.join(cmd)}")
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"UV command timed out after {self.timeout}s: {' '.join(cmd)}") from exc
         except UVCommandError:
             raise
         except Exception as e:

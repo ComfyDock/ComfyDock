@@ -344,7 +344,7 @@ def test_cli_local_authoring_journey(journey: CliJourney):
     journey.run("env-config", "extras", "remove", "smoke-extra")
     assert "smoke-extra" not in journey.run("env-config", "extras", "show").stdout
 
-    _set_dependency_group(journey, "smoke-py", ["idna>=3"])
+    journey.run("py", "add", "idna", "--group", "smoke-py", timeout=240)
     assert "idna" in journey.run("py", "list", "--all").stdout
     journey.run("py", "remove", "idna", "--group", "smoke-py", timeout=180)
     _set_dependency_group(journey, "smoke-remove-group", ["attrs>=23"])

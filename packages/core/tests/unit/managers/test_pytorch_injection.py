@@ -445,9 +445,9 @@ class TestSyncProjectWithPyTorchManager:
         content = temp_env["pyproject_path"].read_text()
         assert "pytorch" not in content.lower()
 
-    def test_sync_project_with_pytorch_manager_injects_and_restores(self, temp_env):
-        """sync_project with pytorch_manager should inject and restore config."""
-        from unittest.mock import MagicMock
+    def test_sync_project_with_pytorch_manager_uses_disposable_injection(self, temp_env):
+        """sync_project should inject PyTorch config only into a temp project."""
+        from types import SimpleNamespace
 
         from comfygit_core.managers.uv_project_manager import UVProjectManager
 
@@ -456,23 +456,24 @@ class TestSyncProjectWithPyTorchManager:
 
         original_content = temp_env["pyproject_path"].read_text()
 
-        # Track pyproject content during sync
         injected_content = None
-        pyproject_path = temp_env["pyproject_path"]
+        sync_cwd = None
 
-        def capture_content(*args, **kwargs):
-            nonlocal injected_content
-            injected_content = pyproject_path.read_text()
-            mock_result = MagicMock()
-            mock_result.stdout = ""
-            return mock_result
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                self.cwd = cwd
+                return self
 
-        # Mock UVCommand
-        mock_uv_command = MagicMock()
-        mock_uv_command.sync.side_effect = capture_content
+            def sync(self, *args, **kwargs):
+                nonlocal injected_content, sync_cwd
+                sync_cwd = self.cwd
+                injected_content = (self.cwd / "pyproject.toml").read_text()
+                return SimpleNamespace(stdout="")
+
+        fake_uv_command = FakeUVCommand()
 
         uv_manager = UVProjectManager(
-            uv_command=mock_uv_command,
+            uv_command=fake_uv_command,
             pyproject_manager=pyproject,
             overlay_manager=OverlayManager(temp_env["cec_path"]),
         )
@@ -483,10 +484,11 @@ class TestSyncProjectWithPyTorchManager:
         # During sync, should have had PyTorch config
         assert injected_content is not None
         assert "pytorch-cu128" in injected_content
+        assert sync_cwd is not None
+        assert not sync_cwd.exists()
 
-        # After sync, should be restored to original
-        restored_content = temp_env["pyproject_path"].read_text()
-        assert restored_content == original_content
+        # The tracked pyproject should never have been injected.
+        assert temp_env["pyproject_path"].read_text() == original_content
 
     def test_sync_project_backend_override_reinstalls_pytorch_runtime_packages(self, temp_env, monkeypatch):
         """Backend overrides should revalidate PyTorch's NVIDIA runtime wheels."""
@@ -513,6 +515,7 @@ class TestSyncProjectWithPyTorchManager:
         mock_result = MagicMock()
         mock_result.stdout = ""
         mock_uv_command = MagicMock()
+        mock_uv_command.for_cwd.return_value = mock_uv_command
         mock_uv_command.sync.return_value = mock_result
 
         uv_manager = UVProjectManager(
@@ -543,8 +546,9 @@ class TestSyncProjectWithPyTorchManager:
 
         original_content = temp_env["pyproject_path"].read_text()
 
-        # Mock UVCommand to raise error
+        # Mock UVCommand to raise error from the disposable project sync.
         mock_uv_command = MagicMock()
+        mock_uv_command.for_cwd.return_value = mock_uv_command
         mock_uv_command.sync.side_effect = UVCommandError("Sync failed", returncode=1)
 
         uv_manager = UVProjectManager(
@@ -560,3 +564,91 @@ class TestSyncProjectWithPyTorchManager:
         # After error, should still be restored to original
         restored_content = temp_env["pyproject_path"].read_text()
         assert restored_content == original_content
+
+    def test_sync_project_with_overlay_copies_back_lock_not_pyproject(self, temp_env):
+        """Overlay sync should use a disposable project and copy back only uv.lock."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        overlays_dir = temp_env["cec_path"] / "overlays"
+        overlays_dir.mkdir(exist_ok=True)
+        (overlays_dir / ".local.toml").write_text(
+            """
+[overlay]
+description = "Local package override"
+
+[sources.localpkg]
+path = "../dev/localpkg"
+editable = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        original_content = temp_env["pyproject_path"].read_text()
+        expected_path = str((temp_env["cec_path"] / "../dev/localpkg").resolve())
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                config = tomlkit.parse((self.cwd / "pyproject.toml").read_text())
+                source_path = config["tool"]["uv"]["sources"]["localpkg"]["path"]
+                assert source_path == expected_path
+                (self.cwd / "uv.lock").write_text("# temp lock\n", encoding="utf-8")
+                return SimpleNamespace(stdout="synced")
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        assert uv_manager.sync_project() == "synced"
+        assert temp_env["pyproject_path"].read_text() == original_content
+        assert (temp_env["cec_path"] / "uv.lock").read_text(encoding="utf-8") == "# temp lock\n"
+        assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
+
+    def test_sync_project_removes_stale_disposable_projects(self, temp_env):
+        """A previous interrupted sync should not poison the next resolution."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        overlays_dir = temp_env["cec_path"] / "overlays"
+        overlays_dir.mkdir(exist_ok=True)
+        (overlays_dir / ".local.toml").write_text(
+            """
+[overlay]
+description = "Local package override"
+
+[sources.localpkg]
+path = "/tmp/localpkg"
+editable = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+        stale_path = temp_env["cec_path"] / ".comfygit-tmp" / "uv-project-stale"
+        stale_path.mkdir(parents=True)
+        (stale_path / "marker").write_text("stale", encoding="utf-8")
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                assert not stale_path.exists()
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                return SimpleNamespace(stdout="")
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=PyprojectManager(temp_env["pyproject_path"]),
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project()
+        assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))

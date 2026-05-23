@@ -974,6 +974,7 @@ class Environment:
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
         self.git_manager.ensure_gitignore_entry("backups/")
+        self.git_manager.ensure_gitignore_entry(".comfygit-tmp/")
         self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
         self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
         self.git_manager.ensure_gitignore_entry("comfyui_model_loaders.json")
@@ -2905,18 +2906,31 @@ class Environment:
                 transformed_packages.append(substituted)
             final_packages = transformed_packages
 
-        output = self.uv_manager.add_dependency(
+        # First record the portable dependency change without solving against
+        # this machine. Sync below applies local overlays and PyTorch backend
+        # configuration through the normal environment materialization path.
+        add_output = self.uv_manager.add_dependency(
             packages=final_packages,
             requirements_file=None,  # We've already parsed it
-            upgrade=upgrade,
+            upgrade=False,
             group=group,
             dev=dev,
             optional=optional,
             editable=editable,
             bounds=bounds,
-            no_build_isolation=no_build_isolation
+            no_build_isolation=no_build_isolation,
+            frozen=True,
         )
 
+        sync_output = self.uv_manager.sync_project(
+            pytorch_manager=getattr(self, "pytorch_manager", None),
+            group=group,
+            dev=dev,
+            extras=[optional] if optional else None,
+            upgrade=upgrade,
+        )
+
+        output = "\n".join(part for part in (add_output, sync_output) if part)
         return {"output": output, "substitutions": substitutions}
 
     def _read_requirements_file(self, requirements_file: Path) -> list[str]:
