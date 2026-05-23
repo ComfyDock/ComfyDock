@@ -87,3 +87,44 @@ def test_delete_model_refuses_locations_outside_base_directory(test_workspace, t
     assert result.remaining_locations == 1
     assert outside_path.exists()
     assert test_workspace.model_repository.get_model(model_hash) is not None
+
+
+def test_delete_model_location_removes_only_selected_location(test_workspace, tmp_path):
+    model_hash = "abc123def4567890"
+    models_dir = test_workspace.get_models_directory()
+    second_dir = tmp_path / "other-models"
+
+    first_path = _index_model(test_workspace, model_hash, models_dir, "loras/model.safetensors")
+    second_path = _index_model(test_workspace, model_hash, second_dir, "loras/model.safetensors")
+
+    result = test_workspace.delete_model_location(
+        model_hash,
+        base_directory=second_dir,
+        relative_path="loras/model.safetensors",
+    )
+
+    assert result.status == "success"
+    assert result.deleted_paths == [str(second_path)]
+    assert result.missing_paths == []
+    assert result.errors == []
+    assert result.remaining_locations == 1
+    assert first_path.exists()
+    assert not second_path.exists()
+    assert test_workspace.model_repository.get_model(model_hash) is not None
+
+
+def test_delete_model_location_not_found_raises_key_error(test_workspace):
+    model_hash = "abc123def4567890"
+    models_dir = test_workspace.get_models_directory()
+    _index_model(test_workspace, model_hash, models_dir, "loras/model.safetensors")
+
+    try:
+        test_workspace.delete_model_location(
+            model_hash,
+            base_directory=models_dir,
+            relative_path="missing/model.safetensors",
+        )
+    except KeyError as exc:
+        assert "Indexed model location not found" in str(exc)
+    else:
+        raise AssertionError("Expected KeyError")
