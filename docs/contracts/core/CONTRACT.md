@@ -118,6 +118,20 @@ Machine-specific sync inputs such as PyTorch backend selection and local UV sour
 overrides belong in gitignored environment-local files, then get injected during
 sync/run. They must not become required tracked manifest state.
 
+### CGCORE-MAN-02A [PLANNED]: Machine-local dependency injection is crash-safe
+Validation: TEST
+
+Core should not mutate the tracked manifest file when applying machine-local
+dependency configuration for uv resolution. Overlay and PyTorch backend data
+should be applied to a disposable project copy or equivalent transaction target
+so process crashes, host reboots, or hard kills cannot leave local-only state in
+the environment repository's `pyproject.toml`.
+
+Only explicit portable user edits, such as adding a declared Python dependency
+or changing tracked custom-node metadata, should be written to the tracked
+manifest. Generated resolution state such as `uv.lock` may be copied back only
+when it is runtime-local or otherwise covered by manifest rules.
+
 ### CGCORE-MAN-03 [PARTIAL]: Runtime directories are derived materialization
 Validation: MIXED
 

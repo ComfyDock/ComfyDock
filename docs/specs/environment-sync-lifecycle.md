@@ -198,14 +198,18 @@ same first-class reviewed apply flow.
 
 ## Local Configuration And Overlays
 
-### CGSYNC-LOCAL-01 [LIVE]: Overlay injection is temporary local dependency configuration
+### CGSYNC-LOCAL-01 [PARTIAL]: Overlay injection is temporary local dependency configuration
 Validation: TEST
 
 Local, shared, stock, and PyTorch overlays may temporarily inject dependencies,
-sources, indexes, constraints, and uv settings during uv resolution. Injection
-must restore the tracked `pyproject.toml` afterward. `overlays/.local.toml` and
-`.overlay-config.toml` are machine-local activation state; shared non-local
-overlays may be portable source files.
+sources, indexes, constraints, and uv settings during uv resolution.
+`overlays/.local.toml` and `.overlay-config.toml` are machine-local activation
+state; shared non-local overlays may be portable source files.
+
+The current implementation restores the tracked `pyproject.toml` after
+process-local injection, but that is not crash-safe. The target behavior is that
+overlay application never mutates the tracked manifest file for sync/run
+resolution.
 
 ### CGSYNC-LOCAL-02 [LIVE]: Overlay collection order is deterministic and PyTorch wins last
 Validation: TEST
@@ -223,6 +227,55 @@ Create/import/materialize may auto-detect and save a backend in
 should read or auto-probe the environment-local backend when no override is
 given. A `--torch-backend` override on those commands is a one-time sync input
 and should not rewrite the saved backend file.
+
+### CGSYNC-LOCAL-04 [PLANNED]: Overlay-aware uv resolution uses disposable project copies
+Validation: TEST
+
+Sync, run-preflight sync, pull reconciliation, materialization, and other
+overlay-aware uv resolution paths should build a disposable project copy before
+running uv with injected local state. The disposable project should live under a
+gitignored environment-local scratch directory such as `.cec/.comfygit-tmp/`,
+and each new operation should remove stale transaction directories before
+creating a fresh one.
+
+The project copy should include the files uv needs to resolve consistently:
+`pyproject.toml`, `.python-version`, `package_config.toml`, `.pytorch-backend`,
+`.overlay-config.toml`, shared/local overlay files, and any existing `uv.lock`.
+Overlays are applied only to the copied `pyproject.toml`. The tracked
+environment manifest must not be modified by overlay application, even
+temporarily.
+
+The uv process may still target the real managed virtualenv by setting
+`UV_PROJECT_ENVIRONMENT` to the environment's runtime venv while using the
+disposable project directory as the uv project root. If uv writes a lockfile, core
+may copy the resulting `uv.lock` back to `.cec/uv.lock` only because that lockfile
+is machine-local runtime state. The temporary `pyproject.toml` must never be
+copied back after sync/run.
+
+Relative local path sources need explicit handling when copied into a temporary
+project root. Core should either persist local source paths as absolute paths or
+rewrite relative local paths in the disposable copy so the solve refers to the
+same source location as the real environment.
+
+### CGSYNC-LOCAL-05 [PLANNED]: Dependency mutation separates manifest edits from overlay-aware sync
+Validation: TEST
+
+Commands that intentionally mutate portable dependency intent, such as
+`cg py add`, should write only the requested portable manifest change to the real
+environment `pyproject.toml`. They should not apply local overlays or PyTorch
+backend state directly to that tracked file.
+
+After the portable manifest edit is recorded, the command should perform
+resolution and installation through the same disposable overlay-aware uv project
+used by sync. This makes dependency mutation respect local backend/source/index
+policy while preserving the manifest boundary between portable intent and
+machine-local solve inputs.
+
+For simple additive dependency writes, core may use uv in a manifest-only mode
+such as `uv add --frozen` when supported, then run normal overlay-aware sync.
+Operations that cannot be represented as a manifest-only uv edit should use an
+equivalent core-owned manifest mutation plus overlay-aware sync, rather than
+falling back to in-place overlay injection.
 
 ## Git And Remote Flows
 
