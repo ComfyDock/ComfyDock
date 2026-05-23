@@ -18,6 +18,21 @@ def test_runtime_config_facades_expose_manifest_and_torch_state(test_env):
     assert test_env.load_manifest_config()["project"]["name"] == "comfygit-env-test-env"
 
 
+def test_runtime_package_version_facade_hides_uv_manager(test_env, monkeypatch):
+    show_package = Mock(return_value="Name: torch\nVersion: 2.12.0+cpu\n")
+    monkeypatch.setattr(test_env.uv_manager, "show_package", show_package)
+
+    assert test_env.get_runtime_package_version("torch") == "2.12.0+cpu"
+
+    show_package.assert_called_with("torch", test_env.get_runtime_python())
+
+
+def test_runtime_package_version_facade_returns_none_when_unparseable(test_env, monkeypatch):
+    monkeypatch.setattr(test_env.uv_manager, "show_package", Mock(return_value="Name: torch\n"))
+
+    assert test_env.get_runtime_package_version("torch") is None
+
+
 def test_dependency_group_removal_facade_returns_typed_result(test_env):
     config = test_env.pyproject.load()
     config["dependency-groups"] = {
@@ -127,6 +142,49 @@ def test_workflow_resolution_facades_delegate_to_workflow_manager(test_env, monk
     fix.assert_called_once_with(resolution, node_strategy, model_strategy)
     update_paths.assert_called_once_with(resolution)
     search_models.assert_called_once_with("film", "LoadFoo", 3)
+
+
+def test_node_operation_facades_delegate_to_node_manager(test_env, monkeypatch):
+    node_manager = test_env.node_manager
+    added = Mock()
+    updated = Mock()
+    removed = Mock()
+    strategy = Mock()
+
+    add_node = Mock(return_value=added)
+    update_node = Mock(return_value=updated)
+    remove_node = Mock(return_value=removed)
+
+    monkeypatch.setattr(node_manager, "add_node", add_node)
+    monkeypatch.setattr(node_manager, "update_node", update_node)
+    monkeypatch.setattr(node_manager, "remove_node", remove_node)
+
+    assert test_env.add_node("some-node", force=True) is added
+    assert test_env.update_node(
+        "some-node",
+        confirmation_strategy=strategy,
+        no_test=True,
+        target_version="1.2.3",
+    ) is updated
+    assert test_env.remove_node("some-node") is removed
+
+    add_node.assert_called_once_with(
+        "some-node",
+        is_development=False,
+        no_test=False,
+        force=True,
+        confirmation_strategy=None,
+        strict=False,
+        extras=None,
+        all_extras=False,
+    )
+    update_node.assert_called_once_with(
+        "some-node",
+        strategy,
+        True,
+        target_version="1.2.3",
+    )
+    remove_node.assert_called_once_with("some-node", untrack_only=False)
 
 
 def test_mark_workflow_model_download_resolved_updates_manifest_tables(test_env, monkeypatch):

@@ -453,6 +453,18 @@ class Environment:
         """Return the Python executable uv uses for this environment."""
         return self.uv_manager.python_executable
 
+    def _get_runtime_package_details(self, package: str) -> str:
+        """Return `uv pip show` output for an installed runtime package."""
+        return self.uv_manager.show_package(package, self.get_runtime_python())
+
+    def get_runtime_package_version(self, package: str) -> str | None:
+        """Return the installed version for a runtime package, if it can be parsed."""
+        package_details = self._get_runtime_package_details(package)
+        match = re.search(r"^Version:\s*(.+)$", package_details, re.MULTILINE)
+        if not match:
+            return None
+        return match.group(1).strip()
+
     def get_manifest_path(self) -> Path:
         """Return the portable manifest path for this environment."""
         return self.pyproject.path
@@ -2092,7 +2104,8 @@ class Environment:
         self,
         identifier: str,
         confirmation_strategy: ConfirmationStrategy | None = None,
-        no_test: bool = False
+        no_test: bool = False,
+        target_version: str | None = None,
     ) -> UpdateResult:
         """Update a node based on its source type.
 
@@ -2104,12 +2117,18 @@ class Environment:
             identifier: Node identifier or name
             confirmation_strategy: Strategy for confirming updates (None = auto-confirm)
             no_test: Skip resolution testing
+            target_version: Optional exact registry version to install
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDEnvironmentError: If node cannot be updated
         """
-        return self.node_manager.update_node(identifier, confirmation_strategy, no_test)
+        return self.node_manager.update_node(
+            identifier,
+            confirmation_strategy,
+            no_test,
+            target_version=target_version,
+        )
 
     def check_development_node_drift(self) -> dict[str, tuple[set[str], set[str]]]:
         """Check if development nodes have requirements drift.
