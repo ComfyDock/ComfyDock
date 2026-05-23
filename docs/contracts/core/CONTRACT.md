@@ -19,14 +19,12 @@ Validation: STATIC
 Core code should not use `print()` or `input()` for normal behavior. Callers own
 rendering, prompting, progress display, and cancellation UX.
 
-### CGCORE-LIB-02A [PARTIAL]: Legacy core migration notices are temporary presentation exceptions
-Validation: HUMAN_REVIEW
+### CGCORE-LIB-02A [RETIRED]: Legacy core migration notice exception
+Validation: STATIC
 
-Existing legacy migration paths may still emit a direct stderr notice from core
-while repairing old environment metadata. Those notices are temporary exceptions
-to the normal no-print boundary and should move behind caller-owned presentation
-callbacks or structured migration results when the surrounding migration path is
-reworked.
+The previous temporary exception that allowed a legacy schema migration path to
+print directly to stderr from core is retired. Core migration paths should log or
+return structured state; callers decide whether and how to render that state.
 
 ### CGCORE-LIB-03 [LIVE]: Workspace and Environment are the primary public API
 Validation: MIXED

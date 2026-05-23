@@ -699,9 +699,6 @@ class Environment:
         migrated = self.pyproject.migrate_pytorch_config()
         if migrated:
             logger.info("Migrated environment to schema v2 (stripped PyTorch config)")
-            # Print so user sees it in CLI output
-            import sys
-            print("📦 Migrated environment to schema v2 (stripped embedded PyTorch config)", file=sys.stderr)
 
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()

@@ -1742,7 +1742,7 @@ packages = []
             print(f"📦 Adding node: {node_name}")
 
         # Create confirmation strategy for dev node replacement
-        from comfygit_core.strategies.confirmation import InteractiveConfirmStrategy
+        from comfygit_cli.strategies.confirmation import InteractiveConfirmStrategy
         confirmation_strategy = InteractiveConfirmStrategy()
 
         # Directly add the node
@@ -2015,7 +2015,7 @@ packages = []
     @with_env_logging("node update")
     def node_update(self, args: argparse.Namespace, logger=None) -> None:
         """Update a custom node."""
-        from comfygit_core.strategies.confirmation import (
+        from comfygit_cli.strategies.confirmation import (
             AutoConfirmStrategy,
             InteractiveConfirmStrategy,
         )
@@ -3851,7 +3851,7 @@ packages = []
     @with_env_logging("manager update")
     def manager_update(self, args: argparse.Namespace, logger: Any = None) -> None:
         """Update or migrate comfygit-manager."""
-        from comfygit_core.strategies.confirmation import (
+        from comfygit_cli.strategies.confirmation import (
             AutoConfirmStrategy,
             InteractiveConfirmStrategy,
         )

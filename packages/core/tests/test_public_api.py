@@ -69,6 +69,7 @@ def test_public_facade_modules_export_declared_symbols():
     """Only documented facade modules define the stable public API."""
     public_modules = [
         "comfygit_core",
+        "comfygit_core.confirmation",
         "comfygit_core.core",
         "comfygit_core.git",
         "comfygit_core.models",
@@ -89,8 +90,9 @@ def test_public_facade_modules_export_declared_symbols():
             )
 
 
-def test_common_adapter_model_types_are_public():
-    """Types used by CLI/Manager adapters should be available from models."""
+def test_common_adapter_types_are_public():
+    """Types used by CLI/Manager adapters should be available from public facades."""
+    from comfygit_core.confirmation import AutoConfirmStrategy, ConfirmationStrategy
     from comfygit_core.models import (
         BatchDownloadCallbacks,
         CDDependencyConflictError,
@@ -128,6 +130,7 @@ def test_common_adapter_model_types_are_public():
         WorkflowSyncStatus,
     )
 
+    assert AutoConfirmStrategy.__name__ == "AutoConfirmStrategy"
     assert BatchDownloadCallbacks.__name__ == "BatchDownloadCallbacks"
     assert CDDependencyConflictError.__name__ == "CDDependencyConflictError"
     assert CDExportError.__name__ == "CDExportError"
@@ -152,6 +155,7 @@ def test_common_adapter_model_types_are_public():
     assert ModelSourceCandidate.__name__ == "ModelSourceCandidate"
     assert NodeInstallCallbacks.__name__ == "NodeInstallCallbacks"
     assert NodeResolutionContext.__name__ == "NodeResolutionContext"
+    assert ConfirmationStrategy.__name__ == "ConfirmationStrategy"
     assert RefDiff.__name__ == "RefDiff"
     assert ReadinessBlockingIssueType is not None
     assert ReadinessEnvironment.__name__ == "ReadinessEnvironment"

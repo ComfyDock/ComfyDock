@@ -338,8 +338,8 @@ class TestNodeVersionReplacement:
         4. add_node would use stale cache showing v1.8.0 as latest
         5. Re-install v1.8.0 instead of v2.1.0
         """
+        from comfygit_core.confirmation import AutoConfirmStrategy
         from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
-        from comfygit_core.strategies.confirmation import AutoConfirmStrategy
 
         # ARRANGE: Install initial version 1.8.0
         node_info_v1_8_0 = NodeInfo(

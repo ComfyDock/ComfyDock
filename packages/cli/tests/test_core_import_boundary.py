@@ -8,6 +8,7 @@ from pathlib import Path
 PUBLIC_CORE_IMPORTS = {
     "comfygit_core",
     "comfygit_core.assets",
+    "comfygit_core.confirmation",
     "comfygit_core.git",
     "comfygit_core.models",
     "comfygit_core.runtime",
@@ -15,10 +16,8 @@ PUBLIC_CORE_IMPORTS = {
 }
 
 TEMPORARY_INTERNAL_IMPORTS = {
-    # TODO: move interactive/auto strategy ownership behind CLI-owned strategies
-    # and Environment.resolve_workflow(mode=\"auto\").
+    # TODO: move auto strategy ownership behind Environment.resolve_workflow(mode=\"auto\").
     "comfygit_core.strategies.auto",
-    "comfygit_core.strategies.confirmation",
     # TODO: expose torch backend probing through Environment facade methods.
     "comfygit_core.utils.pytorch_prober",
 }
