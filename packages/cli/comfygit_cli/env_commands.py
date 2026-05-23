@@ -602,6 +602,9 @@ class EnvironmentCommands:
         else:
             print(f"🔧 Using PyTorch backend: {torch_backend}")
 
+        if torch_backend == "cpu" and "--cpu" not in comfyui_args:
+            comfyui_args = ["--cpu", *comfyui_args]
+
         switch_source_env: str | None = None
         while True:
             current_branch = env.get_current_branch()

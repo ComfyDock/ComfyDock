@@ -56,6 +56,12 @@ Git facade helpers should return typed public models for stable domain shapes
 such as remote ref discovery, and adapters should serialize those models only at
 JSON/API boundaries.
 
+Workspace model-index facade helpers such as `get_model_details()`,
+`get_model_locations()`, `get_model_sources()`, and `get_model_stats()` should
+return typed public model objects for stable index shapes. Repositories may keep
+raw database row dictionaries internally, but adapters should not depend on
+those row shapes.
+
 ### CGCORE-LIB-03B [PARTIAL]: Adapters should not reach through facade objects into managers
 Validation: MIXED
 

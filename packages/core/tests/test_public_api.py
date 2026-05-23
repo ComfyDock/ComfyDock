@@ -123,6 +123,9 @@ def test_common_adapter_types_are_public():
         ImportCallbacks,
         ManifestModel,
         ManifestWorkflowModel,
+        ModelIndexSource,
+        ModelIndexStats,
+        ModelLocation,
         ModelResolutionContext,
         ModelSourceCandidate,
         NodeInstallCallbacks,
@@ -170,6 +173,9 @@ def test_common_adapter_types_are_public():
     assert GitSyncStatus.__name__ == "GitSyncStatus"
     assert ManifestModel.__name__ == "ManifestModel"
     assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
+    assert ModelIndexSource.__name__ == "ModelIndexSource"
+    assert ModelIndexStats.__name__ == "ModelIndexStats"
+    assert ModelLocation.__name__ == "ModelLocation"
     assert ImportCallbacks.__name__ == "ImportCallbacks"
     assert ModelResolutionContext.__name__ == "ModelResolutionContext"
     assert ModelSourceCandidate.__name__ == "ModelSourceCandidate"
@@ -228,4 +234,54 @@ def test_git_remote_refs_model_round_trips_to_public_json_shape():
         "tags": [
             {"name": "v1.0.0", "commit": "abc123"},
         ],
+    }
+
+
+def test_model_index_public_models_round_trip_to_public_json_shape():
+    """Workspace model-index facade results should be typed until API edges serialize them."""
+    from comfygit_core.models import ModelIndexSource, ModelIndexStats, ModelLocation
+
+    location = ModelLocation.from_dict({
+        "id": 12,
+        "model_hash": "abc123",
+        "base_directory": "/models",
+        "relative_path": "checkpoints/test.safetensors",
+        "filename": "test.safetensors",
+        "mtime": 123.0,
+        "last_seen": 456,
+    })
+    source = ModelIndexSource.from_dict({
+        "model_hash": "abc123",
+        "type": "huggingface",
+        "url": "https://huggingface.co/example/model/resolve/main/test.safetensors",
+        "metadata": {"repo": "example/model"},
+        "added_time": 789,
+    })
+    stats = ModelIndexStats.from_dict({
+        "total_models": 1,
+        "total_locations": 2,
+        "total_sources": 3,
+    })
+
+    assert location.full_path == "/models/checkpoints/test.safetensors"
+    assert location.to_dict() == {
+        "id": 12,
+        "model_hash": "abc123",
+        "base_directory": "/models",
+        "relative_path": "checkpoints/test.safetensors",
+        "filename": "test.safetensors",
+        "mtime": 123.0,
+        "last_seen": 456,
+    }
+    assert source.to_dict() == {
+        "model_hash": "abc123",
+        "type": "huggingface",
+        "url": "https://huggingface.co/example/model/resolve/main/test.safetensors",
+        "metadata": {"repo": "example/model"},
+        "added_time": 789,
+    }
+    assert stats.to_dict() == {
+        "total_models": 1,
+        "total_locations": 2,
+        "total_sources": 3,
     }

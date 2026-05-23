@@ -69,6 +69,8 @@ addopts = [
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "registry: marks tests that use the ComfyUI registry cache or network",
+    "network: marks tests that may need external network access",
 ]
 
 [tool.mypy]

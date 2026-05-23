@@ -54,14 +54,16 @@ def test_get_model_details():
 
         # Verify sources
         assert len(details.sources) == 1
-        assert details.sources[0]['type'] == 'civitai'
-        assert details.sources[0]['url'] == "https://civitai.com/api/download/models/12345"
-        assert workspace.find_model_by_source_url("https://civitai.com/api/download/models/12345").hash == model_hash
+        assert details.sources[0].type == 'civitai'
+        assert details.sources[0].url == "https://civitai.com/api/download/models/12345"
+        source_match = workspace.find_model_by_source_url("https://civitai.com/api/download/models/12345")
+        assert source_match is not None
+        assert source_match.hash == model_hash
 
         # Verify locations
         assert len(details.all_locations) == 1
-        assert details.all_locations[0]['relative_path'] == "checkpoints/test.safetensors"
-        assert details.all_locations[0]['filename'] == "test.safetensors"
+        assert details.all_locations[0].relative_path == "checkpoints/test.safetensors"
+        assert details.all_locations[0].filename == "test.safetensors"
 
         refreshed = workspace.ensure_model_hashes(model_hash)
         assert refreshed.model.blake3_hash

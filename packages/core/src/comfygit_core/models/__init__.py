@@ -54,6 +54,8 @@ _EXPORTS: dict[str, str] = {
     "NodeInfo": "shared",
     "NodeDevLinkResult": "shared",
     "ModelInfo": "shared",
+    "ModelIndexSource": "shared",
+    "ModelIndexStats": "shared",
     "ModelLocation": "shared",
     "ModelWithLocation": "shared",
     "ModelDetails": "shared",

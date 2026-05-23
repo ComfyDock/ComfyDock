@@ -62,6 +62,26 @@ test:
 test-e2e:
 	uv run pytest tests/e2e/tests -v
 
+# Run the deterministic CLI smoke journey
+smoke-cli:
+	uv run pytest tests/e2e/tests/smoke/test_cli_journey.py::test_cli_local_authoring_journey -v
+
+# Run registry-backed custom-node smoke checks
+smoke-cli-registry:
+	uv run pytest tests/e2e/tests/smoke/test_cli_journey.py::test_cli_registry_node_lifecycle -v
+
+# Run heavyweight registry custom-node smoke checks
+smoke-cli-registry-heavy:
+	E2E_RUN_HEAVY_REGISTRY=1 uv run pytest tests/e2e/tests/smoke/test_cli_journey.py::test_cli_registry_heavy_kjnodes_add -v
+
+# Run live ComfyUI launch smoke checks
+smoke-cli-run:
+	uv run pytest tests/e2e/tests/smoke/test_cli_journey.py::test_cli_run_cpu_launches_comfyui -v
+
+# Run all CLI smoke lanes
+smoke-cli-full:
+	uv run pytest tests/e2e/tests/smoke/test_cli_journey.py -v
+
 # Cross-platform testing
 test-cross-platform:
 	@python3 dev/scripts/cross-platform-test.py

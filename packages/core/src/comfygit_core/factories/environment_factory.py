@@ -15,6 +15,7 @@ from ..models.exceptions import (
 from ..utils.comfyui_ops import clone_comfyui
 from ..utils.environment_cleanup import mark_environment_complete
 from ..utils.filesystem import rmtree
+from ..utils.requirements import read_comfyui_requirements_with_supplements
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
@@ -283,7 +284,8 @@ class EnvironmentFactory:
         comfyui_reqs = env.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
             logger.info("Adding ComfyUI requirements...")
-            env.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+            requirements = read_comfyui_requirements_with_supplements(comfyui_reqs)
+            env.uv_manager.add_requirements_with_sources(requirements, frozen=True)
 
         # Phase: Install dependencies with PyTorch (40-90%)
         # Single sync handles both PyTorch installation AND ComfyUI dependencies

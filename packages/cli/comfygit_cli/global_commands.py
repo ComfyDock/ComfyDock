@@ -301,7 +301,7 @@ class GlobalCommands:
 
             # Get stats to show summary
             stats = workspace.get_model_stats()
-            total_models = stats.get('total_models', 0)
+            total_models = stats.total_models
 
             if total_models > 0:
                 # Calculate total size
@@ -1068,8 +1068,8 @@ class GlobalCommands:
 
             # Build header
             stats = self.workspace.get_model_stats()
-            total_models = stats.get('total_models', 0)
-            total_locations = stats.get('total_locations', 0)
+            total_models = stats.total_models
+            total_locations = stats.total_locations
 
             if args.duplicates:
                 duplicate_count = len(results)
@@ -1178,25 +1178,23 @@ class GlobalCommands:
             # Locations
             print(f"\n  Locations ({len(locations)}):")
             for loc in locations:
-                from pathlib import Path
-                mtime = datetime.fromtimestamp(loc['mtime']).strftime("%Y-%m-%d %H:%M:%S")
-                if loc.get('base_directory'):
-                    full_path = Path(loc['base_directory']) / loc['relative_path']
-                    print(f"    • {full_path}")
+                mtime = datetime.fromtimestamp(loc.mtime).strftime("%Y-%m-%d %H:%M:%S")
+                if loc.full_path:
+                    print(f"    • {loc.full_path}")
                 else:
-                    print(f"    • {loc['relative_path']}")
+                    print(f"    • {loc.relative_path}")
                 print(f"      Modified: {mtime}")
 
             # Sources
             if sources:
                 print(f"\n  Sources ({len(sources)}):")
                 for source in sources:
-                    print(f"    • {source['type'].title()}")
-                    print(f"      URL: {source['url']}")
-                    if source['metadata']:
-                        for key, value in source['metadata'].items():
+                    print(f"    • {source.type.title()}")
+                    print(f"      URL: {source.url}")
+                    if source.metadata:
+                        for key, value in source.metadata.items():
                             print(f"      {key}: {value}")
-                    added = datetime.fromtimestamp(source['added_time']).strftime("%Y-%m-%d %H:%M:%S")
+                    added = datetime.fromtimestamp(source.added_time).strftime("%Y-%m-%d %H:%M:%S")
                     print(f"      Added: {added}")
             else:
                 print("\n  Sources: None")
@@ -1362,8 +1360,8 @@ class GlobalCommands:
                 print("   Run 'cg model index dir <path>' to set your models directory")
                 return
 
-            total_models = stats.get('total_models', 0)
-            total_locations = stats.get('total_locations', 0)
+            total_models = stats.total_models
+            total_locations = stats.total_locations
             print(f"   Total Models: {total_models} unique models")
             print(f"   Total Files: {total_locations} files indexed")
 
@@ -1469,7 +1467,15 @@ class GlobalCommands:
     @with_workspace_logging("model add-source")
     def model_add_source(self, args: argparse.Namespace) -> None:
         """Add download source URLs to models."""
-        env = self.workspace.get_active_environment()
+        if getattr(args, "target_env", None):
+            env = self.workspace.get_environment(args.target_env)
+        else:
+            env = self.workspace.get_active_environment()
+
+        if not env:
+            print("✗ No active environment. Use: cg use <name>", file=sys.stderr)
+            print("   Or specify with: cg -e <name> model add-source", file=sys.stderr)
+            sys.exit(1)
 
         # Mode detection: direct vs interactive
         if args.model and args.url:
@@ -1507,12 +1513,10 @@ class GlobalCommands:
         print(f"  Size: {format_size(model.file_size)}")
         print(f"  Locations: {len(locations)}")
         for location in locations:
-            base_directory = location.get("base_directory")
-            relative_path = location.get("relative_path")
-            if base_directory and relative_path:
-                print(f"    • {Path(base_directory) / relative_path}")
+            if location.full_path:
+                print(f"    • {location.full_path}")
             else:
-                print(f"    • {location.get('path') or relative_path or 'unknown'}")
+                print(f"    • {location.relative_path or 'unknown'}")
 
         if not args.yes:
             choice = input("\nDelete these model file(s) and clean index entries? [y/N]: ").strip().lower()

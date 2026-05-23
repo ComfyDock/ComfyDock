@@ -28,7 +28,14 @@ from ..models.materialization import (
     MaterializeSourceType,
     ModelMaterializationStrategy,
 )
-from ..models.shared import ModelDeleteResult, ModelDetails, ModelWithLocation
+from ..models.shared import (
+    ModelDeleteResult,
+    ModelDetails,
+    ModelIndexSource,
+    ModelIndexStats,
+    ModelLocation,
+    ModelWithLocation,
+)
 from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
 from ..services.registry_data_manager import RegistryDataManager
@@ -1127,8 +1134,8 @@ class Workspace:
 
         # Same model, possibly multiple locations - use any result to get the model info
         model = results[0]
-        sources = self.model_repository.get_sources(model.hash)
-        locations = self.model_repository.get_locations(model.hash)
+        sources = self.get_model_sources(model.hash)
+        locations = self.get_model_locations(model.hash)
 
         return ModelDetails(
             model=model,
@@ -1144,9 +1151,19 @@ class Workspace:
         """Return whether a model hash exists in the workspace index."""
         return self.model_repository.has_model(model_hash)
 
-    def get_model_sources(self, model_hash: str) -> list[dict]:
+    def get_model_locations(self, model_hash: str) -> list[ModelLocation]:
+        """Return indexed filesystem locations for a model hash."""
+        return [
+            ModelLocation.from_dict(location)
+            for location in self.model_repository.get_locations(model_hash)
+        ]
+
+    def get_model_sources(self, model_hash: str) -> list[ModelIndexSource]:
         """Return indexed source metadata for a model hash."""
-        return self.model_repository.get_sources(model_hash)
+        return [
+            ModelIndexSource.from_dict({**source, "model_hash": model_hash})
+            for source in self.model_repository.get_sources(model_hash)
+        ]
 
     def model_has_sources(self, model_hash: str) -> bool:
         """Return whether a model hash has at least one indexed source URL."""
@@ -1242,15 +1259,13 @@ class Workspace:
         raise FileNotFoundError(f"Model file not found on disk: {details.model.filename}")
 
     @staticmethod
-    def _path_for_model_location(location: dict) -> Path:
+    def _path_for_model_location(location: ModelLocation) -> Path:
         """Resolve an indexed model location to a safe filesystem path."""
-        base_directory = location.get("base_directory")
-        relative_path = location.get("relative_path")
-        if not base_directory or not relative_path:
+        if not location.base_directory or not location.relative_path:
             raise ValueError("Model location is missing base directory or relative path")
 
-        base_path = Path(base_directory).expanduser()
-        target_path = base_path / str(relative_path).replace("\\", "/")
+        base_path = Path(location.base_directory).expanduser()
+        target_path = base_path / location.relative_path.replace("\\", "/")
         base_resolved = base_path.resolve(strict=False)
         parent_resolved = target_path.parent.resolve(strict=False)
 
@@ -1266,47 +1281,50 @@ class Workspace:
         return str(value or "").replace("\\", "/").strip("/")
 
     @classmethod
-    def _same_model_location(cls, location: dict, selector: Mapping[str, object]) -> bool:
+    def _same_model_location(cls, location: ModelLocation, selector: Mapping[str, object]) -> bool:
         requested_id = selector.get("location_id")
         if requested_id is None:
             requested_id = selector.get("id")
-        location_id = location.get("id")
-        if requested_id is not None and location_id is not None:
+        if requested_id is not None and location.id is not None:
             try:
-                return int(str(requested_id)) == int(str(location_id))
+                return int(str(requested_id)) == int(str(location.id))
             except (TypeError, ValueError):
                 return False
 
         requested_base = selector.get("base_directory")
         requested_relative = selector.get("relative_path")
-        if requested_base and requested_relative and location.get("base_directory") and location.get("relative_path"):
+        if requested_base and requested_relative and location.base_directory and location.relative_path:
             return (
-                Path(str(requested_base)).expanduser() == Path(str(location["base_directory"])).expanduser()
+                Path(str(requested_base)).expanduser() == Path(location.base_directory).expanduser()
                 and cls._normalize_location_relative_path(requested_relative)
-                == cls._normalize_location_relative_path(location["relative_path"])
+                == cls._normalize_location_relative_path(location.relative_path)
             )
 
         requested_path = selector.get("path")
         if requested_path:
-            indexed_path = location.get("path") or location.get("full_path")
+            indexed_path = location.full_path
             if indexed_path and Path(str(requested_path)).expanduser() == Path(str(indexed_path)).expanduser():
                 return True
 
         return False
 
     @classmethod
-    def _find_indexed_model_location(cls, locations: list[dict], selector: Mapping[str, object]) -> dict | None:
+    def _find_indexed_model_location(
+        cls,
+        locations: list[ModelLocation],
+        selector: Mapping[str, object],
+    ) -> ModelLocation | None:
         for location in locations:
             if cls._same_model_location(location, selector):
                 return location
         return None
 
-    def _delete_indexed_model_location(self, location: dict, result: ModelDeleteResult) -> None:
+    def _delete_indexed_model_location(self, location: ModelLocation, result: ModelDeleteResult) -> None:
         try:
             model_path = self._path_for_model_location(location)
         except ValueError as exc:
             result.errors.append({
-                "path": str(location.get("path") or location.get("relative_path") or ""),
+                "path": location.full_path or location.relative_path,
                 "error": str(exc),
             })
             return
@@ -1325,13 +1343,18 @@ class Workspace:
             else:
                 result.missing_paths.append(path_str)
 
-            location_id = location.get("id")
-            if location_id is not None:
-                self.model_repository.remove_location_by_id(int(location_id))
+            if location.id is not None:
+                self.model_repository.remove_location_by_id(int(location.id))
             else:
+                if location.base_directory is None:
+                    result.errors.append({
+                        "path": location.full_path or location.relative_path,
+                        "error": "Indexed model location is missing base directory",
+                    })
+                    return
                 self.model_repository.remove_location_for_directory(
-                    Path(location["base_directory"]),
-                    location["relative_path"],
+                    Path(location.base_directory),
+                    location.relative_path,
                 )
         except Exception as exc:
             result.errors.append({
@@ -1412,13 +1435,13 @@ class Workspace:
         result.remaining_locations = len(self.model_repository.get_locations(details.model.hash))
         return result
 
-    def get_model_stats(self):
+    def get_model_stats(self) -> ModelIndexStats:
         """Get model index statistics for current directory.
 
         Returns:
-            Dictionary with model statistics
+            Typed model statistics
         """
-        return self.model_repository.get_stats()
+        return ModelIndexStats.from_dict(self.model_repository.get_stats())
 
     # === Model Directory Management ===
 

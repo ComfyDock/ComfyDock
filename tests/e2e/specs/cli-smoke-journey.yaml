@@ -1,0 +1,39 @@
+version: "1.0"
+feature: cli-smoke-journey
+description: |
+  Repeatable end-to-end CLI smoke journeys for validating ComfyGit behavior
+  after refactors.
+
+clauses:
+  - CGSMOKE-CLI-01
+  - CGSMOKE-CLI-02
+  - CGSMOKE-CLI-03
+  - CGSMOKE-CLI-04
+
+scenarios:
+  - id: local-authoring-journey
+    description: |
+      Creates a disposable workspace, indexes local models, creates an
+      environment, resolves a saved workflow, edits manual model dependencies,
+      commits/exports/imports the environment, and validates model-index cleanup
+      after switching model directories.
+    clauses: [CGSMOKE-CLI-01, CGSMOKE-CLI-02]
+
+  - id: registry-node-lifecycle
+    description: |
+      Adds a representative lightweight registry node, verifies
+      manifest/filesystem/sync state, and removes it cleanly.
+    clauses: [CGSMOKE-CLI-01, CGSMOKE-CLI-03]
+
+  - id: heavy-registry-node-add
+    description: |
+      Optionally adds a heavyweight registry node with slower dependency
+      resolution so node-resolution releases can validate larger real-world
+      node packages without slowing the default smoke lane.
+    clauses: [CGSMOKE-CLI-01, CGSMOKE-CLI-03]
+
+  - id: cpu-runtime-launch
+    description: |
+      Starts ComfyUI through cg run on CPU, verifies explicit --cpu launch
+      behavior and server startup, then terminates the process.
+    clauses: [CGSMOKE-CLI-01, CGSMOKE-CLI-04]

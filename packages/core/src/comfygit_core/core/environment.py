@@ -58,6 +58,7 @@ from ..utils.common import run_command
 from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
 from ..utils.node_identity import resolve_installed_node_alias
+from ..utils.requirements import read_comfyui_requirements_with_supplements
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
@@ -1874,7 +1875,11 @@ class Environment:
             CompletedProcess
         """
         python = self.uv_manager.python_executable
-        cmd = [str(python), "main.py"] + (args or [])
+        comfyui_args = list(args or [])
+        if self.get_torch_backend_status().backend == "cpu" and "--cpu" not in comfyui_args:
+            comfyui_args = ["--cpu", *comfyui_args]
+
+        cmd = [str(python), "main.py"] + comfyui_args
 
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = self.name
@@ -3377,7 +3382,8 @@ class Environment:
                 logger.info("Adding ComfyUI requirements (empty dependencies detected)...")
                 if callbacks:
                     callbacks.on_phase("add_requirements", "Adding ComfyUI base requirements...")
-                self.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+                requirements = read_comfyui_requirements_with_supplements(comfyui_reqs)
+                self.uv_manager.add_requirements_with_sources(requirements, frozen=True)
 
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration

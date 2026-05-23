@@ -25,6 +25,8 @@ rather than every helper function:
 - Create/sync/import/repair/git/run lifecycle behavior:
   `docs/specs/environment-sync-lifecycle.md`.
 - Headless hydration behavior: `docs/specs/environment-materialization-lifecycle.md`.
+- Repeatable CLI end-to-end validation:
+  `docs/specs/cli-smoke-validation.md`.
 - Workflow contract serving, Studio hosting, local/proxy execution, uploads,
   run state, and artifact delivery:
   `docs/specs/workflow-contract-serving-lifecycle.md`.

@@ -1,5 +1,6 @@
 """Requirements parsing utilities."""
 
+import re
 from pathlib import Path
 
 import requirements
@@ -8,6 +9,53 @@ import tomlkit
 from ..logging.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+COMFYUI_RUNTIME_SUPPLEMENTAL_REQUIREMENTS = ("requests",)
+
+
+def read_comfyui_requirements_with_supplements(requirements_path: Path) -> list[str]:
+    """Read ComfyUI requirements and add runtime imports missing from older releases."""
+    lines = _read_requirement_lines(requirements_path)
+    present_packages = {
+        package_name
+        for package_name in (_extract_requirement_name(line) for line in lines)
+        if package_name
+    }
+
+    for package in COMFYUI_RUNTIME_SUPPLEMENTAL_REQUIREMENTS:
+        if package not in present_packages:
+            lines.append(package)
+
+    return lines
+
+
+def _read_requirement_lines(requirements_path: Path) -> list[str]:
+    if not requirements_path.exists():
+        return []
+
+    requirement_lines: list[str] = []
+    with open(requirements_path, encoding="utf-8") as requirements_file:
+        for line in requirements_file:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("-"):
+                continue
+            if "#" in line:
+                line = line.split("#", 1)[0].strip()
+            if line:
+                requirement_lines.append(line)
+    return requirement_lines
+
+
+def _extract_requirement_name(requirement: str) -> str | None:
+    requirement = requirement.split(";", 1)[0].strip()
+    if " @ " in requirement:
+        requirement = requirement.split(" @ ", 1)[0].strip()
+
+    match = re.match(r"^([A-Za-z0-9_.-]+)", requirement)
+    if not match:
+        return None
+
+    return match.group(1).lower().replace("_", "-")
 
 
 def parse_requirements_file(requirements_path: Path) -> dict[str, list[str]]:

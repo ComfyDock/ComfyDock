@@ -4,6 +4,23 @@ from io import StringIO
 from unittest.mock import MagicMock, patch
 
 from comfygit_cli.env_commands import EnvironmentCommands
+from comfygit_core.models import GitCommitSummary
+
+
+def _commit(
+    hash: str,
+    refs: str,
+    message: str,
+    date: str,
+    date_relative: str,
+) -> GitCommitSummary:
+    return GitCommitSummary(
+        hash=hash,
+        refs=refs,
+        message=message,
+        date=date,
+        date_relative=date_relative,
+    )
 
 
 class TestLogCommand:
@@ -19,27 +36,15 @@ class TestLogCommand:
 
         # Mock commit history with refs
         mock_env.get_commit_history.return_value = [
-            {
-                'hash': 'a1b2c3d',
-                'refs': 'HEAD -> main, origin/main',
-                'message': 'Latest commit',
-                'date': '2025-11-17 10:00:00',
-                'date_relative': '5 minutes ago'
-            },
-            {
-                'hash': 'e4f5g6h',
-                'refs': 'feature-branch',
-                'message': 'Branch commit',
-                'date': '2025-11-17 09:00:00',
-                'date_relative': '1 hour ago'
-            },
-            {
-                'hash': 'i7j8k9l',
-                'refs': '',  # No refs
-                'message': 'Old commit',
-                'date': '2025-11-16 10:00:00',
-                'date_relative': '1 day ago'
-            }
+            _commit(
+                'a1b2c3d',
+                'HEAD -> main, origin/main',
+                'Latest commit',
+                '2025-11-17 10:00:00',
+                '5 minutes ago',
+            ),
+            _commit('e4f5g6h', 'feature-branch', 'Branch commit', '2025-11-17 09:00:00', '1 hour ago'),
+            _commit('i7j8k9l', '', 'Old commit', '2025-11-16 10:00:00', '1 day ago'),
         ]
         mock_env.get_current_branch.return_value = "main"
 
@@ -74,13 +79,7 @@ class TestLogCommand:
         mock_env.name = "test-env"
 
         mock_env.get_commit_history.return_value = [
-            {
-                'hash': 'a1b2c3d',
-                'refs': 'HEAD -> main',
-                'message': 'Test commit',
-                'date': '2025-11-17 10:00:00 -0800',
-                'date_relative': '5 minutes ago'
-            }
+            _commit('a1b2c3d', 'HEAD -> main', 'Test commit', '2025-11-17 10:00:00 -0800', '5 minutes ago')
         ]
         mock_env.get_current_branch.return_value = "main"
 
@@ -110,13 +109,7 @@ class TestLogCommand:
         mock_env.name = "test-env"
 
         mock_env.get_commit_history.return_value = [
-            {
-                'hash': 'abc123',
-                'refs': '',  # Empty refs
-                'message': 'Commit without refs',
-                'date': '2025-11-17 10:00:00',
-                'date_relative': '1 hour ago'
-            }
+            _commit('abc123', '', 'Commit without refs', '2025-11-17 10:00:00', '1 hour ago')
         ]
         mock_env.get_current_branch.return_value = "main"
 
@@ -146,13 +139,7 @@ class TestLogCommand:
         mock_env.name = "test-env"
 
         mock_env.get_commit_history.return_value = [
-            {
-                'hash': 'abc123',
-                'refs': 'tag: v1.0',
-                'message': 'Tagged commit',
-                'date': '2025-11-17 10:00:00',
-                'date_relative': '1 hour ago'
-            }
+            _commit('abc123', 'tag: v1.0', 'Tagged commit', '2025-11-17 10:00:00', '1 hour ago')
         ]
         # Detached HEAD state
         mock_env.get_current_branch.return_value = None

@@ -403,16 +403,15 @@ class PyprojectManager:
         # Create a new table with sections in the correct order
         new_table = tomlkit.table()
 
-        # Add scalar metadata fields first. Preserve unknown scalar metadata so
-        # callers can add new top-level manifest flags without this formatter
-        # silently dropping them.
+        # Add metadata and non-reserved subtables first. Preserve unknown
+        # fields so callers can add new top-level manifest flags/tables without
+        # this formatter silently dropping them.
         for key, value in comfygit.items():
             if key in {"nodes", "workflows", "models"}:
                 continue
             if key == "":
                 continue
-            if not isinstance(value, dict):
-                new_table[key] = value
+            new_table[key] = deep_copy_table(value)
 
         # Add nodes if it exists
         if has_nodes:

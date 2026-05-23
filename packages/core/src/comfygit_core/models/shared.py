@@ -1,6 +1,7 @@
 """Core shared data models"""
 
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from comfygit_core.models.registry import RegistryNodeInfo
@@ -296,6 +297,8 @@ class ModelLocation:
     filename: str
     mtime: float
     last_seen: int
+    id: int | None = None
+    base_directory: str | None = None
 
     def validate(self) -> None:
         """Validate model location."""
@@ -306,6 +309,13 @@ class ModelLocation:
         if not self.relative_path:
             raise ComfyDockError("Relative path cannot be empty")
 
+    @property
+    def full_path(self) -> str | None:
+        """Return the absolute indexed path when the base directory is known."""
+        if not self.base_directory:
+            return None
+        return str(Path(self.base_directory) / self.relative_path)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
@@ -313,7 +323,15 @@ class ModelLocation:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'ModelLocation':
         """Create instance from dictionary."""
-        return cls(**data)
+        return cls(
+            id=data.get("id"),
+            model_hash=data["model_hash"],
+            base_directory=data.get("base_directory"),
+            relative_path=data["relative_path"],
+            filename=data["filename"],
+            mtime=data["mtime"],
+            last_seen=data["last_seen"],
+        )
 
 
 @dataclass
@@ -384,11 +402,57 @@ class ModelSourceResult:
 
 
 @dataclass
+class ModelIndexSource:
+    """A source URL recorded in the workspace model index."""
+    type: str
+    url: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+    added_time: int = 0
+    model_hash: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ModelIndexSource":
+        """Create instance from a repository source row."""
+        return cls(
+            type=str(data.get("type") or "custom"),
+            url=str(data.get("url") or ""),
+            metadata=dict(data.get("metadata") or {}),
+            added_time=int(data.get("added_time") or 0),
+            model_hash=data.get("model_hash"),
+        )
+
+
+@dataclass
+class ModelIndexStats:
+    """Summary counts for the workspace model index."""
+    total_models: int = 0
+    total_locations: int = 0
+    total_sources: int = 0
+
+    def to_dict(self) -> dict[str, int]:
+        """Convert to dictionary for JSON serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, int]) -> "ModelIndexStats":
+        """Create instance from a repository stats row."""
+        return cls(
+            total_models=int(data.get("total_models", 0)),
+            total_locations=int(data.get("total_locations", 0)),
+            total_sources=int(data.get("total_sources", 0)),
+        )
+
+
+@dataclass
 class ModelDetails:
     """Complete model information including all locations and sources."""
     model: ModelWithLocation
-    all_locations: list[dict]
-    sources: list[dict]
+    all_locations: list[ModelLocation]
+    sources: list[ModelIndexSource]
 
 
 @dataclass

@@ -11,6 +11,15 @@ End-to-end tests that verify ComfyGit CLI operations against real ComfyUI instal
 # Run smoke tests (fast, no ComfyUI startup)
 uv run pytest tests/e2e/tests/smoke/ -v
 
+# Run the deterministic CLI authoring journey
+make smoke-cli
+
+# Run slower/network smoke lanes when relevant
+make smoke-cli-registry
+make smoke-cli-registry-heavy
+make smoke-cli-run
+make smoke-cli-full
+
 # Run all E2E tests (includes ComfyUI lifecycle)
 uv run pytest tests/e2e/tests/ -v
 
@@ -91,6 +100,7 @@ E2E_PYTHON_VERSION=3.12
 Fast tests that verify CLI operations without starting ComfyUI:
 - Fixture structure validation
 - Basic commands (`status`, `list`, `--version`, `--help`)
+- The disposable CLI authoring journey in `test_cli_journey.py`
 - No `@pytest.mark.slow`
 
 ### Integration Tests (`tests/integration/`)
@@ -98,6 +108,19 @@ Slower tests that require running ComfyUI:
 - ComfyUI startup/shutdown lifecycle
 - Marked with `@pytest.mark.slow`
 - Use port 18188 to avoid conflicts with dev (8188-8190)
+
+### Registry Tests
+Registry-backed custom-node lifecycle tests are marked with
+`@pytest.mark.registry` and `@pytest.mark.network`. Run them before releases
+that touch node install, registry, manifest, or sync behavior.
+
+The default registry smoke uses a representative lightweight node so it remains
+practical to run repeatedly. Heavier node packages with expensive dependency
+resolution are covered by an opt-in slow lane:
+
+```bash
+make smoke-cli-registry-heavy
+```
 
 ## Adding New Tests
 
