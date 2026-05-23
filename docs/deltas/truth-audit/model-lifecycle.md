@@ -104,8 +104,6 @@ path's first directory when the static category is `unknown`.
   `packages/core/src/comfygit_core/managers/environment_model_manager.py`
 - Download service and structured provider/download errors:
   `packages/core/src/comfygit_core/services/model_downloader.py`
-- Legacy/simple download manager:
-  `packages/core/src/comfygit_core/managers/model_download_manager.py`
 - Workflow model parsing:
   `packages/core/src/comfygit_core/analyzers/workflow_dependency_parser.py`
 - Model resolution:
@@ -230,9 +228,9 @@ path's first directory when the static category is `unknown`.
    mismatches as functional workflow issues. These are important reproducibility
    promises and should be explicit.
 
-9. The legacy `ModelDownloadManager` and newer `ModelDownloader` overlap. Truth
-   docs should identify the supported download service surface to avoid future
-   refactors preserving unused/older semantics by accident.
+9. Model downloads are served by `ModelDownloader` and workspace/environment
+   facades. The older manager-layer download implementation was intentionally
+   removed so future refactors do not preserve unused semantics by accident.
 
 10. Online source lookup is implemented as provider lookup by hash/filename, but
     broader source-candidate discovery from saved workflow text remains planned.
