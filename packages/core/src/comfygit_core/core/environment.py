@@ -30,6 +30,7 @@ from ..managers.user_content_symlink_manager import UserContentSymlinkManager
 from ..managers.uv_project_manager import UVProjectManager
 from ..managers.workflow_manager import WorkflowManager
 from ..models.environment import EnvironmentStatus
+from ..models.manifest import ManifestModel
 from ..models.overlay import OverlayConfig, OverlayInfo
 from ..models.ref_diff import RefDiff
 from ..models.runtime_config import (
@@ -84,7 +85,6 @@ if TYPE_CHECKING:
     )
     from ..models.manifest import (
         EnvironmentManifestSnapshot,
-        ManifestModel,
         ManifestWorkflowEntry,
         ManifestWorkflowModel,
     )
@@ -95,6 +95,9 @@ if TYPE_CHECKING:
         DetailedWorkflowStatus,
         NodeInstallCallbacks,
         ResolutionResult,
+        ScoredMatch,
+        ScoredPackageMatch,
+        WorkflowDependencies,
         WorkflowSyncStatus,
     )
     from ..models.workflow_contract import WorkflowExecutionContract
@@ -2140,9 +2143,63 @@ class Environment:
         """Return the ComfyUI workflow JSON path for a workflow name."""
         return self.workflow_manager.comfyui_workflows / f"{workflow_name}.json"
 
+    def get_existing_workflow_path(self, workflow_name: str) -> Path:
+        """Return an existing ComfyUI workflow JSON path.
+
+        Raises:
+            FileNotFoundError: If the workflow is not present in ComfyUI's workflow directory.
+        """
+        return self.workflow_manager.get_workflow_path(workflow_name)
+
+    def invalidate_workflow_resolution_cache(self, workflow_name: str) -> None:
+        """Invalidate cached workflow analysis/resolution for one workflow."""
+        self.workflow_cache.invalidate(self.name, workflow_name)
+
     def list_workflow_models(self, workflow_name: str) -> list[ManifestWorkflowModel]:
         """Return models declared for a workflow."""
         return list(self.get_workflow_manifest_models(workflow_name))
+
+    @_requires_env_lock
+    def set_workflow_manifest_models(
+        self,
+        workflow_name: str,
+        models: Sequence[ManifestWorkflowModel],
+    ) -> None:
+        """Replace manifest model declarations for one workflow."""
+        self.pyproject.workflows.set_workflow_models(workflow_name, list(models))
+
+    @_requires_env_lock
+    def add_workflow_manifest_model(
+        self,
+        workflow_name: str,
+        model: ManifestWorkflowModel,
+    ) -> None:
+        """Add or update one manifest model declaration for a workflow."""
+        self.pyproject.workflows.add_workflow_model(workflow_name, model)
+
+    @_requires_env_lock
+    def add_manifest_model(self, model: ManifestModel) -> None:
+        """Add or update one environment-scoped manifest model."""
+        self.pyproject.models.add_model(model)
+
+    @_requires_env_lock
+    def set_workflow_custom_node_mapping(
+        self,
+        workflow_name: str,
+        node_type: str,
+        package_id: str | None,
+    ) -> None:
+        """Map a workflow node type to a package, or mark it optional when package_id is None."""
+        self.pyproject.workflows.set_custom_node_mapping(workflow_name, node_type, package_id)
+
+    @_requires_env_lock
+    def remove_workflow_custom_node_mapping(
+        self,
+        workflow_name: str,
+        node_type: str,
+    ) -> bool:
+        """Remove a custom-node mapping for one workflow."""
+        return self.pyproject.workflows.remove_custom_node_mapping(workflow_name, node_type)
 
     def update_workflow_model_criticality(
         self,
@@ -2194,6 +2251,126 @@ class Environment:
             for model in self.list_workflow_models(workflow_name)
             if model.status == "unresolved" and model.sources
         ]
+
+    def get_workflow_package_aliases(self) -> Mapping[str, str]:
+        """Return global node package alias metadata used during workflow resolution."""
+        resolver = getattr(self.workflow_manager, "global_node_resolver", None)
+        repository = getattr(resolver, "repository", None)
+        global_mappings = getattr(repository, "global_mappings", None)
+        aliases = getattr(global_mappings, "package_aliases", None)
+        return aliases if isinstance(aliases, dict) else {}
+
+    def analyze_workflow_dependencies(
+        self,
+        workflow_name: str,
+    ) -> tuple[WorkflowDependencies, ResolutionResult]:
+        """Analyze and resolve one saved workflow without applying fixes or downloads."""
+        return self.workflow_manager.analyze_and_resolve_workflow(workflow_name)
+
+    def analyze_workflow_json(
+        self,
+        workflow_data: Mapping[str, object],
+        *,
+        workflow_name: str = "unsaved",
+    ) -> tuple[WorkflowDependencies, ResolutionResult]:
+        """Analyze and resolve workflow JSON that has not necessarily been saved yet."""
+        from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
+        from ..models.workflow import Workflow
+
+        workflow = Workflow.from_json(dict(workflow_data))
+        parser = WorkflowDependencyParser(
+            workflow=workflow,
+            workflow_name=workflow_name,
+            cec_path=self.cec_path,
+            builtin_versions_repository=self.workflow_manager.builtin_versions_repository,
+        )
+        dependencies = parser.analyze_dependencies()
+        return dependencies, self.resolve_workflow_dependencies(dependencies)
+
+    def resolve_workflow_dependencies(
+        self,
+        dependencies: WorkflowDependencies,
+    ) -> ResolutionResult:
+        """Resolve pre-analyzed workflow dependencies without mutating the manifest."""
+        return self.workflow_manager.resolve_workflow(dependencies)
+
+    @_requires_env_lock
+    def fix_workflow_resolution(
+        self,
+        result: ResolutionResult,
+        node_strategy: NodeResolutionStrategy | None = None,
+        model_strategy: ModelResolutionStrategy | None = None,
+    ) -> ResolutionResult:
+        """Apply node/model resolution strategies and persist their manifest choices."""
+        return self.workflow_manager.fix_resolution(result, node_strategy, model_strategy)
+
+    @_requires_env_lock
+    def update_workflow_model_paths(self, result: ResolutionResult) -> int:
+        """Sync workflow JSON model paths from an existing resolution result."""
+        return self.workflow_manager.update_workflow_model_paths(result)
+
+    def search_workflow_node_packages(
+        self,
+        query: str,
+        *,
+        include_registry: bool = True,
+        limit: int = 10,
+    ) -> list[ScoredPackageMatch]:
+        """Search node packages for workflow resolution without exposing the resolver."""
+        return self.workflow_manager.global_node_resolver.search_packages(
+            query,
+            dict(self.list_manifest_nodes()),
+            include_registry,
+            limit,
+        )
+
+    def search_workflow_models(
+        self,
+        query: str,
+        *,
+        node_type: str | None = None,
+        limit: int = 9,
+    ) -> list[ScoredMatch]:
+        """Search indexed models for workflow resolution without exposing the workflow manager."""
+        return self.workflow_manager.search_models(query, node_type, limit)
+
+    @_requires_env_lock
+    def mark_workflow_model_download_resolved(
+        self,
+        workflow_name: str,
+        *,
+        filename: str,
+        model_hash: str,
+    ) -> bool:
+        """Mark a workflow download intent as resolved after a model download succeeds."""
+        models = list(self.get_workflow_manifest_models(workflow_name))
+
+        for model in models:
+            if not (model.filename == filename and model.status == "unresolved" and model.sources):
+                continue
+
+            resolved_model = self.workspace.get_indexed_model(model_hash)
+            if resolved_model is None:
+                return False
+
+            manifest_model = ManifestModel(
+                hash=model_hash,
+                filename=resolved_model.filename,
+                relative_path=resolved_model.relative_path,
+                category=model.category,
+                size=resolved_model.file_size,
+                sources=model.sources,
+            )
+            self.pyproject.models.add_model(manifest_model)
+
+            model.hash = model_hash
+            model.status = "resolved"
+            model.sources = []
+            model.relative_path = None
+            self.pyproject.workflows.set_workflow_models(workflow_name, models)
+            return True
+
+        return False
 
     def resolve_workflow(
         self,

@@ -75,8 +75,12 @@ GitHub, and external UV cache settings. Provider-specific deployment
 credentials such as retired RunPod keys are not part of core workspace
 configuration. Workspace model-index adapter calls now use Workspace facade
 methods for indexed source management, source lookup, hash completion, indexed
-model lookup, and model-location deletion. Serve-runtime adapter reach-throughs
-remain follow-on work.
+model lookup, and model-location deletion. Manager workflow APIs now use
+Environment facades for workflow file lookup, cache invalidation, manifest model
+mutation, custom-node mapping edits, saved and unsaved workflow analysis,
+resolution fixing, model-path sync, package/model search, and post-download
+manifest finalization. Serve-runtime adapter reach-throughs and specialized
+workflow download streaming remain follow-on work.
 
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
