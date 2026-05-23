@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
@@ -30,7 +30,17 @@ from ..managers.user_content_symlink_manager import UserContentSymlinkManager
 from ..managers.uv_project_manager import UVProjectManager
 from ..managers.workflow_manager import WorkflowManager
 from ..models.environment import EnvironmentStatus
+from ..models.overlay import OverlayConfig, OverlayInfo
 from ..models.ref_diff import RefDiff
+from ..models.runtime_config import (
+    DependencyGroupRemovalResult,
+    OverlayActivationResult,
+    OverlayTemplateResult,
+    TorchBackendDetection,
+    TorchBackendSelection,
+    TorchBackendStatus,
+    UVCommandContext,
+)
 from ..models.shared import (
     ManagerStatus,
     ManagerUpdateResult,
@@ -91,6 +101,36 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+
+_OVERLAY_TEMPLATE = """[overlay]
+# description = "Describe this overlay"
+# kind = "pytorch"
+# requires = ["cuda"]
+
+[dependencies]
+packages = []
+
+[sources]
+# package-name = { git = "https://github.com/user/repo.git" }
+
+[settings]
+no-build-isolation-package = []
+override-dependencies = []
+environments = []
+
+# [[dependency-metadata]]
+# name = "package-name"
+# version = "1.0.0"
+# requires-dist = ["torch"]
+
+[constraints]
+packages = []
+
+# [[index]]
+# name = "custom-index"
+# url = "https://example.com/simple"
+# explicit = true
+"""
 
 
 def _workflow_api_prompt_relpath(workflow_name: str) -> Path:
@@ -231,6 +271,220 @@ class Environment:
     def remove_sync_extra(self, extra: str) -> bool:
         """Remove a default optional extra (returns True if removed)."""
         return self.pyproject.remove_sync_extra(extra)
+
+    # =====================================================
+    # Local Runtime Configuration
+    # =====================================================
+
+    def get_python_version(self, default: str = "3.12") -> str:
+        """Return the configured Python version for this environment."""
+        python_version_file = self.cec_path / ".python-version"
+        if python_version_file.exists():
+            return python_version_file.read_text(encoding="utf-8").strip()
+        return default
+
+    def is_valid_torch_backend(self, backend: str) -> bool:
+        """Return whether a PyTorch backend string has a supported format."""
+        return self.pytorch_manager.is_valid_backend(backend)
+
+    def get_torch_backend_status(self) -> TorchBackendStatus:
+        """Return local PyTorch backend state without mutating configuration."""
+        has_backend = self.pytorch_manager.has_backend()
+        backend: str | None = None
+        versions: Mapping[str, str] = {}
+        if has_backend:
+            backend = self.pytorch_manager.get_backend()
+            versions = self.pytorch_manager.get_versions()
+
+        return TorchBackendStatus(
+            backend=backend,
+            versions=versions,
+            backend_file=self.pytorch_manager.backend_file,
+            is_configured=has_backend,
+        )
+
+    def ensure_torch_backend(
+        self,
+        python_version: str | None = None,
+        override: str | None = None,
+    ) -> TorchBackendSelection:
+        """Return an explicit or configured backend, probing when no backend is configured."""
+        if override:
+            return TorchBackendSelection(
+                backend=override,
+                versions={},
+                backend_file=self.pytorch_manager.backend_file,
+                is_configured=self.pytorch_manager.has_backend(),
+                was_probed=False,
+            )
+
+        had_backend = self.pytorch_manager.has_backend()
+        backend = self.pytorch_manager.ensure_backend(
+            python_version or self.get_python_version()
+        )
+        return TorchBackendSelection(
+            backend=backend,
+            versions=self.pytorch_manager.get_versions(),
+            backend_file=self.pytorch_manager.backend_file,
+            is_configured=True,
+            was_probed=not had_backend,
+        )
+
+    def set_torch_backend(
+        self,
+        backend: str,
+        python_version: str | None = None,
+    ) -> TorchBackendStatus:
+        """Probe and persist a local PyTorch backend selection."""
+        if not self.pytorch_manager.is_valid_backend(backend):
+            raise ValueError(f"Invalid PyTorch backend: {backend}")
+        self.pytorch_manager.probe_and_set_backend(
+            python_version or self.get_python_version(),
+            backend,
+        )
+        return self.get_torch_backend_status()
+
+    def detect_torch_backend(self, python_version: str | None = None) -> TorchBackendDetection:
+        """Probe the recommended backend without persisting it."""
+        from ..utils.pytorch_prober import probe_pytorch_versions
+
+        resolved_python = python_version or self.get_python_version()
+        versions, backend = probe_pytorch_versions(resolved_python, "auto")
+        return TorchBackendDetection(
+            backend=backend,
+            versions=versions,
+            python_version=resolved_python,
+        )
+
+    def list_overlays(self, *, active_only: bool = False) -> list[OverlayInfo]:
+        """Return discovered overlays without exposing the overlay manager."""
+        overlays = self.overlay_manager.list_overlays()
+        if active_only:
+            return [overlay for overlay in overlays if overlay.is_active]
+        return overlays
+
+    def get_overlay(self, name: str) -> OverlayConfig:
+        """Resolve and load an overlay by user-provided name."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        return self.overlay_manager.load_overlay(resolved_name)
+
+    def enable_overlay(self, name: str) -> OverlayActivationResult:
+        """Enable an overlay in local activation config."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        active_names = self.overlay_manager.get_active_names()
+        active_keys = {active.lower() for active in active_names}
+        is_compatible = self.overlay_manager.is_overlay_compatible(resolved_name)
+        if resolved_name.lower() in active_keys:
+            return OverlayActivationResult(
+                name=resolved_name,
+                changed=False,
+                is_compatible=is_compatible,
+            )
+
+        self.overlay_manager.set_active_names(active_names + [resolved_name])
+        return OverlayActivationResult(
+            name=resolved_name,
+            changed=True,
+            is_compatible=is_compatible,
+        )
+
+    def disable_overlay(self, name: str) -> OverlayActivationResult:
+        """Disable an overlay in local activation config."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        active_names = self.overlay_manager.get_active_names()
+        filtered = [
+            active
+            for active in active_names
+            if active.lower() != resolved_name.lower()
+        ]
+        is_compatible = self.overlay_manager.is_overlay_compatible(resolved_name)
+        if len(filtered) == len(active_names):
+            return OverlayActivationResult(
+                name=resolved_name,
+                changed=False,
+                is_compatible=is_compatible,
+            )
+
+        self.overlay_manager.set_active_names(filtered)
+        return OverlayActivationResult(
+            name=resolved_name,
+            changed=True,
+            is_compatible=is_compatible,
+        )
+
+    def create_overlay_template(
+        self,
+        name: str | None = None,
+        *,
+        local: bool = False,
+    ) -> OverlayTemplateResult:
+        """Create a shared or local overlay template file."""
+        if name is None:
+            if not local:
+                raise ValueError("Overlay name is required (or use local=True for .local.toml)")
+            name = ".local"
+        elif local and not name.startswith("."):
+            name = f".{name}"
+
+        OverlayConfig.validate_name(name)
+        overlay_path = self.cec_path / "overlays" / f"{name}.toml"
+        scope = "local" if name.startswith(".") else "shared"
+        if overlay_path.exists():
+            return OverlayTemplateResult(
+                name=name,
+                path=overlay_path,
+                scope=scope,
+                created=False,
+            )
+
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_text(_OVERLAY_TEMPLATE, encoding="utf-8")
+        return OverlayTemplateResult(
+            name=name,
+            path=overlay_path,
+            scope=scope,
+            created=True,
+        )
+
+    def get_runtime_python(self) -> Path:
+        """Return the Python executable uv uses for this environment."""
+        return self.uv_manager.python_executable
+
+    def get_manifest_path(self) -> Path:
+        """Return the portable manifest path for this environment."""
+        return self.pyproject.path
+
+    def load_manifest_config(self) -> Mapping[str, object]:
+        """Load the raw manifest document for display/serialization adapters."""
+        return self.pyproject.load()
+
+    def remove_dependencies_from_group(
+        self,
+        group: str,
+        packages: Sequence[str],
+    ) -> DependencyGroupRemovalResult:
+        """Remove packages from a dependency group without exposing pyproject internals."""
+        result = self.pyproject.dependencies.remove_from_group(group, list(packages))
+        return DependencyGroupRemovalResult(
+            removed=list(result["removed"]),
+            skipped=list(result["skipped"]),
+        )
+
+    def remove_dependency_group(self, group: str) -> None:
+        """Remove an entire dependency group from the manifest."""
+        self.pyproject.dependencies.remove_group(group)
+
+    def get_uv_command_context(self) -> UVCommandContext:
+        """Return environment-scoped uv command context for CLI passthrough."""
+        return UVCommandContext(
+            binary=self.uv_manager.uv._binary,
+            cwd=self.cec_path,
+            env={
+                **os.environ,
+                "UV_PROJECT_ENVIRONMENT": str(self.venv_path),
+                "UV_CACHE_DIR": str(self.workspace_paths.cache / "uv_cache"),
+            },
+        )
 
     @cached_property
     def node_manager(self) -> NodeManager:
@@ -1873,6 +2127,73 @@ class Environment:
             Dict with 'new', 'modified', 'deleted', and 'synced' workflow names
         """
         return self.workflow_manager.get_workflow_sync_status()
+
+    def get_workflow_sync_status(self) -> WorkflowSyncStatus:
+        """Return workflow file sync status without exposing the workflow manager."""
+        return self.workflow_manager.get_workflow_sync_status()
+
+    def get_workflow_status(self) -> DetailedWorkflowStatus:
+        """Return analyzed workflow status without exposing the workflow manager."""
+        return self.workflow_manager.get_workflow_status()
+
+    def get_workflow_path(self, workflow_name: str) -> Path:
+        """Return the ComfyUI workflow JSON path for a workflow name."""
+        return self.workflow_manager.comfyui_workflows / f"{workflow_name}.json"
+
+    def list_workflow_models(self, workflow_name: str) -> list[ManifestWorkflowModel]:
+        """Return models declared for a workflow."""
+        return list(self.get_workflow_manifest_models(workflow_name))
+
+    def update_workflow_model_criticality(
+        self,
+        workflow_name: str,
+        model_identifier: str,
+        criticality: str,
+    ) -> bool:
+        """Update model criticality for a workflow dependency."""
+        return self.workflow_manager.update_model_criticality(
+            workflow_name=workflow_name,
+            model_identifier=model_identifier,
+            new_criticality=criticality,
+        )
+
+    def add_workflow_model_dependency(
+        self,
+        workflow_name: str,
+        *,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+        criticality: str = "required",
+    ) -> ManifestWorkflowModel:
+        """Declare an indexed local model as a manual workflow dependency."""
+        return self.workflow_manager.add_existing_model_to_workflow(
+            workflow_name=workflow_name,
+            model_hash=model_hash,
+            relative_path=relative_path,
+            criticality=criticality,
+        )
+
+    def remove_workflow_model_dependency(
+        self,
+        workflow_name: str,
+        *,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+    ) -> bool:
+        """Remove a manually declared workflow model dependency."""
+        return self.workflow_manager.remove_manual_model_from_workflow(
+            workflow_name=workflow_name,
+            model_hash=model_hash,
+            relative_path=relative_path,
+        )
+
+    def get_workflow_failed_downloads(self, workflow_name: str) -> list[ManifestWorkflowModel]:
+        """Return workflow models with source intent that remain unresolved."""
+        return [
+            model
+            for model in self.list_workflow_models(workflow_name)
+            if model.status == "unresolved" and model.sources
+        ]
 
     def resolve_workflow(
         self,

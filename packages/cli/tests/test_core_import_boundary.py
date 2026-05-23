@@ -18,8 +18,17 @@ PUBLIC_CORE_IMPORTS = {
 TEMPORARY_INTERNAL_IMPORTS = {
     # TODO: move auto strategy ownership behind Environment.resolve_workflow(mode=\"auto\").
     "comfygit_core.strategies.auto",
-    # TODO: expose torch backend probing through Environment facade methods.
-    "comfygit_core.utils.pytorch_prober",
+}
+
+DISALLOWED_ENV_REACH_THROUGH_ATTRS = {
+    "git_manager",
+    "model_manager",
+    "node_manager",
+    "overlay_manager",
+    "pyproject",
+    "pytorch_manager",
+    "uv_manager",
+    "workflow_manager",
 }
 
 
@@ -49,3 +58,20 @@ def test_cli_runtime_uses_public_core_facades_or_temporary_allowlist():
             violations.append(f"{path.relative_to(cli_root.parent)}:{line}: {module}")
 
     assert not violations, "CLI imported unsupported core internals:\n" + "\n".join(violations)
+
+
+def test_env_commands_use_environment_facades_instead_of_manager_reach_throughs():
+    path = Path(__file__).resolve().parents[1] / "comfygit_cli" / "env_commands.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "env"
+            and node.attr in DISALLOWED_ENV_REACH_THROUGH_ATTRS
+        ):
+            violations.append(f"{path.name}:{node.lineno}: env.{node.attr}")
+
+    assert not violations, "env_commands reached through Environment facade:\n" + "\n".join(violations)

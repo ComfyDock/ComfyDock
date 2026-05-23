@@ -67,6 +67,11 @@ repository, or utility attributes such as `env.pyproject`,
 reach-throughs; new adapter needs should be served by typed facade methods and
 public result models.
 
+Environment command adapters now use facade methods for local PyTorch backend
+selection, overlays, runtime Python lookup, manifest display, dependency group
+mutation, and workflow model dependency edits. Workspace-level config/download
+and serve-runtime adapter reach-throughs remain follow-on work.
+
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
 

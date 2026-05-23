@@ -105,10 +105,7 @@ class EnvironmentCommands:
 
     def _get_python_version(self, env: Environment) -> str:
         """Get Python version from environment."""
-        python_version_file = env.cec_path / ".python-version"
-        if python_version_file.exists():
-            return python_version_file.read_text(encoding="utf-8").strip()
-        return "3.12"
+        return env.get_python_version()
 
     def _get_or_probe_backend(
         self, env: Environment, override: str | None = None
@@ -126,19 +123,14 @@ class EnvironmentCommands:
         if override:
             return override, False
 
-        had_backend = env.pytorch_manager.has_backend()
-
         try:
-            python_version = self._get_python_version(env)
-            backend = env.pytorch_manager.ensure_backend(python_version)
-
-            was_probed = not had_backend
-            if was_probed:
+            selection = env.ensure_torch_backend(override=override)
+            if selection.was_probed:
                 print("⚠️  No PyTorch backend configured. Auto-detecting...")
-                print(f"✓ Backend detected and saved: {backend}")
+                print(f"✓ Backend detected and saved: {selection.backend}")
                 print("   To change: cg env-config torch-backend set <backend>")
 
-            return backend, was_probed
+            return selection.backend, selection.was_probed
         except Exception as e:
             print(f"✗ Error probing PyTorch backend: {e}")
             print("   Try setting it explicitly: cg env-config torch-backend set <backend>")
@@ -344,21 +336,20 @@ class EnvironmentCommands:
         """Show current PyTorch backend setting for this environment."""
         env = self._get_env(args)
 
-        backend = env.pytorch_manager.get_backend()
-        backend_file = env.pytorch_manager.backend_file
-        versions = env.pytorch_manager.get_versions()
+        status = env.get_torch_backend_status()
+        backend = status.backend or "(not configured)"
 
         print(f"PyTorch Backend: {backend}")
-        if versions:
-            for pkg, ver in versions.items():
+        if status.versions:
+            for pkg, ver in status.versions.items():
                 print(f"   {pkg}={ver}")
 
-        if backend_file.exists():
-            print(f"   Source: {backend_file}")
+        if status.is_configured:
+            print(f"   Source: {status.backend_file}")
         else:
-            print("   Source: auto-detected (no .pytorch-backend file)")
+            print("   Source: not configured")
             print()
-            print(f"💡 To save this setting: cg env-config torch-backend set {backend}")
+            print("💡 To save this setting: cg env-config torch-backend set <backend>")
 
     @with_env_logging("env-config torch-backend set")
     def env_config_torch_set(self, args: argparse.Namespace, logger=None) -> None:
@@ -366,13 +357,11 @@ class EnvironmentCommands:
 
         Probes for exact versions and stores both backend and version pins.
         """
-        from comfygit_core.utils.pytorch_prober import PyTorchProbeError
-
         env = self._get_env(args)
         backend = args.backend
 
         # Validate backend format
-        if not env.pytorch_manager.is_valid_backend(backend):
+        if not env.is_valid_torch_backend(backend):
             print(f"✗ Invalid backend: {backend}")
             print()
             print("Valid formats:")
@@ -382,27 +371,20 @@ class EnvironmentCommands:
             print("  • xpu (Intel)")
             sys.exit(1)
 
-        # Read python version
-        python_version_file = env.cec_path / ".python-version"
-        python_version = (
-            python_version_file.read_text(encoding="utf-8").strip()
-            if python_version_file.exists()
-            else "3.12"
-        )
+        python_version = env.get_python_version()
 
         # Probe and set backend with versions
         print(f"🔍 Probing PyTorch versions for {backend} (Python {python_version})...")
         try:
-            resolved = env.pytorch_manager.probe_and_set_backend(python_version, backend)
-        except PyTorchProbeError as e:
+            status = env.set_torch_backend(backend, python_version)
+        except Exception as e:
             print(f"✗ Error probing PyTorch: {e}")
             sys.exit(1)
 
         # Show what was stored
-        versions = env.pytorch_manager.get_versions()
-        print(f"✓ PyTorch backend set to: {resolved}")
-        if versions:
-            for pkg, ver in versions.items():
+        print(f"✓ PyTorch backend set to: {status.backend}")
+        if status.versions:
+            for pkg, ver in status.versions.items():
                 print(f"   {pkg}={ver}")
         print()
         print("Run 'cg sync' to apply the new backend configuration.")
@@ -410,47 +392,35 @@ class EnvironmentCommands:
     @with_env_logging("env-config torch-backend detect")
     def env_config_torch_detect(self, args: argparse.Namespace, logger=None) -> None:
         """Auto-detect recommended PyTorch backend using uv probe."""
-        from comfygit_core.utils.pytorch_prober import PyTorchProbeError, probe_pytorch_versions
-
         env = self._get_env(args)
-        backend_file = env.pytorch_manager.backend_file
-
-        # Read python version from file
-        python_version_file = env.cec_path / ".python-version"
-        python_version = (
-            python_version_file.read_text(encoding="utf-8").strip()
-            if python_version_file.exists()
-            else "3.12"
-        )
+        python_version = env.get_python_version()
 
         # Probe for recommended backend
         print(f"🔍 Probing PyTorch compatibility for Python {python_version}...")
         try:
-            _, detected = probe_pytorch_versions(python_version, "auto")
-        except PyTorchProbeError as e:
+            detection = env.detect_torch_backend(python_version)
+        except Exception as e:
             print(f"✗ Error probing PyTorch: {e}")
             sys.exit(1)
 
         # Get current backend (if any)
-        if env.pytorch_manager.has_backend():
-            current = env.pytorch_manager.get_backend()
-        else:
-            current = "(not configured)"
+        status = env.get_torch_backend_status()
+        current = status.backend or "(not configured)"
 
-        print(f"Detected backend: {detected}")
+        print(f"Detected backend: {detection.backend}")
         print(f"Current backend:  {current}")
 
-        if backend_file.exists():
-            print(f"   Source: {backend_file}")
+        if status.is_configured:
+            print(f"   Source: {status.backend_file}")
         else:
             print("   Source: not configured")
 
-        if current != detected and current != "(not configured)":
+        if current != detection.backend and current != "(not configured)":
             print()
-            print(f"💡 Consider updating: cg env-config torch-backend set {detected}")
+            print(f"💡 Consider updating: cg env-config torch-backend set {detection.backend}")
         elif current == "(not configured)":
             print()
-            print(f"💡 Set the backend: cg env-config torch-backend set {detected}")
+            print(f"💡 Set the backend: cg env-config torch-backend set {detection.backend}")
 
     @with_env_logging("env-config extras show")
     def env_config_extras_show(self, args: argparse.Namespace, logger=None) -> None:
@@ -506,16 +476,14 @@ class EnvironmentCommands:
     def overlay_list(self, args: argparse.Namespace, logger=None) -> None:
         """List overlays available in the environment."""
         env = self._get_env(args)
-        overlays = env.overlay_manager.list_overlays()
-
-        if getattr(args, "active", False):
-            overlays = [o for o in overlays if o.is_active]
+        active_only = getattr(args, "active", False)
+        overlays = env.list_overlays(active_only=active_only)
 
         if not overlays:
-            print("No active overlays found" if getattr(args, "active", False) else "No overlays found")
+            print("No active overlays found" if active_only else "No overlays found")
             return
 
-        print("Active overlays:" if getattr(args, "active", False) else "Available overlays:")
+        print("Active overlays:" if active_only else "Available overlays:")
         for overlay in overlays:
             active_marker = "active" if overlay.is_active else "inactive"
             if overlay.is_local:
@@ -536,8 +504,7 @@ class EnvironmentCommands:
         env = self._get_env(args)
 
         try:
-            resolved_name = env.overlay_manager.resolve_overlay_name(args.name)
-            overlay = env.overlay_manager.load_overlay(resolved_name)
+            overlay = env.get_overlay(args.name)
         except Exception as e:
             print(f"✗ {e}")
             sys.exit(1)
@@ -552,21 +519,17 @@ class EnvironmentCommands:
     def overlay_enable(self, args: argparse.Namespace, logger=None) -> None:
         """Enable an overlay in local activation config."""
         env = self._get_env(args)
-        manager = env.overlay_manager
 
         try:
-            resolved_name = manager.resolve_overlay_name(args.name)
-            active_names = manager.get_active_names()
-            active_keys = {name.lower() for name in active_names}
-            if resolved_name.lower() in active_keys:
-                print(f"Overlay already enabled: {resolved_name}")
+            result = env.enable_overlay(args.name)
+            if not result.changed:
+                print(f"Overlay already enabled: {result.name}")
                 return
 
-            manager.set_active_names(active_names + [resolved_name])
-            if not manager.is_overlay_compatible(resolved_name):
-                print(f"✓ Enabled overlay: {resolved_name} (platform requirements currently unmet)")
+            if not result.is_compatible:
+                print(f"✓ Enabled overlay: {result.name} (platform requirements currently unmet)")
                 return
-            print(f"✓ Enabled overlay: {resolved_name}")
+            print(f"✓ Enabled overlay: {result.name}")
         except Exception as e:
             print(f"✗ {e}")
             sys.exit(1)
@@ -575,20 +538,13 @@ class EnvironmentCommands:
     def overlay_disable(self, args: argparse.Namespace, logger=None) -> None:
         """Disable an overlay in local activation config."""
         env = self._get_env(args)
-        manager = env.overlay_manager
 
         try:
-            resolved_name = manager.resolve_overlay_name(args.name)
-            active_names = manager.get_active_names()
-            filtered = [
-                name for name in active_names
-                if name.lower() != resolved_name.lower()
-            ]
-            if len(filtered) == len(active_names):
-                print(f"Overlay is not enabled: {resolved_name}")
+            result = env.disable_overlay(args.name)
+            if not result.changed:
+                print(f"Overlay is not enabled: {result.name}")
                 return
-            manager.set_active_names(filtered)
-            print(f"✓ Disabled overlay: {resolved_name}")
+            print(f"✓ Disabled overlay: {result.name}")
         except Exception as e:
             print(f"✗ {e}")
             sys.exit(1)
@@ -596,70 +552,22 @@ class EnvironmentCommands:
     @with_env_logging("overlay create")
     def overlay_create(self, args: argparse.Namespace, logger=None) -> None:
         """Create an overlay template file."""
-        from comfygit_core.models import OverlayConfig
-
         env = self._get_env(args)
         local = getattr(args, "local", False)
-        name = args.name
-
-        if name is None:
-            if not local:
-                print("✗ Overlay name is required (or use --local for .local.toml)")
-                sys.exit(1)
-            name = ".local"
-        elif local and not name.startswith("."):
-            name = f".{name}"
 
         try:
-            OverlayConfig.validate_name(name)
+            result = env.create_overlay_template(args.name, local=local)
         except Exception as e:
             print(f"✗ {e}")
             sys.exit(1)
 
-        overlay_path = env.cec_path / "overlays" / f"{name}.toml"
-        if overlay_path.exists():
-            scope = "local" if name.startswith(".") else "shared"
-            print(f"Overlay already exists: {name} ({scope})")
-            print(f"  {overlay_path}")
+        if not result.created:
+            print(f"Overlay already exists: {result.name} ({result.scope})")
+            print(f"  {result.path}")
             return
 
-        overlay_path.parent.mkdir(parents=True, exist_ok=True)
-        overlay_path.write_text(
-            """[overlay]
-# description = "Describe this overlay"
-# kind = "pytorch"
-# requires = ["cuda"]
-
-[dependencies]
-packages = []
-
-[sources]
-# package-name = { git = "https://github.com/user/repo.git" }
-
-[settings]
-no-build-isolation-package = []
-override-dependencies = []
-environments = []
-
-# [[dependency-metadata]]
-# name = "package-name"
-# version = "1.0.0"
-# requires-dist = ["torch"]
-
-[constraints]
-packages = []
-
-# [[index]]
-# name = "custom-index"
-# url = "https://example.com/simple"
-# explicit = true
-""",
-            encoding="utf-8",
-        )
-
-        scope = "local" if name.startswith(".") else "shared"
-        print(f"✓ Created {scope} overlay: {name}")
-        print(f"  {overlay_path}")
+        print(f"✓ Created {result.scope} overlay: {result.name}")
+        print(f"  {result.path}")
 
     @with_env_logging("run")
     def run(self, args: argparse.Namespace) -> None:
@@ -822,7 +730,7 @@ packages = []
             f"Switch complete; starting ComfyUI for {env.name}",
         )
 
-        python = env.uv_manager.python_executable
+        python = env.get_runtime_python()
         cmd = [str(python), "main.py"] + (comfyui_args or [])
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = env.name
@@ -1100,14 +1008,14 @@ packages = []
             import os
             import subprocess
             editor = args.ide if args.ide != "auto" else os.environ.get("EDITOR", "code")
-            subprocess.run([editor, str(env.pyproject.path)])
+            subprocess.run([editor, str(env.get_manifest_path())])
             return
 
         import tomlkit
         import yaml
 
         # Load raw TOML config
-        config = env.pyproject.load()
+        config = env.load_manifest_config()
 
         # Handle section filtering if requested
         if hasattr(args, 'section') and args.section:
@@ -2216,26 +2124,26 @@ packages = []
             print(f"🗑 Removing {len(args.packages)} package(s) from group '{group_name}'...")
 
             try:
-                result = env.pyproject.dependencies.remove_from_group(group_name, args.packages)
+                result = env.remove_dependencies_from_group(group_name, args.packages)
             except ValueError as e:
                 print(f"✗ {e}", file=sys.stderr)
                 sys.exit(1)
 
             # Show results
-            if not result['removed']:
-                if len(result['skipped']) == 1:
-                    print(f"\nℹ️  Package '{result['skipped'][0]}' is not in group '{group_name}'")
+            if not result.removed:
+                if len(result.skipped) == 1:
+                    print(f"\nℹ️  Package '{result.skipped[0]}' is not in group '{group_name}'")
                 else:
                     print(f"\nℹ️  None of the specified packages are in group '{group_name}':")
-                    for pkg in result['skipped']:
+                    for pkg in result.skipped:
                         print(f"  • {pkg}")
                 return
 
-            print(f"\n✓ Removed {len(result['removed'])} package(s) from group '{group_name}'")
+            print(f"\n✓ Removed {len(result.removed)} package(s) from group '{group_name}'")
 
-            if result['skipped']:
-                print(f"\nℹ️  Skipped {len(result['skipped'])} package(s) not in group:")
-                for pkg in result['skipped']:
+            if result.skipped:
+                print(f"\nℹ️  Skipped {len(result.skipped)} package(s) not in group:")
+                for pkg in result.skipped:
                     print(f"  • {pkg}")
 
             print(f"\nRun 'cg -e {env.name} py list --all' to view remaining groups")
@@ -2288,7 +2196,7 @@ packages = []
         print(f"🗑 Removing dependency group: {group_name}")
 
         try:
-            env.pyproject.dependencies.remove_group(group_name)
+            env.remove_dependency_group(group_name)
         except ValueError as e:
             print(f"✗ {e}", file=sys.stderr)
             sys.exit(1)
@@ -2309,17 +2217,14 @@ packages = []
             sys.exit(1)
 
         # Build UV command with environment context
-        cmd = [env.uv_manager.uv._binary] + args.uv_args
+        uv_context = env.get_uv_command_context()
+        cmd = [uv_context.binary] + args.uv_args
 
         # Execute with environment context (cwd and env vars)
         result = subprocess.run(
             cmd,
-            cwd=env.cec_path,
-            env={
-                **os.environ,
-                "UV_PROJECT_ENVIRONMENT": str(env.venv_path),
-                "UV_CACHE_DIR": str(env.workspace_paths.cache / "uv_cache"),
-            }
+            cwd=uv_context.cwd,
+            env=dict(uv_context.env),
         )
         sys.exit(result.returncode)
 
@@ -2915,7 +2820,7 @@ packages = []
 
         # Get workflow status (read-only analysis)
         try:
-            workflow_status = env.workflow_manager.get_workflow_status()
+            workflow_status = env.get_workflow_status()
 
             if logger:
                 logger.debug(f"Workflow status: {workflow_status.sync_status}")
@@ -3383,7 +3288,7 @@ packages = []
                 return
 
         # Get workflow models
-        models = env.pyproject.workflows.get_workflow_models(workflow_name)
+        models = env.list_workflow_models(workflow_name)
         if not models:
             print(f"✗ No models found in workflow '{workflow_name}'")
             return
@@ -3394,10 +3299,10 @@ packages = []
             model_identifier = args.model_identifier
             new_importance = args.importance
 
-            success = env.workflow_manager.update_model_criticality(
+            success = env.update_workflow_model_criticality(
                 workflow_name=workflow_name,
                 model_identifier=model_identifier,
-                new_criticality=new_importance
+                criticality=new_importance,
             )
 
             if success:
@@ -3447,10 +3352,10 @@ packages = []
 
                 # Update model importance
                 identifier = model.hash if model.hash else model.filename
-                success = env.workflow_manager.update_model_criticality(
+                success = env.update_workflow_model_criticality(
                     workflow_name=workflow_name,
                     model_identifier=identifier,
-                    new_criticality=new_importance
+                    criticality=new_importance,
                 )
 
                 if success:
@@ -3472,7 +3377,7 @@ packages = []
                 print("✗ No workflow selected")
                 return
 
-        models = env.pyproject.workflows.get_workflow_models(workflow_name)
+        models = env.list_workflow_models(workflow_name)
         if not models:
             print(f"✗ No models found in workflow '{workflow_name}'")
             return
@@ -3503,7 +3408,7 @@ packages = []
             sys.exit(1)
 
         try:
-            model = env.workflow_manager.add_existing_model_to_workflow(
+            model = env.add_workflow_model_dependency(
                 workflow_name=args.workflow_name,
                 model_hash=model_hash,
                 relative_path=relative_path,
@@ -3529,7 +3434,7 @@ packages = []
             sys.exit(1)
 
         try:
-            removed = env.workflow_manager.remove_manual_model_from_workflow(
+            removed = env.remove_workflow_model_dependency(
                 workflow_name=args.workflow_name,
                 model_hash=model_hash,
                 relative_path=relative_path,
@@ -3551,7 +3456,7 @@ packages = []
         Returns:
             Selected workflow name or None if cancelled
         """
-        status = env.workflow_manager.get_workflow_sync_status()
+        status = env.get_workflow_sync_status()
         all_workflows = status.new + status.modified + status.synced
 
         if not all_workflows:
@@ -3624,7 +3529,7 @@ packages = []
         except FileNotFoundError as e:
             if logger:
                 logger.error(f"Resolution failed for '{args.name}': {e}", exc_info=True)
-            workflow_path = env.workflow_manager.comfyui_workflows / f"{args.name}.json"
+            workflow_path = env.get_workflow_path(args.name)
             print(f"✗ Workflow '{args.name}' not found at {workflow_path}")
             sys.exit(1)
         except Exception as e:
@@ -3760,11 +3665,7 @@ packages = []
         elif result.models_resolved or result.nodes_resolved:
             # Check for failed download intents by querying current state (not stale result)
             # Downloads execute AFTER result is created, so we need fresh state
-            current_models = env.pyproject.workflows.get_workflow_models(args.name)
-            failed_downloads = [
-                m for m in current_models
-                if m.status == 'unresolved' and m.sources  # Has download intent but still unresolved
-            ]
+            failed_downloads = env.get_workflow_failed_downloads(args.name)
 
             if failed_downloads:
                 print("\n⚠️  Resolution partially complete:")
@@ -3861,12 +3762,10 @@ packages = []
         use_yes = getattr(args, 'yes', False)
 
         # Ensure backend is configured (same as sync/run commands)
-        had_backend = env.pytorch_manager.has_backend()
-        if not had_backend:
+        selection = env.ensure_torch_backend()
+        if selection.was_probed:
             print("⚠️  No PyTorch backend configured. Auto-detecting...")
-            python_version = self._get_python_version(env)
-            backend = env.pytorch_manager.ensure_backend(python_version)
-            print(f"✓ Backend detected and saved: {backend}")
+            print(f"✓ Backend detected and saved: {selection.backend}")
             print("   To change: cg env-config torch-backend set <backend>\n")
 
         status = env.get_manager_status()

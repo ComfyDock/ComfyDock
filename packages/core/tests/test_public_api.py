@@ -101,6 +101,7 @@ def test_common_adapter_types_are_public():
         CDRegistryDataError,
         CDWorkspaceNotFoundError,
         DependencyCriticality,
+        DependencyGroupRemovalResult,
         EnvironmentManifestSnapshot,
         EnvironmentReadiness,
         EnvironmentStatus,
@@ -118,12 +119,18 @@ def test_common_adapter_types_are_public():
         ModelSourceCandidate,
         NodeInstallCallbacks,
         NodeResolutionContext,
+        OverlayActivationResult,
+        OverlayTemplateResult,
         ReadinessBlockingIssueType,
         ReadinessEnvironment,
         ReadinessGitStatusReader,
         ReadinessWorkflowStatusReader,
         RefDiff,
         ResolutionResult,
+        TorchBackendDetection,
+        TorchBackendSelection,
+        TorchBackendStatus,
+        UVCommandContext,
         UVCommandError,
         WorkflowAnalysisStatus,
         WorkflowExecutionContract,
@@ -138,6 +145,7 @@ def test_common_adapter_types_are_public():
     assert CDRegistryDataError.__name__ == "CDRegistryDataError"
     assert CDWorkspaceNotFoundError.__name__ == "CDWorkspaceNotFoundError"
     assert DependencyCriticality is not None
+    assert DependencyGroupRemovalResult.__name__ == "DependencyGroupRemovalResult"
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
@@ -155,6 +163,8 @@ def test_common_adapter_types_are_public():
     assert ModelSourceCandidate.__name__ == "ModelSourceCandidate"
     assert NodeInstallCallbacks.__name__ == "NodeInstallCallbacks"
     assert NodeResolutionContext.__name__ == "NodeResolutionContext"
+    assert OverlayActivationResult.__name__ == "OverlayActivationResult"
+    assert OverlayTemplateResult.__name__ == "OverlayTemplateResult"
     assert ConfirmationStrategy.__name__ == "ConfirmationStrategy"
     assert RefDiff.__name__ == "RefDiff"
     assert ReadinessBlockingIssueType is not None
@@ -162,6 +172,10 @@ def test_common_adapter_types_are_public():
     assert ReadinessGitStatusReader.__name__ == "ReadinessGitStatusReader"
     assert ReadinessWorkflowStatusReader.__name__ == "ReadinessWorkflowStatusReader"
     assert ResolutionResult.__name__ == "ResolutionResult"
+    assert TorchBackendDetection.__name__ == "TorchBackendDetection"
+    assert TorchBackendSelection.__name__ == "TorchBackendSelection"
+    assert TorchBackendStatus.__name__ == "TorchBackendStatus"
+    assert UVCommandContext.__name__ == "UVCommandContext"
     assert UVCommandError.__name__ == "UVCommandError"
     assert WorkflowAnalysisStatus.__name__ == "WorkflowAnalysisStatus"
     assert WorkflowExecutionContract.__name__ == "WorkflowExecutionContract"
