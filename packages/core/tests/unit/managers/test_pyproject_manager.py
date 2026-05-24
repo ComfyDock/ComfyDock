@@ -435,8 +435,8 @@ class TestWorkflowExecutionContractLoading:
         assert "req123" in content
         assert "opt456" in content
 
-    def test_remove_all_models_cleans_sections(self, temp_pyproject):
-        """Test removing all models cleans up empty sections."""
+    def test_cleanup_orphaned_models_cleans_sections(self, temp_pyproject):
+        """Test orphan cleanup removes the empty global model section."""
         from comfygit_core.models.manifest import ManifestModel
         manager = PyprojectManager(temp_pyproject)
 
@@ -446,9 +446,8 @@ class TestWorkflowExecutionContractLoading:
         manager.models.add_model(model1)
         manager.models.add_model(model2)
 
-        # Remove all models
-        manager.models.remove_model("hash1")
-        manager.models.remove_model("hash2")
+        # Remove all unreferenced models
+        manager.models.cleanup_orphans()
 
         # Read the raw TOML output
         with open(temp_pyproject) as f:
@@ -1094,76 +1093,6 @@ class TestInitialPyprojectConfig:
 
 class TestExcludeDependencies:
     """Test exclude-dependencies handling in UV config."""
-
-    def test_ensure_exclude_dependencies_adds_new(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies adds new packages."""
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add exclude dependencies
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "some-other-package"])
-
-        # Read config
-        with open(temp_pyproject) as f:
-            content = f.read()
-
-        # Verify exclusions added
-        assert "[tool.uv]" in content
-        assert "exclude-dependencies" in content
-        assert "opencv-python" in content
-        assert "some-other-package" in content
-
-    def test_ensure_exclude_dependencies_idempotent(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies is idempotent."""
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add exclusions twice
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
-
-        # Load config
-        config = manager.load()
-        exclusions = config['tool']['uv'].get('exclude-dependencies', [])
-
-        # Should only appear once
-        assert exclusions.count("opencv-python") == 1
-
-    def test_ensure_exclude_dependencies_merges_with_existing(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies merges with existing exclusions."""
-        # Manually create config with existing exclusions
-        initial_config = {
-            "project": {
-                "name": "test-project",
-                "version": "0.1.0",
-                "requires-python": ">=3.11",
-                "dependencies": [],
-            },
-            "tool": {
-                "comfygit": {
-                    "comfyui_version": "v0.3.60",
-                    "python_version": "3.11",
-                },
-                "uv": {
-                    "exclude-dependencies": ["existing-package"]
-                }
-            }
-        }
-
-        with open(temp_pyproject, 'w') as f:
-            tomlkit.dump(initial_config, f)
-
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add new exclusions
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "existing-package"])
-
-        # Load config
-        config = manager.load()
-        exclusions = config['tool']['uv']['exclude-dependencies']
-
-        # Should have both, no duplicates
-        assert len(exclusions) == 2
-        assert "existing-package" in exclusions
-        assert "opencv-python" in exclusions
 
     def test_set_exclude_dependencies_replaces_existing(self, temp_pyproject):
         """set_exclude_dependencies should replace, not merge."""

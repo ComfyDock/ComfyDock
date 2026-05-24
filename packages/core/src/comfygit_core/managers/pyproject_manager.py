@@ -474,36 +474,6 @@ class PyprojectManager:
         # Replace the comfygit table
         config['tool']['comfygit'] = new_table
 
-    def get_manifest_state(self) -> str:
-        """Get the current manifest state.
-
-        Returns:
-            'local' or 'exportable'
-        """
-        config = self.load()
-        if 'tool' in config and 'comfygit' in config['tool']:
-            return config['tool']['comfygit'].get('manifest_state', 'local')
-        return 'local'
-
-    def set_manifest_state(self, state: str) -> None:
-        """Set the manifest state.
-
-        Args:
-            state: 'local' or 'exportable'
-        """
-        if state not in ('local', 'exportable'):
-            raise ValueError(f"Invalid manifest state: {state}")
-
-        config = self.load()
-        if 'tool' not in config:
-            config['tool'] = {}
-        if 'comfygit' not in config['tool']:
-            config['tool']['comfygit'] = {}
-
-        config['tool']['comfygit']['manifest_state'] = state
-        self.save(config)
-        logger.info(f"Set manifest state to: {state}")
-
     @staticmethod
     def _normalize_extra(extra: str) -> str:
         """Normalize optional extras for comparison."""
@@ -1274,29 +1244,6 @@ class UVConfigHandler(BaseHandler):
         config['tool']['uv']['constraint-dependencies'] = constraints
         self.save(config)
 
-    def add_override(self, package: str) -> None:
-        """Add an override dependency to [tool.uv]."""
-        config = self.load()
-        self.ensure_section(config, 'tool', 'uv')
-
-        overrides = config['tool']['uv'].get('override-dependencies', [])
-        if not isinstance(overrides, list):
-            overrides = [overrides] if overrides else []
-
-        pkg_name = self._extract_package_name(package)
-
-        for i, existing in enumerate(overrides):
-            if self._extract_package_name(existing) == pkg_name:
-                logger.info(f"Updating override: {existing} -> {package}")
-                overrides[i] = package
-                break
-        else:
-            logger.info(f"Adding override: {package}")
-            overrides.append(package)
-
-        config['tool']['uv']['override-dependencies'] = overrides
-        self.save(config)
-
     def add_no_build_isolation_package(self, package_name: str) -> None:
         """Add package to no-build-isolation-package list."""
         config = self.load()
@@ -1526,27 +1473,6 @@ class UVConfigHandler(BaseHandler):
             group_deps.append(package)
             logger.info(f"Added '{package}' to group '{group}'")
 
-    def ensure_exclude_dependencies(self, packages: list[str]) -> None:
-        """Ensure packages are in exclude-dependencies list.
-
-        Called during sync to ensure exclusions are applied even for
-        environments created before this feature.
-
-        Args:
-            packages: List of package names to exclude
-        """
-        config = self.load()
-        self.ensure_section(config, 'tool', 'uv')
-
-        current = set(config['tool']['uv'].get('exclude-dependencies', []))
-        to_add = set(packages) - current
-
-        if to_add:
-            all_exclusions = sorted(current | set(packages))
-            config['tool']['uv']['exclude-dependencies'] = all_exclusions
-            self.save(config)
-            logger.info(f"Added package exclusions: {sorted(to_add)}")
-
     def set_exclude_dependencies(self, packages: list[str]) -> None:
         """Set exclude-dependencies list, replacing any existing values.
 
@@ -1595,22 +1521,6 @@ class NodeHandler(BaseHandler):
 
         logger.info(f"Added custom node: {identifier}")
         self.save(config)
-
-    def add_development(self, name: str) -> None:
-        """Add a development node (version='dev')."""
-        from ..models.shared import NodeInfo
-        node_info = NodeInfo(
-            name=name,
-            version='dev',
-            source='development'
-        )
-        self.add(node_info, name)
-
-    # def is_development(self, identifier: str) -> bool:
-    #     """Check if a node is a development node."""
-    #     nodes = self.get_existing()
-    #     node = nodes.get(identifier)
-    #     return node and hasattr(node, 'version') and node.version == 'dev'
 
     def get_existing(self) -> dict[str, NodeInfo]:
         """Get all existing custom nodes from pyproject.toml."""
@@ -1738,13 +1648,6 @@ class WorkflowHandler(BaseHandler):
         except Exception:
             logger.error(f"Failed to load config for workflow: {name}")
             return None
-
-    def add_workflow(self, name: str) -> None:
-        """Add a new workflow to the pyproject.toml."""
-        config = self.load()
-        self._ensure_workflow_entry(config, name)
-        logger.info(f"Added new workflow: {name}")
-        self.save(config)
 
     def get_execution_contract(
         self,
@@ -1957,21 +1860,6 @@ class WorkflowHandler(BaseHandler):
 
         if not is_batch:
             self.save(config)
-
-    def clear_workflow_resolutions(self, name: str) -> bool:
-        """Clear model resolutions for a workflow."""
-        config = self.load()
-        workflows = config.get('tool', {}).get('comfygit', {}).get('workflows', {})
-
-        if name not in workflows:
-            return False
-
-        del workflows[name]
-        # Clean up empty sections
-        self.clean_empty_sections(config, 'tool', 'comfygit', 'workflows')
-        self.save(config)
-        logger.info(f"Cleared model resolutions for workflow: {name}")
-        return True
 
     # === Per-workflow custom_node_map methods ===
 
@@ -2218,36 +2106,6 @@ class ModelHandler(BaseHandler):
         except Exception as e:
             logger.warning(f"Error getting model by hash {model_hash}: {e}")
             return None
-
-    def remove_model(self, model_hash: str) -> bool:
-        """Remove a model from the manifest.
-
-        Args:
-            model_hash: Model hash to remove
-
-        Returns:
-            True if removed, False if not found
-        """
-        config = self.load()
-        models = config.get("tool", {}).get("comfygit", {}).get("models", {})
-
-        if model_hash in models:
-            del models[model_hash]
-            self.save(config)
-            logger.debug(f"Removed model: {model_hash[:8]}...")
-            return True
-
-        return False
-
-    def get_all_model_hashes(self) -> set[str]:
-        """Get all model hashes in manifest.
-
-        Returns:
-            Set of all model hashes
-        """
-        config = self.load()
-        models = config.get("tool", {}).get("comfygit", {}).get("models", {})
-        return set(models.keys())
 
     def cleanup_orphans(self, config: dict | None = None) -> None:
         """Remove models from global table that aren't referenced by any workflow.

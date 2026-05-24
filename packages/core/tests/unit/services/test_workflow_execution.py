@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.workflow_contract import (
     NamedWorkflowContract,
@@ -220,7 +219,6 @@ def test_build_manifest_contract_prompt_loads_workflow_from_snapshot(tmp_path: P
             handle,
         )
     manager = PyprojectManager(pyproject_path)
-    manager.workflows.add_workflow("simple")
     manager.workflows.set_execution_contract(
         "simple",
         WorkflowExecutionContract(
@@ -262,7 +260,6 @@ def test_build_manifest_contract_prompt_requires_stored_api_prompt(tmp_path: Pat
             handle,
         )
     manager = PyprojectManager(pyproject_path)
-    manager.workflows.add_workflow("simple")
     manager.workflows.set_execution_contract(
         "simple",
         WorkflowExecutionContract(contracts={"default": _contract()}),

@@ -123,7 +123,10 @@ class TestPhase2ExportChanges:
         (dev_node_path / "requirements.txt").write_text("torch>=2.0.0")
 
         # Track as dev node
-        test_env.pyproject.nodes.add_development("my-dev-node")
+        test_env.pyproject.nodes.add(
+            NodeInfo(name="my-dev-node", version="dev", source="development"),
+            "my-dev-node",
+        )
 
         # Commit to make environment exportable
         workflow_status = test_env.workflow_manager.get_workflow_status()
@@ -163,7 +166,10 @@ class TestPhase2ExportChanges:
         )
 
         # Track as dev node (should auto-detect git info during export)
-        test_env.pyproject.nodes.add_development("my-git-node")
+        test_env.pyproject.nodes.add(
+            NodeInfo(name="my-git-node", version="dev", source="development"),
+            "my-git-node",
+        )
 
         # Commit environment
         workflow_status = test_env.workflow_manager.get_workflow_status()
@@ -376,7 +382,10 @@ class TestPhase4RollbackChanges:
         (dev_node_path / "nodes.py").write_text("# original code")
 
         # Track as dev node and commit
-        test_env.pyproject.nodes.add_development("my-dev-node")
+        test_env.pyproject.nodes.add(
+            NodeInfo(name="my-dev-node", version="dev", source="development"),
+            "my-dev-node",
+        )
         workflow_status = test_env.workflow_manager.get_workflow_status()
         test_env.execute_commit(workflow_status, message="Add dev node")
 
@@ -445,7 +454,10 @@ class TestPhase4RollbackChanges:
         (dev_node_path / "nodes.py").write_text("# dev code")
 
         # Track as dev node
-        test_env.pyproject.nodes.add_development("my-dev-node")
+        test_env.pyproject.nodes.add(
+            NodeInfo(name="my-dev-node", version="dev", source="development"),
+            "my-dev-node",
+        )
 
         # Verify it's tracked
         nodes = test_env.pyproject.nodes.get_existing()
