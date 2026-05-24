@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from ..models.manifest import (
-    EnvironmentManifestSnapshot,
     ManifestModel,
     ManifestWorkflowModel,
 )
@@ -20,7 +19,6 @@ from ..models.readiness import (
     ReadinessBlockingIssue,
     ReadinessContext,
     ReadinessEnvironment,
-    ReadinessModelSourceReader,
     ReadinessWarnings,
 )
 from ..models.shared import NodeInfo
@@ -35,23 +33,6 @@ def _resolve_manifest_artifact_path(manifest_dir: Path, relative_path: str) -> P
             f"Contract API prompt path must be relative to the manifest: {relative_path}"
         )
     return manifest_dir / path
-
-
-def _safe_list(value: object) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, dict):
-        return list(value.values())
-    if isinstance(value, list):
-        return value
-    if isinstance(value, tuple | set):
-        return list(value)
-    if isinstance(value, Iterable) and not isinstance(value, str):
-        try:
-            return list(value)
-        except TypeError:
-            return []
-    return []
 
 
 def _safe_str(value: object) -> str | None:
@@ -99,37 +80,6 @@ def node_provenance_reason(node: NodeInfo) -> str:
     return "Node source is unknown."
 
 
-class _WorkspaceModelSourceReader:
-    """Adapter from Workspace model-source APIs to readiness source hints."""
-
-    def __init__(self, workspace: object) -> None:
-        self._workspace = workspace
-
-    def get_model_source_candidates(
-        self,
-        model_hash: str,
-    ) -> tuple[ModelSourceCandidate, ...]:
-        sources = self._get_sources(model_hash)
-        candidates: list[ModelSourceCandidate] = []
-        seen_urls: set[str] = set()
-        for source in sources:
-            candidate = _source_to_candidate(source)
-            if candidate is None or candidate.url in seen_urls:
-                continue
-            seen_urls.add(candidate.url)
-            candidates.append(candidate)
-        return tuple(candidates)
-
-    def _get_sources(self, model_hash: str) -> list[Any]:
-        get_model_sources = getattr(self._workspace, "get_model_sources", None)
-        if callable(get_model_sources):
-            try:
-                return _safe_list(get_model_sources(model_hash))
-            except Exception:
-                return []
-        return []
-
-
 def _source_to_candidate(source: object) -> ModelSourceCandidate | None:
     if isinstance(source, ModelSourceCandidate):
         return source
@@ -145,22 +95,6 @@ def _source_to_candidate(source: object) -> ModelSourceCandidate | None:
     return ModelSourceCandidate(type=source_type, url=url)
 
 
-def _source_reader_from_workspace(workspace: object | None) -> ReadinessModelSourceReader | None:
-    if workspace is None:
-        return None
-    return _WorkspaceModelSourceReader(workspace)
-
-
-def _manifest_snapshot_from_env(env: ReadinessEnvironment) -> EnvironmentManifestSnapshot:
-    get_manifest_snapshot = getattr(env, "get_manifest_snapshot", None)
-    if callable(get_manifest_snapshot):
-        return cast(EnvironmentManifestSnapshot, get_manifest_snapshot())
-
-    raise TypeError(
-        "Readiness checks require an Environment with get_manifest_snapshot()."
-    )
-
-
 def build_readiness_context(
     env: ReadinessEnvironment,
     *,
@@ -171,15 +105,15 @@ def build_readiness_context(
     has_uncommitted_git_changes = False
 
     if include_blocking:
-        workflow_status = env.workflow_manager.get_workflow_status()
-        has_uncommitted_git_changes = env.git_manager.has_uncommitted_changes()
+        workflow_status = env.get_workflow_status()
+        has_uncommitted_git_changes = env.has_uncommitted_git_changes()
 
     return ReadinessContext(
-        manifest=_manifest_snapshot_from_env(env),
+        manifest=env.get_manifest_snapshot(),
         manifest_dir=Path(env.cec_path),
         workflow_status=workflow_status,
         has_uncommitted_git_changes=has_uncommitted_git_changes,
-        model_source_reader=_source_reader_from_workspace(getattr(env, "workspace", None)),
+        model_source_reader=env,
     )
 
 

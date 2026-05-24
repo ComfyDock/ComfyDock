@@ -100,8 +100,9 @@ parallel policy implementations.
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
 custom-node exclusions without Manager- or CLI-specific UI decisions. Workflow
-source candidate discovery and deploy/build integration remain follow-on
-work.
+source candidate discovery now routes through public Environment/Workspace
+facades instead of manager reach-throughs. Deploy/build integration remains
+follow-on work.
 
 ## Portable Environment Contract
 

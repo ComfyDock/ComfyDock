@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 from comfygit_core.models.manifest import (
     EnvironmentManifestSnapshot,
@@ -16,6 +17,7 @@ from comfygit_core.models.readiness import (
     ModelSourceWarning,
     NodeProvenanceWarning,
     ReadinessContext,
+    ReadinessWorkflowStatus,
 )
 from comfygit_core.models.shared import NodeInfo
 from comfygit_core.models.workflow_contract import WorkflowExecutionContract
@@ -35,48 +37,35 @@ class FakeSourceReader:
         return self._sources_by_hash.get(model_hash, [])
 
 
-class FakeWorkspace:
-    def __init__(self, sources_by_hash=None):
-        self._sources_by_hash = sources_by_hash or {}
-
-    def get_model_sources(self, model_hash: str):
-        return self._sources_by_hash.get(model_hash, [])
-
-
-class FakeGitManager:
-    def __init__(self, has_changes=False):
-        self._has_changes = has_changes
-
-    def has_uncommitted_changes(self):
-        return self._has_changes
-
-
-class FakeWorkflowManager:
-    def __init__(self, status):
-        self._status = status
-
-    def get_workflow_status(self):
-        return self._status
-
-
 class FakeEnvironment:
     def __init__(
         self,
         *,
         snapshot: EnvironmentManifestSnapshot,
         cec_path: Path,
-        workspace: FakeWorkspace,
-        workflow_manager: FakeWorkflowManager,
-        git_manager: FakeGitManager,
+        model_sources=None,
+        workflow_status=None,
+        has_git_changes: bool = False,
     ) -> None:
         self._snapshot = snapshot
         self.cec_path = cec_path
-        self.workspace = workspace
-        self.workflow_manager = workflow_manager
-        self.git_manager = git_manager
+        self._model_sources = model_sources or {}
+        self._workflow_status = workflow_status
+        self._has_git_changes = has_git_changes
 
     def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
         return self._snapshot
+
+    def get_workflow_status(self) -> ReadinessWorkflowStatus:
+        if self._workflow_status is None:
+            raise AssertionError("workflow status was not configured")
+        return cast(ReadinessWorkflowStatus, self._workflow_status)
+
+    def has_uncommitted_git_changes(self) -> bool:
+        return self._has_git_changes
+
+    def get_model_source_candidates(self, model_hash: str):
+        return self._model_sources.get(model_hash, [])
 
 
 def make_node(
@@ -209,9 +198,9 @@ def make_env(
     return FakeEnvironment(
         snapshot=snapshot,
         cec_path=cec_path or Path("."),
-        workspace=FakeWorkspace(model_sources),
-        workflow_manager=FakeWorkflowManager(workflow_status),
-        git_manager=FakeGitManager(has_changes=git_changes),
+        model_sources=model_sources,
+        workflow_status=workflow_status,
+        has_git_changes=git_changes,
     )
 
 
@@ -335,7 +324,7 @@ def test_indexed_model_sources_are_reported_as_repair_candidates():
     ]
 
 
-def test_environment_adapter_uses_workspace_model_source_facade():
+def test_environment_adapter_uses_public_model_source_candidate_facade():
     model = make_model(filename="checkpoint.safetensors", hash="abc123", sources=[])
     sync_status = SimpleNamespace(
         has_changes=False,

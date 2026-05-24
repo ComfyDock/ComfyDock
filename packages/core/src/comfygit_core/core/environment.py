@@ -89,7 +89,7 @@ if TYPE_CHECKING:
         ManifestWorkflowModel,
     )
     from ..models.merge_plan import MergeResult, MergeValidation
-    from ..models.readiness import EnvironmentReadiness
+    from ..models.readiness import EnvironmentReadiness, ModelSourceCandidate
     from ..models.workflow import (
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,
@@ -2671,6 +2671,23 @@ class Environment:
     def get_workflow_custom_node_map(self, workflow_name: str) -> Mapping[str, str | bool]:
         """Return custom-node mappings declared for a workflow in the manifest."""
         return self.get_manifest_snapshot().get_workflow_custom_node_map(workflow_name)
+
+    def has_uncommitted_git_changes(self) -> bool:
+        """Return whether the tracked environment repository has uncommitted changes."""
+        return self.git_manager.has_uncommitted_changes()
+
+    def get_model_source_candidates(self, model_hash: str) -> tuple[ModelSourceCandidate, ...]:
+        """Return indexed model source hints in readiness candidate form."""
+        from ..models.readiness import ModelSourceCandidate
+
+        candidates: list[ModelSourceCandidate] = []
+        seen_urls: set[str] = set()
+        for source in self.workspace.get_model_sources(model_hash):
+            if not source.url or source.url in seen_urls:
+                continue
+            seen_urls.add(source.url)
+            candidates.append(ModelSourceCandidate(type=source.type, url=source.url))
+        return tuple(candidates)
 
     @_requires_env_lock
     def get_readiness(self, *, include_blocking: bool = True) -> EnvironmentReadiness:
