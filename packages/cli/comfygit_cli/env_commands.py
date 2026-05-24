@@ -3503,7 +3503,7 @@ class EnvironmentCommands:
 
         # Choose strategy
         if args.auto:
-            from comfygit_core.strategies.auto import AutoModelStrategy, AutoNodeStrategy
+            from comfygit_core.workflow import AutoModelStrategy, AutoNodeStrategy
             node_strategy = AutoNodeStrategy()
             model_strategy = AutoModelStrategy()
         else:

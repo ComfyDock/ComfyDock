@@ -77,7 +77,8 @@ Environment command adapters now use facade methods for local PyTorch backend
 selection, overlays, runtime Python lookup, manifest display, dependency group
 mutation, and workflow model dependency edits. Workspace-level config/download
 configuration now uses Workspace facade methods for Civitai, Hugging Face,
-GitHub, and external UV cache settings. Provider-specific deployment
+GitHub, external UV cache settings, model download path suggestion, and model
+download execution. Provider-specific deployment
 credentials such as retired RunPod keys are not part of core workspace
 configuration. Workspace model-index adapter calls now use Workspace facade
 methods for indexed source management, source lookup, hash completion, indexed

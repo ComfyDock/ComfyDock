@@ -1385,19 +1385,17 @@ class GlobalCommands:
         try:
             # Get models directory
             models_dir = self.workspace.get_models_directory()
-            downloader = self.workspace.model_downloader
 
             # Determine target path
             if args.path:
                 # User specified explicit path
                 suggested_path = Path(args.path)
             elif args.category:
-                # User specified category - extract filename from URL
-                filename = downloader._extract_filename(url, None)
-                suggested_path = Path(args.category) / filename
+                # User specified category - keep the filename from the URL
+                suggested_path = self.workspace.suggest_model_download_path(url, category=args.category)
             else:
                 # Auto-suggest based on URL/filename
-                suggested_path = downloader.suggest_path(url, node_type=None, filename_hint=None)
+                suggested_path = self.workspace.suggest_model_download_path(url)
 
             # Path confirmation loop (unless --yes)
             while not args.yes:
@@ -1434,7 +1432,7 @@ class GlobalCommands:
             # Download with progress callback
             print(f"\n📥 Downloading to: {suggested_path}")
             progress_callback = create_progress_callback()
-            result = downloader.download(request, progress_callback=progress_callback)
+            result = self.workspace.download_model_request(request, progress_callback=progress_callback)
             print()  # New line after progress
 
             # Handle result

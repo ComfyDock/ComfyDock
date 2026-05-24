@@ -2,10 +2,10 @@
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from comfygit_core.repositories.comfyui_builtin_versions_repository import (
     ComfyUIBuiltinVersionsRepository,
@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from ..models.git import GitRemoteRefs
     from ..models.protocols import EnvironmentCreateProgress, ImportCallbacks
     from ..models.shared import LegacyCleanupResult
+    from ..services.model_downloader import DownloadRequest, DownloadResult
 
 logger = get_logger(__name__)
 
@@ -452,6 +453,33 @@ class Workspace:
             model_repository=self.model_repository,
             workspace_config=self.workspace_config_manager
         )
+
+    def suggest_model_download_path(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        node_type: str | None = None,
+        filename_hint: str | None = None,
+    ) -> Path:
+        """Suggest a model path relative to the configured models directory."""
+        if category:
+            filename = self.model_downloader._extract_filename(url, filename_hint)
+            return Path(category) / filename
+
+        return self.model_downloader.suggest_path(
+            url,
+            node_type=node_type,
+            filename_hint=filename_hint,
+        )
+
+    def download_model_request(
+        self,
+        request: "DownloadRequest",
+        progress_callback: Callable[[int, int], Any] | None = None,
+    ) -> "DownloadResult":
+        """Download a model and index it in the workspace model repository."""
+        return self.model_downloader.download(request, progress_callback=progress_callback)
 
     @cached_property
     def import_analyzer(self):

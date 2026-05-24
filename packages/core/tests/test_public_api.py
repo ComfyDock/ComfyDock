@@ -32,6 +32,8 @@ def test_workspace_public_constructors_are_available():
     assert callable(Workspace.set_github_token)
     assert callable(Workspace.get_external_uv_cache)
     assert callable(Workspace.set_external_uv_cache)
+    assert callable(Workspace.suggest_model_download_path)
+    assert callable(Workspace.download_model_request)
 
 
 def test_environment_public_git_facade_methods_are_available():
@@ -96,6 +98,13 @@ def test_public_facade_modules_export_declared_symbols():
             assert hasattr(module, export_name), (
                 f"{module_name} export '{export_name}' is declared but not importable"
             )
+
+
+def test_runtime_public_helpers_are_available():
+    """Adapters should not need low-level uv integration imports for runtime setup."""
+    from comfygit_core.runtime import create_uv_venv
+
+    assert callable(create_uv_venv)
 
 
 def test_common_adapter_types_are_public():

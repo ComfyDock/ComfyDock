@@ -15,11 +15,6 @@ PUBLIC_CORE_IMPORTS = {
     "comfygit_core.workflow",
 }
 
-TEMPORARY_INTERNAL_IMPORTS = {
-    # TODO: move auto strategy ownership behind Environment.resolve_workflow(mode=\"auto\").
-    "comfygit_core.strategies.auto",
-}
-
 DISALLOWED_ENV_REACH_THROUGH_ATTRS = {
     "git_manager",
     "model_manager",
@@ -53,7 +48,7 @@ def test_cli_runtime_uses_public_core_facades_or_temporary_allowlist():
 
     for path in sorted(cli_root.rglob("*.py")):
         for module, line in _core_imports(path):
-            if module in PUBLIC_CORE_IMPORTS or module in TEMPORARY_INTERNAL_IMPORTS:
+            if module in PUBLIC_CORE_IMPORTS:
                 continue
             violations.append(f"{path.relative_to(cli_root.parent)}:{line}: {module}")
 
