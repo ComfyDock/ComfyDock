@@ -86,45 +86,93 @@ class PyprojectManager:
         self,
         dependency: str = "uv>=0.11.8",
         group: str = "comfygit-system",
-    ) -> None:
-        """Ensure uv remains a ComfyGit-managed system tool."""
+    ) -> bool:
+        """Ensure uv remains a ComfyGit-managed system tool.
+
+        Returns:
+            True when the manifest changed, False when it already matched.
+        """
         config = self.load()
+        changed = False
 
-        if 'dependency-groups' not in config:
+        if not isinstance(config.get('dependency-groups'), dict):
             config['dependency-groups'] = tomlkit.table()
-        if group not in config['dependency-groups']:
-            config['dependency-groups'][group] = []
+            changed = True
 
-        group_deps = config['dependency-groups'][group]
-        if not isinstance(group_deps, list):
-            group_deps = [group_deps] if group_deps else []
+        def _as_dependency_list(value: Any) -> list[Any]:
+            if value is None:
+                return []
+            if isinstance(value, str):
+                return [value]
+            try:
+                return list(value)
+            except TypeError:
+                return [value]
+
+        def _is_list_like(value: Any) -> bool:
+            return not isinstance(value, str) and hasattr(value, "__iter__") and hasattr(value, "append")
+
+        def _same_dependencies(left: list[Any], right: list[Any]) -> bool:
+            return [str(item) for item in left] == [str(item) for item in right]
 
         def _name(spec: str) -> str:
             return self.uv_config._extract_package_name(spec)
 
-        group_deps = [dep for dep in group_deps if _name(str(dep)) != "uv"]
-        group_deps.append(dependency)
-        config['dependency-groups'][group] = group_deps
+        dependency_groups = cast(dict, config['dependency-groups'])
+        existing_group_value = dependency_groups.get(group)
+        group_deps = _as_dependency_list(existing_group_value)
+        desired_group_deps = [dep for dep in group_deps if _name(str(dep)) != "uv"]
+        desired_group_deps.append(dependency)
+        if (
+            group not in dependency_groups
+            or not _is_list_like(existing_group_value)
+            or not _same_dependencies(group_deps, desired_group_deps)
+        ):
+            dependency_groups[group] = desired_group_deps
+            changed = True
 
-        self.uv_config.ensure_section(config, 'tool', 'uv')
+        tool_config = config.get('tool')
+        if not isinstance(tool_config, dict):
+            tool_config = tomlkit.table()
+            config['tool'] = tool_config
+            changed = True
+        uv_config = tool_config.get('uv')
+        if not isinstance(uv_config, dict):
+            uv_config = tomlkit.table()
+            tool_config['uv'] = uv_config
+            changed = True
+        uv_config = cast(dict, uv_config)
 
-        constraints = config['tool']['uv'].get('constraint-dependencies', [])
-        if not isinstance(constraints, list):
-            constraints = [constraints] if constraints else []
-        constraints = [item for item in constraints if _name(str(item)) != "uv"]
-        if constraints:
-            config['tool']['uv']['constraint-dependencies'] = constraints
-        else:
-            config['tool']['uv'].pop('constraint-dependencies', None)
+        if 'constraint-dependencies' in uv_config:
+            constraints = _as_dependency_list(uv_config.get('constraint-dependencies'))
+            desired_constraints = [item for item in constraints if _name(str(item)) != "uv"]
+            if desired_constraints:
+                if (
+                    not _is_list_like(uv_config.get('constraint-dependencies'))
+                    or not _same_dependencies(constraints, desired_constraints)
+                ):
+                    uv_config['constraint-dependencies'] = desired_constraints
+                    changed = True
+            else:
+                uv_config.pop('constraint-dependencies', None)
+                changed = True
 
-        overrides = config['tool']['uv'].get('override-dependencies', [])
-        if not isinstance(overrides, list):
-            overrides = [overrides] if overrides else []
-        overrides = [item for item in overrides if _name(str(item)) != "uv"]
-        overrides.append(dependency)
-        config['tool']['uv']['override-dependencies'] = overrides
+        existing_override_value = uv_config.get('override-dependencies')
+        overrides = _as_dependency_list(existing_override_value)
+        desired_overrides = [item for item in overrides if _name(str(item)) != "uv"]
+        desired_overrides.append(dependency)
+        if (
+            'override-dependencies' not in uv_config
+            or not _is_list_like(existing_override_value)
+            or not _same_dependencies(overrides, desired_overrides)
+        ):
+            uv_config['override-dependencies'] = desired_overrides
+            changed = True
 
-        self.save(config)
+        if changed:
+            self.save(config)
+
+        return changed
 
     def exists(self) -> bool:
         """Check if the pyproject.toml file exists."""

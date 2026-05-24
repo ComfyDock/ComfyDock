@@ -805,6 +805,64 @@ class TestPyprojectCaching:
         assert manager2.get_load_stats()['instance_loads'] == 1
 
 
+class TestSystemUVDependency:
+    """Test ComfyGit-managed uv dependency invariants."""
+
+    def test_ensure_system_uv_dependency_adds_required_manifest_state(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        changed = manager.ensure_system_uv_dependency()
+
+        assert changed is True
+        config = manager.load()
+        assert config["dependency-groups"]["comfygit-system"] == ["uv>=0.11.8"]
+        assert config["tool"]["uv"]["override-dependencies"] == ["uv>=0.11.8"]
+        assert "constraint-dependencies" not in config["tool"]["uv"]
+
+    def test_ensure_system_uv_dependency_noop_preserves_cache_and_file(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        PyprojectManager.reset_load_stats()
+
+        assert manager.ensure_system_uv_dependency() is True
+        cached_config = manager.load()
+        loads_after_cache_fill = manager.get_load_stats()["instance_loads"]
+        bytes_before = temp_pyproject.read_bytes()
+        mtime_before = temp_pyproject.stat().st_mtime_ns
+
+        assert manager.ensure_system_uv_dependency() is False
+
+        assert temp_pyproject.read_bytes() == bytes_before
+        assert temp_pyproject.stat().st_mtime_ns == mtime_before
+        assert manager.get_load_stats()["instance_loads"] == loads_after_cache_fill
+        assert manager.load() is cached_config
+
+    def test_ensure_system_uv_dependency_repairs_conflicting_uv_entries(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["dependency-groups"] = {
+            "comfygit-system": ["uv==0.10.0", "example-package>=1"],
+        }
+        config["tool"]["uv"] = {
+            "constraint-dependencies": ["uv<0.11", "numpy>=2"],
+            "override-dependencies": ["requests>=2", "uv==0.10.0"],
+        }
+        manager.save(config)
+
+        changed = manager.ensure_system_uv_dependency()
+
+        assert changed is True
+        config = manager.load(force_reload=True)
+        assert config["dependency-groups"]["comfygit-system"] == [
+            "example-package>=1",
+            "uv>=0.11.8",
+        ]
+        assert config["tool"]["uv"]["constraint-dependencies"] == ["numpy>=2"]
+        assert config["tool"]["uv"]["override-dependencies"] == [
+            "requests>=2",
+            "uv>=0.11.8",
+        ]
+
+
 class TestUVConfigFormatting:
     """Test that UV config operations produce consistent TOML formatting."""
 
