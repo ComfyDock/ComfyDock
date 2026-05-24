@@ -24,7 +24,7 @@ from pathlib import Path
 # Add parent dir to path for conftest import
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from comfygit_core.models.manifest import NamedWorkflowContract, WorkflowExecutionContract
+from comfygit_core.models.workflow_contract import NamedWorkflowContract, WorkflowExecutionContract
 from conftest import simulate_comfyui_save_workflow
 from helpers.model_index_builder import ModelIndexBuilder
 from helpers.pyproject_assertions import PyprojectAssertions

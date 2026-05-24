@@ -6,6 +6,8 @@ import pytest
 import tomlkit
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
+from comfygit_core.manifest import overlays as manifest_overlays
+from comfygit_core.manifest.overlays import extract_dependency_key
 from comfygit_core.models.overlay import OverlayConfig
 
 
@@ -176,11 +178,10 @@ def test_pytorch_overlay_strips_existing_pytorch_before_apply(tmp_path):
 def test_extract_dependency_key_handles_dotted_distribution_names(tmp_path):
     pyproject_path = tmp_path / "pyproject.toml"
     _create_pyproject(pyproject_path)
-    manager = PyprojectManager(pyproject_path)
 
-    assert manager._extract_dependency_key("zope.interface>=5") == "zope-interface"
-    assert manager._extract_dependency_key("jaraco.functools") == "jaraco-functools"
-    assert manager._extract_dependency_key("requests>=2.31") == "requests"
+    assert extract_dependency_key("zope.interface>=5") == "zope-interface"
+    assert extract_dependency_key("jaraco.functools") == "jaraco-functools"
+    assert extract_dependency_key("requests>=2.31") == "requests"
 
 
 def test_overlay_dependency_replaces_base_when_name_is_dotted(tmp_path):
@@ -291,7 +292,7 @@ def test_overlay_materialization_failure_logs_redacted_summary_without_secret_le
     def fail_apply(*_args, **_kwargs):
         raise RuntimeError("forced failure")
 
-    monkeypatch.setattr(manager, "_inject_overlay_payload", fail_apply)
+    monkeypatch.setattr(manifest_overlays, "inject_overlay_payload", fail_apply)
 
     with pytest.raises(RuntimeError, match="forced failure"):
         manager.apply_uv_overlays([overlay])

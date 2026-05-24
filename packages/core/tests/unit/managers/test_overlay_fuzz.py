@@ -10,6 +10,7 @@ import tomlkit
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.uv_project_manager import UVProjectManager
+from comfygit_core.manifest import overlays as manifest_overlays
 from comfygit_core.models.overlay import OverlayConfig
 
 
@@ -401,7 +402,7 @@ def test_materialization_leaves_file_unchanged_when_overlay_application_fails(tm
     def fail_apply(*_args, **_kwargs):
         raise RuntimeError("forced failure")
 
-    monkeypatch.setattr(manager, "_inject_overlay_payload", fail_apply)
+    monkeypatch.setattr(manifest_overlays, "inject_overlay_payload", fail_apply)
 
     with pytest.raises(RuntimeError, match="forced failure"):
         manager.apply_uv_overlays([overlay])

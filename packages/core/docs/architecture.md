@@ -43,6 +43,7 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 | **models/** | Public typed contracts | Exported data classes, protocols, exceptions with context |
 | **readiness.py**, **workflow.py**, **runtime.py**, **assets.py**, **git.py** | Public facades | Reusable domain helpers promoted for adapters |
 | **managers/** | Orchestration | Environment orchestrators (Git, Model), Resource managers (Node, Workflow, Model symlinks), Config managers (PyProject, UV, PyTorch backend) |
+| **manifest/** | Internal manifest abstraction | Pyproject-backed store, section handlers, edit helpers, overlay materialization, migration cleanup |
 | **analyzers/** | Analysis | Parse workflows/git/status; classify nodes |
 | **resolvers/** | Resolution | Map workflow nodes to packages; resolve model sources |
 | **services/** | Business logic | Lookup, registry, downloads, import analysis |
@@ -98,6 +99,13 @@ Low-level resolvers, managers, repositories, factories, and utilities are
 implementation details unless re-exported through a public facade module.
 Adapters should import from `comfygit_core`, `comfygit_core.models`, or the
 explicit facade modules instead of deep implementation paths.
+
+The `manifest/` package is the internal boundary around the current
+`pyproject.toml` implementation. `PyprojectManager` remains the compatibility
+facade for existing core internals, but document storage, section ownership,
+overlay materialization, and disposable uv project sync should live behind
+manifest helpers. New callers should prefer `Environment.get_manifest_snapshot()`
+or the public Environment/Workspace facade methods instead of reading raw TOML.
 
 ## Dependencies
 

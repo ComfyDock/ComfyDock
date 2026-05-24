@@ -803,6 +803,84 @@ class TestPyprojectCaching:
         assert manager1.get_load_stats()['instance_loads'] == 1
         assert manager2.get_load_stats()['instance_loads'] == 1
 
+    def test_edit_saves_once_on_success(self, temp_pyproject):
+        """edit() should save mutations when the context exits successfully."""
+        manager = PyprojectManager(temp_pyproject)
+
+        with manager.edit() as config:
+            config["project"]["version"] = "2.0.0"
+
+        assert manager.load(force_reload=True)["project"]["version"] == "2.0.0"
+
+    def test_edit_failure_invalidates_cache_without_saving(self, temp_pyproject):
+        """Failed edit() contexts should not leave mutated cache state behind."""
+        manager = PyprojectManager(temp_pyproject)
+        original = temp_pyproject.read_text(encoding="utf-8")
+        manager.load()
+
+        with pytest.raises(RuntimeError, match="forced edit failure"):
+            with manager.edit() as config:
+                config["project"]["version"] = "9.9.9"
+                raise RuntimeError("forced edit failure")
+
+        assert temp_pyproject.read_text(encoding="utf-8") == original
+        assert manager.load()["project"]["version"] == "0.1.0"
+
+    def test_edit_batches_handler_mutations(self, temp_pyproject, monkeypatch):
+        """Handlers that accept a config can participate in one manifest save."""
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+
+        manager = PyprojectManager(temp_pyproject)
+        original_save = manager.save
+        save_count = 0
+
+        def counting_save(config):
+            nonlocal save_count
+            save_count += 1
+            original_save(config)
+
+        monkeypatch.setattr(manager, "save", counting_save)
+
+        with manager.edit() as config:
+            manager.workflows.set_workflow_models(
+                "batch-workflow",
+                [
+                    ManifestWorkflowModel(
+                        filename="model.safetensors",
+                        category="checkpoints",
+                        criticality="required",
+                        status="resolved",
+                        hash="abc123",
+                        nodes=[
+                            WorkflowNodeWidgetRef(
+                                node_id="1",
+                                node_type="CheckpointLoaderSimple",
+                                widget_index=0,
+                                widget_value="model.safetensors",
+                            )
+                        ],
+                    )
+                ],
+                config=config,
+            )
+            manager.models.add_model(
+                ManifestModel(
+                    hash="abc123",
+                    filename="model.safetensors",
+                    size=1024,
+                    relative_path="checkpoints/model.safetensors",
+                    category="checkpoints",
+                ),
+                config=config,
+            )
+            manager.models.cleanup_orphans(config=config)
+
+        assert save_count == 1
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        assert "batch-workflow" in snapshot.workflows
+        assert "abc123" in snapshot.models
+
 
 class TestSystemUVDependency:
     """Test ComfyGit-managed uv dependency invariants."""

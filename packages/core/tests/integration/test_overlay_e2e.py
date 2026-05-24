@@ -31,7 +31,9 @@ def _capture_disposable_sync(test_env, observe) -> None:
             observe(materialized)
             return SimpleNamespace(stdout="ok")
 
-    test_env.uv_manager.uv = _FakeUV()
+    fake_uv = _FakeUV()
+    test_env.uv_manager.uv = fake_uv
+    test_env.uv_manager.disposable_project.uv = fake_uv
 
 
 def test_full_sync_cycle_with_shared_overlay_materializes_then_keeps_tracked_manifest_clean(test_env):

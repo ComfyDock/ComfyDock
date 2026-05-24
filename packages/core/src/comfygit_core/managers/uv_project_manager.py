@@ -1,7 +1,6 @@
 """UV project management with smart orchestration and pyproject.toml coordination."""
 from __future__ import annotations
 
-import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..managers.overlay_manager import OverlayManager
+from ..manifest.disposable_project import DisposableUvProject
 from ..models.exceptions import CDPyprojectError, UVCommandError
 
 if TYPE_CHECKING:
@@ -20,9 +20,6 @@ logger = get_logger(__name__)
 
 class UVProjectManager:
     """High-level UV project management with smart workflows and pyproject.toml coordination."""
-
-    TEMP_PROJECT_ROOT = ".comfygit-tmp"
-    TEMP_PROJECT_PREFIX = "uv-project-"
 
     # Marker translations for converting requirements.txt to pyproject.toml format
     MARKER_TRANSLATIONS = {
@@ -50,6 +47,7 @@ class UVProjectManager:
         self.overlay_manager = overlay_manager or OverlayManager(
             self.pyproject.path.parent
         )
+        self.disposable_project = DisposableUvProject(self.pyproject, self.uv)
 
     # ===== Properties =====
 
@@ -64,131 +62,6 @@ class UVProjectManager:
     @property
     def binary(self) -> str:
         return self.uv.binary
-
-    # ===== Disposable Project Operations =====
-
-    @property
-    def _temporary_projects_path(self) -> Path:
-        return self.project_path / self.TEMP_PROJECT_ROOT
-
-    def _cleanup_stale_temporary_projects(self) -> None:
-        temp_root = self._temporary_projects_path
-        if not temp_root.exists():
-            return
-
-        for child in temp_root.iterdir():
-            if child.is_dir() and child.name.startswith(self.TEMP_PROJECT_PREFIX):
-                shutil.rmtree(child, ignore_errors=True)
-
-    def _copy_project_runtime_inputs(self, target_path: Path) -> None:
-        """Copy the files uv may need to resolve a disposable project.
-
-        The copied pyproject.toml may be mutated with overlays. The source
-        project remains the portable truth and is never edited by this helper.
-        """
-        target_path.mkdir(parents=True, exist_ok=True)
-
-        for filename in (
-            "pyproject.toml",
-            "uv.lock",
-            ".python-version",
-            "package_config.toml",
-            ".pytorch-backend",
-            ".overlay-config.toml",
-            ".local-uv-config",
-        ):
-            source = self.project_path / filename
-            if source.exists() and source.is_file():
-                shutil.copy2(source, target_path / filename)
-
-        overlays_source = self.project_path / "overlays"
-        if overlays_source.exists() and overlays_source.is_dir():
-            shutil.copytree(overlays_source, target_path / "overlays", dirs_exist_ok=True)
-
-    def _make_disposable_project(self) -> tuple[Path, PyprojectManager]:
-        self._cleanup_stale_temporary_projects()
-        self._temporary_projects_path.mkdir(parents=True, exist_ok=True)
-        temp_path = Path(
-            tempfile.mkdtemp(
-                prefix=self.TEMP_PROJECT_PREFIX,
-                dir=self._temporary_projects_path,
-            )
-        )
-        self._copy_project_runtime_inputs(temp_path)
-        return temp_path, type(self.pyproject)(temp_path / "pyproject.toml")
-
-    def _absolutize_relative_source_paths(self, pyproject: PyprojectManager) -> None:
-        """Make relative uv source paths in the temp copy resolve like the real project.
-
-        uv resolves relative ``tool.uv.sources.*.path`` entries from the project
-        directory it is invoked in. Disposable projects run from a temp
-        directory, so temp-only materialized config must preserve the old meaning by
-        converting relative source paths to absolute paths rooted at the real
-        environment ``.cec`` directory.
-        """
-        config = pyproject.load()
-        sources = (
-            config.get("tool", {})
-            .get("uv", {})
-            .get("sources", {})
-        )
-        if not isinstance(sources, dict):
-            return
-
-        changed = False
-
-        def rewrite(source_config: dict) -> None:
-            nonlocal changed
-            path_value = source_config.get("path")
-            if not isinstance(path_value, str):
-                return
-            path = Path(path_value)
-            if path.is_absolute():
-                return
-            source_config["path"] = str((self.project_path / path).resolve())
-            changed = True
-
-        for source_config in sources.values():
-            if isinstance(source_config, dict):
-                rewrite(source_config)
-            elif isinstance(source_config, list):
-                for item in source_config:
-                    if isinstance(item, dict):
-                        rewrite(item)
-
-        if changed:
-            pyproject.save(config)
-
-    def _copy_runtime_lock_from_disposable_project(self, temp_path: Path) -> None:
-        temp_lock = temp_path / "uv.lock"
-        if not temp_lock.exists():
-            return
-        shutil.copy2(temp_lock, self.project_path / "uv.lock")
-
-    def _sync_with_disposable_project(
-        self,
-        overlays,
-        *,
-        verbose: bool = False,
-        extras: list[str] | None = None,
-        all_extras: bool = False,
-        **flags,
-    ) -> str:
-        temp_path, temp_pyproject = self._make_disposable_project()
-        try:
-            temp_pyproject.apply_uv_overlays(overlays)
-            self._absolutize_relative_source_paths(temp_pyproject)
-            temp_uv = self.uv.for_cwd(temp_path)
-            result = temp_uv.sync(
-                verbose=verbose,
-                extra=extras,
-                all_extras=all_extras,
-                **flags,
-            )
-            self._copy_runtime_lock_from_disposable_project(temp_path)
-            return result.stdout
-        finally:
-            shutil.rmtree(temp_path, ignore_errors=True)
 
     # ===== Basic Operations =====
 
@@ -394,7 +267,7 @@ class UVProjectManager:
         )
 
         if overlays:
-            return self._sync_with_disposable_project(
+            return self.disposable_project.sync(
                 overlays,
                 verbose=verbose,
                 extras=extras,
