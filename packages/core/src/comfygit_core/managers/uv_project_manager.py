@@ -176,17 +176,17 @@ class UVProjectManager:
     ) -> str:
         temp_path, temp_pyproject = self._make_disposable_project()
         try:
-            with temp_pyproject.uv_injection_context(overlays=overlays):
-                self._absolutize_relative_source_paths(temp_pyproject)
-                temp_uv = self.uv.for_cwd(temp_path)
-                result = temp_uv.sync(
-                    verbose=verbose,
-                    extra=extras,
-                    all_extras=all_extras,
-                    **flags,
-                )
-                self._copy_runtime_lock_from_disposable_project(temp_path)
-                return result.stdout
+            temp_pyproject.apply_uv_overlays(overlays)
+            self._absolutize_relative_source_paths(temp_pyproject)
+            temp_uv = self.uv.for_cwd(temp_path)
+            result = temp_uv.sync(
+                verbose=verbose,
+                extra=extras,
+                all_extras=all_extras,
+                **flags,
+            )
+            self._copy_runtime_lock_from_disposable_project(temp_path)
+            return result.stdout
         finally:
             shutil.rmtree(temp_path, ignore_errors=True)
 

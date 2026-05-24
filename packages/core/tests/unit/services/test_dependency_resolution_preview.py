@@ -60,7 +60,7 @@ def test_package_version_change_properties_group_by_kind():
     assert [change.name for change in preview.upgraded] == ["d"]
 
 
-def test_lock_temp_project_injects_overlays_pytorch_backend_and_restores_pyproject(
+def test_lock_temp_project_materializes_overlays_and_pytorch_backend(
     tmp_path,
     monkeypatch,
 ):
@@ -126,7 +126,7 @@ packages = ["click<8.2"]
     assert "torchvision==0.26.0+cu126" in observed["content"]
     assert "example-lib==1.2.3" in observed["content"]
     assert "click<8.2" in observed["content"]
-    assert pyproject.read_text(encoding="utf-8") == original
+    assert pyproject.read_text(encoding="utf-8") == observed["content"]
 
 
 def test_copy_project_files_includes_overlay_activation_config(tmp_path):

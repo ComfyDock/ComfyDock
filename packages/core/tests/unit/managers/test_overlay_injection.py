@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 import tomlkit
-
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.models.overlay import OverlayConfig
@@ -79,6 +78,30 @@ def test_overlay_injection_supports_all_fields_and_restores_file(tmp_path):
 
     restored = pyproject_path.read_text(encoding="utf-8")
     assert restored == original
+
+
+def test_apply_uv_overlays_persists_materialized_config(tmp_path):
+    pyproject_path = tmp_path / "pyproject.toml"
+    _create_pyproject(pyproject_path)
+    manager = PyprojectManager(pyproject_path)
+
+    overlay = OverlayConfig(
+        name="direct",
+        path=tmp_path / "direct.toml",
+        dependencies=["requests>=2.31"],
+        sources={"requests": {"index": "custom"}},
+        indexes=[{"name": "custom", "url": "https://example.com/simple", "explicit": True}],
+    )
+
+    manager.apply_uv_overlays([overlay])
+
+    materialized = manager.load(force_reload=True)
+    deps = materialized["project"]["dependencies"]
+    uv_cfg = materialized["tool"]["uv"]
+
+    assert "requests>=2.31" in deps
+    assert uv_cfg["sources"]["requests"]["index"] == "custom"
+    assert any(index["name"] == "custom" for index in uv_cfg["index"])
 
 
 def test_overlay_injection_last_wins_with_pep503_normalization(tmp_path):
@@ -281,7 +304,7 @@ def test_injection_failure_logs_redacted_summary_without_secret_leak(tmp_path, c
     assert "Overlays:" in log_output
     assert "private-overlay" in log_output
     assert "Overlay field summary:" in log_output
-    assert "Injection error: RuntimeError: forced failure" in log_output
+    assert "Overlay application error: RuntimeError: forced failure" in log_output
     assert "secret-token" not in log_output
     assert "Injected config:" not in log_output
     assert "[project]" not in log_output

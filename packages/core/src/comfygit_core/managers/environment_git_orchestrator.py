@@ -305,8 +305,8 @@ class EnvironmentGitOrchestrator:
         # Reload pyproject
         self.pyproject.reset_lazy_handlers()
 
-        # NOTE: UV overlay injection (local/active/CLI + PyTorch) is handled by
-        # uv_injection_context(), which restores original pyproject.toml after sync.
+        # NOTE: UV overlays are materialized into a disposable project copy
+        # during sync, so local/PyTorch config does not mutate tracked truth.
 
         new_nodes = self.pyproject.nodes.get_existing()
 

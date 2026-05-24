@@ -10,7 +10,7 @@ import re
 import threading
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import tomlkit
 from packaging.requirements import Requirement
@@ -627,6 +627,70 @@ class PyprojectManager:
             if count > 0
         }
 
+    def _log_overlay_application_failure(
+        self,
+        effective_overlays: list[OverlayConfig],
+        exc: Exception,
+    ) -> None:
+        logger.error("=== UV Overlay Application Failure ===")
+        logger.error(
+            "Overlays: %s",
+            [overlay.name for overlay in effective_overlays],
+        )
+        try:
+            summary = self._summarize_modified_overlay_fields(effective_overlays)
+        except Exception:
+            summary = {}
+        logger.error("Overlay field summary: %s", summary)
+        logger.error("Overlay application error: %s: %s", type(exc).__name__, exc)
+
+    def _apply_uv_overlays_to_config(
+        self,
+        config: dict,
+        effective_overlays: list[OverlayConfig],
+    ) -> None:
+        if not effective_overlays:
+            return
+
+        self._sanitize_workflow_contracts_for_toml(config)
+
+        # Strip tracked local path sources before local overlays are applied.
+        if any(overlay.is_local for overlay in effective_overlays):
+            self._strip_local_path_sources_from_config(config)
+
+        from ..constants import PYTORCH_CORE_PACKAGES
+        for overlay in effective_overlays:
+            if overlay.kind == "pytorch":
+                self._strip_pytorch_config_from_config(config, set(PYTORCH_CORE_PACKAGES))
+
+            payload = overlay.to_injection_payload()
+            self._inject_overlay_payload(config, payload)
+
+    def apply_uv_overlays(
+        self,
+        overlays: list[OverlayConfig] | None = None,
+    ) -> None:
+        """Persist overlay-derived UV configuration into this pyproject.
+
+        Use this for disposable or generated project files where the overlay
+        materialization itself is the desired file state. Callers that need
+        temporary mutation of a durable manifest should continue using
+        ``uv_injection_context`` until those flows are migrated.
+        """
+        effective_overlays = list(overlays or [])
+
+        if not effective_overlays:
+            return
+
+        with self._get_injection_lock():
+            try:
+                config = self.load()
+                self._apply_uv_overlays_to_config(config, effective_overlays)
+                self.save(config)
+            except Exception as exc:
+                self._log_overlay_application_failure(effective_overlays, exc)
+                raise
+
     def uv_injection_context(
         self,
         overlays: list[OverlayConfig] | None = None,
@@ -656,34 +720,13 @@ class PyprojectManager:
                         original_content = self.path.read_text(encoding="utf-8")
                         config = self.load(force_reload=True)
 
-                    # Strip tracked local path sources before local overlays are applied.
-                    if any(overlay.is_local for overlay in effective_overlays):
-                        self._strip_local_path_sources_from_config(config)
-
-                    from ..constants import PYTORCH_CORE_PACKAGES
-                    for overlay in effective_overlays:
-                        if overlay.kind == "pytorch":
-                            self._strip_pytorch_config_from_config(config, PYTORCH_CORE_PACKAGES)
-
-                        payload = overlay.to_injection_payload()
-                        self._inject_overlay_payload(config, payload)
-
+                    self._apply_uv_overlays_to_config(config, effective_overlays)
                     self.save(config)
 
                     yield
 
                 except Exception as exc:
-                    logger.error("=== UV Sync Failure ===")
-                    logger.error(
-                        "Overlays: %s",
-                        [overlay.name for overlay in effective_overlays],
-                    )
-                    try:
-                        summary = self._summarize_modified_overlay_fields(effective_overlays)
-                    except Exception:
-                        summary = {}
-                    logger.error("Overlay field summary: %s", summary)
-                    logger.error("Injection error: %s: %s", type(exc).__name__, exc)
+                    self._log_overlay_application_failure(effective_overlays, exc)
                     raise
 
                 finally:
@@ -843,7 +886,8 @@ class PyprojectManager:
             config['tool'] = tomlkit.table()
         if 'comfygit' not in config['tool']:
             config['tool']['comfygit'] = tomlkit.table()
-        config['tool']['comfygit']['schema_version'] = 2
+        comfygit_config = cast(dict[str, Any], config['tool']['comfygit'])
+        comfygit_config['schema_version'] = 2
         self.save(config)
 
         # Verify the save worked
@@ -940,7 +984,7 @@ class PyprojectManager:
                 return normalized_requirement.lower()
             return canonicalize_name(match.group(1))
 
-    def _to_aot(self, values: list[dict]) -> tomlkit.items.AoT:
+    def _to_aot(self, values: list[dict]) -> Any:
         aot = tomlkit.aot()
         for value in values:
             table = tomlkit.table()
@@ -998,7 +1042,7 @@ class PyprojectManager:
         if 'uv' not in config['tool']:
             config['tool']['uv'] = tomlkit.table()
 
-        uv_config = config['tool']['uv']
+        uv_config = cast(dict[str, Any], config['tool']['uv'])
 
         existing_indexes = uv_config.get('index', [])
         if not isinstance(existing_indexes, list):
@@ -1016,18 +1060,19 @@ class PyprojectManager:
             existing_sources = {}
         if 'sources' not in uv_config:
             uv_config['sources'] = tomlkit.table()
+        uv_sources = cast(dict[str, Any], uv_config['sources'])
         for package_name, source in payload.get('sources', {}).items():
             source_key = canonicalize_name(package_name)
             existing_key = next(
                 (
-                    key for key in list(uv_config['sources'].keys())
+                    key for key in list(uv_sources.keys())
                     if canonicalize_name(key) == source_key
                 ),
                 None,
             )
             if existing_key and existing_key != package_name:
-                del uv_config['sources'][existing_key]
-            uv_config['sources'][package_name] = source
+                del uv_sources[existing_key]
+            uv_sources[package_name] = source
 
         constraints = [c for c in payload.get('constraints', []) if isinstance(c, str)]
         if constraints:

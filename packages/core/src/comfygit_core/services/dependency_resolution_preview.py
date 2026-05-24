@@ -182,8 +182,8 @@ class DependencyResolutionPreviewService:
 
         overlays = overlay_manager.collect_overlays(pytorch_config=pytorch_config)
         if overlays:
-            with pyproject.uv_injection_context(overlays=overlays):
-                uv.lock()
+            pyproject.apply_uv_overlays(overlays)
+            uv.lock()
             return
 
         uv.lock()
