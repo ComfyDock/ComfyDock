@@ -6,7 +6,10 @@ especially for UV-based Python projects.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+import time
+import traceback
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -211,9 +214,6 @@ class PyprojectManager:
             CDPyprojectNotFoundError: If the file doesn't exist
             CDPyprojectInvalidError: If the file is empty or invalid
         """
-        import time
-        import traceback
-
         if not self.exists():
             raise CDPyprojectNotFoundError(f"pyproject.toml not found at {self.path}")
 
@@ -231,13 +231,14 @@ class PyprojectManager:
         PyprojectManager._total_load_calls += 1
         self._instance_load_calls += 1
 
-        # Get caller info for tracking where loads are coming from
-        stack = traceback.extract_stack()
-        caller_frame = stack[-2] if len(stack) >= 2 else None
-        caller_info = f"{caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}" if caller_frame else "unknown"
-
-        # Start timing
-        start_time = time.perf_counter()
+        debug_enabled = logger.isEnabledFor(logging.DEBUG)
+        start_time = 0.0
+        caller_info = "unknown"
+        if debug_enabled:
+            stack = traceback.extract_stack()
+            caller_frame = stack[-2] if len(stack) >= 2 else None
+            caller_info = f"{caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}" if caller_frame else "unknown"
+            start_time = time.perf_counter()
 
         try:
             with open(self.path, encoding='utf-8') as f:
@@ -252,15 +253,13 @@ class PyprojectManager:
         self._config_cache = config
         self._cache_mtime = current_mtime
 
-        # Calculate elapsed time
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-
-        # Log with detailed metrics
-        logger.debug(
-            f"[PYPROJECT LOAD #{self._instance_load_calls}/{PyprojectManager._total_load_calls}] "
-            f"Loaded pyproject.toml in {elapsed_ms:.2f}ms | "
-            f"Called from: {caller_info}"
-        )
+        if debug_enabled:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.debug(
+                f"[PYPROJECT LOAD #{self._instance_load_calls}/{PyprojectManager._total_load_calls}] "
+                f"Loaded pyproject.toml in {elapsed_ms:.2f}ms | "
+                f"Called from: {caller_info}"
+            )
 
         return config
 
