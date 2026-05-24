@@ -16,7 +16,7 @@ Validation: TEST
 
 Sync is allowed to recreate or replace the managed virtual environment. Users
 should not rely on manually installed packages surviving unless they are captured
-in manifest dependencies or local injection configuration.
+in manifest dependencies or local overlay configuration.
 
 ### CGSYNC-LIFE-03 [LIVE]: Run syncs unless explicitly bypassed
 Validation: TEST
@@ -198,17 +198,16 @@ same first-class reviewed apply flow.
 
 ## Local Configuration And Overlays
 
-### CGSYNC-LOCAL-01 [PARTIAL]: Overlay injection is temporary local dependency configuration
+### CGSYNC-LOCAL-01 [LIVE]: Overlay materialization is disposable local dependency configuration
 Validation: TEST
 
-Local, shared, stock, and PyTorch overlays may temporarily inject dependencies,
-sources, indexes, constraints, and uv settings during uv resolution.
+Local, shared, stock, and PyTorch overlays may materialize dependencies,
+sources, indexes, constraints, and uv settings only in disposable uv project
+copies during uv resolution.
 `overlays/.local.toml` and `.overlay-config.toml` are machine-local activation
 state; shared non-local overlays may be portable source files.
 
-The current implementation restores the tracked `pyproject.toml` after
-process-local injection, but that is not crash-safe. The target behavior is that
-overlay application never mutates the tracked manifest file for sync/run
+Overlay application must never mutate the tracked manifest file for sync/run
 resolution.
 
 ### CGSYNC-LOCAL-02 [LIVE]: Overlay collection order is deterministic and PyTorch wins last
@@ -228,12 +227,12 @@ should read or auto-probe the environment-local backend when no override is
 given. A `--torch-backend` override on those commands is a one-time sync input
 and should not rewrite the saved backend file.
 
-### CGSYNC-LOCAL-04 [PLANNED]: Overlay-aware uv resolution uses disposable project copies
+### CGSYNC-LOCAL-04 [LIVE]: Overlay-aware uv resolution uses disposable project copies
 Validation: TEST
 
 Sync, run-preflight sync, pull reconciliation, materialization, and other
 overlay-aware uv resolution paths should build a disposable project copy before
-running uv with injected local state. The disposable project should live under a
+running uv with materialized local state. The disposable project should live under a
 gitignored environment-local scratch directory such as `.cec/.comfygit-tmp/`,
 and each new operation should remove stale transaction directories before
 creating a fresh one.
@@ -275,7 +274,7 @@ For simple additive dependency writes, core may use uv in a manifest-only mode
 such as `uv add --frozen` when supported, then run normal overlay-aware sync.
 Operations that cannot be represented as a manifest-only uv edit should use an
 equivalent core-owned manifest mutation plus overlay-aware sync, rather than
-falling back to in-place overlay injection.
+mutating the tracked manifest with local overlay state.
 
 ## Git And Remote Flows
 
@@ -304,7 +303,7 @@ Validation: TEST
 Checkout, hard reset, branch switch, merge, revert, and pull should reconcile
 derived environment state after changing tracked `.cec` state. Reconciliation
 should reset manifest readers, reconcile custom-node filesystem state, sync uv
-with local PyTorch/overlay injection, and restore tracked workflows into ComfyUI.
+with local PyTorch/overlay materialization, and restore tracked workflows into ComfyUI.
 Branch switch may preserve uncommitted workflow edits only when the target branch
 does not overwrite them.
 

@@ -63,11 +63,11 @@ story.
   truth (`docs/contracts/core/CONTRACT.md:68`,
   `docs/specs/environment-manifest-model.md:100`).
 - Machine-local configuration is not committed manifest truth. PyTorch backend
-  and local uv/source overrides are injected during sync/run
+  and local uv/source overrides are materialized in disposable uv projects during sync/run
   (`docs/contracts/core/CONTRACT.md:61`,
   `docs/specs/environment-sync-lifecycle.md:218`).
 - `sync` may recreate the venv; manual package installs into `.venv` are
-  disposable unless captured in manifest dependencies or local injection config
+  disposable unless captured in manifest dependencies or local overlay config
   (`docs/specs/environment-sync-lifecycle.md:14`,
   `docs/contracts/core/CONTRACT.md:182`).
 - `run` syncs unless explicitly bypassed, forwards ComfyUI args, and supervises
@@ -76,7 +76,7 @@ story.
 - `repair` is meant to restore derived state from manifest, lockfile, and local
   config (`docs/specs/environment-sync-lifecycle.md:28`;
   `packages/cli/comfygit_cli/cli.py:720`).
-- Local overlays are temporary dependency injection. Local and activation files
+- Local overlays are disposable dependency materialization. Local and activation files
   are machine-local; shared non-local overlays may be portable source files
   (`docs/specs/environment-sync-lifecycle.md:199`,
   `packages/cli/comfygit_cli/cli.py:567`).
@@ -87,7 +87,7 @@ story.
   `packages/cli/comfygit_cli/cli.py:594`, `packages/cli/comfygit_cli/cli.py:743`,
   `packages/cli/comfygit_cli/cli.py:842`).
 - Git handoff operations such as checkout, reset, switch, merge, revert, and pull
-  should reconcile nodes, packages, uv state, local PyTorch/overlay injection, and
+  should reconcile nodes, packages, uv state, local PyTorch/overlay materialization, and
   workflows after tracked state changes (`docs/specs/environment-sync-lifecycle.md:242`,
   `docs/specs/environment-sync-lifecycle.md:248`).
 - Export bundles include portable recipe files, captured API prompts, workflows,
@@ -119,8 +119,8 @@ story.
   `docs/specs/environment-materialization-lifecycle.md:7`).
 - Concepts show PyTorch backend configuration as `[tool.uv]`/`[tool.uv.sources]`
   inside tracked `pyproject.toml` (`docs/comfygit-docs/docs/getting-started/concepts.md:193`).
-  Current behavior stores backend selection in `.pytorch-backend` and injects it
-  locally during sync/run (`docs/contracts/core/CONTRACT.md:61`;
+  Current behavior stores backend selection in `.pytorch-backend` and materializes it
+  locally in disposable sync projects (`docs/contracts/core/CONTRACT.md:61`;
   `packages/core/src/comfygit_core/factories/environment_factory.py:587`).
 - Environment creation says the default Python is 3.12
   (`docs/comfygit-docs/docs/user-guide/environments/creating-environments.md:21`),
@@ -129,7 +129,7 @@ story.
 - Creation internals say ComfyGit writes PyTorch download indexes to
   `pyproject.toml` (`docs/comfygit-docs/docs/user-guide/environments/creating-environments.md:252`).
   This should be rewritten around `.pytorch-backend`, generated PyTorch overlays,
-  and local injection.
+  and disposable local materialization.
 - Export/import says `uv.lock` is part of the export payload
   (`docs/comfygit-docs/docs/user-guide/collaboration/export-import.md:66`), but
   export code explicitly does not include it because PyTorch variants are

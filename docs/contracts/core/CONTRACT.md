@@ -251,7 +251,7 @@ Validation: TEST
 
 ComfyGit-managed environments use uv to resolve and sync Python dependencies.
 Manual package installs into the environment virtualenv are not durable unless
-captured in manifest dependency state or machine-local injection config.
+captured in manifest dependency state or machine-local overlay config.
 The `comfygit-system` dependency group owns uv as a ComfyGit-managed resolver
 tool and must keep it on a version new enough to support the manifest features
 ComfyGit writes, including dependency exclusions. Transitive packages may not

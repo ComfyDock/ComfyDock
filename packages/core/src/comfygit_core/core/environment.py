@@ -16,6 +16,7 @@ import tomlkit
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
+from ..constants import SYSTEM_DEPENDENCY_GROUP, SYSTEM_UV_DEPENDENCY
 from ..factories.uv_factory import create_uv_for_environment
 from ..logging.logging_config import get_logger
 from ..managers.environment_git_orchestrator import EnvironmentGitOrchestrator
@@ -31,7 +32,7 @@ from ..managers.uv_project_manager import UVProjectManager
 from ..managers.workflow_manager import WorkflowManager
 from ..models.environment import EnvironmentStatus
 from ..models.manifest import ManifestModel
-from ..models.overlay import OverlayConfig, OverlayInfo
+from ..models.overlay import OVERLAY_TEMPLATE, OverlayConfig, OverlayInfo
 from ..models.ref_diff import RefDiff
 from ..models.runtime_config import (
     DependencyGroupRemovalResult,
@@ -105,36 +106,6 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
-
-_OVERLAY_TEMPLATE = """[overlay]
-# description = "Describe this overlay"
-# kind = "pytorch"
-# requires = ["cuda"]
-
-[dependencies]
-packages = []
-
-[sources]
-# package-name = { git = "https://github.com/user/repo.git" }
-
-[settings]
-no-build-isolation-package = []
-override-dependencies = []
-environments = []
-
-# [[dependency-metadata]]
-# name = "package-name"
-# version = "1.0.0"
-# requires-dist = ["torch"]
-
-[constraints]
-packages = []
-
-# [[index]]
-# name = "custom-index"
-# url = "https://example.com/simple"
-# explicit = true
-"""
 
 
 def _workflow_api_prompt_relpath(workflow_name: str) -> Path:
@@ -440,9 +411,8 @@ class Environment:
                 scope=scope,
                 created=False,
             )
-
         overlay_path.parent.mkdir(parents=True, exist_ok=True)
-        overlay_path.write_text(_OVERLAY_TEMPLATE, encoding="utf-8")
+        overlay_path.write_text(OVERLAY_TEMPLATE, encoding="utf-8")
         return OverlayTemplateResult(
             name=name,
             path=overlay_path,
@@ -954,7 +924,7 @@ class Environment:
         """Migrate pyproject schema v1 → v2 if needed.
 
         Schema v1 has PyTorch config embedded in [tool.uv] section.
-        Schema v2 uses runtime injection from .pytorch-backend file.
+        Schema v2 materializes PyTorch config from .pytorch-backend only in disposable sync projects.
 
         This migration:
         1. Strips embedded [tool.uv] PyTorch config
@@ -1036,13 +1006,16 @@ class Environment:
         self.pyproject.uv_config.set_exclude_dependencies(
             self.package_config.exclude_packages
         )
-        self.pyproject.ensure_system_uv_dependency()
+        self.pyproject.ensure_system_uv_dependency(
+            dependency=SYSTEM_UV_DEPENDENCY,
+            group=SYSTEM_DEPENDENCY_GROUP,
+        )
 
         extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
 
         logger.info("Syncing environment...")
 
-        # Sync packages with UV - progressive installation with PyTorch injection
+        # Sync packages with UV - progressive installation with disposable overlay materialization.
         try:
             sync_result = self.uv_manager.sync_dependencies_progressive(
                 dry_run=dry_run,

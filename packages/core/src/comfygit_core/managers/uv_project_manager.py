@@ -122,7 +122,7 @@ class UVProjectManager:
 
         uv resolves relative ``tool.uv.sources.*.path`` entries from the project
         directory it is invoked in. Disposable projects run from a temp
-        directory, so temp-only injected config must preserve the old meaning by
+        directory, so temp-only materialized config must preserve the old meaning by
         converting relative source paths to absolute paths rooted at the real
         environment ``.cec`` directory.
         """
@@ -345,12 +345,12 @@ class UVProjectManager:
 
         Args:
             verbose: Show uv output in real-time
-            pytorch_manager: Optional PyTorch backend manager for temporary injection.
-                            If provided, PyTorch config is injected before sync and
-                            restored after (regardless of success/failure).
+            pytorch_manager: Optional PyTorch backend manager for disposable overlay materialization.
+                            If provided, PyTorch config is applied to the temporary
+                            sync project only.
                             Also forces reinstall of PyTorch packages to ensure correct backend.
             overlay_names: Optional one-time overlay names to include for this sync.
-            skip_optional_overlays: If True, only inject pytorch overlays and
+            skip_optional_overlays: If True, only apply pytorch overlays and
                                     skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
@@ -731,9 +731,9 @@ class UVProjectManager:
             dry_run: If True, don't actually install
             callbacks: Optional callbacks for progress reporting
             verbose: If True, show uv output in real-time
-            pytorch_manager: Optional PyTorch backend manager for temporary injection
+            pytorch_manager: Optional PyTorch backend manager for disposable overlay materialization
             overlay_names: Optional one-time overlay names for this sync
-            skip_optional_overlays: If True, only inject pytorch overlays and
+            skip_optional_overlays: If True, only apply pytorch overlays and
                                     skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install

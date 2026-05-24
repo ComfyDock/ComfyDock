@@ -50,7 +50,7 @@ def test_overlay_parses_all_supported_fields(tmp_path):
     )
 
     overlay = OverlayConfig.from_toml(path)
-    payload = overlay.to_injection_payload()
+    payload = overlay.to_uv_payload()
 
     assert overlay.name == "sageattention"
     assert overlay.is_local is False
@@ -96,7 +96,7 @@ def test_overlay_parses_dependencies_only(tmp_path):
     )
 
     overlay = OverlayConfig.from_toml(path)
-    payload = overlay.to_injection_payload()
+    payload = overlay.to_uv_payload()
 
     assert payload["dependencies"] == ["xformers", "triton>=3.0"]
     assert overlay.is_empty() is False

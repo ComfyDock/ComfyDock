@@ -1,4 +1,4 @@
-"""Manages .pytorch-backend file and PyTorch configuration injection."""
+"""Manages .pytorch-backend file and PyTorch overlay configuration."""
 from __future__ import annotations
 
 import re
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 
 class PyTorchBackendManager:
-    """Manages .pytorch-backend file and PyTorch configuration injection.
+    """Manages .pytorch-backend file and PyTorch overlay configuration.
 
     The .pytorch-backend file stores the user's PyTorch backend choice (e.g., cu128, cpu).
     This file is gitignored, allowing different machines to use different backends

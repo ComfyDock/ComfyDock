@@ -405,7 +405,7 @@ flowchart TB
 |---------|---------|
 | `PyprojectManager` | All pyproject.toml operations via 5 handlers (deps, nodes, uv, workflows, models) |
 | `UVProjectManager` | UV commands + pyproject coordination |
-| `PyTorchBackendManager` | .pytorch-backend file management and config injection |
+| `PyTorchBackendManager` | .pytorch-backend file management and overlay config generation |
 | `GitManager` | High-level git workflows (commit, pull, push, branch, merge) |
 
 #### Symlink Managers

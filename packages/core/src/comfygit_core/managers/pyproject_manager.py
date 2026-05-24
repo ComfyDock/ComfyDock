@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import threading
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -33,7 +32,6 @@ from ..models.overlay import OverlayConfig
 
 if TYPE_CHECKING:
     from ..models.shared import NodeInfo
-    from .pytorch_backend_manager import PyTorchBackendManager
 
 from ..utils.dependency_parser import parse_dependency_string
 
@@ -45,9 +43,6 @@ class PyprojectManager:
 
     # Class-level call counter for tracking total loads across all instances
     _total_load_calls = 0
-    # Serialize temporary UV injection per pyproject path across manager instances.
-    _injection_locks: dict[str, threading.RLock] = {}
-    _injection_locks_guard = threading.Lock()
 
     def __init__(self, pyproject_path: Path):
         """Initialize the PyprojectManager.
@@ -560,44 +555,6 @@ class PyprojectManager:
         self.reset_lazy_handlers()
         logger.debug("Restored pyproject.toml from snapshot")
 
-    def pytorch_injection_context(
-        self,
-        pytorch_manager: PyTorchBackendManager,
-        backend_override: str | None = None,
-    ):
-        """Context manager that temporarily injects PyTorch config during sync.
-
-        This pattern allows syncing with platform-specific PyTorch configuration
-        without persisting it to the tracked pyproject.toml.
-
-        Usage:
-            with pyproject.pytorch_injection_context(pytorch_manager):
-                uv.sync_project()  # Sync happens with PyTorch config injected
-
-        Args:
-            pytorch_manager: PyTorchBackendManager instance for config generation
-            backend_override: Override backend instead of reading from file (e.g., "cu128")
-
-        Yields:
-            None - the context manager just handles inject/restore
-        """
-        pytorch_overlay = self._pytorch_manager_to_overlay(
-            pytorch_manager,
-            backend_override=backend_override,
-        )
-        return self.uv_injection_context(
-            overlays=[pytorch_overlay] if pytorch_overlay else None,
-        )
-
-    def _get_injection_lock(self) -> threading.RLock:
-        path_key = str(self.path.resolve())
-        with self._injection_locks_guard:
-            lock = self._injection_locks.get(path_key)
-            if lock is None:
-                lock = threading.RLock()
-                self._injection_locks[path_key] = lock
-            return lock
-
     def _summarize_modified_overlay_fields(self, overlays: list[OverlayConfig]) -> dict[str, int]:
         summary = {
             "dependencies": 0,
@@ -611,7 +568,7 @@ class PyprojectManager:
         }
 
         for overlay in overlays:
-            payload = overlay.to_injection_payload()
+            payload = overlay.to_uv_payload()
             for key in summary:
                 value = payload.get(key)
                 if isinstance(value, dict):
@@ -663,7 +620,7 @@ class PyprojectManager:
             if overlay.kind == "pytorch":
                 self._strip_pytorch_config_from_config(config, set(PYTORCH_CORE_PACKAGES))
 
-            payload = overlay.to_injection_payload()
+            payload = overlay.to_uv_payload()
             self._inject_overlay_payload(config, payload)
 
     def apply_uv_overlays(
@@ -673,99 +630,22 @@ class PyprojectManager:
         """Persist overlay-derived UV configuration into this pyproject.
 
         Use this for disposable or generated project files where the overlay
-        materialization itself is the desired file state. Callers that need
-        temporary mutation of a durable manifest should continue using
-        ``uv_injection_context`` until those flows are migrated.
+        materialization itself is the desired file state. Durable tracked
+        manifests should not be passed here for local overlays; sync/run should
+        first copy them into a disposable project.
         """
         effective_overlays = list(overlays or [])
 
         if not effective_overlays:
             return
 
-        with self._get_injection_lock():
-            try:
-                config = self.load()
-                self._apply_uv_overlays_to_config(config, effective_overlays)
-                self.save(config)
-            except Exception as exc:
-                self._log_overlay_application_failure(effective_overlays, exc)
-                raise
-
-    def uv_injection_context(
-        self,
-        overlays: list[OverlayConfig] | None = None,
-    ):
-        """Context manager that temporarily injects UV config during sync.
-
-        Uses a unified overlay pipeline for all temporary injection.
-        """
-        from contextlib import contextmanager
-
-        @contextmanager
-        def _injection_context():
-            effective_overlays = list(overlays or [])
-
-            if not effective_overlays:
-                yield
-                return
-
-            with self._get_injection_lock():
-                # Capture original content before any modifications
-                original_content = self.path.read_text(encoding="utf-8")
-
-                try:
-                    config = self.load()
-                    if self._sanitize_workflow_contracts_for_toml(config):
-                        self.save(config)
-                        original_content = self.path.read_text(encoding="utf-8")
-                        config = self.load(force_reload=True)
-
-                    self._apply_uv_overlays_to_config(config, effective_overlays)
-                    self.save(config)
-
-                    yield
-
-                except Exception as exc:
-                    self._log_overlay_application_failure(effective_overlays, exc)
-                    raise
-
-                finally:
-                    # ALWAYS restore original content
-                    self.path.write_text(original_content, encoding="utf-8")
-                    # Invalidate cache to ensure fresh reads
-                    self._config_cache = None
-                    self._cache_mtime = None
-                    logger.debug("Restored original pyproject.toml after UV injection")
-
-        return _injection_context()
-
-    def _pytorch_manager_to_overlay(
-        self,
-        pytorch_manager: PyTorchBackendManager,
-        backend_override: str | None = None,
-    ) -> OverlayConfig | None:
-        config = self.load()
-        python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
-        pytorch_config = pytorch_manager.get_pytorch_config(
-            backend_override=backend_override,
-            python_version=python_version,
-        )
-        if not pytorch_config:
-            return None
-        return OverlayConfig(
-            name=".pytorch",
-            path=self.path.parent / ".pytorch-backend",
-            description="Auto-generated PyTorch backend overlay",
-            kind="pytorch",
-            requires=[],
-            is_local=True,
-            dependencies=[],
-            sources=dict(pytorch_config.get("sources", {})),
-            settings={},
-            dependency_metadata=[],
-            constraints=list(pytorch_config.get("constraints", [])),
-            indexes=list(pytorch_config.get("indexes", [])),
-        )
+        try:
+            config = self.load()
+            self._apply_uv_overlays_to_config(config, effective_overlays)
+            self.save(config)
+        except Exception as exc:
+            self._log_overlay_application_failure(effective_overlays, exc)
+            raise
 
     def strip_local_path_sources(self, config: dict | None = None) -> list[str]:
         """Remove uv sources with local filesystem paths.
@@ -852,7 +732,7 @@ class PyprojectManager:
         """Migrate from schema v1 to v2 by stripping embedded PyTorch config.
 
         Schema v1 had PyTorch config embedded in [tool.uv] section.
-        Schema v2 uses runtime injection from .pytorch-backend file.
+        Schema v2 materializes PyTorch config from .pytorch-backend only in disposable sync projects.
 
         This migration:
         1. Strips embedded [tool.uv] PyTorch config (indexes, sources, constraints)

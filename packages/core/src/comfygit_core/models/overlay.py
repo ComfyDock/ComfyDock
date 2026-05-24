@@ -1,15 +1,45 @@
 """Overlay configuration model and TOML parser."""
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tomllib
 from packaging.utils import canonicalize_name
 
 ALLOWED_OVERLAY_KINDS = {"pytorch", "shared", "local"}
 ALLOWED_OVERLAY_REQUIRES = {"cuda", "rocm"}
+
+OVERLAY_TEMPLATE = """[overlay]
+# description = "Describe this overlay"
+# kind = "pytorch"
+# requires = ["cuda"]
+
+[dependencies]
+packages = []
+
+[sources]
+# package-name = { git = "https://github.com/user/repo.git" }
+
+[settings]
+no-build-isolation-package = []
+override-dependencies = []
+environments = []
+
+# [[dependency-metadata]]
+# name = "package-name"
+# version = "1.0.0"
+# requires-dist = ["torch"]
+
+[constraints]
+packages = []
+
+# [[index]]
+# name = "custom-index"
+# url = "https://example.com/simple"
+# explicit = true
+"""
 
 
 def _as_dict(value: Any, field_name: str) -> dict[str, Any]:
@@ -173,8 +203,8 @@ class OverlayConfig:
             deduped.append(value)
         return deduped
 
-    def to_injection_payload(self) -> dict[str, Any]:
-        """Convert overlay config to pyproject injection payload."""
+    def to_uv_payload(self) -> dict[str, Any]:
+        """Convert overlay config to the UV pyproject payload."""
         no_build_isolation = _as_list_of_strings(
             self.settings.get("no-build-isolation-package"),
             "settings.no-build-isolation-package",
@@ -200,7 +230,7 @@ class OverlayConfig:
         }
 
     def is_empty(self) -> bool:
-        payload = self.to_injection_payload()
+        payload = self.to_uv_payload()
         return not any(
             payload[key]
             for key in (

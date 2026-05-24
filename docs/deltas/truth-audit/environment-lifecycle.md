@@ -29,8 +29,8 @@ normative contracts/specs.
   downloads skipped unless requested.
 - Sync is guarded by an environment operation lock. It migrates old PyTorch
   manifest config to local config, ensures gitignore entries for generated/local
-  files, ensures package config and ComfyGit-managed uv resolver floor, injects
-  overlays/PyTorch configuration temporarily during uv sync, reconciles nodes,
+  files, ensures package config and ComfyGit-managed uv resolver floor,
+  materializes overlays/PyTorch configuration in disposable uv projects, reconciles nodes,
   restores workflows, updates model links, and can resolve/download model intents
   according to strategy.
 - CLI `run` syncs before starting ComfyUI unless `--no-sync` is passed, reads or
@@ -44,7 +44,7 @@ normative contracts/specs.
   delegates to `env.sync()` to reconcile derived state from manifest/local config.
 - Git operations delegate to `EnvironmentGitOrchestrator`. Checkout, hard reset,
   switch, merge, and revert snapshot old node state, perform git, reset
-  `pyproject` handlers, reconcile nodes, uv-sync with PyTorch injection, and
+  `pyproject` handlers, reconcile nodes, uv-sync with disposable PyTorch overlays, and
   restore workflows. Branch switching can preserve uncommitted workflows when the
   target branch would not overwrite them.
 - Push requires a clean `.cec` git tree and blocks if referenced workflow API
@@ -55,7 +55,8 @@ normative contracts/specs.
   and local, `.overlay-config.toml` activates shared/stock overlays locally,
   and CLI `--overlay` adds one-time overlays. Collection order is deterministic:
   local, active overlays sorted by canonical name, CLI extras, then generated
-  PyTorch overlay. Injection is temporary and restores `pyproject.toml` after uv.
+  PyTorch overlay. Overlay materialization happens in disposable uv projects and
+  keeps tracked `pyproject.toml` clean.
 - Legacy `.local-uv-config` is migrated to `overlays/.local.toml` during overlay
   manager construction. Export/import and directory materialization copy shared
   overlays but exclude local overlay and local activation state.
@@ -132,12 +133,12 @@ normative contracts/specs.
 - PyTorch backend/local config:
   - `packages/cli/tests/test_torch_backend_cli.py`
   - `packages/core/tests/unit/managers/test_pytorch_backend_manager.py`
-  - `packages/core/tests/unit/managers/test_pytorch_injection.py`
+  - `packages/core/tests/unit/managers/test_pytorch_overlay_materialization.py`
   - `packages/core/tests/unit/managers/test_pytorch_stripping.py`
   - `packages/core/tests/integration/test_pytorch_reconfiguration.py`
 - Overlays/local UV sources:
   - `packages/core/tests/unit/managers/test_overlay_manager.py`
-  - `packages/core/tests/unit/managers/test_overlay_injection.py`
+  - `packages/core/tests/unit/managers/test_overlay_materialization.py`
   - `packages/core/tests/integration/test_overlay_e2e.py`
   - `packages/core/tests/integration/test_overlay_git_integration.py`
   - `packages/core/tests/integration/test_overlay_system_integration.py`
@@ -182,7 +183,7 @@ Partial or overly broad existing coverage:
 - `CGSPEC-LOCAL-02` says local UV sources are machine-local, but overlays are now
   the implementation model. The clause does not describe local/shared/stock
   overlays, activation state, deterministic merge order, platform requirements,
-  or temporary injection/restore.
+  or disposable materialization.
 - `CGCORE-MAN-03` covers derived runtime state generally, but completion markers
   and partial-environment cleanup/list filtering are important implemented
   lifecycle invariants not represented directly.
@@ -210,8 +211,8 @@ Partial or overly broad existing coverage:
 4. **Overlays are under-specified relative to current implementation.**
    The old "local UV sources" concept has become an overlay system. Current
    behavior includes shared overlays, local overlays, stock overlays, activation
-   config, platform requirement filtering, deterministic order, and temporary uv
-   injection. This should be promoted into a dedicated local-configuration spec
+   config, platform requirement filtering, deterministic order, and disposable uv
+   materialization. This should be promoted into a dedicated local-configuration spec
    section.
 
 5. **PyTorch CLI operation semantics are better tested than documented.**
@@ -297,19 +298,20 @@ Suggested evidence:
 - `packages/core/tests/unit/core/test_import_no_manager.py`
 - `packages/cli/tests/test_no_manager_flags.py`
 
-### CGSYNC-LOCAL-01 [LIVE]: Overlay injection is temporary local dependency configuration
+### CGSYNC-LOCAL-01 [LIVE]: Overlay materialization is disposable local dependency configuration
 Validation: TEST
 
-Local/shared/stock overlays and PyTorch backend configuration may temporarily
-inject dependencies, sources, indexes, constraints, and uv settings during uv
-resolution. Injection must restore the tracked `pyproject.toml` afterward.
+Local/shared/stock overlays and PyTorch backend configuration may materialize
+dependencies, sources, indexes, constraints, and uv settings only in disposable
+uv project copies during resolution. Materialization must not mutate the
+tracked `pyproject.toml`.
 `overlays/.local.toml` and `.overlay-config.toml` are machine-local activation
 state; shared non-local overlays may be portable source files.
 
 Suggested evidence:
 
 - `packages/core/tests/integration/test_overlay_e2e.py`
-- `packages/core/tests/unit/managers/test_overlay_injection.py`
+- `packages/core/tests/unit/managers/test_overlay_materialization.py`
 - `packages/core/tests/unit/managers/test_overlay_manager.py`
 
 ### CGSYNC-LOCAL-02 [LIVE]: Overlay collection order is deterministic and PyTorch wins last
@@ -346,7 +348,7 @@ Validation: TEST
 Checkout, hard reset, branch switch, merge, revert, and pull should reconcile
 derived environment state after changing tracked `.cec` state. Reconciliation
 should reset manifest readers, reconcile custom-node filesystem state, sync uv
-with local PyTorch/overlay injection, and restore tracked workflows into ComfyUI.
+with local PyTorch/overlay materialization, and restore tracked workflows into ComfyUI.
 Branch switch may preserve uncommitted workflow edits only when the target branch
 does not overwrite them.
 
@@ -424,7 +426,7 @@ Suggested evidence:
   `CGSYNC-GIT-04` so git operation specifics are not hidden behind a broad
   sentence.
 - `CGSPEC-LOCAL-02 [LIVE]`: update wording from "Local UV sources" to overlays
-  plus local UV/source injection, or make it the umbrella clause and add
+  plus local UV/source materialization, or make it the umbrella clause and add
   `CGSYNC-LOCAL-*` lifecycle clauses.
 - `CGMAT-API-04 [PLANNED]`: current create/import/finalize paths now extract
   folder paths and model loader metadata. Consider reclassifying to `PARTIAL` or

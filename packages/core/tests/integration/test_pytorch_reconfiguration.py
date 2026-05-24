@@ -1,7 +1,7 @@
 """Integration tests for PyTorch configuration preservation.
 
-Tests that PyTorch config is handled via injection context manager, keeping
-pyproject.toml clean of machine-specific PyTorch configuration.
+Tests that PyTorch config is materialized in disposable sync projects, keeping
+tracked pyproject.toml clean of machine-specific PyTorch configuration.
 """
 from unittest.mock import patch
 
@@ -69,8 +69,8 @@ class TestCheckoutKeepsPyprojectClean:
     def test_checkout_does_not_pollute_pyproject(self, test_env, mock_comfyui_clone):
         """Checkout should NOT write PyTorch config to pyproject.toml.
 
-        PyTorch config is now handled entirely by pytorch_injection_context()
-        which temporarily injects config during sync and restores afterward.
+        PyTorch config is now applied only to disposable sync projects and is
+        not written to the tracked pyproject.toml.
         """
         # ARRANGE - First commit: add a marker field
         config = test_env.pyproject.load()

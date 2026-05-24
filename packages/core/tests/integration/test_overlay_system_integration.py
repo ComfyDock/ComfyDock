@@ -1,10 +1,8 @@
-"""Integration tests for overlay collection and injection flows."""
+"""Integration tests for overlay collection and materialization flows."""
 
 from __future__ import annotations
 
 from textwrap import dedent
-
-import pytest
 
 
 def _write_overlay(path, content: str) -> None:
@@ -50,8 +48,8 @@ def test_collect_overlays_order_is_deterministic(test_env):
     ]
 
 
-def test_overlay_injection_applies_fields_and_restores_file(test_env):
-    """Injection should apply overlay fields, strip local sources, then restore."""
+def test_overlay_materialization_applies_fields(test_env):
+    """Materialization should apply overlay fields and strip local sources."""
     config = test_env.pyproject.load()
     config.setdefault("tool", {}).setdefault("uv", {})
     config["tool"]["uv"]["sources"] = {
@@ -92,44 +90,21 @@ def test_overlay_injection_applies_fields_and_restores_file(test_env):
         """,
     )
 
-    original = test_env.pyproject.snapshot()
     overlays = test_env.overlay_manager.collect_overlays()
 
-    with test_env.pyproject.uv_injection_context(overlays=overlays):
-        injected = test_env.pyproject.load(force_reload=True)
-        uv_config = injected["tool"]["uv"]
+    test_env.pyproject.apply_uv_overlays(overlays)
+    materialized = test_env.pyproject.load(force_reload=True)
+    uv_config = materialized["tool"]["uv"]
 
-        assert "requests>=2.31" in injected["project"]["dependencies"]
-        assert "editable-local" not in uv_config["sources"]
-        assert "overlay-package" in uv_config["sources"]
-        assert "urllib3<3" in uv_config["constraint-dependencies"]
-        assert any(index.get("name") == "overlay-index" for index in uv_config["index"])
-        assert uv_config["no-build-isolation-package"] == ["Flash_Attn"]
-        assert "idna<4" in uv_config["override-dependencies"]
-        assert "python_version >= '3.11'" in uv_config["environments"]
-        assert any(
-            entry.get("name") == "overlay-package"
-            for entry in uv_config["dependency-metadata"]
-        )
-
-    assert test_env.pyproject.snapshot() == original
-
-
-def test_overlay_injection_restores_file_after_exception(test_env):
-    """Injected pyproject must be restored even when sync flow raises."""
-    overlays_dir = test_env.cec_path / "overlays"
-    _write_overlay(
-        overlays_dir / "raise-case.toml",
-        """
-        [dependencies]
-        packages = ["requests>=2.31"]
-        """,
+    assert "requests>=2.31" in materialized["project"]["dependencies"]
+    assert "editable-local" not in uv_config["sources"]
+    assert "overlay-package" in uv_config["sources"]
+    assert "urllib3<3" in uv_config["constraint-dependencies"]
+    assert any(index.get("name") == "overlay-index" for index in uv_config["index"])
+    assert uv_config["no-build-isolation-package"] == ["Flash_Attn"]
+    assert "idna<4" in uv_config["override-dependencies"]
+    assert "python_version >= '3.11'" in uv_config["environments"]
+    assert any(
+        entry.get("name") == "overlay-package"
+        for entry in uv_config["dependency-metadata"]
     )
-    overlays = test_env.overlay_manager.collect_overlays(extra_names=["raise-case"])
-    original = test_env.pyproject.snapshot()
-
-    with pytest.raises(RuntimeError, match="forced"):
-        with test_env.pyproject.uv_injection_context(overlays=overlays):
-            raise RuntimeError("forced")
-
-    assert test_env.pyproject.snapshot() == original

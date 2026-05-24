@@ -313,7 +313,7 @@ class EnvironmentGitOrchestrator:
         # Reconcile nodes
         self.node_manager.reconcile_nodes_for_rollback(old_nodes, new_nodes)
 
-        # Sync Python environment with PyTorch injection
+        # Sync Python environment with disposable PyTorch overlay materialization.
         extras, all_extras = self.pyproject.resolve_sync_extras(None, False)
         self.uv.sync_project(
             all_groups=True,

@@ -17,7 +17,24 @@ def _write_overlay(path: Path, content: str) -> None:
     path.write_text(content.strip() + "\n", encoding="utf-8")
 
 
-def test_full_sync_cycle_with_shared_overlay_injects_then_restores(test_env, monkeypatch):
+def _capture_disposable_sync(test_env, observe) -> None:
+    class _FakeUV:
+        python_executable = Path("/tmp/fake-python")
+        binary = "uv"
+
+        def for_cwd(self, cwd):
+            self.cwd = cwd
+            return self
+
+        def sync(self, **kwargs):
+            materialized = PyprojectManager(self.cwd / "pyproject.toml").load(force_reload=True)
+            observe(materialized)
+            return SimpleNamespace(stdout="ok")
+
+    test_env.uv_manager.uv = _FakeUV()
+
+
+def test_full_sync_cycle_with_shared_overlay_materializes_then_keeps_tracked_manifest_clean(test_env):
     overlay_path = test_env.cec_path / "overlays" / "shared.toml"
     _write_overlay(
         overlay_path,
@@ -34,13 +51,11 @@ def test_full_sync_cycle_with_shared_overlay_injects_then_restores(test_env, mon
     observed = {}
     original = test_env.pyproject.snapshot()
 
-    def _fake_sync(**kwargs):
-        injected = test_env.pyproject.load(force_reload=True)
-        observed["dependencies"] = list(injected["project"]["dependencies"])
-        observed["request_source"] = injected["tool"]["uv"]["sources"]["requests"]["index"]
-        return SimpleNamespace(stdout="ok")
+    def _observe(materialized):
+        observed["dependencies"] = list(materialized["project"]["dependencies"])
+        observed["request_source"] = materialized["tool"]["uv"]["sources"]["requests"]["index"]
 
-    monkeypatch.setattr(test_env.uv_manager.uv, "sync", _fake_sync)
+    _capture_disposable_sync(test_env, _observe)
 
     test_env.uv_manager.sync_project()
 
@@ -49,7 +64,7 @@ def test_full_sync_cycle_with_shared_overlay_injects_then_restores(test_env, mon
     assert test_env.pyproject.snapshot() == original
 
 
-def test_full_sync_cycle_with_local_overlay_always_active(test_env, monkeypatch):
+def test_full_sync_cycle_with_local_overlay_always_active(test_env):
     local_overlay = test_env.cec_path / "overlays" / ".local.toml"
     _write_overlay(
         local_overlay,
@@ -65,13 +80,11 @@ def test_full_sync_cycle_with_local_overlay_always_active(test_env, monkeypatch)
     observed = {}
     original = test_env.pyproject.snapshot()
 
-    def _fake_sync(**kwargs):
-        injected = test_env.pyproject.load(force_reload=True)
-        observed["dependencies"] = list(injected["project"]["dependencies"])
-        observed["source_path"] = injected["tool"]["uv"]["sources"]["localpkg"]["path"]
-        return SimpleNamespace(stdout="ok")
+    def _observe(materialized):
+        observed["dependencies"] = list(materialized["project"]["dependencies"])
+        observed["source_path"] = materialized["tool"]["uv"]["sources"]["localpkg"]["path"]
 
-    monkeypatch.setattr(test_env.uv_manager.uv, "sync", _fake_sync)
+    _capture_disposable_sync(test_env, _observe)
 
     test_env.uv_manager.sync_project()
 
@@ -80,7 +93,7 @@ def test_full_sync_cycle_with_local_overlay_always_active(test_env, monkeypatch)
     assert test_env.pyproject.snapshot() == original
 
 
-def test_migration_flow_creates_local_overlay_and_injects(test_env, monkeypatch):
+def test_migration_flow_creates_local_overlay_and_materializes(test_env):
     legacy_path = test_env.cec_path / ".local-uv-config"
     legacy_path.write_text(
         """
@@ -102,13 +115,11 @@ def test_migration_flow_creates_local_overlay_and_injects(test_env, monkeypatch)
 
     observed = {}
 
-    def _fake_sync(**kwargs):
-        injected = test_env.pyproject.load(force_reload=True)
-        observed["source_path"] = injected["tool"]["uv"]["sources"]["sageattention"]["path"]
-        observed["constraints"] = list(injected["tool"]["uv"]["constraint-dependencies"])
-        return SimpleNamespace(stdout="ok")
+    def _observe(materialized):
+        observed["source_path"] = materialized["tool"]["uv"]["sources"]["sageattention"]["path"]
+        observed["constraints"] = list(materialized["tool"]["uv"]["constraint-dependencies"])
 
-    monkeypatch.setattr(test_env.uv_manager.uv, "sync", _fake_sync)
+    _capture_disposable_sync(test_env, _observe)
     test_env.uv_manager.sync_project()
 
     assert observed["source_path"] == "/tmp/SageAttention"
@@ -163,7 +174,7 @@ def test_cli_overlay_commands_end_to_end(test_env, monkeypatch, capsys):
     assert "cli-shared" not in test_env.overlay_manager.get_active_names()
 
 
-def test_multi_overlay_merge_order_and_pytorch_precedence(test_env, monkeypatch):
+def test_multi_overlay_merge_order_and_pytorch_precedence(test_env):
     overlays_dir = test_env.cec_path / "overlays"
     _write_overlay(
         overlays_dir / "alpha.toml",
@@ -218,14 +229,12 @@ def test_multi_overlay_merge_order_and_pytorch_precedence(test_env, monkeypatch)
     observed = {}
     original = test_env.pyproject.snapshot()
 
-    def _fake_sync(**kwargs):
-        injected = test_env.pyproject.load(force_reload=True)
-        observed["packagex_source"] = injected["tool"]["uv"]["sources"]["packagex"]["url"]
-        observed["torch_source"] = injected["tool"]["uv"]["sources"]["torch"]["index"]
-        observed["constraints"] = list(injected["tool"]["uv"]["constraint-dependencies"])
-        return SimpleNamespace(stdout="ok")
+    def _observe(materialized):
+        observed["packagex_source"] = materialized["tool"]["uv"]["sources"]["packagex"]["url"]
+        observed["torch_source"] = materialized["tool"]["uv"]["sources"]["torch"]["index"]
+        observed["constraints"] = list(materialized["tool"]["uv"]["constraint-dependencies"])
 
-    monkeypatch.setattr(test_env.uv_manager.uv, "sync", _fake_sync)
+    _capture_disposable_sync(test_env, _observe)
 
     collected = test_env.overlay_manager.collect_overlays(
         extra_names=["gamma"],
