@@ -1,6 +1,8 @@
 """Sync option manifest helpers."""
 from __future__ import annotations
 
+from typing import Any, cast
+
 from .base import BaseHandler
 
 
@@ -37,18 +39,20 @@ class SyncConfigHandler(BaseHandler):
     def set_extras(self, extras: list[str]) -> None:
         """Set default optional extras to install during sync."""
         normalized = self.dedupe_extras(extras)
-        with self.manager.edit() as config:
-            config.setdefault("tool", {})
-            config["tool"].setdefault("comfygit", {})
+        with self.manager.edit() as raw_config:
+            config = cast(dict[str, Any], raw_config)
+            comfygit = self.ensure_section(config, "tool", "comfygit")
 
-            sync_config = config["tool"]["comfygit"].get("sync", {})
+            sync_config = comfygit.get("sync", {})
+            if not isinstance(sync_config, dict):
+                sync_config = {}
             if normalized:
                 sync_config["extras"] = normalized
-                config["tool"]["comfygit"]["sync"] = sync_config
-            elif isinstance(sync_config, dict):
+                comfygit["sync"] = sync_config
+            else:
                 sync_config.pop("extras", None)
                 if not sync_config:
-                    config["tool"]["comfygit"].pop("sync", None)
+                    comfygit.pop("sync", None)
 
     def add_extra(self, extra: str) -> bool:
         """Add a default sync extra. Returns True if added."""
