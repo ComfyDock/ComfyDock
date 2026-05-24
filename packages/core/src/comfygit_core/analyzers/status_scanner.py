@@ -273,7 +273,7 @@ class StatusScanner:
         Returns:
             Expected environment state from configuration
         """
-        self._pyproject.load()
+        self._pyproject.get_manifest_snapshot()
 
         # Get expected custom nodes from pyproject
         node_infos = self._pyproject.nodes.get_existing()

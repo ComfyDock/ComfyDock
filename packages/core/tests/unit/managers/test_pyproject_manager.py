@@ -6,7 +6,9 @@ from tempfile import TemporaryDirectory
 import pytest
 import tomlkit
 from comfygit_core.managers.pyproject_manager import PyprojectManager
+from comfygit_core.models.manifest import ManifestModel
 from comfygit_core.models.shared import NodeInfo
+from tomlkit.toml_document import TOMLDocument
 
 
 @pytest.fixture
@@ -92,6 +94,72 @@ class TestModelHandlerFormatting:
         # Verify structure - global models section
         assert "[tool.comfygit.models]" in content
         assert "xyz789" in content
+
+
+class TestPyprojectManifestDomainApi:
+    """Pyproject-backed manifest operations hide TOML table mechanics."""
+
+    def test_load_returns_toml_document(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        assert isinstance(manager.load(), TOMLDocument)
+
+    def test_headless_marker_preserves_child_tables(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(
+                name="comfygit-manager",
+                version="0.1.2",
+                source="registry",
+                registry_id="comfygit-manager",
+            ),
+            "comfygit-manager",
+        )
+
+        manager.manifest.set_headless()
+
+        config = manager.load()
+        assert config["tool"]["comfygit"]["headless"] is True
+        assert "comfygit-manager" in config["tool"]["comfygit"]["nodes"]
+
+        assert manager.manifest.clear_headless() is True
+        assert "headless" not in manager.load()["tool"]["comfygit"]
+
+    def test_edit_batches_domain_mutations(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        manager.models.add_model(
+            ManifestModel(
+                hash="abc123",
+                filename="model.safetensors",
+                size=10,
+                relative_path="checkpoints/model.safetensors",
+                category="checkpoints",
+            )
+        )
+
+        with manager.manifest.edit() as edit:
+            edit.register_node(
+                "my-node",
+                NodeInfo(
+                    name="my-node",
+                    source="development",
+                    registry_id="my-node",
+                ),
+            )
+            edit.update_node_git_info(
+                "my-node",
+                repository="https://github.com/example/my-node.git",
+                branch="main",
+                pinned_commit="abcde12345",
+            )
+            assert edit.add_model_source("abc123", "https://example.com/model.safetensors")
+
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        node = snapshot.nodes["my-node"]
+        assert node.repository == "https://github.com/example/my-node.git"
+        assert node.branch == "main"
+        assert node.pinned_commit == "abcde12345"
+        assert snapshot.models["abc123"].sources == ["https://example.com/model.safetensors"]
 
 
 class TestWorkflowExecutionContractLoading:

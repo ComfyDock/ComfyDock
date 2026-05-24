@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import tomlkit
 
+from .store import PyprojectDocument
+
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
 
@@ -15,7 +17,7 @@ class BaseHandler:
     def __init__(self, manager: PyprojectManager):
         self.manager = manager
 
-    def load(self) -> dict:
+    def load(self) -> PyprojectDocument:
         """Load configuration from manager."""
         return self.manager.load()
 

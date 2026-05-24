@@ -180,8 +180,7 @@ class UVProjectManager:
 
         # Get current dependencies to filter what actually exists
         from ..utils.dependency_parser import parse_dependency_string
-        config = self.pyproject.load()
-        current_deps = config.get('project', {}).get('dependencies', [])
+        current_deps = self.pyproject.manifest.list_project_dependencies()
         current_pkg_names = {parse_dependency_string(dep)[0].lower() for dep in current_deps}
 
         # Filter to only packages that exist
@@ -253,8 +252,7 @@ class UVProjectManager:
                     lock_file.unlink()
                     logger.info(f"Deleted uv.lock for backend override to {backend_override}")
 
-            config = self.pyproject.load()
-            python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+            python_version = self.pyproject.manifest.get_python_version()
             pytorch_config = pytorch_manager.get_pytorch_config(
                 backend_override=backend_override,
                 python_version=python_version,

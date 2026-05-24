@@ -8,12 +8,15 @@ from pathlib import Path
 
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
+from tomlkit.toml_document import TOMLDocument
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDPyprojectError, CDPyprojectInvalidError, CDPyprojectNotFoundError
 from ..models.workflow_contract import toml_safe_contract_value
 
 logger = get_logger(__name__)
+
+PyprojectDocument = TOMLDocument
 
 
 class PyprojectStore:
@@ -24,7 +27,7 @@ class PyprojectStore:
     def __init__(self, path: Path):
         self.path = path
         self._instance_load_calls = 0
-        self._config_cache: dict | None = None
+        self._config_cache: PyprojectDocument | None = None
         self._cache_mtime: float | None = None
 
     def exists(self) -> bool:
@@ -48,7 +51,7 @@ class PyprojectStore:
         self._config_cache = None
         self._cache_mtime = None
 
-    def load(self, force_reload: bool = False) -> dict:
+    def load(self, force_reload: bool = False) -> PyprojectDocument:
         """Load the pyproject.toml file with instance-level caching."""
         if not self.exists():
             raise CDPyprojectNotFoundError(f"pyproject.toml not found at {self.path}")
@@ -103,7 +106,7 @@ class PyprojectStore:
 
         return config
 
-    def save(self, config: dict | None = None) -> None:
+    def save(self, config: PyprojectDocument | dict | None = None) -> None:
         """Save the configuration to pyproject.toml."""
         if config is None:
             raise CDPyprojectError("No configuration to save")

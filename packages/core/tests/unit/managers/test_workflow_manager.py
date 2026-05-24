@@ -1,5 +1,7 @@
 """Tests for WorkflowManager normalization logic."""
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -28,6 +30,17 @@ def workflow_manager(tmp_path):
                 builtin_versions_repository=None,
             )
             manager.pyproject.nodes.get_existing.return_value = {}
+
+            @contextmanager
+            def manifest_edit():
+                config = manager.pyproject.load()
+                yield SimpleNamespace(
+                    config=config,
+                    mark_changed=lambda: None,
+                    cleanup_model_orphans=lambda: manager.pyproject.models.cleanup_orphans(config=config),
+                )
+
+            manager.pyproject.manifest.edit = manifest_edit
             return manager
 
 

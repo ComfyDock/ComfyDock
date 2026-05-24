@@ -12,6 +12,21 @@ ComfyGit environment repositories store the portable manifest in `pyproject.toml
 Core may use helper files and databases for cache/runtime state, but portable
 environment intent belongs in the manifest.
 
+### CGSPEC-MAN-01A [LIVE]: Manifest APIs are pyproject-backed and UV-aware
+Validation: MIXED
+
+ComfyGit's manifest abstraction hides TOML syntax, TOMLKit document mechanics,
+table ordering, and nested `[tool.comfygit]` storage details from normal callers.
+It does not hide that the portable manifest is `pyproject.toml`, or that uv
+dependency groups, sources, indexes, Python version, lock behavior, and
+materialization semantics are part of the environment contract.
+
+Core should provide typed manifest projections and domain edit affordances for
+ComfyGit concepts such as nodes, workflows, models, headless materialization,
+workflow contracts, and dependency intent. It should not introduce a generic
+storage-agnostic manifest backend unless ComfyGit actually gains a second
+portable manifest substrate.
+
 ### CGSPEC-MAN-02 [LIVE]: `[tool.comfygit]` owns ComfyGit-specific metadata
 Validation: TEST
 
@@ -96,6 +111,18 @@ handlers. The snapshot is a consumer-facing read model for services such as
 readiness, build planning, and serve/runtime adapters. It must not replace the
 `pyproject.toml` file as the persisted authority, and callers should request a
 new snapshot after manifest mutations.
+
+### CGSPEC-MAN-08A [PARTIAL]: Manifest writes use domain edits over raw TOML mutation
+Validation: MIXED
+
+Portable manifest mutations should flow through pyproject-backed domain methods
+or edit transactions instead of scattered direct mutation of nested TOML tables.
+Domain edit methods may expose UV-shaped concepts where those concepts are the
+real contract, such as dependency groups and source/index configuration.
+
+Storage-level code such as TOML I/O, merge/diff analysis, migration, and import
+inspection may remain explicitly pyproject-aware. Adapter code and higher-level
+core services should prefer typed snapshots and domain edit affordances.
 
 ### CGSPEC-MAN-09 [PLANNED]: Materialization consumes manifest truth, not runtime state
 Validation: TEST

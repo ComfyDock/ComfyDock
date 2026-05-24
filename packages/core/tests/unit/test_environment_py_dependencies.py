@@ -166,16 +166,11 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_project_deps(self, mock_env):
         """Should return dependencies from [project.dependencies]."""
-        mock_config = {
-            'project': {
-                'dependencies': [
-                    'requests>=2.0.0',
-                    'pillow',
-                    'tqdm>=4.0.0'
-                ]
-            }
-        }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = [
+            'requests>=2.0.0',
+            'pillow',
+            'tqdm>=4.0.0'
+        ]
 
         deps = mock_env.list_dependencies()
 
@@ -185,8 +180,7 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_empty_when_no_deps(self, mock_env):
         """Should return empty dict when no dependencies exist."""
-        mock_config = {'project': {}}
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = []
 
         deps = mock_env.list_dependencies()
 
@@ -194,8 +188,7 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_empty_when_no_project_section(self, mock_env):
         """Should return empty dict when project section doesn't exist."""
-        mock_config = {}
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = []
 
         deps = mock_env.list_dependencies()
 

@@ -85,8 +85,9 @@ model lookup, and model-location deletion. Manager workflow APIs now use
 Environment facades for workflow file lookup, cache invalidation, manifest model
 mutation, custom-node mapping edits, saved and unsaved workflow analysis,
 resolution fixing, model-path sync, package/model search, and post-download
-manifest finalization. Serve-runtime adapter reach-throughs and specialized
-workflow download streaming remain follow-on work.
+manifest finalization, workflow node package resolution, manifest debug
+inspection, and workflow model download streaming. Serve-runtime adapter
+reach-throughs remain follow-on work.
 
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
@@ -111,6 +112,20 @@ An environment repository's tracked `pyproject.toml` carries the portable recipe
 for recreating the environment: ComfyUI/Python intent, Python dependencies,
 custom nodes, workflows, workflow contracts, and model metadata.
 
+### CGCORE-MAN-01A [LIVE]: Manifest abstractions remain pyproject-backed
+Validation: MIXED
+
+Core may expose typed manifest snapshots, pyproject-backed manifest services,
+and manifest edit transactions so callers do not depend on TOMLKit objects or
+deep `[tool.comfygit]` table paths. These abstractions hide document mechanics,
+not the fact that `pyproject.toml` and uv dependency semantics are the canonical
+portable substrate.
+
+Public adapters should prefer Environment and Workspace facades, typed manifest
+snapshots, and domain edit affordances. Code that must inspect or mutate raw
+TOML should stay in pyproject storage, migration, merge/diff, import-inspection,
+or manifest implementation modules.
+
 ### CGCORE-MAN-02 [LIVE]: Machine-local configuration is not committed as manifest truth
 Validation: TEST
 
@@ -118,7 +133,7 @@ Machine-specific sync inputs such as PyTorch backend selection and local UV sour
 overrides belong in gitignored environment-local files, then get injected during
 sync/run. They must not become required tracked manifest state.
 
-### CGCORE-MAN-02A [PLANNED]: Machine-local dependency injection is crash-safe
+### CGCORE-MAN-02A [LIVE]: Machine-local dependency injection is crash-safe
 Validation: TEST
 
 Core should not mutate the tracked manifest file when applying machine-local

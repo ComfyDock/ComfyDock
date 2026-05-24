@@ -328,9 +328,7 @@ class EnvironmentFactory:
         _complete("install_manager")
 
         if no_manager:
-            config = env.pyproject.load()
-            config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
-            env.pyproject.save(config)
+            env.pyproject.manifest.set_headless()
 
         # Phase: Finalize environment (90-100%)
         _progress("finalize", "Finalizing environment", 90)

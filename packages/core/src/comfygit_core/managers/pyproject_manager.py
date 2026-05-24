@@ -20,6 +20,7 @@ from ..manifest import (
     DependencyHandler,
     ModelHandler,
     NodeHandler,
+    PyprojectManifest,
     SyncConfigHandler,
     UVConfigHandler,
     WorkflowHandler,
@@ -32,7 +33,7 @@ from ..manifest.overlays import (
     apply_uv_overlays_to_config,
     summarize_modified_overlay_fields,
 )
-from ..manifest.store import PyprojectStore
+from ..manifest.store import PyprojectDocument, PyprojectStore
 from ..models.overlay import OverlayConfig
 
 logger = get_logger(__name__)
@@ -82,6 +83,11 @@ class PyprojectManager:
     def sync_config(self) -> SyncConfigHandler:
         """Get sync configuration handler."""
         return SyncConfigHandler(self)
+
+    @cached_property
+    def manifest(self) -> PyprojectManifest:
+        """Get pyproject-backed manifest domain operations."""
+        return PyprojectManifest(self)
 
     # ===== Core Operations =====
 
@@ -199,7 +205,7 @@ class PyprojectManager:
         PyprojectStore.reset_load_stats()
         cls._total_load_calls = 0
 
-    def load(self, force_reload: bool = False) -> dict:
+    def load(self, force_reload: bool = False) -> PyprojectDocument:
         """Load the pyproject.toml file with instance-level caching.
 
         Cache is automatically invalidated when the file's mtime changes.
@@ -225,11 +231,9 @@ class PyprojectManager:
         handler reads. Callers should request a new snapshot after any manifest
         mutation instead of retaining one as an authority.
         """
-        return EnvironmentManifestSnapshot.from_toml_dict(
-            self.load(force_reload=force_reload)
-        )
+        return self.manifest.snapshot(force_reload=force_reload)
 
-    def save(self, config: dict | None = None) -> None:
+    def save(self, config: PyprojectDocument | dict | None = None) -> None:
         """Save the configuration to pyproject.toml.
 
         Automatically invalidates the cache to ensure fresh reads after save.
@@ -243,7 +247,7 @@ class PyprojectManager:
         self._store.save(config)
 
     @contextmanager
-    def edit(self) -> Iterator[dict]:
+    def edit(self) -> Iterator[PyprojectDocument]:
         """Yield a mutable manifest document and save once on success.
 
         If the edit body raises, the tracked file is left untouched and the
@@ -420,9 +424,10 @@ class PyprojectManager:
         strip_tracked_pytorch_config_from_config(config, set(PYTORCH_CORE_PACKAGES))
         if 'tool' not in config:
             config['tool'] = tomlkit.table()
-        if 'comfygit' not in config['tool']:
-            config['tool']['comfygit'] = tomlkit.table()
-        comfygit_config = cast(dict[str, Any], config['tool']['comfygit'])
+        tool_config = cast(dict[str, Any], config['tool'])
+        if 'comfygit' not in tool_config:
+            tool_config['comfygit'] = tomlkit.table()
+        comfygit_config = cast(dict[str, Any], tool_config['comfygit'])
         comfygit_config['schema_version'] = 2
         self.save(config)
 

@@ -23,7 +23,6 @@ from ..models.workflow import (
     ResolutionResult,
     ResolvedModel,
     ScoredMatch,
-    Workflow,
     WorkflowAnalysisStatus,
     WorkflowNode,
     WorkflowNodeWidgetRef,
@@ -774,7 +773,11 @@ class WorkflowManager:
         """Remove manifest workflow entries whose editable workflow file is gone."""
         is_batch = config is not None
         if config is None:
-            config = self.pyproject.load()
+            with self.pyproject.manifest.edit() as edit:
+                removed_count = self.cleanup_orphaned_workflow_entries(config=edit.config)
+                if removed_count > 0:
+                    edit.mark_changed()
+                return removed_count
 
         workflows = self._workflow_entries_from_config(config)
 
@@ -802,14 +805,21 @@ class WorkflowManager:
 
     def cleanup_orphaned_workflow_api_prompts(self, config: dict | None = None) -> int:
         """Remove workflow API prompt files not referenced by remaining contracts."""
-        if config is None:
-            config = self.pyproject.load()
-
         workflow_api_dir = self.cec_path / "workflow_api"
         if not workflow_api_dir.exists():
             return 0
 
-        referenced = self._referenced_workflow_api_prompt_files(config)
+        if config is not None:
+            referenced = self._referenced_workflow_api_prompt_files(config)
+        else:
+            workflows = self.pyproject.get_manifest_snapshot().workflows
+            referenced = {
+                contract.api_prompt_file
+                for workflow in workflows.values()
+                if workflow.execution_contract is not None
+                for contract in [workflow.execution_contract]
+                if contract.api_prompt_file
+            }
         removed_count = 0
 
         for api_file in sorted(workflow_api_dir.rglob("*.json")):
@@ -1416,7 +1426,7 @@ class WorkflowManager:
                 model_groups[key].append((model_ref, candidates))
 
             # Resolve each group (one prompt per unique model)
-            for (widget_value, node_type), group in model_groups.items():
+            for (widget_value, _node_type), group in model_groups.items():
                 # Extract all refs and candidates
                 all_refs_in_group = [ref for ref, _ in group]
                 primary_ref, primary_candidates = group[0]
@@ -1508,7 +1518,10 @@ class WorkflowManager:
 
         is_batch = config is not None
         if not is_batch:
-            config = self.pyproject.load()
+            with self.pyproject.manifest.edit() as edit:
+                self.apply_resolution(resolution, config=edit.config)
+                edit.mark_changed()
+                return
 
         workflow_name = resolution.workflow_name
 
@@ -2109,7 +2122,7 @@ class WorkflowManager:
             return True
 
         # Multiple matches - update all and return True
-        for idx, model in matches:
+        for idx, _model in matches:
             models[idx].criticality = new_criticality
 
         self.pyproject.workflows.set_workflow_models(workflow_name, models)

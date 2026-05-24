@@ -12,8 +12,6 @@ from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import tomlkit
-
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
 from ..constants import SYSTEM_DEPENDENCY_GROUP, SYSTEM_UV_DEPENDENCY
@@ -96,13 +94,17 @@ if TYPE_CHECKING:
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,
         NodeInstallCallbacks,
+        NodeResolutionContext,
         ResolutionResult,
+        ResolvedNodePackage,
         ScoredMatch,
         ScoredPackageMatch,
         WorkflowDependencies,
+        WorkflowNode,
         WorkflowSyncStatus,
     )
     from ..models.workflow_contract import WorkflowExecutionContract
+    from ..services.model_downloader import DownloadRequest, DownloadResult
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
@@ -458,7 +460,8 @@ class Environment:
 
     def remove_dependency_group(self, group: str) -> None:
         """Remove an entire dependency group from the manifest."""
-        self.pyproject.dependencies.remove_group(group)
+        if not self.pyproject.manifest.remove_dependency_group(group):
+            raise ValueError(f"Group '{group}' not found")
 
     def get_uv_command_context(self) -> UVCommandContext:
         """Return environment-scoped uv command context for CLI passthrough."""
@@ -775,51 +778,16 @@ class Environment:
 
     def _cleanup_system_nodes_dependency_group(self) -> None:
         """Remove legacy dependency-groups.system-nodes from pyproject.toml."""
-        config = self.pyproject.load()
-        dep_groups = config.get("dependency-groups", {})
-        if "system-nodes" in dep_groups:
-            del dep_groups["system-nodes"]
-            if not dep_groups:
-                del config["dependency-groups"]
-            self.pyproject.save(config)
+        if self.pyproject.manifest.remove_dependency_group("system-nodes"):
             logger.info("Removed legacy dependency-groups.system-nodes")
 
     def _is_headless_mode(self) -> bool:
         """Return True when this environment was created/imported with --no-manager."""
-        config = self.pyproject.load()
-        return bool(config.get("tool", {}).get("comfygit", {}).get("headless", False))
+        return self.pyproject.manifest.is_headless()
 
     def _set_headless_marker(self) -> None:
         """Persist headless marker in pyproject.toml."""
-        config = self.pyproject.load()
-        self._set_comfygit_scalar(config, "headless", True)
-        self.pyproject.save(config)
-
-    def _set_comfygit_scalar(self, config: dict, key: str, value: object) -> None:
-        """Set a scalar on [tool.comfygit] before child tables.
-
-        TOML requires table values to appear before child tables such as
-        [tool.comfygit.nodes.*]. TOMLKit can silently drop scalars appended
-        after those child tables, so rebuild this table in a valid order.
-        """
-        tool = config.setdefault("tool", {})
-        comfygit_cfg = tool.setdefault("comfygit", {})
-        rebuilt = tomlkit.table()
-        child_items: list[tuple[str, object]] = []
-
-        for existing_key, existing_value in comfygit_cfg.items():
-            if existing_key == key:
-                continue
-            if isinstance(existing_value, dict):
-                child_items.append((existing_key, existing_value))
-            else:
-                rebuilt[existing_key] = existing_value
-
-        rebuilt[key] = value
-        for child_key, child_value in child_items:
-            rebuilt[child_key] = child_value
-
-        tool["comfygit"] = rebuilt
+        self.pyproject.manifest.set_headless()
 
     def _prepare_headless_import(self) -> None:
         """Prepare imported/materialized environments that should not load Manager."""
@@ -831,11 +799,7 @@ class Environment:
 
     def _clear_headless_marker(self) -> None:
         """Remove headless marker after manager installation."""
-        config = self.pyproject.load()
-        comfygit_cfg = config.get("tool", {}).get("comfygit", {})
-        if comfygit_cfg.get("headless"):
-            del comfygit_cfg["headless"]
-            self.pyproject.save(config)
+        self.pyproject.manifest.clear_headless()
 
     def _register_imported_manager(self) -> None:
         """Auto-register or install comfygit-manager for imported environment.
@@ -885,22 +849,15 @@ class Environment:
             except Exception as e:
                 logger.warning(f"Could not read manager version: {e}")
 
-        # Register as tracked node
-        config = self.pyproject.load()
-        if "tool" not in config:
-            config["tool"] = {}
-        if "comfygit" not in config["tool"]:
-            config["tool"]["comfygit"] = {}
-        if "nodes" not in config["tool"]["comfygit"]:
-            config["tool"]["comfygit"]["nodes"] = {}
-
-        config["tool"]["comfygit"]["nodes"][MANAGER_NODE_ID] = {
-            "name": MANAGER_NODE_ID,
-            "version": version or "unknown",
-            "source": "registry",
-            "registry_id": MANAGER_NODE_ID,
-        }
-        self.pyproject.save(config)
+        self.pyproject.manifest.register_node(
+            MANAGER_NODE_ID,
+            NodeInfo(
+                name=MANAGER_NODE_ID,
+                version=version or "unknown",
+                source="registry",
+                registry_id=MANAGER_NODE_ID,
+            ),
+        )
         logger.info(f"Registered existing comfygit-manager (v{version or 'unknown'})")
 
     def _install_manager_from_registry(self) -> None:
@@ -2322,6 +2279,29 @@ class Environment:
             limit,
         )
 
+    def resolve_workflow_node_packages(
+        self,
+        node: WorkflowNode,
+        context: NodeResolutionContext,
+    ) -> list[ResolvedNodePackage] | None:
+        """Resolve one workflow node type without exposing the resolver object."""
+        return self.workflow_manager.global_node_resolver.resolve_single_node_with_context(
+            node,
+            context,
+        )
+
+    def get_model_download_directory(self) -> Path:
+        """Return the workspace model directory used by model downloads."""
+        return self.model_downloader.models_dir
+
+    def download_model_request(
+        self,
+        request: DownloadRequest,
+        progress_callback=None,
+    ) -> DownloadResult:
+        """Download a model using the environment's configured downloader."""
+        return self.model_downloader.download(request, progress_callback)
+
     def search_workflow_models(
         self,
         query: str,
@@ -2603,14 +2583,14 @@ class Environment:
 
         # Commit can be responsible for cleanup even when the only pending
         # change is a stale tracked workflow_api artifact.
-        cleanup_config = self.pyproject.load()
-        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
-            config=cleanup_config,
-        )
-        if cleanup_result["workflow_entries"] > 0:
-            # Clean up orphaned models after workflow sections are removed.
-            self.pyproject.models.cleanup_orphans(config=cleanup_config)
-            self.pyproject.save(cleanup_config)
+        with self.pyproject.manifest.edit() as edit:
+            cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
+                config=edit.config,
+            )
+            if cleanup_result["workflow_entries"] > 0:
+                # Clean up orphaned models after workflow sections are removed.
+                edit.cleanup_model_orphans()
+                edit.mark_changed()
 
         # Check if there are any changes to commit (workflows OR git)
         has_workflow_changes = workflow_status.sync_status.has_changes
@@ -2623,26 +2603,26 @@ class Environment:
         # Apply auto-resolutions to pyproject.toml for workflows with changes
         # BATCHED MODE: Load config once, pass through all operations, save once
         logger.info("Committing all changes...")
-        config = self.pyproject.load()
+        with self.pyproject.manifest.edit() as edit:
+            config = edit.config
 
-        for wf_analysis in workflow_status.analyzed_workflows:
-            if wf_analysis.sync_state in ("new", "modified"):
-                # Apply resolution results to pyproject (in-memory mutations)
-                self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
+            for wf_analysis in workflow_status.analyzed_workflows:
+                if wf_analysis.sync_state in ("new", "modified"):
+                    # Apply resolution results to pyproject (in-memory mutations)
+                    self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
+                    edit.mark_changed()
 
-        # Clean up orphaned workflow entries and workflow API prompt artifacts.
-        # This handles BOTH:
-        # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
-        # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
-        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
-        if cleanup_result["workflow_entries"] > 0:
-            logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
+            # Clean up orphaned workflow entries and workflow API prompt artifacts.
+            # This handles BOTH:
+            # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
+            # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
+            cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
+            if cleanup_result["workflow_entries"] > 0:
+                logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
 
-            # Clean up orphaned models (must run AFTER workflow sections are removed).
-            self.pyproject.models.cleanup_orphans(config=config)
-
-        # Save all changes at once
-        self.pyproject.save(config)
+                # Clean up orphaned models (must run AFTER workflow sections are removed).
+                edit.cleanup_model_orphans()
+                edit.mark_changed()
 
         logger.info("Copying workflows from ComfyUI to .cec...")
         copy_results = self.workflow_manager.copy_all_workflows()
@@ -2964,13 +2944,12 @@ class Environment:
             Dictionary mapping group name to list of dependencies.
             Base dependencies are always under "dependencies" key and appear first.
         """
-        config = self.pyproject.load()
-        base_deps = config.get('project', {}).get('dependencies', [])
+        base_deps = self.pyproject.manifest.list_project_dependencies()
 
         result = {"dependencies": base_deps}
 
         if all:
-            dep_groups = self.pyproject.dependencies.get_groups()
+            dep_groups = self.pyproject.manifest.list_dependency_groups()
             result.update(dep_groups)
 
         return result
@@ -3049,8 +3028,7 @@ class Environment:
         from ..analyzers.node_git_analyzer import get_node_git_info
 
         nodes = self.pyproject.nodes.get_existing()
-        config = self.pyproject.load()
-        modified = False
+        updates: list[tuple[str, str | None, str | None, str | None, str]] = []
 
         for identifier, node_info in nodes.items():
             if node_info.source != 'development':
@@ -3077,29 +3055,26 @@ class Environment:
                     no_git_callback(node_info.name)
                 continue
 
-            # Update node info with git data
-            node_data = config['tool']['comfygit']['nodes'].get(identifier, {})
-            update_needed = False
+            updates.append((
+                identifier,
+                git_info.remote_url,
+                git_info.branch,
+                git_info.commit,
+                node_info.name,
+            ))
 
-            if git_info.remote_url and node_data.get('repository') != git_info.remote_url:
-                node_data['repository'] = git_info.remote_url
-                update_needed = True
+        if not updates:
+            return
 
-            if git_info.branch and node_data.get('branch') != git_info.branch:
-                node_data['branch'] = git_info.branch
-                update_needed = True
-
-            if git_info.commit and node_data.get('pinned_commit') != git_info.commit:
-                node_data['pinned_commit'] = git_info.commit
-                update_needed = True
-
-            if update_needed:
-                config['tool']['comfygit']['nodes'][identifier] = node_data
-                modified = True
-                logger.info(f"Captured git info for dev node '{node_info.name}'")
-
-        if modified:
-            self.pyproject.save(config)
+        with self.pyproject.manifest.edit() as edit:
+            for identifier, remote_url, branch, commit, node_name in updates:
+                if edit.update_node_git_info(
+                    identifier,
+                    repository=remote_url,
+                    branch=branch,
+                    pinned_commit=commit,
+                ):
+                    logger.info(f"Captured git info for dev node '{node_name}'")
 
     def finalize_import(
         self,
@@ -3152,15 +3127,14 @@ class Environment:
         comfyui_cache = ComfyUICacheManager(cache_base_path=self.workspace_paths.cache)
 
         # Read ComfyUI version from pyproject.toml
-        comfyui_version = None
-        comfyui_version_type = None
         try:
-            pyproject_data = self.pyproject.load()
-            comfygit_config = pyproject_data.get("tool", {}).get("comfygit", {})
-            comfyui_version = comfygit_config.get("comfyui_version")
-            comfyui_version_type = comfygit_config.get("comfyui_version_type")
+            comfyui_manifest_version = self.pyproject.manifest.get_comfyui_version()
+            comfyui_version = comfyui_manifest_version.version
+            comfyui_version_type = comfyui_manifest_version.version_type
         except Exception as e:
             logger.warning(f"Could not read comfyui_version from pyproject.toml: {e}")
+            comfyui_version = None
+            comfyui_version_type = None
 
         if comfyui_version:
             version_desc = f"{comfyui_version_type} {comfyui_version}" if comfyui_version_type else comfyui_version
@@ -3363,8 +3337,7 @@ class Environment:
         # freshly cloned ComfyUI so uv sync installs everything.
         comfyui_reqs = self.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
-            pyproject_data = self.pyproject.load()
-            current_deps = pyproject_data.get("project", {}).get("dependencies", [])
+            current_deps = self.pyproject.manifest.list_project_dependencies()
             if not current_deps:
                 logger.info("Adding ComfyUI requirements (empty dependencies detected)...")
                 if callbacks:
