@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, cast
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
-from ..constants import SYSTEM_DEPENDENCY_GROUP, SYSTEM_UV_DEPENDENCY
 from ..factories.uv_factory import create_uv_for_environment
 from ..logging.logging_config import get_logger
 from ..managers.environment_git_orchestrator import EnvironmentGitOrchestrator
@@ -957,230 +956,22 @@ class Environment:
         Raises:
             UVCommandError: If sync fails
         """
-        result = SyncResult()
+        from ..services.environment_sync_coordinator import EnvironmentSyncCoordinator
 
-        # Migrate schema v1 → v2 if needed (strips embedded PyTorch config)
-        # This ensures old environments get migrated on first sync with new code
-        self._ensure_schema_migrated()
-
-        # Ensure package config exists (migration for existing envs)
-        self.package_config.ensure_exists()
-
-        # Sync exclude-dependencies from package_config.toml to pyproject.toml
-        # This ensures user edits to package_config.toml take effect
-        self.pyproject.uv_config.set_exclude_dependencies(
-            self.package_config.exclude_packages
+        return EnvironmentSyncCoordinator(self).sync(
+            dry_run=dry_run,
+            model_strategy=model_strategy,
+            model_callbacks=model_callbacks,
+            node_callbacks=node_callbacks,
+            remove_extra_nodes=remove_extra_nodes,
+            sync_callbacks=sync_callbacks,
+            verbose=verbose,
+            preserve_workflows=preserve_workflows,
+            backend_override=backend_override,
+            overlay_names=overlay_names,
+            extras=extras,
+            all_extras=all_extras,
         )
-        self.pyproject.ensure_system_uv_dependency(
-            dependency=SYSTEM_UV_DEPENDENCY,
-            group=SYSTEM_DEPENDENCY_GROUP,
-        )
-
-        extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
-
-        logger.info("Syncing environment...")
-
-        # Sync packages with UV - progressive installation with disposable overlay materialization.
-        try:
-            sync_result = self.uv_manager.sync_dependencies_progressive(
-                dry_run=dry_run,
-                callbacks=sync_callbacks,
-                verbose=verbose,
-                pytorch_manager=self.pytorch_manager,
-                overlay_names=overlay_names,
-                backend_override=backend_override,
-                extras=extras,
-                all_extras=all_extras,
-            )
-            result.packages_synced = sync_result.packages_synced
-            result.dependency_groups_installed.extend(sync_result.dependency_groups_installed)
-            result.dependency_groups_failed.extend(sync_result.dependency_groups_failed)
-            result.dependency_groups_skipped.extend(sync_result.dependency_groups_skipped)
-        except Exception as e:
-            # Progressive sync handles optional groups gracefully
-            # Only base or required groups cause this exception
-            logger.error(f"Package sync failed: {e}")
-            result.errors.append(f"Package sync failed: {e}")
-            result.success = False
-
-        # Handle version mismatches by removing nodes with wrong versions
-        # They will be reinstalled by sync_nodes_to_filesystem
-        if not dry_run:
-            try:
-                # Get current status to find version mismatches
-                current_status = self.status()
-                for mismatch in current_status.comparison.version_mismatches:
-                    node_name = mismatch['name']
-                    node_path = self.custom_nodes_path / node_name
-                    if node_path.exists():
-                        logger.info(f"Removing node with wrong version: {node_name} ({mismatch['actual']} → {mismatch['expected']})")
-                        rmtree(node_path)
-            except Exception as e:
-                logger.warning(f"Could not check/fix version mismatches: {e}")
-
-        # Sync custom nodes to filesystem
-        try:
-            # Pass remove_extra flag (default True for aggressive repair behavior)
-            self.node_manager.sync_nodes_to_filesystem(
-                remove_extra=remove_extra_nodes and not dry_run,
-                callbacks=node_callbacks
-            )
-            # For now, we just note it happened
-        except Exception as e:
-            logger.error(f"Node sync failed: {e}")
-            result.errors.append(f"Node sync failed: {e}")
-            result.success = False
-
-        staged_node_groups: list[str] = []
-        if not dry_run:
-            try:
-                staged_node_groups = self.node_manager.provision_missing_node_dependencies()
-                if staged_node_groups:
-                    logger.info(
-                        "Syncing %d staged node dependency group(s)",
-                        len(staged_node_groups),
-                    )
-                    self.uv_manager.sync_project(
-                        verbose=verbose,
-                        pytorch_manager=self.pytorch_manager,
-                        overlay_names=overlay_names,
-                        backend_override=backend_override,
-                        extras=extras,
-                        all_extras=all_extras,
-                        all_groups=True,
-                    )
-                    result.dependency_groups_installed.extend(staged_node_groups)
-            except Exception as e:
-                logger.error(f"Node dependency provisioning failed: {e}")
-                result.errors.append(f"Node dependency provisioning failed: {e}")
-                result.dependency_groups_failed.extend(
-                    (group_name, str(e)) for group_name in staged_node_groups
-                )
-                result.success = False
-
-        # Restore workflows from .cec/ to ComfyUI (for git pull workflow)
-        if not dry_run and not preserve_workflows:
-            logger.debug("Restoring workflows from .cec/")
-            try:
-                self.workflow_manager.restore_all_from_cec()
-                logger.info("Restored workflows from .cec/")
-            except Exception as e:
-                logger.warning(f"Failed to restore workflows: {e}")
-                result.errors.append(f"Workflow restore failed: {e}")
-                # Non-fatal - continue
-
-        # Handle missing models
-        if not dry_run and model_strategy != "skip":
-            try:
-                # Reuse existing import machinery
-                workflows_with_intents = self.model_manager.prepare_import_with_model_strategy(
-                    strategy=model_strategy
-                )
-
-                if workflows_with_intents:
-                    logger.info(f"Downloading models for {len(workflows_with_intents)} workflow(s)")
-
-                    # prepare_import_with_model_strategy() may update pyproject model entries.
-                    # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
-                    # download intents instead of stale session-cached resolutions.
-                    for workflow_name in workflows_with_intents:
-                        self.workflow_cache.invalidate(self.name, workflow_name)
-
-                    # Resolve each workflow (triggers downloads)
-                    from ..strategies.auto import AutoModelStrategy, AutoNodeStrategy
-
-                    for workflow_name in workflows_with_intents:
-                        try:
-                            logger.debug(f"Resolving workflow: {workflow_name}")
-
-                            # Resolve workflow (analyzes and prepares downloads)
-                            resolution_result = self.resolve_workflow(
-                                name=workflow_name,
-                                model_strategy=AutoModelStrategy(),
-                                node_strategy=AutoNodeStrategy(),
-                                download_callbacks=model_callbacks
-                            )
-
-                            # Track downloads from actual download results (not stale ResolvedModel objects)
-                            # Note: Download results are populated by _execute_pending_downloads() during resolve_workflow()
-                            for dr in resolution_result.download_results:
-                                if dr.success:
-                                    result.models_downloaded.append(dr.filename)
-                                else:
-                                    result.models_failed.append((dr.filename, dr.error or "Download failed"))
-
-                        except Exception as e:
-                            logger.error(f"Failed to resolve {workflow_name}: {e}", exc_info=True)
-                            result.errors.append(f"Failed to resolve {workflow_name}: {e}")
-
-            except Exception as e:
-                logger.warning(f"Model download failed: {e}", exc_info=True)
-                result.errors.append(f"Model download failed: {e}")
-                # Non-fatal - continue
-
-        # Ensure model symlink exists
-        try:
-            self.model_symlink_manager.create_symlink()
-            result.model_paths_configured = True
-        except Exception as e:
-            logger.warning(f"Failed to ensure model symlink: {e}")
-            result.errors.append(f"Model symlink configuration failed: {e}")
-            # Continue anyway - symlink might already exist from environment creation
-
-        # Auto-migrate existing environments (one-time operation)
-        # Check if input/output are real directories with content
-        needs_migration = False
-        if self.comfyui_path.exists():
-            from ..utils.symlink_utils import is_link
-
-            input_path = self.comfyui_path / "input"
-            output_path = self.comfyui_path / "output"
-
-            if input_path.exists() and not is_link(input_path):
-                needs_migration = True
-            if output_path.exists() and not is_link(output_path):
-                needs_migration = True
-
-        if needs_migration:
-            logger.info("Detected pre-symlink environment, migrating user data...")
-            try:
-                migration_stats = self.user_content_manager.migrate_existing_data()
-                total_moved = (
-                    migration_stats["input_files_moved"] +
-                    migration_stats["output_files_moved"]
-                )
-                if total_moved > 0:
-                    logger.info(
-                        f"Migration complete: {total_moved} files moved to workspace-level storage"
-                    )
-            except Exception as e:
-                logger.error(f"Migration failed: {e}")
-                result.errors.append(f"User data migration failed: {e}")
-                # Don't fail sync - user can migrate manually
-
-        # Ensure user content symlinks exist
-        try:
-            self.user_content_manager.create_directories()
-            self.user_content_manager.create_symlinks()
-            logger.debug("User content symlinks configured")
-        except Exception as e:
-            logger.warning(f"Failed to ensure user content symlinks: {e}")
-            result.errors.append(f"User content symlink configuration failed: {e}")
-            # Continue anyway - symlinks might already exist
-
-        # Mark environment as complete after successful sync (repair operation)
-        # This ensures environments that lost .complete (e.g., from manual git pull) are visible
-        if result.success and not dry_run:
-            from ..utils.environment_cleanup import mark_environment_complete
-            mark_environment_complete(self.cec_path)
-            logger.debug("Marked environment as complete")
-
-        if result.success:
-            logger.info("Successfully synced environment")
-        else:
-            logger.warning(f"Sync completed with {len(result.errors)} errors")
-
-        return result
 
     # =====================================================
     # Pull/Merge Preview

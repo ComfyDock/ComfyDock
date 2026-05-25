@@ -157,11 +157,12 @@ The lock should cover sync, manager update, model/node/workflow mutations, git
 handoff operations, import finalization where practical, and destructive
 operations that reconcile runtime state.
 
-### CGSYNC-LIFE-10A [PLANNED]: Sync orchestration has explicit plan and apply phases
+### CGSYNC-LIFE-10A [PARTIAL]: Sync orchestration has explicit plan and apply phases
 Validation: MIXED
 
-Environment sync should be implemented as a small public facade over a
-coordinator with named phases: plan environment state, reconcile Python
+Environment sync is implemented as a small public facade over a coordinator with
+named apply phases. It should continue moving toward explicit plan/apply
+separation across the phases: plan environment state, reconcile Python
 dependencies, reconcile custom nodes, restore workflows, resolve or prepare
 models, configure symlinks, and mark completion. Each phase should report
 typed outcome data and make side effects explicit so import, pull/checkout,
