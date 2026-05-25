@@ -109,12 +109,19 @@ follow-on work.
 ### CGCORE-AUTH-01 [LIVE]: Provider credentials are user-supplied local runtime configuration
 Validation: TEST
 
-Core may use workspace-local credentials or runtime environment variables for
-provider APIs such as CivitAI, Hugging Face, and GitHub. Core must not ship
-secret-like provider API keys, bearer tokens, or private search credentials as
-default constants. Features that require provider credentials should fail with a
-structured authentication/configuration error or disabled state until the caller
-or user supplies credentials.
+Core may use workspace-local credentials, runtime environment variables, or
+caller-supplied request credentials for provider APIs such as CivitAI, Hugging
+Face, and GitHub. Core must not ship secret-like provider API keys, bearer
+tokens, or private search credentials as default constants. Features that
+require provider credentials should fail with a structured
+authentication/configuration error or disabled state until the caller or user
+supplies credentials.
+
+Git remote personal access tokens represent the calling user's git identity.
+Adapters should supply them per operation or through machine-local credential
+helpers rather than treating them as portable environment state. Model-provider
+credentials such as CivitAI and Hugging Face keys may be workspace-local backend
+configuration when backend model search or download work requires them.
 
 ### CGCORE-AUTH-02 [LIVE]: Provider auth attaches only to allowlisted hosts
 Validation: TEST

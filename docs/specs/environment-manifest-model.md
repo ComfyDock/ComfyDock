@@ -380,23 +380,28 @@ committed as the portable environment recipe.
 Validation: TEST
 
 GitHub or other git host credentials used to resolve private environment
-repositories, git custom nodes, or development node repositories belong in local
-workspace configuration or runtime environment variables. They must not be
-written into the portable environment manifest. Manifest entries should store
-repository URLs and refs; each machine or deployment provider supplies its own
-credentials.
+repositories, git custom nodes, or development node repositories belong to the
+machine, runtime, or calling user performing the acquisition. They may be
+supplied by runtime environment variables, process-local credential helpers, or
+adapter-scoped request credentials such as a browser-held Manager token. They
+must not be written into the portable environment manifest. Manifest entries
+should store repository URLs and refs; each machine, browser user, or deployment
+provider supplies its own credentials.
 
 ### CGSPEC-LOCAL-02B [LIVE]: Provider API credentials are workspace-local and permission-hardened
 Validation: TEST
 
-CivitAI, Hugging Face, GitHub, and future provider API credentials are
-workspace-local acquisition configuration. They may be stored in the workspace
+CivitAI, Hugging Face, and future model/download provider API credentials may be
+workspace-local acquisition configuration when backend model search or download
+work needs durable machine-local access. They may be stored in the workspace
 configuration file or supplied by environment variables, but they must not be
 written into environment manifests, export bundles, model source metadata, or
 workflow artifacts. Workspace credential files should be created with
 owner-only permissions where the platform supports them, and UI surfaces should
 describe that storage honestly instead of claiming server-side credentials are
-never persisted.
+never persisted. Git remote personal access tokens are governed by
+`CGSPEC-LOCAL-02A` because they represent the calling user's git identity rather
+than shared model-provider acquisition configuration.
 
 ### CGSPEC-LOCAL-03 [LIVE]: ComfyGit-managed resolver floors are tracked policy
 Validation: TEST
