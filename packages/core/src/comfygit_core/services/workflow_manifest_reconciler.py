@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..logging.logging_config import get_logger
 from ..models.manifest import ManifestModel, ManifestWorkflowModel
 from ..models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidgetRef
+
+if TYPE_CHECKING:
+    from ..managers.pyproject_manager import PyprojectManager
 
 logger = get_logger(__name__)
 
@@ -17,7 +20,7 @@ class WorkflowManifestReconciler:
     def __init__(
         self,
         *,
-        pyproject: Any,
+        pyproject: PyprojectManager,
         model_repository: Any,
         normalize_package_id: Callable[[str], str],
         category_for_node_ref: Callable[[WorkflowNodeWidgetRef], str],
