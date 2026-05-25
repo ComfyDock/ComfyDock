@@ -992,9 +992,10 @@ class Environment:
                 extras=extras,
                 all_extras=all_extras,
             )
-            result.packages_synced = sync_result["packages_synced"]
-            result.dependency_groups_installed.extend(sync_result["dependency_groups_installed"])
-            result.dependency_groups_failed.extend(sync_result["dependency_groups_failed"])
+            result.packages_synced = sync_result.packages_synced
+            result.dependency_groups_installed.extend(sync_result.dependency_groups_installed)
+            result.dependency_groups_failed.extend(sync_result.dependency_groups_failed)
+            result.dependency_groups_skipped.extend(sync_result.dependency_groups_skipped)
         except Exception as e:
             # Progressive sync handles optional groups gracefully
             # Only base or required groups cause this exception

@@ -93,7 +93,7 @@ GITHUB_COMFYUI_BUILTINS_BY_VERSION_URL = "https://raw.githubusercontent.com/comf
 
 MAX_REGISTRY_DATA_AGE_HOURS = 24
 
-# Prevent infinite loops for optional group removal
+# Prevent infinite loops when retrying sync with failing optional groups skipped.
 MAX_OPT_GROUP_RETRIES = 10
 
 # PyTorch core packages

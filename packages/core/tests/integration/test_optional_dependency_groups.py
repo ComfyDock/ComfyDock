@@ -68,6 +68,11 @@ class TestOptionalDependencyGroups:
         # Failed optional groups should be tracked
         assert len(result.dependency_groups_failed) == 1
         assert result.dependency_groups_failed[0][0] == "optional-cuda"
+        assert result.dependency_groups_skipped == ["optional-cuda"]
+
+        # Portable manifest intent should be preserved.
+        groups_after_sync = test_env.pyproject.dependencies.get_groups()
+        assert "optional-cuda" in groups_after_sync
 
         # Required groups should succeed (installed in second call without optional-cuda)
         assert "comfyui-test-node" in result.dependency_groups_installed
@@ -182,6 +187,8 @@ class TestOptionalDependencyGroups:
         assert len(result.dependency_groups_failed) == 1
         failed_group, error = result.dependency_groups_failed[0]
         assert failed_group == "optional-bad"
+        assert result.dependency_groups_skipped == ["optional-bad"]
+        assert "optional-bad" in test_env.pyproject.dependencies.get_groups()
 
     def test_all_optional_groups_fail_sync_still_succeeds(self, test_env):
         """If all optional groups fail but base deps succeed, sync should succeed."""
@@ -219,6 +226,10 @@ class TestOptionalDependencyGroups:
         # ASSERT
         assert result.success, "Sync should succeed even if all optional groups fail"
         assert len(result.dependency_groups_failed) >= 1, "Should track at least one failed group"
+        assert set(result.dependency_groups_skipped) >= {"optional-a", "optional-b"}
+        groups_after_sync = test_env.pyproject.dependencies.get_groups()
+        assert "optional-a" in groups_after_sync
+        assert "optional-b" in groups_after_sync
         assert result.packages_synced, "Base dependencies should be installed"
 
     def test_empty_dependency_groups_works(self, test_env):

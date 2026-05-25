@@ -10,6 +10,7 @@ from ..logging.logging_config import get_logger
 from ..managers.overlay_manager import OverlayManager
 from ..manifest.disposable_project import DisposableUvProject
 from ..models.exceptions import CDPyprojectError, UVCommandError
+from ..models.sync import UVSyncOutcome
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -585,16 +586,16 @@ class UVProjectManager:
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
-    ) -> dict:
+    ) -> UVSyncOutcome:
         """Install dependencies progressively with graceful optional group handling.
 
         Installs dependencies in phases:
-        1. Base dependencies + all groups together with iterative optional group removal on failure
+        1. Base dependencies + all groups together.
 
         If optional groups fail to build, we iteratively:
         - Parse the error to identify the failing group
-        - Remove that group from pyproject.toml
-        - Delete uv.lock to force re-resolution
+        - Record the failure as local sync state
+        - Skip that group for the current sync attempt
         - Retry the sync with all remaining groups
         - Continue until success or max retries
 
@@ -611,32 +612,28 @@ class UVProjectManager:
             all_extras: Install all optional extras
 
         Returns:
-            Dict with keys:
-            - packages_synced: bool
-            - dependency_groups_installed: list[str]
-            - dependency_groups_failed: list[tuple[str, str]]
+            Typed uv sync outcome.
         """
         from ..constants import MAX_OPT_GROUP_RETRIES
         from ..utils.uv_error_handler import parse_failed_dependency_group
 
-        result = {
-            "packages_synced": False,
-            "dependency_groups_installed": [],
-            "dependency_groups_failed": []
-        }
-
+        result = UVSyncOutcome()
         attempts = 0
+        skipped_groups: list[str] = []
 
         logger.info("Installing dependencies with all groups...")
 
         while attempts < MAX_OPT_GROUP_RETRIES:
             try:
-                # Get all dependency groups (may have changed after removal)
                 dep_groups = self.pyproject.dependencies.get_groups()
+                group_list = [
+                    group_name
+                    for group_name in dep_groups
+                    if group_name not in skipped_groups
+                ]
 
-                if dep_groups:
+                if group_list:
                     # Install base + all groups together
-                    group_list = list(dep_groups.keys())
                     logger.debug(f"Syncing with groups: {group_list}")
                     self.sync_project(
                         group=group_list,
@@ -651,7 +648,7 @@ class UVProjectManager:
                     )
 
                     # Track successful installations
-                    result["dependency_groups_installed"].extend(group_list)
+                    result.dependency_groups_installed.extend(group_list)
                 else:
                     # No groups - just sync base dependencies
                     logger.debug("No dependency groups, syncing base only")
@@ -667,40 +664,38 @@ class UVProjectManager:
                         all_extras=all_extras,
                     )
 
-                result["packages_synced"] = True
+                result.packages_synced = True
+                result.dependency_groups_skipped = list(skipped_groups)
+                result.attempts = attempts + 1
                 break  # Success - exit loop
 
             except UVCommandError as e:
                 failed_group = parse_failed_dependency_group(e.stderr or "")
 
-                if failed_group and failed_group.startswith('optional-'):
+                if failed_group and failed_group.startswith('optional-') and failed_group not in skipped_groups:
                     attempts += 1
                     logger.warning(
                         f"Build failed for optional group '{failed_group}' (attempt {attempts}/{MAX_OPT_GROUP_RETRIES}), "
-                        "removing and retrying..."
+                        "skipping for this sync and retrying..."
                     )
 
-                    # Remove the problematic group
-                    try:
-                        self.pyproject.dependencies.remove_group(failed_group)
-                    except ValueError:
-                        pass  # Group already gone
+                    skipped_groups.append(failed_group)
 
-                    # Delete lockfile to force re-resolution
-                    lockfile = self.project_path / "uv.lock"
-                    if lockfile.exists():
-                        lockfile.unlink()
-                        logger.debug("Deleted uv.lock to force re-resolution")
-
-                    result["dependency_groups_failed"].append((failed_group, "Build failed (incompatible platform)"))
+                    result.dependency_groups_failed.append((failed_group, "Build failed (incompatible platform)"))
+                    result.dependency_groups_skipped = list(skipped_groups)
+                    result.attempts = attempts
 
                     if callbacks:
-                        callbacks.on_dependency_group_complete(failed_group, success=False, error="Build failed - removed")
+                        callbacks.on_dependency_group_complete(
+                            failed_group,
+                            success=False,
+                            error="Build failed - skipped for this sync",
+                        )
 
                     if attempts >= MAX_OPT_GROUP_RETRIES:
                         raise RuntimeError(
                             f"Failed to install dependencies after {MAX_OPT_GROUP_RETRIES} attempts. "
-                            f"Removed groups: {[g for g, _ in result['dependency_groups_failed']]}"
+                            f"Skipped groups: {result.dependency_groups_skipped}"
                         ) from e
 
                     # Loop continues for retry

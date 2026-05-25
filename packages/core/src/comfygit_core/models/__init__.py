@@ -74,6 +74,7 @@ _EXPORTS: dict[str, str] = {
     "OverlayConfig": "overlay",
     "OverlayInfo": "overlay",
     "SyncResult": "sync",
+    "UVSyncOutcome": "sync",
     "APICredentials": "workspace_config",
     "ModelDirectory": "workspace_config",
     "WorkspaceConfig": "workspace_config",

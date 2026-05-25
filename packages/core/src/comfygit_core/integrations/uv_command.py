@@ -171,6 +171,7 @@ class UVCommand:
             'raw': '--raw',
             'dev': '--dev',
             'group': '--group',
+            'no_group': '--no-group',
             'optional': '--optional',
             'extra': '--extra',
             'all_extras': '--all-extras',
