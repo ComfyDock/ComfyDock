@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDProcessError
+from .redaction import redact_command, redact_sensitive_text
 
 logger = get_logger(__name__)
 
@@ -36,8 +37,9 @@ def run_command(
         CDProcessError: If command fails and check=True
         subprocess.TimeoutExpired: If command times out
     """
+    safe_cmd = redact_command(cmd)
     try:
-        logger.debug(f"Running command: {' '.join(cmd)}")
+        logger.debug(f"Running command: {safe_cmd}")
         if cwd:
             logger.debug(f"Working directory: {cwd}")
 
@@ -55,9 +57,9 @@ def run_command(
 
     except subprocess.CalledProcessError as e:
         # Transform CalledProcessError into our custom exception
-        error_msg = f"Command failed with exit code {e.returncode}: {' '.join(cmd)}"
+        error_msg = f"Command failed with exit code {e.returncode}: {safe_cmd}"
         if e.stderr:
-            error_msg += f"\nStderr: {e.stderr}"
+            error_msg += f"\nStderr: {redact_sensitive_text(e.stderr)}"
         logger.error(error_msg)
         raise CDProcessError(
             message=error_msg,
@@ -65,14 +67,14 @@ def run_command(
             stderr=e.stderr,
             stdout=e.stdout,
             returncode=e.returncode
-        )
+        ) from e
     except subprocess.TimeoutExpired:
-        error_msg = f"Command timed out after {timeout}s: {' '.join(cmd)}"
+        error_msg = f"Command timed out after {timeout}s: {safe_cmd}"
         logger.error(error_msg)
         # Let TimeoutExpired propagate - it's specific and useful
         raise
     except Exception as e:
-        error_msg = f"Error running command {' '.join(cmd)}: {e}"
+        error_msg = f"Error running command {safe_cmd}: {redact_sensitive_text(e)}"
         logger.error(error_msg)
         raise
 
@@ -139,7 +141,7 @@ def log_requirements_content(requirements_file: Path, show_all: bool = True) -> 
         lines = content.split('\n')
 
         # Count non-comment, non-empty lines
-        package_lines = [l for l in lines if l.strip() and not l.strip().startswith('#')]
+        package_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
 
         #
         separator = '=' * 60

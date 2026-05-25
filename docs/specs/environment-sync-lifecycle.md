@@ -18,6 +18,16 @@ Sync is allowed to recreate or replace the managed virtual environment. Users
 should not rely on manually installed packages surviving unless they are captured
 in manifest dependencies or local overlay configuration.
 
+### CGSYNC-LIFE-02A [PARTIAL]: Dry-run sync is a read-only planning path
+Validation: TEST
+
+Dry-run sync should build and return a reconciliation plan without mutating the
+tracked manifest, local overlay configuration, virtual environment, custom-node
+checkout directories, workflow copies, symlinks, completion markers, cache
+state, or gitignore entries. Implementation may still share planning code with
+real sync, but write-capable phases should be explicit and skipped unless the
+caller requested apply mode.
+
 ### CGSYNC-LIFE-03 [LIVE]: Run syncs unless explicitly bypassed
 Validation: TEST
 
@@ -147,6 +157,17 @@ The lock should cover sync, manager update, model/node/workflow mutations, git
 handoff operations, import finalization where practical, and destructive
 operations that reconcile runtime state.
 
+### CGSYNC-LIFE-10A [PLANNED]: Sync orchestration has explicit plan and apply phases
+Validation: MIXED
+
+Environment sync should be implemented as a small public facade over a
+coordinator with named phases: plan environment state, reconcile Python
+dependencies, reconcile custom nodes, restore workflows, resolve or prepare
+models, configure symlinks, and mark completion. Each phase should report
+typed outcome data and make side effects explicit so import, pull/checkout,
+repair, materialization, and run supervision can reuse the same lifecycle
+without duplicating policy in `Environment`.
+
 ### CGSYNC-LIFE-11 [LIVE]: Incomplete environments are hidden and cleaned up
 Validation: TEST
 
@@ -195,6 +216,16 @@ Validation: HUMAN_REVIEW
 Core and Manager support reviewed dependency apply. CLI may detect and display
 dependency conflicts and dependency previews, but it does not yet expose the
 same first-class reviewed apply flow.
+
+### CGSYNC-NODE-04 [PARTIAL]: Optional dependency fallback does not rewrite portable intent
+Validation: TEST
+
+If a uv sync operation discovers that an optional dependency group fails on the
+current machine, core should return typed outcome data describing the failed and
+skipped groups. Retrying the current sync while excluding those groups is a
+local operation choice. The portable dependency group remains in
+`pyproject.toml` unless the user explicitly edits or removes that optional
+dependency intent.
 
 ## Local Configuration And Overlays
 
@@ -275,6 +306,20 @@ such as `uv add --frozen` when supported, then run normal overlay-aware sync.
 Operations that cannot be represented as a manifest-only uv edit should use an
 equivalent core-owned manifest mutation plus overlay-aware sync, rather than
 mutating the tracked manifest with local overlay state.
+
+## Workflow Resolution
+
+### CGSYNC-WF-01 [PARTIAL]: Workflow resolution writeback is owned by one manifest reconciler
+Validation: MIXED
+
+Workflow resolution may discover custom-node package mappings, built-in node
+usage, model dependencies, manual model dependencies, download intents,
+criticality, and path/category fixes. The conversion from a resolution result to
+portable manifest edits should be owned by one core reconciler so criticality,
+manual dependency preservation, source/download intent persistence, and node
+package writeback cannot drift across multiple call sites. Workflow JSON path
+rewriting, cache invalidation, and pending download execution are separate side
+effects that should remain outside the manifest reconciler.
 
 ## Git And Remote Flows
 

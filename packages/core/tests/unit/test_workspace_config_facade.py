@@ -1,5 +1,6 @@
 """Tests for Workspace configuration facade methods."""
 
+import os
 from pathlib import Path
 
 from comfygit_core import Workspace
@@ -45,3 +46,13 @@ def test_workspace_external_uv_cache_facade_persists_and_clears_path(tmp_path):
     workspace.set_external_uv_cache(None)
 
     assert workspace.get_external_uv_cache() is None
+
+
+def test_workspace_config_file_is_owner_only_when_tokens_are_saved(tmp_path):
+    workspace = Workspace.create(tmp_path / "workspace")
+
+    workspace.set_civitai_token("civitai-token")
+
+    if os.name != "nt":
+        mode = workspace.paths.workspace_file.stat().st_mode & 0o777
+        assert mode == 0o600

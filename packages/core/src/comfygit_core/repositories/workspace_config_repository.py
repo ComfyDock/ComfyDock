@@ -63,10 +63,23 @@ class WorkspaceConfigRepository:
     def save(self, data: WorkspaceConfig):
         """Save config atomically (write to temp, then rename)."""
         data_dict = WorkspaceConfig.to_dict(data)
+        self.config_file_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.config_file_path.with_suffix(".tmp")
         with temp_path.open("w", encoding='utf-8') as f:
             json.dump(data_dict, f, indent=2)
+        self._harden_config_file_permissions(temp_path)
         temp_path.replace(self.config_file_path)  # Atomic on POSIX
+        self._harden_config_file_permissions(self.config_file_path)
+
+    @staticmethod
+    def _harden_config_file_permissions(path: Path) -> None:
+        """Best-effort owner-only permissions for local credential config files."""
+        if os.name == "nt":
+            return
+        try:
+            path.chmod(0o600)
+        except OSError as e:
+            logger.debug("Could not harden workspace config permissions for %s: %s", path, e)
 
     def set_models_directory(self, path: Path):
         logger.info(f"Setting models directory to {path}")

@@ -78,6 +78,7 @@ class TestModelDownloader:
 
         assert downloader.detect_url_type("https://example.com/model.safetensors") == "custom"
         assert downloader.detect_url_type("https://cdn.example.org/files/model.ckpt") == "custom"
+        assert downloader.detect_url_type("https://example.com/model.safetensors?next=civitai.com") == "custom"
 
     def test_suggest_path_with_known_node(self, tmp_path):
         """Test path suggestion for known loader nodes."""
@@ -513,6 +514,38 @@ class TestModelDownloader:
         call_kwargs = mock_get.call_args[1]
         assert 'headers' in call_kwargs
         assert call_kwargs['headers'] == {}  # Empty, no auth header
+        assert result.success is True
+
+    @patch('requests.get')
+    def test_custom_url_query_mentioning_civitai_gets_no_auth_header(self, mock_get, tmp_path):
+        """CivitAI auth should be based on URL host, not full-string containment."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.headers = {'content-length': '1024'}
+        mock_response.iter_content = Mock(return_value=[b"test" * 256])
+        mock_get.return_value = mock_response
+
+        workspace_config = Mock()
+        workspace_config.get_models_directory.return_value = tmp_path
+        workspace_config.get_civitai_token.return_value = "test_api_key_12345"
+
+        repo = Mock()
+        repo.find_by_source_url.return_value = None
+        repo.calculate_short_hash.return_value = "abc123"
+
+        downloader = ModelDownloader(repo, workspace_config)
+        request = DownloadRequest(
+            url="https://example.com/models/file.safetensors?redirect=https://civitai.com/api/download/models/1",
+            target_path=tmp_path / "checkpoints/model.safetensors"
+        )
+
+        result = downloader.download(request)
+
+        mock_get.assert_called_once()
+        call_kwargs = mock_get.call_args[1]
+        assert 'headers' in call_kwargs
+        assert call_kwargs['headers'] == {}
+        workspace_config.get_civitai_token.assert_not_called()
         assert result.success is True
 
     @patch('requests.get')

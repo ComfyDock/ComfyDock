@@ -386,6 +386,18 @@ written into the portable environment manifest. Manifest entries should store
 repository URLs and refs; each machine or deployment provider supplies its own
 credentials.
 
+### CGSPEC-LOCAL-02B [LIVE]: Provider API credentials are workspace-local and permission-hardened
+Validation: TEST
+
+CivitAI, Hugging Face, GitHub, and future provider API credentials are
+workspace-local acquisition configuration. They may be stored in the workspace
+configuration file or supplied by environment variables, but they must not be
+written into environment manifests, export bundles, model source metadata, or
+workflow artifacts. Workspace credential files should be created with
+owner-only permissions where the platform supports them, and UI surfaces should
+describe that storage honestly instead of claiming server-side credentials are
+never persisted.
+
 ### CGSPEC-LOCAL-03 [LIVE]: ComfyGit-managed resolver floors are tracked policy
 Validation: TEST
 

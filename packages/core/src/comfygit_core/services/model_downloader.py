@@ -20,6 +20,8 @@ from ..logging.logging_config import get_logger
 from ..models.exceptions import DownloadErrorContext
 from ..models.shared import ModelWithLocation
 from ..utils.model_categories import get_model_category
+from ..utils.provider_urls import is_civitai_url, is_huggingface_url
+from ..utils.redaction import redact_url
 from .huggingface_url import parse_huggingface_url
 
 if TYPE_CHECKING:
@@ -101,11 +103,9 @@ class ModelDownloader:
         Returns:
             'civitai', 'huggingface', or 'custom'
         """
-        url_lower = url.lower()
-
-        if "civitai.com" in url_lower:
+        if is_civitai_url(url):
             return "civitai"
-        elif "huggingface.co" in url_lower or "hf.co" in url_lower:
+        elif is_huggingface_url(url):
             return "huggingface"
         else:
             return "custom"
@@ -222,9 +222,11 @@ class ModelDownloader:
 
         # Classify based on exception type
         if isinstance(error, requests.HTTPError):
-            http_status = error.response.status_code
+            http_status = error.response.status_code if error.response is not None else None
 
-            if http_status == 401:
+            if http_status is None:
+                error_category = "unknown"
+            elif http_status == 401:
                 # Unauthorized - check if we have auth
                 if not has_auth:
                     error_category = "auth_missing"
@@ -507,7 +509,7 @@ class ModelDownloader:
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Step 3-4: Download with streaming hash calculation
-            logger.info(f"Downloading from {request.url}")
+            logger.info("Downloading from %s", redact_url(request.url))
             url_type = self.detect_url_type(request.url)
 
             # HuggingFace URL handling
@@ -516,7 +518,7 @@ class ModelDownloader:
 
             # Add Civitai auth header if URL is from Civitai and we have an API key
             headers = {}
-            if "civitai.com" in request.url.lower() and self.workspace_config:
+            if url_type == "civitai" and self.workspace_config:
                 api_key = self.workspace_config.get_civitai_token()
                 if api_key:
                     headers['Authorization'] = f'Bearer {api_key}'

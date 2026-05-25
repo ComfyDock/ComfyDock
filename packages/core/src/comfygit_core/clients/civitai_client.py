@@ -26,6 +26,8 @@ from comfygit_core.models.exceptions import (
 from comfygit_core.repositories.workspace_config_repository import (
     WorkspaceConfigRepository,
 )
+from comfygit_core.utils.provider_urls import is_civitai_url
+from comfygit_core.utils.redaction import redact_url
 from comfygit_core.utils.retry import (
     RateLimitManager,
     RetryConfig,
@@ -37,9 +39,6 @@ logger = get_logger(__name__)
 DEFAULT_CIVITAI_URL = "https://civitai.com/api/v1"
 DEFAULT_CIVITAI_SEARCH_URL = "https://search-new.civitai.com"
 DEFAULT_CIVITAI_SEARCH_INDEX = "models_v9"
-DEFAULT_CIVITAI_SEARCH_CLIENT_KEY = (
-    "8c46eb2508e21db1e9828a97968d91ab1ca1caa5f70a00e88a2ba1e286603b61"
-)
 
 
 class CivitAIError(CDRegistryError):
@@ -198,10 +197,10 @@ class CivitAIClient:
             return []
 
         search_url = os.environ.get("CIVITAI_SEARCH_HOST", DEFAULT_CIVITAI_SEARCH_URL).rstrip("/")
-        search_key = os.environ.get(
-            "CIVITAI_SEARCH_CLIENT_KEY",
-            DEFAULT_CIVITAI_SEARCH_CLIENT_KEY,
-        )
+        search_key = os.environ.get("CIVITAI_SEARCH_CLIENT_KEY") or self._api_key
+        if not search_key:
+            logger.debug("CivitAI ranked search disabled: no API key configured")
+            return []
         search_index = os.environ.get("CIVITAI_SEARCH_INDEX", DEFAULT_CIVITAI_SEARCH_INDEX)
 
         filters: list[str] = []
@@ -520,7 +519,7 @@ class CivitAIClient:
         req.add_header("Content-Type", "application/json")
 
         # Add authentication if available
-        if (authenticated or self._api_key) and self._api_key:
+        if (authenticated or self._api_key) and self._api_key and is_civitai_url(url):
             req.add_header("Authorization", f"Bearer {self._api_key}")
 
         try:
@@ -533,7 +532,7 @@ class CivitAIClient:
 
         except urllib.error.HTTPError as e:
             if e.code == 404:
-                logger.debug(f"CivitAI: Not found at '{url}'")
+                logger.debug("CivitAI: Not found at '%s'", redact_url(url))
                 return None
 
             elif e.code == 429:
@@ -565,10 +564,10 @@ class CivitAIClient:
                     error_data = e.read().decode("utf-8")
                     if error_data:
                         error_detail = f" - {error_data}"
-                except:
+                except Exception:
                     pass
                 logger.error(f"CivitAI HTTP error: {e.code} {e.reason}{error_detail}")
-                logger.debug(f"Failed URL: {url}")
+                logger.debug("Failed URL: %s", redact_url(url))
                 raise CivitAIError(
                     f"CivitAI request failed: HTTP {e.code} {e.reason}{error_detail}"
                 ) from e

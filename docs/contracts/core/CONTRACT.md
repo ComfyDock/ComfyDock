@@ -78,8 +78,7 @@ selection, overlays, runtime Python lookup, manifest display, dependency group
 mutation, and workflow model dependency edits. Workspace-level config/download
 configuration now uses Workspace facade methods for Civitai, Hugging Face,
 GitHub, external UV cache settings, model download path suggestion, and model
-download execution. Provider-specific deployment
-credentials such as retired RunPod keys are not part of core workspace
+download execution. Retired deployment-provider credentials are not part of core workspace
 configuration. Workspace model-index adapter calls now use Workspace facade
 methods for indexed source management, source lookup, hash completion, indexed
 model lookup, and model-location deletion. Manager workflow APIs now use
@@ -104,6 +103,37 @@ custom-node exclusions without Manager- or CLI-specific UI decisions. Workflow
 source candidate discovery now routes through public Environment/Workspace
 facades instead of manager reach-throughs. Deploy/build integration remains
 follow-on work.
+
+## Provider Credentials And External Auth
+
+### CGCORE-AUTH-01 [LIVE]: Provider credentials are user-supplied local runtime configuration
+Validation: TEST
+
+Core may use workspace-local credentials or runtime environment variables for
+provider APIs such as CivitAI, Hugging Face, and GitHub. Core must not ship
+secret-like provider API keys, bearer tokens, or private search credentials as
+default constants. Features that require provider credentials should fail with a
+structured authentication/configuration error or disabled state until the caller
+or user supplies credentials.
+
+### CGCORE-AUTH-02 [LIVE]: Provider auth attaches only to allowlisted hosts
+Validation: TEST
+
+Core must parse provider URLs and attach provider authentication only when the
+request host is an exact provider host or an approved subdomain for that
+provider. String containment in the full URL is not sufficient. Query strings,
+paths, redirects, and arbitrary user-provided URLs must not cause CivitAI,
+Hugging Face, GitHub, or future provider credentials to be sent to another host.
+
+### CGCORE-AUTH-03 [PARTIAL]: Local credential files are hardened and redacted
+Validation: MIXED
+
+Workspace-local credential storage should be treated as sensitive local
+configuration: files containing provider tokens should be created with
+owner-only permissions where the platform supports POSIX permissions, and logs
+should redact token-like values, authorization headers, signed URL query
+parameters, and provider tokens. This remains partial until all credential
+persistence and logging paths route through shared hardening helpers.
 
 ## Portable Environment Contract
 
@@ -408,6 +438,18 @@ commit was last materialized. At that point, checkout of an older commit should
 avoid silent toolchain migration where practical and should instead surface an
 explicit repair or migration action when current ComfyGit cannot safely operate
 with the recorded toolchain.
+
+### CGCORE-DEP-09 [PARTIAL]: Optional dependency failures are local sync state
+Validation: TEST
+
+An optional dependency group that fails to resolve, build, or install on the
+current machine should be reported as local sync state rather than silently
+removed from tracked portable manifest truth. Core may retry uv sync with
+failed optional groups skipped for the current operation, but removing or
+rewriting those groups in `pyproject.toml` requires explicit user intent. This
+remains partial until all uv sync paths return typed outcome data that records
+attempted groups, skipped groups, failed optional groups, and any manifest
+mutations.
 
 ## Resolution And Sync
 

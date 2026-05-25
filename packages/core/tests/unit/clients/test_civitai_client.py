@@ -74,8 +74,8 @@ class TestCivitAIClient:
         assert response.total_items == 1
 
     @patch("urllib.request.urlopen")
-    def test_search_model_index_ids_uses_public_search_index(self, mock_urlopen, cache_manager):
-        """Text search should ask CivitAI's ranked model index for IDs."""
+    def test_search_model_index_ids_uses_ranked_search_index_with_api_key(self, mock_urlopen, cache_manager):
+        """Text search should ask CivitAI's ranked model index when a key is configured."""
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read.return_value = json.dumps({
@@ -86,7 +86,7 @@ class TestCivitAIClient:
         }).encode()
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
-        client = CivitAIClient(cache_manager=cache_manager)
+        client = CivitAIClient(cache_manager=cache_manager, api_key="test-api-key")
         ids = client.search_model_index_ids(
             "absolute reality",
             limit=10,
@@ -98,7 +98,7 @@ class TestCivitAIClient:
         assert ids == [81458, 1530714]
         request = mock_urlopen.call_args.args[0]
         assert request.full_url == "https://search-new.civitai.com/indexes/models_v9/search"
-        assert request.get_header("Authorization").startswith("Bearer ")
+        assert request.get_header("Authorization") == "Bearer test-api-key"
 
         body = json.loads(request.data.decode("utf-8"))
         assert body["q"] == "absolute reality"
@@ -119,13 +119,23 @@ class TestCivitAIClient:
         mock_response.read.return_value = json.dumps({"hits": [{"id": 81458}]}).encode()
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
-        client = CivitAIClient(cache_manager=cache_manager)
+        client = CivitAIClient(cache_manager=cache_manager, api_key="test-api-key")
         ids = client.search_model_index_ids("absolute", nsfw_level=2)
 
         assert ids == [81458]
         request = mock_urlopen.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
         assert body["filter"] == ["nsfwLevel NOT IN [4, 8, 16, 32]"]
+
+    @patch("urllib.request.urlopen")
+    def test_search_model_index_ids_returns_empty_without_key(self, mock_urlopen, cache_manager):
+        """Ranked CivitAI search should not use a bundled client key."""
+        client = CivitAIClient(cache_manager=cache_manager)
+
+        ids = client.search_model_index_ids("absolute")
+
+        assert ids == []
+        mock_urlopen.assert_not_called()
 
     def test_search_params_to_dict(self):
         """Test SearchParams converts to query dict correctly."""

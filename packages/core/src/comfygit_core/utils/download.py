@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from ..logging.logging_config import get_logger
+from .redaction import redact_sensitive_text, redact_url
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,7 @@ def download_and_extract_archive(url: str, target_path: Path) -> None:
         raise
     except Exception as e:
         logger.error(f"Unexpected error during download/extract: {e}")
-        raise OSError(f"Unexpected error during download/extract: {e}")
+        raise OSError(f"Unexpected error during download/extract: {e}") from e
     finally:
         # Always clean up temp file
         if temp_file_path and temp_file_path.exists():
@@ -63,7 +64,7 @@ def download_file(url: str, suffix: str | None = None) -> Path:
             suffix = Path(url).suffix
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            logger.info(f"Downloading from {url}")
+            logger.info("Downloading from %s", redact_url(url))
 
             with urllib.request.urlopen(url) as response:
                 # Read in chunks for large files
@@ -82,8 +83,9 @@ def download_file(url: str, suffix: str | None = None) -> Path:
             return tmp_path
 
     except Exception as e:
-        logger.error(f"Download failed: {e}")
-        raise OSError(f"Download failed: {e}")
+        safe_error = redact_sensitive_text(e)
+        logger.error("Download failed: %s", safe_error)
+        raise OSError(f"Download failed: {safe_error}") from e
 
 
 def extract_archive(archive_path: Path, target_path: Path) -> None:
@@ -152,7 +154,7 @@ def _try_extract_zip(archive_path: Path, target_path: Path) -> None:
     except zipfile.BadZipFile:
         raise
     except Exception as e:
-        raise OSError(f"ZIP extraction failed: {e}")
+        raise OSError(f"ZIP extraction failed: {e}") from e
 
 
 def _try_extract_tar_gz(archive_path: Path, target_path: Path) -> None:
@@ -168,7 +170,7 @@ def _try_extract_tar_gz(archive_path: Path, target_path: Path) -> None:
     except tarfile.ReadError:
         raise
     except Exception as e:
-        raise OSError(f"TAR.GZ extraction failed: {e}")
+        raise OSError(f"TAR.GZ extraction failed: {e}") from e
 
 
 def _try_extract_tar(archive_path: Path, target_path: Path) -> None:
@@ -184,7 +186,7 @@ def _try_extract_tar(archive_path: Path, target_path: Path) -> None:
     except tarfile.ReadError:
         raise
     except Exception as e:
-        raise OSError(f"TAR extraction failed: {e}")
+        raise OSError(f"TAR extraction failed: {e}") from e
 
 
 def _try_extract_tar_bz2(archive_path: Path, target_path: Path) -> None:
@@ -200,7 +202,7 @@ def _try_extract_tar_bz2(archive_path: Path, target_path: Path) -> None:
     except tarfile.ReadError:
         raise
     except Exception as e:
-        raise OSError(f"TAR.BZ2 extraction failed: {e}")
+        raise OSError(f"TAR.BZ2 extraction failed: {e}") from e
 
 
 def _log_extraction_failure(archive_path: Path) -> None:

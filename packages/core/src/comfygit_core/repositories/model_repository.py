@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import xxhash
 from blake3 import blake3
@@ -11,8 +12,12 @@ from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
 from ..models.shared import ModelWithLocation
+from ..utils.redaction import redact_url
 
 logger = get_logger(__name__)
+
+_CURRENT_DIRECTORY_SENTINEL: Literal["USE_CURRENT"] = "USE_CURRENT"
+BaseDirectoryFilter = Path | None | Literal["USE_CURRENT"]
 
 # Database schema version
 # v10: Switch from blake3 to xxhash for short hash (7x faster)
@@ -52,7 +57,7 @@ def calculate_model_short_hash(file_path: Path) -> str:
         return hasher.hexdigest()[:16]
 
     except Exception as e:
-        raise ComfyDockError(f"Failed to calculate short hash for {file_path}: {e}")
+        raise ComfyDockError(f"Failed to calculate short hash for {file_path}: {e}") from e
 
 
 # Models table: One entry per unique model file (by hash)
@@ -406,7 +411,7 @@ class ModelRepository:
 
         return removed_count
 
-    def get_all_models(self, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
+    def get_all_models(self, base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL) -> list[ModelWithLocation]:
         """Get all models with their locations, optionally filtered by directory.
 
         Args:
@@ -459,7 +464,11 @@ class ModelRepository:
 
         return models
 
-    def find_model_by_hash(self, hash_query: str, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
+    def find_model_by_hash(
+        self,
+        hash_query: str,
+        base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL,
+    ) -> list[ModelWithLocation]:
         """Find models by hash prefix, optionally filtered by directory.
 
         Args:
@@ -518,7 +527,11 @@ class ModelRepository:
 
         return models
 
-    def find_by_filename(self, filename_query: str, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
+    def find_by_filename(
+        self,
+        filename_query: str,
+        base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL,
+    ) -> list[ModelWithLocation]:
         """Find models by exact filename match.
 
         Args:
@@ -626,7 +639,12 @@ class ModelRepository:
             (model_hash, source_type, source_url, json.dumps(metadata), int(datetime.now().timestamp()))
         )
 
-        logger.debug(f"Added source for {model_hash[:8]}...: {source_type} - {source_url}")
+        logger.debug(
+            "Added source for %s...: %s - %s",
+            model_hash[:8],
+            source_type,
+            redact_url(source_url),
+        )
 
     def remove_source(self, model_hash: str, source_url: str) -> bool:
         """Remove a download source for a model.
@@ -646,13 +664,13 @@ class ModelRepository:
         rows_affected = self.sqlite.execute_write(query, (model_hash, source_url))
 
         if rows_affected > 0:
-            logger.debug(f"Removed source for {model_hash[:8]}...: {source_url}")
+            logger.debug("Removed source for %s...: %s", model_hash[:8], redact_url(source_url))
             return True
         else:
-            logger.debug(f"Source not found for {model_hash[:8]}...: {source_url}")
+            logger.debug("Source not found for %s...: %s", model_hash[:8], redact_url(source_url))
             return False
 
-    def get_stats(self, base_directory: Path | None = "USE_CURRENT") -> dict[str, int]:
+    def get_stats(self, base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL) -> dict[str, int]:
         """Get index statistics, optionally filtered by directory.
 
         Args:
@@ -769,7 +787,7 @@ class ModelRepository:
             return hasher.hexdigest()
 
         except Exception as e:
-            raise ComfyDockError(f"Failed to calculate hash for {file_path}: {e}")
+            raise ComfyDockError(f"Failed to calculate hash for {file_path}: {e}") from e
 
     def compute_sha256(self, file_path: Path) -> str:
         """Compute SHA256 hash for external compatibility.
@@ -790,7 +808,11 @@ class ModelRepository:
 
         return sha256_hash.hexdigest()
 
-    def get_by_category(self, category: str, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
+    def get_by_category(
+        self,
+        category: str,
+        base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL,
+    ) -> list[ModelWithLocation]:
         """Get all models in a specific category, optionally filtered by directory.
 
         Args:
@@ -847,7 +869,11 @@ class ModelRepository:
 
         return models
 
-    def find_by_exact_path(self, relative_path: str, base_directory: Path | None = "USE_CURRENT") -> ModelWithLocation | None:
+    def find_by_exact_path(
+        self,
+        relative_path: str,
+        base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL,
+    ) -> ModelWithLocation | None:
         """Find model by exact relative path, optionally filtered by directory.
 
         Args:
@@ -905,7 +931,11 @@ class ModelRepository:
             metadata=metadata
         )
 
-    def search(self, term: str, base_directory: Path | None = "USE_CURRENT") -> list[ModelWithLocation]:
+    def search(
+        self,
+        term: str,
+        base_directory: BaseDirectoryFilter = _CURRENT_DIRECTORY_SENTINEL,
+    ) -> list[ModelWithLocation]:
         """Search for models by filename or path, optionally filtered by directory.
 
         Args:
