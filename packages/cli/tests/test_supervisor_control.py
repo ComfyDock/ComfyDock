@@ -2,7 +2,7 @@ import json
 import socket
 from urllib.request import urlopen
 
-from comfygit_core.lifecycle.switch_observer import (
+from comfygit_core.runtime import (
     SUPERVISOR_INFO_FILE,
     SWITCH_LOGS_ROUTE,
     SWITCH_STATUS_FILE,

@@ -11,6 +11,7 @@ PUBLIC_CORE_IMPORTS = {
     "comfygit_core.confirmation",
     "comfygit_core.git",
     "comfygit_core.models",
+    "comfygit_core.readiness",
     "comfygit_core.runtime",
     "comfygit_core.workflow",
 }
@@ -42,17 +43,26 @@ def _core_imports(path: Path) -> list[tuple[str, int]]:
     return imports
 
 
-def test_cli_runtime_uses_public_core_facades_or_temporary_allowlist():
-    cli_root = Path(__file__).resolve().parents[1] / "comfygit_cli"
+def _assert_tree_uses_public_core_facades(root: Path, label: str) -> None:
     violations: list[str] = []
 
-    for path in sorted(cli_root.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         for module, line in _core_imports(path):
             if module in PUBLIC_CORE_IMPORTS:
                 continue
-            violations.append(f"{path.relative_to(cli_root.parent)}:{line}: {module}")
+            violations.append(f"{path.relative_to(root.parent)}:{line}: {module}")
 
-    assert not violations, "CLI imported unsupported core internals:\n" + "\n".join(violations)
+    assert not violations, f"{label} imported unsupported core internals:\n" + "\n".join(violations)
+
+
+def test_cli_runtime_uses_public_core_facades_or_temporary_allowlist():
+    cli_root = Path(__file__).resolve().parents[1] / "comfygit_cli"
+    _assert_tree_uses_public_core_facades(cli_root, "CLI runtime")
+
+
+def test_cli_tests_use_public_core_facades_or_explicit_public_models():
+    tests_root = Path(__file__).resolve().parent
+    _assert_tree_uses_public_core_facades(tests_root, "CLI tests")
 
 
 def test_env_commands_use_environment_facades_instead_of_manager_reach_throughs():

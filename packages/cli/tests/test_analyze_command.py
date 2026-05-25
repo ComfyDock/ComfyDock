@@ -70,7 +70,7 @@ def test_analyze_uses_standalone_service_when_no_workspace(capsys) -> None:
 
     with patch("comfygit_cli.global_commands.get_workspace_optional", return_value=None):
         with patch(
-            "comfygit_core.services.workflow_analysis_service.WorkflowAnalysisService.create_standalone",
+            "comfygit_core.workflow.WorkflowAnalysisService.create_standalone",
             return_value=fake_service,
         ) as create_standalone:
             global_cmds.analyze(args)
@@ -99,7 +99,7 @@ def test_analyze_uses_workspace_service_when_workspace_available(capsys) -> None
 
     with patch("comfygit_cli.global_commands.get_workspace_optional", return_value=fake_workspace):
         with patch(
-            "comfygit_core.services.workflow_analysis_service.WorkflowAnalysisService.create_from_workspace",
+            "comfygit_core.workflow.WorkflowAnalysisService.create_from_workspace",
             return_value=fake_service,
         ) as create_from_workspace:
             global_cmds.analyze(args)

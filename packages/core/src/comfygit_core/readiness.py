@@ -12,15 +12,16 @@ from .models import (
     ReadinessEnvironment,
     ReadinessGitStatusReader,
     ReadinessModelSourceReader,
-    ReadinessWorkflowStatus,
-    ReadinessWorkflowSyncStatus,
     ReadinessWarnings,
+    ReadinessWorkflowStatus,
     ReadinessWorkflowStatusReader,
+    ReadinessWorkflowSyncStatus,
 )
 from .services.environment_readiness import (
     build_environment_readiness,
     build_readiness_context,
     build_readiness_from_context,
+    collect_node_provenance_warnings,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "build_environment_readiness",
     "build_readiness_context",
     "build_readiness_from_context",
+    "collect_node_provenance_warnings",
 ]

@@ -33,7 +33,7 @@ Test Strategy:
 
 import json
 
-from comfygit_core.models.workflow import (
+from comfygit_core.models import (
     ResolutionResult,
     ResolvedModel,
     WorkflowNodeWidgetRef,

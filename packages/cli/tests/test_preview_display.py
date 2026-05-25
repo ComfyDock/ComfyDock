@@ -3,7 +3,7 @@
 import io
 from contextlib import redirect_stdout
 
-from comfygit_core.models.ref_diff import (
+from comfygit_core.models import (
     DependencyChanges,
     ModelChange,
     NodeChange,
@@ -26,7 +26,7 @@ class FakeEnvironmentCommands:
 
     def _display_diff_preview(self, diff) -> None:
         """Display a RefDiff to the user."""
-        from comfygit_core.models.ref_diff import RefDiff as RefDiffType
+        from comfygit_core.models import RefDiff as RefDiffType
 
         if not isinstance(diff, RefDiffType):
             return

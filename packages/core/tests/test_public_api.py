@@ -157,9 +157,11 @@ def test_common_adapter_types_are_public():
         UVCommandContext,
         UVCommandError,
         WorkflowAnalysisStatus,
+        WorkflowDependencies,
         WorkflowExecutionContract,
         WorkflowSyncStatus,
     )
+    from comfygit_core.readiness import collect_node_provenance_warnings
 
     assert AutoConfirmStrategy.__name__ == "AutoConfirmStrategy"
     assert BatchDownloadCallbacks.__name__ == "BatchDownloadCallbacks"
@@ -209,8 +211,10 @@ def test_common_adapter_types_are_public():
     assert UVCommandContext.__name__ == "UVCommandContext"
     assert UVCommandError.__name__ == "UVCommandError"
     assert WorkflowAnalysisStatus.__name__ == "WorkflowAnalysisStatus"
+    assert WorkflowDependencies.__name__ == "WorkflowDependencies"
     assert WorkflowExecutionContract.__name__ == "WorkflowExecutionContract"
     assert WorkflowSyncStatus.__name__ == "WorkflowSyncStatus"
+    assert callable(collect_node_provenance_warnings)
 
 
 def test_git_remote_refs_model_round_trips_to_public_json_shape():

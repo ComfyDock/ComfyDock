@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 from comfygit_core.logging.logging_config import get_logger, setup_logging
-from comfygit_core.utils.input_signature import create_node_key
+from comfygit_core.workflow import create_node_key
 
 logger = get_logger(__name__)
 

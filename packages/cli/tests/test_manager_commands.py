@@ -2,7 +2,7 @@
 import argparse
 from unittest.mock import MagicMock, patch
 
-from comfygit_core.models.shared import ManagerStatus, ManagerUpdateResult
+from comfygit_core.models import ManagerStatus, ManagerUpdateResult
 
 
 class TestManagerCommands:
@@ -259,13 +259,13 @@ class TestStatusLegacyManagerNotice:
         skipping the legacy manager notice check.
         """
         from comfygit_cli.env_commands import EnvironmentCommands
-        from comfygit_core.models.environment import (
+        from comfygit_core.models import (
+            DetailedWorkflowStatus,
             EnvironmentComparison,
             EnvironmentStatus,
             GitStatus,
+            WorkflowSyncStatus,
         )
-        from comfygit_core.models.shared import ManagerStatus
-        from comfygit_core.models.workflow import DetailedWorkflowStatus, WorkflowSyncStatus
 
         env_cmds = EnvironmentCommands()
 

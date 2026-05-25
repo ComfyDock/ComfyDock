@@ -513,6 +513,14 @@ class Environment:
             self.workspace_paths.system_nodes,
         )
 
+    def ensure_system_node_links(self) -> list[str]:
+        """Ensure workspace-level system nodes are linked into this environment.
+
+        Adapters should use this facade instead of importing the underlying
+        symlink manager.
+        """
+        return self.system_node_manager.create_symlinks()
+
     @cached_property
     def workflow_cache(self) -> WorkflowCacheRepository:
         """Get workflow cache repository."""

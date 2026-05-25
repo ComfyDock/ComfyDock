@@ -4,7 +4,7 @@ Tests the _print_workflow_issues() method to ensure it correctly reports
 uninstalled packages after resolution.
 """
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_core.models.workflow import (
+from comfygit_core.models import (
     ResolutionResult,
     WorkflowAnalysisStatus,
     WorkflowDependencies,

@@ -21,8 +21,13 @@ from comfygit_cli.env_commands import EnvironmentCommands
 # Import core models
 core_src_path = Path(__file__).parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(core_src_path))
-from comfygit_core.models.environment import EnvironmentComparison, EnvironmentStatus, GitStatus
-from comfygit_core.models.workflow import DetailedWorkflowStatus, WorkflowSyncStatus
+from comfygit_core.models import (
+    DetailedWorkflowStatus,
+    EnvironmentComparison,
+    EnvironmentStatus,
+    GitStatus,
+    WorkflowSyncStatus,
+)
 
 
 class TestDetachedHeadDisplay:
@@ -154,4 +159,3 @@ class TestDetachedHeadDisplay:
 
         assert "detached HEAD" not in output, \
             "Must not show detached HEAD warning when on a branch"
-

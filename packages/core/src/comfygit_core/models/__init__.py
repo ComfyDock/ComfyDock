@@ -143,6 +143,7 @@ _EXPORTS: dict[str, str] = {
     "ScoredPackageMatch": "workflow",
     "WorkflowNodeWidgetRef": "workflow",
     "WorkflowAnalysisStatus": "workflow",
+    "WorkflowDependencies": "workflow",
     "WorkflowSyncStatus": "workflow",
     "DetailedWorkflowStatus": "workflow",
     "ResolutionResult": "workflow",

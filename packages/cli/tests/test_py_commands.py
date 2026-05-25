@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_core.models import UVCommandContext
-from comfygit_core.models.exceptions import UVCommandError
+from comfygit_core.models import UVCommandContext, UVCommandError
 
 
 def _uv_command_context() -> UVCommandContext:
