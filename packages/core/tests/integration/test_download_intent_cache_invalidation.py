@@ -67,7 +67,7 @@ class TestDownloadIntentCacheInvalidation:
             )
         )
 
-        # Run fix_resolution which writes download intent via _write_single_model_resolution
+        # Run fix_resolution, which writes download intent through manifest reconciliation.
         test_env.workflow_manager.fix_resolution(
             resolution1,
             model_strategy=mock_strategy

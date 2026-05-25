@@ -15,6 +15,7 @@ from comfygit_core.models.workflow import (
     WorkflowDependencies,
     WorkflowNodeWidgetRef,
 )
+from comfygit_core.services.workflow_manifest_reconciler import WorkflowManifestReconciler
 
 
 class TestModelDeduplication:
@@ -35,6 +36,16 @@ class TestModelDeduplication:
         manager._write_model_resolution_grouped = WorkflowManager._write_model_resolution_grouped.__get__(manager)
         manager._get_category_for_node_ref = Mock(return_value="vae")
         manager._get_default_criticality = Mock(return_value="flexible")
+        manager.manifest_reconciler = WorkflowManifestReconciler(
+            pyproject=manager.pyproject,
+            model_repository=manager.model_repository,
+            normalize_package_id=lambda value: value,
+            category_for_node_ref=manager._get_category_for_node_ref,
+            default_criticality=manager._get_default_criticality,
+            is_manual_workflow_model=WorkflowManager._is_manual_workflow_model,
+            manual_workflow_model_key=WorkflowManager._manual_workflow_model_key,
+            cleanup_orphaned_workflow_state=Mock(return_value=0),
+        )
 
         return manager
 

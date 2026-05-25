@@ -31,6 +31,7 @@ from ..models.workflow import (
 from ..repositories.workflow_repository import WorkflowRepository
 from ..resolvers.model_resolver import ModelResolver
 from ..services.model_downloader import ModelDownloader
+from ..services.workflow_manifest_reconciler import WorkflowManifestReconciler
 from ..services.workflow_resolution_service import (
     ResolutionContext,
     WorkflowResolutionService,
@@ -109,6 +110,16 @@ class WorkflowManager:
         self.workflow_resolution_service = WorkflowResolutionService(
             self.global_node_resolver,
             self.model_resolver,
+        )
+        self.manifest_reconciler = WorkflowManifestReconciler(
+            pyproject=self.pyproject,
+            model_repository=self.model_repository,
+            normalize_package_id=self._normalize_package_id,
+            category_for_node_ref=self._get_category_for_node_ref,
+            default_criticality=self._get_default_criticality,
+            is_manual_workflow_model=self._is_manual_workflow_model,
+            manual_workflow_model_key=self._manual_workflow_model_key,
+            cleanup_orphaned_workflow_state=self.cleanup_orphaned_workflow_state,
         )
 
         # Use injected model downloader from workspace
@@ -360,105 +371,6 @@ class WorkflowManager:
         }
 
 
-    def _write_single_model_resolution(
-        self,
-        workflow_name: str,
-        resolved: ResolvedModel
-    ) -> None:
-        """Write a single model resolution immediately (progressive mode).
-
-        Builds ManifestWorkflowModel from resolved model and writes to both:
-        1. Global models table (if resolved)
-        2. Workflow models list (unified)
-
-        Supports download intents (status=unresolved, sources=[URL], relative_path=path).
-
-        Args:
-            workflow_name: Workflow being resolved
-            resolved: ResolvedModel with reference + resolved model + flags
-        """
-        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
-
-        model_ref = resolved.reference
-        model = resolved.resolved_model
-
-        # Determine category and criticality
-        category = self._get_category_for_node_ref(model_ref)
-
-        # Override criticality if marked optional
-        if resolved.is_optional:
-            criticality = "optional"
-        else:
-            criticality = self._get_default_criticality(category)
-
-        # NEW: Handle download intent case (both from pyproject and from node properties)
-        if resolved.match_type in ("download_intent", "property_download_intent"):
-            manifest_model = ManifestWorkflowModel(
-                filename=model_ref.widget_value,
-                category=category,
-                criticality=criticality,
-                status="unresolved",  # No hash yet
-                nodes=[model_ref],
-                sources=[resolved.model_source] if resolved.model_source else [],  # URL
-                relative_path=resolved.target_path.as_posix() if resolved.target_path else None  # Target path
-            )
-            self.pyproject.workflows.add_workflow_model(workflow_name, manifest_model)
-
-            # Invalidate cache so download intent is detected on next resolution
-            self.workflow_cache.invalidate(
-                env_name=self.environment_name,
-                workflow_name=workflow_name
-            )
-
-            return
-
-        # Build manifest model
-        if model is None:
-            # Model without hash - always unresolved (even if optional)
-            # Optional means "workflow works without it", not "resolved"
-            manifest_model = ManifestWorkflowModel(
-                filename=model_ref.widget_value,
-                category=category,
-                criticality=criticality,
-                status="unresolved",
-                nodes=[model_ref],
-                sources=[]
-            )
-        else:
-            # Resolved model - fetch sources from repository
-            sources = []
-            if model.hash:
-                sources_from_repo = self.model_repository.get_sources(model.hash)
-                sources = [s['url'] for s in sources_from_repo]
-
-            manifest_model = ManifestWorkflowModel(
-                hash=model.hash,
-                filename=model.filename,
-                category=category,
-                criticality=criticality,
-                status="resolved",
-                nodes=[model_ref],
-                sources=sources
-            )
-
-            # Add to global table with sources
-            global_model = ManifestModel(
-                hash=model.hash,
-                filename=model.filename,
-                size=model.file_size,
-                relative_path=model.relative_path,
-                category=category,
-                sources=sources
-            )
-            self.pyproject.models.add_model(global_model)
-
-        # Progressive write to workflow
-        self.pyproject.workflows.add_workflow_model(workflow_name, manifest_model)
-
-        # NOTE: Workflow JSON path update moved to batch operation at end of fix_resolution()
-        # Progressive JSON updates fail when cache has stale node IDs (node lookup mismatch)
-        # Batch update is more efficient and ensures consistent node IDs within same parse session
-
     def _write_model_resolution_grouped(
         self,
         workflow_name: str,
@@ -476,87 +388,16 @@ class WorkflowManager:
             resolved: ResolvedModel with resolution result
             all_refs: ALL node references for this model (deduplicated group)
         """
-        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
-
-        # Use primary ref for category determination
-        primary_ref = resolved.reference
-        model = resolved.resolved_model
-
-        # Determine category and criticality
-        category = self._get_category_for_node_ref(primary_ref)
-
-        # Override criticality if marked optional
-        if resolved.is_optional:
-            criticality = "optional"
-        else:
-            criticality = self._get_default_criticality(category)
-
-        # Handle download intent case (both from pyproject and from node properties)
-        if resolved.match_type in ("download_intent", "property_download_intent"):
-            manifest_model = ManifestWorkflowModel(
-                filename=primary_ref.widget_value,
-                category=category,
-                criticality=criticality,
-                status="unresolved",
-                nodes=all_refs,  # ALL REFS!
-                sources=[resolved.model_source] if resolved.model_source else [],
-                relative_path=resolved.target_path.as_posix() if resolved.target_path else None
-            )
-            self.pyproject.workflows.add_workflow_model(workflow_name, manifest_model)
-
-            # Invalidate cache
+        invalidate_cache = self.manifest_reconciler.write_model_resolution_grouped(
+            workflow_name,
+            resolved,
+            all_refs,
+        )
+        if invalidate_cache:
             self.workflow_cache.invalidate(
                 env_name=self.environment_name,
                 workflow_name=workflow_name
             )
-            return
-
-        # Build manifest model
-        if model is None:
-            # Model without hash - unresolved
-            manifest_model = ManifestWorkflowModel(
-                filename=primary_ref.widget_value,
-                category=category,
-                criticality=criticality,
-                status="unresolved",
-                nodes=all_refs,  # ALL REFS!
-                sources=[]
-            )
-        else:
-            # Resolved model - fetch sources from repository
-            sources = []
-            if model.hash:
-                sources_from_repo = self.model_repository.get_sources(model.hash)
-                sources = [s['url'] for s in sources_from_repo]
-
-            manifest_model = ManifestWorkflowModel(
-                hash=model.hash,
-                filename=model.filename,
-                category=category,
-                criticality=criticality,
-                status="resolved",
-                nodes=all_refs,  # ALL REFS!
-                sources=sources
-            )
-
-            # Add to global table with sources
-            global_model = ManifestModel(
-                hash=model.hash,
-                filename=model.filename,
-                size=model.file_size,
-                relative_path=model.relative_path,
-                category=category,
-                sources=sources
-            )
-            self.pyproject.models.add_model(global_model)
-
-        # Progressive write to workflow
-        self.pyproject.workflows.add_workflow_model(workflow_name, manifest_model)
-
-        # Log grouped write
-        if len(all_refs) > 1:
-            node_ids = ", ".join(f"#{ref.node_id}" for ref in all_refs)
-            logger.debug(f"Wrote grouped model resolution for nodes: {node_ids}")
 
     def _update_single_workflow_node_path(
         self,
@@ -609,19 +450,10 @@ class WorkflowManager:
             workflow_name: Workflow being resolved
             node_package_id: Package ID to add to workflow.nodes
         """
-        node_package_id = self._normalize_package_id(node_package_id)
-
-        # Get existing workflow node packages from pyproject
-        workflows_config = self.pyproject.workflows.get_all_with_resolutions()
-        workflow_config = workflows_config.get(workflow_name, {})
-        existing_nodes = set(workflow_config.get('nodes', []))
-
-        # Add new package (set handles deduplication)
-        existing_nodes.add(node_package_id)
-
-        # Write back to pyproject
-        self.pyproject.workflows.set_node_packs(workflow_name, existing_nodes)
-        logger.debug(f"Added {node_package_id} to workflow '{workflow_name}' nodes")
+        self.manifest_reconciler.write_single_node_resolution(
+            workflow_name,
+            node_package_id,
+        )
 
     def get_workflow_path(self, name: str) -> Path:
         """Check if workflow exists in ComfyUI directory and return path.
@@ -1514,186 +1346,13 @@ class WorkflowManager:
             resolution: Result with auto-resolved dependencies from resolve_workflow()
             config: Optional in-memory config for batched writes. If None, loads and saves immediately.
         """
-        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
-
         is_batch = config is not None
         if not is_batch:
             with self.pyproject.manifest.edit() as edit:
-                self.apply_resolution(resolution, config=edit.config)
+                self.manifest_reconciler.apply_resolution(resolution, config=edit.config)
                 edit.mark_changed()
-                return
-
-        workflow_name = resolution.workflow_name
-
-        # Phase 1: Reconcile nodes (unchanged)
-        target_node_pack_ids = set()
-        target_node_types = set()
-
-        for pkg in resolution.nodes_resolved:
-            if pkg.is_optional:
-                target_node_types.add(pkg.node_type)
-            elif pkg.package_id is not None:
-                normalized_id = self._normalize_package_id(pkg.package_id)
-                target_node_pack_ids.add(normalized_id)
-                target_node_types.add(pkg.node_type)
-
-        for node in resolution.nodes_unresolved:
-            target_node_types.add(node.type)
-        for node in resolution.nodes_version_gated:
-            target_node_types.add(node.type)
-        for pkg in resolution.nodes_uninstallable:
-            target_node_types.add(pkg.node_type)
-        for packages in resolution.nodes_ambiguous:
-            if packages:
-                target_node_types.add(packages[0].node_type)
-
-        if target_node_pack_ids:
-            self.pyproject.workflows.set_node_packs(workflow_name, target_node_pack_ids, config=config)
         else:
-            self.pyproject.workflows.set_node_packs(workflow_name, None, config=config)
-
-        # Reconcile custom_node_map
-        existing_custom_map = self.pyproject.workflows.get_custom_node_map(workflow_name, config=config)
-        for node_type in list(existing_custom_map.keys()):
-            if node_type not in target_node_types:
-                self.pyproject.workflows.remove_custom_node_mapping(workflow_name, node_type, config=config)
-
-        existing_workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name, config=config)
-        manual_workflow_models = [
-            model for model in existing_workflow_models
-            if self._is_manual_workflow_model(model)
-        ]
-
-        # Phase 2: Build ManifestWorkflowModel entries with smart defaults
-        manifest_models: list[ManifestWorkflowModel] = []
-
-        # Group resolved models by hash
-        hash_to_refs: dict[str, list[WorkflowNodeWidgetRef]] = {}
-        for resolved in resolution.models_resolved:
-            if resolved.resolved_model:
-                model_hash = resolved.resolved_model.hash
-                if model_hash not in hash_to_refs:
-                    hash_to_refs[model_hash] = []
-                hash_to_refs[model_hash].append(resolved.reference)
-            elif resolved.match_type in ("download_intent", "property_download_intent"):
-                # Download intent (from pyproject or node properties) - preserve it in manifest
-                category = self._get_category_for_node_ref(resolved.reference)
-                manifest_model = ManifestWorkflowModel(
-                    filename=resolved.reference.widget_value,
-                    category=category,
-                    criticality="flexible",
-                    status="unresolved",
-                    nodes=[resolved.reference],
-                    sources=[resolved.model_source] if resolved.model_source else [],
-                    relative_path=resolved.target_path.as_posix() if resolved.target_path else None
-                )
-                manifest_models.append(manifest_model)
-            elif resolved.is_optional:
-                # Type C: Optional unresolved (user marked as optional, no model data)
-                category = self._get_category_for_node_ref(resolved.reference)
-                manifest_model = ManifestWorkflowModel(
-                    filename=resolved.reference.widget_value,
-                    category=category,
-                    criticality="optional",
-                    status="unresolved",
-                    nodes=[resolved.reference],
-                    sources=[]
-                )
-                manifest_models.append(manifest_model)
-
-        # Create manifest entries for resolved models
-        for model_hash, refs in hash_to_refs.items():
-            # Get model from first resolved entry
-            model = next(
-                (r.resolved_model for r in resolution.models_resolved if r.resolved_model and r.resolved_model.hash == model_hash),
-                None
-            )
-            if not model:
-                continue
-
-            # Determine criticality with smart defaults
-            criticality = self._get_default_criticality(model.category)
-
-            # Fetch sources from repository to enrich global table
-            sources_from_repo = self.model_repository.get_sources(model.hash)
-            sources = [s['url'] for s in sources_from_repo]
-
-            # Workflow model: lightweight reference (no sources - hash is the key)
-            manifest_model = ManifestWorkflowModel(
-                hash=model.hash,
-                filename=model.filename,
-                category=model.category,
-                criticality=criticality,
-                status="resolved",
-                nodes=refs,
-                sources=[]  # Empty - sources stored in global table only
-            )
-            manifest_models.append(manifest_model)
-
-            # Global table: enrich with sources from SQLite
-            global_model = ManifestModel(
-                hash=model.hash,
-                filename=model.filename,
-                size=model.file_size,
-                relative_path=model.relative_path,
-                category=model.category,
-                sources=sources  # From SQLite - authoritative source
-            )
-            self.pyproject.models.add_model(global_model, config=config)
-
-        existing_by_filename = {m.filename: m for m in existing_workflow_models}
-
-        # Add unresolved models
-        for ref in resolution.models_unresolved:
-            category = self._get_category_for_node_ref(ref)
-            criticality = self._get_default_criticality(category)
-
-            # Check if this model already has a download intent from a previous session
-            existing = existing_by_filename.get(ref.widget_value)
-            sources = []
-            relative_path = None
-            if existing and existing.status == "unresolved" and existing.sources:
-                # Preserve download intent from previous session
-                sources = existing.sources
-                relative_path = existing.relative_path
-                logger.debug(f"Preserving download intent for '{ref.widget_value}': sources={sources}, path={relative_path}")
-
-            manifest_model = ManifestWorkflowModel(
-                filename=ref.widget_value,
-                category=category,
-                criticality=criticality,
-                status="unresolved",
-                nodes=[ref],
-                sources=sources,
-                relative_path=relative_path
-            )
-            manifest_models.append(manifest_model)
-
-        existing_keys = {
-            self._manual_workflow_model_key(model)
-            for model in manifest_models
-            if self._manual_workflow_model_key(model) is not None
-        }
-        for manual_model in manual_workflow_models:
-            manual_key = self._manual_workflow_model_key(manual_model)
-            if manual_key is None or manual_key in existing_keys:
-                continue
-            manifest_models.append(manual_model)
-            existing_keys.add(manual_key)
-
-        # Write all models to workflow
-        self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
-
-        # Clean up workflows deleted from ComfyUI, including their now-unreferenced
-        # workflow API prompt artifacts.
-        self.cleanup_orphaned_workflow_state(config=config)
-
-        # Clean up orphaned models (must run AFTER workflow sections are removed)
-        self.pyproject.models.cleanup_orphans(config=config)
-
-        # Save if not in batch mode
-        if not is_batch:
-            self.pyproject.save(config)
+            self.manifest_reconciler.apply_resolution(resolution, config=config)
 
         # Phase 3: Update workflow JSON with resolved paths
         self.update_workflow_model_paths(resolution)

@@ -217,7 +217,7 @@ Core and Manager support reviewed dependency apply. CLI may detect and display
 dependency conflicts and dependency previews, but it does not yet expose the
 same first-class reviewed apply flow.
 
-### CGSYNC-NODE-04 [PARTIAL]: Optional dependency fallback does not rewrite portable intent
+### CGSYNC-NODE-04 [LIVE]: Optional dependency fallback does not rewrite portable intent
 Validation: TEST
 
 If a uv sync operation discovers that an optional dependency group fails on the
@@ -309,8 +309,8 @@ mutating the tracked manifest with local overlay state.
 
 ## Workflow Resolution
 
-### CGSYNC-WF-01 [PARTIAL]: Workflow resolution writeback is owned by one manifest reconciler
-Validation: MIXED
+### CGSYNC-WF-01 [LIVE]: Workflow resolution writeback is owned by one manifest reconciler
+Validation: TEST
 
 Workflow resolution may discover custom-node package mappings, built-in node
 usage, model dependencies, manual model dependencies, download intents,
