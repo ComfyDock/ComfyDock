@@ -2050,7 +2050,7 @@ class Environment:
         dependencies: WorkflowDependencies,
     ) -> ResolutionResult:
         """Resolve pre-analyzed workflow dependencies without mutating the manifest."""
-        return self.workflow_manager.resolve_workflow(dependencies)
+        return self.workflow_manager.resolve_dependencies(dependencies)
 
     @_requires_env_lock
     def fix_workflow_resolution(

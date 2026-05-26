@@ -126,7 +126,7 @@ def test_workflow_resolution_facades_delegate_to_workflow_manager(test_env, monk
     search_models = Mock(return_value=["model-match"])
 
     monkeypatch.setattr(workflow_manager, "analyze_and_resolve_workflow", analyze)
-    monkeypatch.setattr(workflow_manager, "resolve_workflow", resolve)
+    monkeypatch.setattr(workflow_manager, "resolve_dependencies", resolve)
     monkeypatch.setattr(workflow_manager, "fix_resolution", fix)
     monkeypatch.setattr(workflow_manager, "update_workflow_model_paths", update_paths)
     monkeypatch.setattr(workflow_manager, "search_models", search_models)

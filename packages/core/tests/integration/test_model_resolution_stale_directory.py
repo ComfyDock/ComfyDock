@@ -98,7 +98,7 @@ class TestWorkflowModelResolutionWithDirectorySwitch:
         assert model_ref.widget_value == model_filename
 
         # Resolve workflow
-        resolution = test_env.workflow_manager.resolve_workflow(dependencies)
+        resolution = test_env.workflow_manager.resolve_dependencies(dependencies)
 
         # DEBUG: Print what we found
         print("\n=== RESOLUTION RESULTS ===")

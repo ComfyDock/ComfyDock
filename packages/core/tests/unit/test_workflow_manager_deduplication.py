@@ -271,14 +271,14 @@ class TestDeduplicationIntegration:
         assert len(groups[("model_a.safetensors", "CheckpointLoaderSimple")]) == 1
 
 
-class TestResolveWorkflowDeduplication:
-    """Test that resolve_workflow() deduplicates model refs in status reporting."""
+class TestResolveDependenciesDeduplication:
+    """Test that resolve_dependencies() deduplicates model refs in status reporting."""
 
-    def test_resolve_workflow_deduplicates_model_refs_in_unresolved_list(self):
+    def test_resolve_dependencies_deduplicates_model_refs_in_unresolved_list(self):
         """When same model appears in multiple nodes, models_unresolved should contain unique refs only.
 
         This test verifies that status reporting shows accurate counts by deduplicating
-        model references at the resolve_workflow() level, not just in fix_resolution().
+        model references at the resolve_dependencies() level, not just in fix_resolution().
 
         Example: If workflow has qwen_image_vae.safetensors in nodes #39 and #337,
         models_unresolved should contain 1 representative ref, not 2 duplicate refs.
@@ -344,13 +344,13 @@ class TestResolveWorkflowDeduplication:
         # All models unresolved (return None)
         manager.model_resolver.resolve_model.return_value = None
 
-        # Bind actual resolve_workflow method
-        manager.resolve_workflow = WorkflowManager.resolve_workflow.__get__(manager)
+        # Bind actual resolve_dependencies method
+        manager.resolve_dependencies = WorkflowManager.resolve_dependencies.__get__(manager)
         policy = Mock()
         manager._get_workflow_model_path_policy = Mock(return_value=policy)
 
         # ACT: Resolve workflow
-        result = manager.resolve_workflow(analysis)
+        result = manager.resolve_dependencies(analysis)
 
         # ASSERT: Should have 2 unique unresolved models, not 4
         # Current bug: This will fail because models_unresolved contains all 4 refs
@@ -370,7 +370,7 @@ class TestResolveWorkflowDeduplication:
             f"Expected unique model keys {expected_keys}, got {unresolved_keys}"
         )
 
-    def test_resolve_workflow_checks_path_sync_for_unsaved_workflow(self):
+    def test_resolve_dependencies_checks_path_sync_for_unsaved_workflow(self):
         """Path sync should still be evaluated for unsaved workflows analyzed from JSON."""
         ref = WorkflowNodeWidgetRef(
             node_id="301",
@@ -431,7 +431,7 @@ class TestResolveWorkflowDeduplication:
             )
         ]
 
-        manager.resolve_workflow = WorkflowManager.resolve_workflow.__get__(manager)
+        manager.resolve_dependencies = WorkflowManager.resolve_dependencies.__get__(manager)
         policy = Mock()
 
         def annotate_resolution(resolution):
@@ -440,7 +440,7 @@ class TestResolveWorkflowDeduplication:
         policy.annotate_resolution.side_effect = annotate_resolution
         manager._get_workflow_model_path_policy = Mock(return_value=policy)
 
-        result = manager.resolve_workflow(analysis)
+        result = manager.resolve_dependencies(analysis)
 
         assert len(result.models_resolved) == 1
         assert result.models_resolved[0].needs_path_sync is True

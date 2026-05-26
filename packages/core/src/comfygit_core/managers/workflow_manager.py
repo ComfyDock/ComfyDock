@@ -685,10 +685,10 @@ class WorkflowManager:
         """
         return self.workflow_analysis_cache.analyze_and_resolve_workflow(
             name,
-            self.resolve_workflow,
+            self.resolve_dependencies,
         )
 
-    def resolve_workflow(self, analysis: WorkflowDependencies) -> ResolutionResult:
+    def resolve_dependencies(self, analysis: WorkflowDependencies) -> ResolutionResult:
         """Attempt automatic resolution of workflow dependencies.
 
         Takes the provided analysis and tries to resolve:
@@ -731,14 +731,14 @@ class WorkflowManager:
     ) -> ResolutionResult:
         """Fix remaining issues using strategies with progressive writes.
 
-        Takes ResolutionResult from resolve_workflow() and uses strategies to resolve ambiguities.
+        Takes ResolutionResult from resolve_dependencies() and uses strategies to resolve ambiguities.
         ALL user choices are written immediately (progressive mode):
         - Each model resolution writes to pyproject + workflow JSON
         - Each node mapping writes to per-workflow custom_node_map
         - Ctrl+C preserves partial progress
 
         Args:
-            resolution: Result from resolve_workflow()
+            resolution: Result from resolve_dependencies()
             node_strategy: Strategy for handling unresolved/ambiguous nodes
             model_strategy: Strategy for handling ambiguous/missing models
 
@@ -982,7 +982,7 @@ class WorkflowManager:
         Auto-applies sensible criticality defaults, etc.
 
         Args:
-            resolution: Result with auto-resolved dependencies from resolve_workflow()
+            resolution: Result with auto-resolved dependencies from resolve_dependencies()
             config: Optional in-memory config for batched writes. If None, loads and saves immediately.
         """
         is_batch = config is not None
