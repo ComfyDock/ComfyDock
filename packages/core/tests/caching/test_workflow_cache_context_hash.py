@@ -351,6 +351,38 @@ class TestContextHashCustomMappings:
 
         assert hash2 != hash1
 
+    def test_context_hash_tracks_installed_package_behind_consensus_alias(
+        self,
+        cache_with_mocks,
+        sample_dependencies,
+    ):
+        """Alias-backed consensus mappings should change when the alias stops resolving."""
+        cache_with_mocks.pyproject_manager.workflows.get_custom_node_map.return_value = {}
+        cache_with_mocks.pyproject_manager.workflows.get_all_with_resolutions.return_value = {
+            "workflow_a": {
+                "nodes": [],
+            },
+            "workflow_b": {
+                "nodes": ["pkg-1"],
+                "custom_node_map": {"NodeTypeA": "Package 1"},
+            },
+        }
+
+        hash1 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        cache_with_mocks.pyproject_manager.nodes.get_existing.return_value["pkg-1"].name = (
+            "Renamed Package"
+        )
+        hash2 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        assert hash2 != hash1
+
 
 class TestContextHashManualModels:
     """Test that manually declared workflow models affect resolution cache."""

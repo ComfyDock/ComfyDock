@@ -31,8 +31,10 @@ from ..services.model_downloader import ModelDownloader
 from ..services.workflow_analysis_cache import WorkflowAnalysisCache
 from ..services.workflow_file_store import WorkflowFileStore
 from ..services.workflow_manifest_reconciler import WorkflowManifestReconciler
+from ..services.workflow_resolution_context_builder import (
+    WorkflowResolutionContextBuilder,
+)
 from ..services.workflow_resolution_service import (
-    ResolutionContext,
     WorkflowResolutionService,
 )
 from ..utils.git import is_git_url
@@ -120,6 +122,13 @@ class WorkflowManager:
         self.workflow_resolution_service = WorkflowResolutionService(
             self.global_node_resolver,
             self.model_resolver,
+        )
+        self.workflow_resolution_context_builder = WorkflowResolutionContextBuilder(
+            pyproject=self.pyproject,
+            model_repository=self.model_repository,
+            cec_path=self.cec_path,
+            builtin_versions_repository=self.builtin_versions_repository,
+            normalize_package_id=self._normalize_package_id,
         )
         self.manifest_reconciler = WorkflowManifestReconciler(
             pyproject=self.pyproject,
@@ -361,35 +370,9 @@ class WorkflowManager:
 
     def _get_consensus_custom_node_map(self, workflow_name: str) -> dict[str, str | bool]:
         """Return unambiguous custom node mappings learned from other workflows."""
-        workflows = self.pyproject.workflows.get_all_with_resolutions()
-        installed_nodes = self.pyproject.nodes.get_existing()
-        candidates: dict[str, set[str | bool]] = {}
-
-        for other_name, workflow_data in workflows.items():
-            if other_name == workflow_name:
-                continue
-
-            custom_map = workflow_data.get("custom_node_map", {})
-            if not isinstance(custom_map, Mapping):
-                continue
-
-            for node_type, package_id in custom_map.items():
-                if isinstance(package_id, bool):
-                    normalized: str | bool = package_id
-                elif isinstance(package_id, str):
-                    normalized = self._normalize_package_id(package_id)
-                    if not resolve_installed_node_alias(normalized, installed_nodes):
-                        continue
-                else:
-                    continue
-
-                candidates.setdefault(str(node_type), set()).add(normalized)
-
-        return {
-            node_type: next(iter(package_ids))
-            for node_type, package_ids in candidates.items()
-            if len(package_ids) == 1
-        }
+        return self.workflow_resolution_context_builder.consensus_custom_node_map(
+            workflow_name
+        )
 
 
     def _write_model_resolution_grouped(
@@ -804,32 +787,8 @@ class WorkflowManager:
         Returns:
             ResolutionResult with resolved and unresolved dependencies
         """
-        workflow_name = analysis.workflow_name
-        previous_resolutions = {}
-        workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name)
-        for manifest_model in workflow_models:
-            for ref in manifest_model.nodes:
-                previous_resolutions[ref] = manifest_model
-
-        global_models_dict = {}
-        try:
-            all_global_models = self.pyproject.models.get_all()
-            for model in all_global_models:
-                global_models_dict[model.hash] = model
-        except Exception as e:
-            logger.warning(f"Failed to load global models table: {e}")
-
-        current_custom_map = self.pyproject.workflows.get_custom_node_map(workflow_name)
-        consensus_custom_map = self._get_consensus_custom_node_map(workflow_name)
-
-        context = ResolutionContext(
-            installed_packages=self.pyproject.nodes.get_existing(),
-            custom_node_mappings={**consensus_custom_map, **current_custom_map},
-            previous_model_resolutions=previous_resolutions,
-            global_models=global_models_dict,
-            cec_path=getattr(self, "cec_path", None),
-            builtin_versions_repository=self.builtin_versions_repository,
-            workflow_name=workflow_name,
+        context = self.workflow_resolution_context_builder.build_runtime_context(
+            analysis,
             auto_select_ambiguous=True,  # TODO: Make configurable
         )
 

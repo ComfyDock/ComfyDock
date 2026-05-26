@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
 from ..models.workflow import ResolutionResult, WorkflowDependencies
+from ..services.workflow_resolution_context_builder import (
+    WorkflowResolutionContextBuilder,
+)
 from ..utils.workflow_hash import compute_workflow_hash
 
 
@@ -114,9 +117,30 @@ class WorkflowCacheRepository:
         self._analysis_context_hash_cache: tuple[tuple[object, ...], str] | None = None
         self._resolution_state_hash_cache: tuple[tuple[object, ...], str] | None = None
         self._models_sync_time_cache: tuple[tuple[str, int, int] | tuple[str, None], str | None] | None = None
+        self.resolution_context_builder = (
+            WorkflowResolutionContextBuilder(
+                pyproject=pyproject_manager,
+                model_repository=model_repository,
+                cec_path=cec_path,
+                builtin_versions_repository=builtin_versions_repository,
+                normalize_package_id=self._normalize_cache_package_id,
+            )
+            if pyproject_manager and model_repository
+            else None
+        )
 
         # Ensure schema exists
         self._ensure_schema()
+
+    def _normalize_cache_package_id(self, package_id: str) -> str:
+        """Canonicalize package IDs used by cache-only consensus fingerprints."""
+        if self.node_mapping_repository is None:
+            return package_id
+        canonicalize = getattr(self.node_mapping_repository, "canonicalize_package_id", None)
+        if not callable(canonicalize):
+            return package_id
+        canonical_package_id = canonicalize(package_id)
+        return canonical_package_id if isinstance(canonical_package_id, str) else package_id
 
     def _get_current_models_sync_time(self) -> str | None:
         """Return the model-index sync timestamp that affects resolution caches."""
@@ -407,7 +431,9 @@ class WorkflowCacheRepository:
                 context_start = time.perf_counter()
                 current_context_hash = self._compute_resolution_context_hash(
                     dependencies,
-                    workflow_name
+                    workflow_name,
+                    resolution_state_hash=resolution_state_hash,
+                    models_sync_time=current_models_sync_time,
                 )
                 context_elapsed = (time.perf_counter() - context_start) * 1000
                 logger.debug(f"[CACHE] Context hash computation took {context_elapsed:.2f}ms for '{workflow_name}'")
@@ -514,6 +540,7 @@ class WorkflowCacheRepository:
                 dependencies,
                 workflow_name,
                 resolution_state_hash=resolution_state_hash,
+                models_sync_time=models_sync_time,
             )
 
         # Serialize data
@@ -948,6 +975,7 @@ class WorkflowCacheRepository:
         dependencies: WorkflowDependencies,
         workflow_name: str,
         resolution_state_hash: str | None = None,
+        models_sync_time: str | None | object = _MODELS_SYNC_TIME_UNSET,
     ) -> str:
         """Compute workflow-specific resolution context hash.
 
@@ -960,151 +988,28 @@ class WorkflowCacheRepository:
         Returns:
             16-character hex hash of resolution context
         """
-        if not self.pyproject_manager or not self.model_repository:
+        if self.resolution_context_builder is None:
             return ""
 
         import time
 
         context_start = time.perf_counter()
-        context: dict[str, object] = {
-            "resolution_state_hash": resolution_state_hash
+        current_models_sync_time = (
+            self._get_current_models_sync_time()
+            if models_sync_time is _MODELS_SYNC_TIME_UNSET
+            else models_sync_time
+        )
+        if not isinstance(current_models_sync_time, str | type(None)):
+            current_models_sync_time = None
+        context = self.resolution_context_builder.build_cache_fingerprint_context(
+            dependencies,
+            workflow_name=workflow_name,
+            resolution_state_hash=resolution_state_hash
             if resolution_state_hash is not None
-            else self._compute_resolution_state_hash(),
-        }
-
-        # 1. Custom node mappings for nodes in THIS workflow
-        step_start = time.perf_counter()
-        node_types = {n.type for n in dependencies.non_builtin_nodes}
-        custom_map = self.pyproject_manager.workflows.get_custom_node_map(workflow_name)
-        context["custom_mappings"] = {
-            node_type: custom_map[node_type]
-            for node_type in node_types
-            if node_type in custom_map
-        }
-        workflow_configs = self.pyproject_manager.workflows.get_all_with_resolutions()
-        consensus_candidates: dict[str, set[str | bool]] = {}
-        for other_name, workflow_data in workflow_configs.items():
-            if other_name == workflow_name:
-                continue
-
-            other_custom_map = workflow_data.get("custom_node_map", {})
-            for node_type in node_types:
-                if node_type in other_custom_map:
-                    package_id = other_custom_map[node_type]
-                    if isinstance(package_id, str | bool):
-                        consensus_candidates.setdefault(node_type, set()).add(package_id)
-
-        context["consensus_custom_mappings"] = {
-            node_type: next(iter(package_ids))
-            for node_type, package_ids in consensus_candidates.items()
-            if node_type not in custom_map and len(package_ids) == 1
-        }
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 1 (custom mappings) took {step_elapsed:.2f}ms")
-
-        # 2. Declared packages for nodes THIS workflow uses
-        # Use authoritative workflow.nodes list instead of inferring from workflow content
-        step_start = time.perf_counter()
-
-        # Read nodes list from workflow config (written by apply_resolution)
-        workflow_config = workflow_configs.get(workflow_name, {})
-        relevant_packages = set(workflow_config.get('nodes', []))
-
-        # Get global package metadata
-        declared_packages = self.pyproject_manager.nodes.get_existing()
-
-        context["declared_packages"] = {
-            pkg: {
-                "version": declared_packages[pkg].version,
-                "repository": declared_packages[pkg].repository,
-                "source": declared_packages[pkg].source
-            }
-            for pkg in relevant_packages
-            if pkg in declared_packages
-        }
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 2 (declared packages) took {step_elapsed:.2f}ms")
-
-        # 3. Model entries from pyproject for THIS workflow
-        step_start = time.perf_counter()
-        workflow_models = self.pyproject_manager.workflows.get_workflow_models(workflow_name)
-        model_pyproject_data = {}
-        for manifest_model in workflow_models:
-            nodes = getattr(manifest_model, "nodes", None) or []
-            if not nodes:
-                key_source = (
-                    getattr(manifest_model, "relative_path", None)
-                    or getattr(manifest_model, "hash", None)
-                    or getattr(manifest_model, "filename", None)
-                    or "unknown"
-                )
-                model_pyproject_data[f"manual:{key_source}"] = {
-                    "hash": manifest_model.hash,
-                    "status": manifest_model.status,
-                    "criticality": manifest_model.criticality,
-                    "sources": manifest_model.sources,
-                    "relative_path": manifest_model.relative_path,
-                    "declared_by": getattr(manifest_model, "declared_by", None),
-                }
-                continue
-
-            for ref in nodes:
-                ref_key = f"{ref.node_id}_{ref.widget_index}"
-                model_pyproject_data[ref_key] = {
-                    "hash": manifest_model.hash,
-                    "status": manifest_model.status,
-                    "criticality": manifest_model.criticality,
-                    "sources": manifest_model.sources,
-                    "relative_path": manifest_model.relative_path,
-                }
-
-        context["workflow_models_pyproject"] = model_pyproject_data
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 3 (workflow models) took {step_elapsed:.2f}ms")
-
-        # 4. Model index subset (only models THIS workflow references)
-        step_start = time.perf_counter()
-        model_index_subset = {}
-        for model_ref in dependencies.found_models:
-            normalized_value = model_ref.widget_value.replace("\\", "/")
-            filename = normalized_value.rsplit("/", 1)[-1]
-            models = self.model_repository.find_by_filename(filename)
-            if models:
-                model_index_subset[filename] = [
-                    {
-                        "hash": getattr(m, "hash", None),
-                        "relative_path": getattr(m, "relative_path", None),
-                        "category": getattr(m, "category", None),
-                    }
-                    for m in models
-                ]
-
-        context["model_index_subset"] = model_index_subset
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 4 (model index queries, {len(dependencies.found_models)} models) took {step_elapsed:.2f}ms")
-
-        # 5. Model index sync time (invalidate when model index changes)
-        step_start = time.perf_counter()
-        if self.workspace_config_manager:
-            try:
-                config = self.workspace_config_manager.load()
-                if config.global_model_directory and config.global_model_directory.last_sync:
-                    context["models_sync_time"] = config.global_model_directory.last_sync
-                else:
-                    context["models_sync_time"] = None
-            except Exception as e:
-                logger.warning(f"Failed to get model sync time: {e}")
-                context["models_sync_time"] = None
-        else:
-            context["models_sync_time"] = None
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 5 (model sync time) took {step_elapsed:.2f}ms")
-
-        # Hash the normalized context
-        step_start = time.perf_counter()
+            else self._compute_resolution_state_hash(current_models_sync_time),
+            models_sync_time=current_models_sync_time,
+        )
         hash_result = self._hash_context(context)
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 6 (JSON + hash) took {step_elapsed:.2f}ms")
 
         total_elapsed = (time.perf_counter() - context_start) * 1000
         logger.debug(f"[CONTEXT] Total context hash computation: {total_elapsed:.2f}ms")
