@@ -30,15 +30,15 @@ from ..services.model_downloader import ModelDownloader
 from ..services.workflow_analysis_cache import WorkflowAnalysisCache
 from ..services.workflow_file_store import WorkflowFileStore
 from ..services.workflow_manifest_reconciler import WorkflowManifestReconciler
+from ..services.workflow_manual_model_policy import WorkflowManualModelPolicy
 from ..services.workflow_model_path_policy import WorkflowModelPathPolicy
+from ..services.workflow_node_package_policy import WorkflowNodePackagePolicy
 from ..services.workflow_resolution_context_builder import (
     WorkflowResolutionContextBuilder,
 )
 from ..services.workflow_resolution_service import (
     WorkflowResolutionService,
 )
-from ..utils.git import is_git_url
-from ..utils.node_identity import resolve_installed_node_alias
 
 if TYPE_CHECKING:
     from ..caching.workflow_cache import WorkflowCacheRepository
@@ -110,24 +110,21 @@ class WorkflowManager:
             self.global_node_resolver,
             self.model_resolver,
         )
+        self.node_package_policy = WorkflowNodePackagePolicy(
+            pyproject=self.pyproject,
+            global_node_resolver=self.global_node_resolver,
+            node_mapping_repository=self.node_mapping_repository,
+        )
+        self.manual_model_policy = WorkflowManualModelPolicy()
         self.workflow_resolution_context_builder = WorkflowResolutionContextBuilder(
             pyproject=self.pyproject,
             model_repository=self.model_repository,
             cec_path=self.cec_path,
             builtin_versions_repository=self.builtin_versions_repository,
-            normalize_package_id=self._normalize_package_id,
+            normalize_package_id=self.node_package_policy.normalize_package_id,
         )
         self.workflow_model_path_policy = self._create_workflow_model_path_policy()
-        self.manifest_reconciler = WorkflowManifestReconciler(
-            pyproject=self.pyproject,
-            model_repository=self.model_repository,
-            normalize_package_id=self._normalize_package_id,
-            category_for_node_ref=self._get_category_for_node_ref,
-            default_criticality=self._get_default_criticality,
-            is_manual_workflow_model=self._is_manual_workflow_model,
-            manual_workflow_model_key=self._manual_workflow_model_key,
-            cleanup_orphaned_workflow_state=self.cleanup_orphaned_workflow_state,
-        )
+        self.manifest_reconciler = self._create_manifest_reconciler()
 
         # Use injected model downloader from workspace
         self.downloader = model_downloader
@@ -143,6 +140,7 @@ class WorkflowManager:
             self.model_resolver,
         )
         self.workflow_model_path_policy = self._create_workflow_model_path_policy()
+        self.manifest_reconciler = self._create_manifest_reconciler()
 
     def _create_workflow_model_path_policy(self) -> WorkflowModelPathPolicy:
         """Create workflow model path policy from current runtime metadata."""
@@ -158,41 +156,33 @@ class WorkflowManager:
         """Return model path policy matching the current runtime metadata."""
         if self.workflow_model_path_policy.model_config is not self.model_resolver.model_config:
             self.workflow_model_path_policy = self._create_workflow_model_path_policy()
+            self.manifest_reconciler = self._create_manifest_reconciler()
         return self.workflow_model_path_policy
 
-    @staticmethod
-    def _normalize_model_relative_path(relative_path: str) -> str:
+    def _create_manifest_reconciler(self) -> WorkflowManifestReconciler:
+        """Create manifest reconciler from explicit workflow policy services."""
+        return WorkflowManifestReconciler(
+            pyproject=self.pyproject,
+            model_repository=self.model_repository,
+            node_package_policy=self.node_package_policy,
+            model_path_policy=self.workflow_model_path_policy,
+            manual_model_policy=self.manual_model_policy,
+        )
+
+    def _normalize_model_relative_path(self, relative_path: str) -> str:
         """Normalize and validate a path relative to the configured models directory."""
-        normalized = relative_path.replace("\\", "/").strip()
-        path = PurePosixPath(normalized)
-        if not normalized or path.is_absolute() or ".." in path.parts:
-            raise ValueError(f"Model path must be relative to the models directory: {relative_path}")
-        return path.as_posix()
+        return self.manual_model_policy.normalize_model_relative_path(relative_path)
 
-    @staticmethod
-    def _category_for_indexed_model(model: ModelWithLocation) -> str:
+    def _category_for_indexed_model(self, model: ModelWithLocation) -> str:
         """Return the manifest category for an indexed model location."""
-        if model.category and model.category != "unknown":
-            return model.category
-        parts = PurePosixPath(model.relative_path.replace("\\", "/")).parts
-        if len(parts) > 1 and parts[0]:
-            return parts[0]
-        return model.category or "unknown"
+        return self.manual_model_policy.category_for_indexed_model(model)
 
-    @staticmethod
-    def _is_manual_workflow_model(model) -> bool:
+    def _is_manual_workflow_model(self, model) -> bool:
         """Return whether a workflow model was manually declared outside graph analysis."""
-        return getattr(model, "declared_by", None) == "manual" or not getattr(model, "nodes", None)
+        return self.manual_model_policy.is_manual_workflow_model(model)
 
-    @classmethod
-    def _manual_workflow_model_key(cls, model) -> tuple[str, str] | None:
-        relative_path = getattr(model, "relative_path", None)
-        if relative_path:
-            return ("path", cls._normalize_model_relative_path(relative_path))
-        model_hash = getattr(model, "hash", None)
-        if model_hash:
-            return ("hash", str(model_hash))
-        return None
+    def _manual_workflow_model_key(self, model) -> tuple[str, str] | None:
+        return self.manual_model_policy.manual_workflow_model_key(model)
 
     def _source_urls_for_model_hash(self, model_hash: str) -> list[str]:
         """Return source URLs currently known in the workspace model index."""
@@ -346,32 +336,8 @@ class WorkflowManager:
         return removed
 
     def _normalize_package_id(self, package_id: str) -> str:
-        """Normalize GitHub URLs to registry IDs if they exist in the registry.
-
-        This prevents duplicate entries when users manually enter GitHub URLs
-        for packages that exist in the registry.
-
-        Args:
-            package_id: Package ID (registry ID or GitHub URL)
-
-        Returns:
-            Normalized package ID (registry ID if URL matches, otherwise unchanged)
-        """
-        installed_id = resolve_installed_node_alias(
-            package_id,
-            self.pyproject.nodes.get_existing(),
-        )
-        if installed_id:
-            return installed_id
-
-        # Check if it's a GitHub URL
-        if is_git_url(package_id):
-            # Try to resolve to registry package
-            if registry_pkg := self.global_node_resolver.resolve_github_url(package_id):
-                return self.node_mapping_repository.canonicalize_package_id(registry_pkg.id) or registry_pkg.id
-
-        # Canonicalize legacy IDs directly
-        return self.node_mapping_repository.canonicalize_package_id(package_id) or package_id
+        """Normalize package IDs for manifest storage."""
+        return self.node_package_policy.normalize_package_id(package_id)
 
     def _get_consensus_custom_node_map(self, workflow_name: str) -> dict[str, str | bool]:
         """Return unambiguous custom node mappings learned from other workflows."""
@@ -1040,10 +1006,14 @@ class WorkflowManager:
         if not is_batch:
             with self.pyproject.manifest.edit() as edit:
                 self.manifest_reconciler.apply_resolution(resolution, config=edit.config)
+                self.cleanup_orphaned_workflow_state(config=edit.config)
+                self.pyproject.models.cleanup_orphans(config=edit.config)
                 edit.mark_changed()
         else:
             assert config is not None
             self.manifest_reconciler.apply_resolution(resolution, config=config)
+            self.cleanup_orphaned_workflow_state(config=config)
+            self.pyproject.models.cleanup_orphans(config=config)
 
         # Phase 3: Update workflow JSON with resolved paths
         self.update_workflow_model_paths(resolution)

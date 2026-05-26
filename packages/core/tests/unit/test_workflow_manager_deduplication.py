@@ -16,6 +16,7 @@ from comfygit_core.models.workflow import (
     WorkflowNodeWidgetRef,
 )
 from comfygit_core.services.workflow_manifest_reconciler import WorkflowManifestReconciler
+from comfygit_core.services.workflow_manual_model_policy import WorkflowManualModelPolicy
 from comfygit_core.services.workflow_resolution_service import ResolutionContext
 
 
@@ -35,17 +36,17 @@ class TestModelDeduplication:
 
         # Make the actual methods we're testing real
         manager._write_model_resolution_grouped = WorkflowManager._write_model_resolution_grouped.__get__(manager)
-        manager._get_category_for_node_ref = Mock(return_value="vae")
-        manager._get_default_criticality = Mock(return_value="flexible")
+        node_package_policy = Mock()
+        node_package_policy.normalize_package_id.side_effect = lambda value: value
+        model_path_policy = Mock()
+        model_path_policy.category_for_node_ref.return_value = "vae"
+        model_path_policy.default_criticality.return_value = "flexible"
         manager.manifest_reconciler = WorkflowManifestReconciler(
             pyproject=manager.pyproject,
             model_repository=manager.model_repository,
-            normalize_package_id=lambda value: value,
-            category_for_node_ref=manager._get_category_for_node_ref,
-            default_criticality=manager._get_default_criticality,
-            is_manual_workflow_model=WorkflowManager._is_manual_workflow_model,
-            manual_workflow_model_key=WorkflowManager._manual_workflow_model_key,
-            cleanup_orphaned_workflow_state=Mock(return_value=0),
+            node_package_policy=node_package_policy,
+            model_path_policy=model_path_policy,
+            manual_model_policy=WorkflowManualModelPolicy(),
         )
 
         return manager

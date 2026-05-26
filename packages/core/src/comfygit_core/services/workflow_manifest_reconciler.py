@@ -1,7 +1,6 @@
 """Manifest writeback for workflow resolution results."""
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ..logging.logging_config import get_logger
@@ -10,6 +9,9 @@ from ..models.workflow import ResolutionResult, ResolvedModel, WorkflowNodeWidge
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
+    from .workflow_manual_model_policy import WorkflowManualModelPolicy
+    from .workflow_model_path_policy import WorkflowModelPathPolicy
+    from .workflow_node_package_policy import WorkflowNodePackagePolicy
 
 logger = get_logger(__name__)
 
@@ -22,25 +24,19 @@ class WorkflowManifestReconciler:
         *,
         pyproject: PyprojectManager,
         model_repository: Any,
-        normalize_package_id: Callable[[str], str],
-        category_for_node_ref: Callable[[WorkflowNodeWidgetRef], str],
-        default_criticality: Callable[[str], str],
-        is_manual_workflow_model: Callable[[Any], bool],
-        manual_workflow_model_key: Callable[[Any], tuple[str, str] | None],
-        cleanup_orphaned_workflow_state: Callable[..., Any],
+        node_package_policy: WorkflowNodePackagePolicy,
+        model_path_policy: WorkflowModelPathPolicy,
+        manual_model_policy: WorkflowManualModelPolicy,
     ) -> None:
         self.pyproject = pyproject
         self.model_repository = model_repository
-        self.normalize_package_id = normalize_package_id
-        self.category_for_node_ref = category_for_node_ref
-        self.default_criticality = default_criticality
-        self.is_manual_workflow_model = is_manual_workflow_model
-        self.manual_workflow_model_key = manual_workflow_model_key
-        self.cleanup_orphaned_workflow_state = cleanup_orphaned_workflow_state
+        self.node_package_policy = node_package_policy
+        self.model_path_policy = model_path_policy
+        self.manual_model_policy = manual_model_policy
 
     def write_single_node_resolution(self, workflow_name: str, node_package_id: str) -> None:
         """Add one resolved node package to a workflow manifest entry."""
-        normalized_id = self.normalize_package_id(node_package_id)
+        normalized_id = self.node_package_policy.normalize_package_id(node_package_id)
 
         workflows_config = self.pyproject.workflows.get_all_with_resolutions()
         workflow_config = workflows_config.get(workflow_name, {})
@@ -64,8 +60,8 @@ class WorkflowManifestReconciler:
         primary_ref = resolved.reference
         model = resolved.resolved_model
 
-        category = self.category_for_node_ref(primary_ref)
-        criticality = "optional" if resolved.is_optional else self.default_criticality(category)
+        category = self.model_path_policy.category_for_node_ref(primary_ref)
+        criticality = "optional" if resolved.is_optional else self.model_path_policy.default_criticality(category)
 
         if resolved.match_type in ("download_intent", "property_download_intent"):
             manifest_model = ManifestWorkflowModel(
@@ -133,7 +129,7 @@ class WorkflowManifestReconciler:
             if pkg.is_optional:
                 target_node_types.add(pkg.node_type)
             elif pkg.package_id is not None:
-                normalized_id = self.normalize_package_id(pkg.package_id)
+                normalized_id = self.node_package_policy.normalize_package_id(pkg.package_id)
                 target_node_pack_ids.add(normalized_id)
                 target_node_types.add(pkg.node_type)
 
@@ -160,7 +156,7 @@ class WorkflowManifestReconciler:
         existing_workflow_models = self.pyproject.workflows.get_workflow_models(workflow_name, config=config)
         manual_workflow_models = [
             model for model in existing_workflow_models
-            if self.is_manual_workflow_model(model)
+            if self.manual_model_policy.is_manual_workflow_model(model)
         ]
 
         manifest_models = self._build_manifest_models(
@@ -170,21 +166,18 @@ class WorkflowManifestReconciler:
         )
 
         existing_keys = {
-            self.manual_workflow_model_key(model)
+            self.manual_model_policy.manual_workflow_model_key(model)
             for model in manifest_models
-            if self.manual_workflow_model_key(model) is not None
+            if self.manual_model_policy.manual_workflow_model_key(model) is not None
         }
         for manual_model in manual_workflow_models:
-            manual_key = self.manual_workflow_model_key(manual_model)
+            manual_key = self.manual_model_policy.manual_workflow_model_key(manual_model)
             if manual_key is None or manual_key in existing_keys:
                 continue
             manifest_models.append(manual_model)
             existing_keys.add(manual_key)
 
         self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
-
-        self.cleanup_orphaned_workflow_state(config=config)
-        self.pyproject.models.cleanup_orphans(config=config)
 
     def _build_manifest_models(
         self,
@@ -217,7 +210,7 @@ class WorkflowManifestReconciler:
             if not model:
                 continue
 
-            criticality = self.default_criticality(model.category)
+            criticality = self.model_path_policy.default_criticality(model.category)
             sources_from_repo = self.model_repository.get_sources(model.hash)
             sources = [s["url"] for s in sources_from_repo]
 
@@ -248,8 +241,8 @@ class WorkflowManifestReconciler:
         existing_by_filename = {m.filename: m for m in existing_workflow_models}
 
         for ref in resolution.models_unresolved:
-            category = self.category_for_node_ref(ref)
-            criticality = self.default_criticality(category)
+            category = self.model_path_policy.category_for_node_ref(ref)
+            criticality = self.model_path_policy.default_criticality(category)
             existing = existing_by_filename.get(ref.widget_value)
             sources = []
             relative_path = None
@@ -276,7 +269,7 @@ class WorkflowManifestReconciler:
         return manifest_models
 
     def _download_intent_model(self, resolved: ResolvedModel) -> ManifestWorkflowModel:
-        category = self.category_for_node_ref(resolved.reference)
+        category = self.model_path_policy.category_for_node_ref(resolved.reference)
         return ManifestWorkflowModel(
             filename=resolved.reference.widget_value,
             category=category,
@@ -288,7 +281,7 @@ class WorkflowManifestReconciler:
         )
 
     def _optional_unresolved_model(self, ref: WorkflowNodeWidgetRef) -> ManifestWorkflowModel:
-        category = self.category_for_node_ref(ref)
+        category = self.model_path_policy.category_for_node_ref(ref)
         return ManifestWorkflowModel(
             filename=ref.widget_value,
             category=category,
