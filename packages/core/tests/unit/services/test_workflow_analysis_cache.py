@@ -33,18 +33,28 @@ def _service(tmp_path, cache):
     )
 
 
-def test_analyze_workflow_uses_cached_dependencies(tmp_path):
+def test_analyze_and_resolve_uses_cached_dependencies_and_resolution(tmp_path):
     deps = WorkflowDependencies(workflow_name="workflow")
+    resolution = ResolutionResult(workflow_name="workflow")
     cache = Mock()
-    cache.get.return_value = CachedWorkflowAnalysis(dependencies=deps)
+    cache.get.return_value = CachedWorkflowAnalysis(
+        dependencies=deps,
+        resolution=resolution,
+    )
     service = _service(tmp_path, cache)
+    resolver = Mock()
 
-    assert service.analyze_workflow("workflow") is deps
+    assert service.analyze_and_resolve_workflow("workflow", resolver) == (
+        deps,
+        resolution,
+    )
+    resolver.assert_not_called()
     cache.set.assert_not_called()
 
 
-def test_analyze_workflow_parses_and_caches_on_miss(tmp_path, monkeypatch):
+def test_analyze_and_resolve_parses_resolves_and_caches_on_miss(tmp_path, monkeypatch):
     deps = WorkflowDependencies(workflow_name="workflow")
+    resolution = ResolutionResult(workflow_name="workflow")
     cache = Mock()
     cache.get.return_value = None
 
@@ -62,30 +72,34 @@ def test_analyze_workflow_parses_and_caches_on_miss(tmp_path, monkeypatch):
         FakeParser,
     )
     service = _service(tmp_path, cache)
-
-    assert service.analyze_workflow("workflow") is deps
-    cache.set.assert_called_once()
-    assert cache.set.call_args.kwargs["dependencies"] is deps
-    assert cache.set.call_args.kwargs["resolution"] is None
-
-
-def test_analyze_and_resolve_returns_full_cached_result(tmp_path):
-    deps = WorkflowDependencies(workflow_name="workflow")
-    resolution = ResolutionResult(workflow_name="workflow")
-    cache = Mock()
-    cache.get.return_value = CachedWorkflowAnalysis(
-        dependencies=deps,
-        resolution=resolution,
-    )
-    service = _service(tmp_path, cache)
-    resolver = Mock()
+    resolver = Mock(return_value=resolution)
 
     assert service.analyze_and_resolve_workflow("workflow", resolver) == (
         deps,
         resolution,
     )
-    resolver.assert_not_called()
-    cache.set.assert_not_called()
+    resolver.assert_called_once_with(deps)
+    cache.set.assert_called_once()
+    assert cache.set.call_args.kwargs["dependencies"] is deps
+    assert cache.set.call_args.kwargs["resolution"] is resolution
+
+
+def test_analyze_and_resolve_reresolves_cached_dependencies_without_resolution(tmp_path):
+    deps = WorkflowDependencies(workflow_name="workflow")
+    resolution = ResolutionResult(workflow_name="workflow")
+    cache = Mock()
+    cache.get.return_value = CachedWorkflowAnalysis(dependencies=deps)
+    service = _service(tmp_path, cache)
+    resolver = Mock(return_value=resolution)
+
+    assert service.analyze_and_resolve_workflow("workflow", resolver) == (
+        deps,
+        resolution,
+    )
+    resolver.assert_called_once_with(deps)
+    cache.set.assert_called_once()
+    assert cache.set.call_args.kwargs["dependencies"] is deps
+    assert cache.set.call_args.kwargs["resolution"] is resolution
 
 
 def test_analyze_and_resolve_reresolves_partial_cache_hit(tmp_path):

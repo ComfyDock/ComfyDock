@@ -673,7 +673,7 @@ class TestWorkflowModelDeduplication:
 
         manager = PyprojectManager(temp_pyproject)
 
-        # Create unresolved model entry (what analyze_workflow creates)
+        # Create unresolved model entry (what workflow analysis/resolution creates)
         unresolved_ref = WorkflowNodeWidgetRef(
             node_id="4",
             node_type="CheckpointLoaderSimple",

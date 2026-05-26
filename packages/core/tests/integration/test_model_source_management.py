@@ -159,8 +159,7 @@ class TestAutoResolvedModelsCommit:
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow_v1)
 
         # Resolve workflow to fix path sync issues before committing
-        deps = test_env.workflow_manager.analyze_workflow("test_workflow")
-        resolution = test_env.workflow_manager.resolve_workflow(deps)
+        _deps, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
         test_env.workflow_manager.apply_resolution(resolution)
 
         workflow_status = test_env.workflow_manager.get_workflow_status()
@@ -192,8 +191,7 @@ class TestAutoResolvedModelsCommit:
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow_v2)
 
         # Resolve workflow to fix path sync issues before committing
-        deps = test_env.workflow_manager.analyze_workflow("test_workflow")
-        resolution = test_env.workflow_manager.resolve_workflow(deps)
+        _deps, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
         test_env.workflow_manager.apply_resolution(resolution)
 
         # Commit the changes

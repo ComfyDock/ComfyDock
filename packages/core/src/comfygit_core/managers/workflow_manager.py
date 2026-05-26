@@ -669,23 +669,6 @@ class WorkflowManager:
             analyzed_workflows=analyzed
         )
 
-    def analyze_workflow(self, name: str) -> WorkflowDependencies:
-        """Analyze a single workflow for dependencies - with caching.
-
-        NOTE: For best performance, use analyze_and_resolve_workflow() which
-        caches BOTH analysis and resolution.
-
-        Args:
-            name: Workflow name
-
-        Returns:
-            WorkflowDependencies
-
-        Raises:
-            FileNotFoundError if workflow not found
-        """
-        return self.workflow_analysis_cache.analyze_workflow(name)
-
     def analyze_and_resolve_workflow(self, name: str) -> tuple[WorkflowDependencies, ResolutionResult]:
         """Analyze and resolve workflow with full caching.
 
@@ -716,7 +699,7 @@ class WorkflowManager:
         Does NOT modify pyproject.toml - that happens in fix_workflow().
 
         Args:
-            analysis: Workflow dependencies from analyze_workflow()
+            analysis: Workflow dependencies from analyze_and_resolve_workflow()
 
         Returns:
             ResolutionResult with resolved and unresolved dependencies

@@ -64,32 +64,6 @@ class WorkflowAnalysisCache:
         self.pyproject_path = pyproject_path
         self.builtin_versions_repository = builtin_versions_repository
 
-    def analyze_workflow(self, name: str) -> WorkflowDependencies:
-        """Analyze a workflow for dependencies, using cache when possible."""
-        workflow_path = self.workflow_file_store.get_workflow_path(name)
-        cached = self.workflow_cache.get(
-            env_name=self.environment_name,
-            workflow_name=name,
-            workflow_path=workflow_path,
-            pyproject_path=self.pyproject_path,
-        )
-
-        if cached is not None:
-            logger.debug(f"Cache HIT for workflow '{name}'")
-            return cached.dependencies
-
-        logger.debug(f"Cache MISS for workflow '{name}' - running full analysis")
-        dependencies = self._parse_workflow(workflow_path)
-        self.workflow_cache.set(
-            env_name=self.environment_name,
-            workflow_name=name,
-            workflow_path=workflow_path,
-            dependencies=dependencies,
-            resolution=None,
-            pyproject_path=self.pyproject_path,
-        )
-        return dependencies
-
     def analyze_and_resolve_workflow(
         self,
         name: str,
@@ -108,7 +82,7 @@ class WorkflowAnalysisCache:
             logger.debug(f"Cache HIT (full) for workflow '{name}'")
             return (cached.dependencies, cached.resolution)
 
-        if cached and cached.needs_reresolution:
+        if cached:
             logger.debug(f"Cache PARTIAL HIT for workflow '{name}' - re-resolving")
             dependencies = cached.dependencies
         else:

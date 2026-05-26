@@ -78,13 +78,13 @@ def _write_generated_metadata(env) -> None:
 def test_analysis_cache_invalidates_when_generated_loader_metadata_changes(test_env):
     simulate_comfyui_save_workflow(test_env, "dynamic_loader", _dynamic_loader_workflow())
 
-    deps1 = test_env.workflow_manager.analyze_workflow("dynamic_loader")
+    deps1, _ = test_env.workflow_manager.analyze_and_resolve_workflow("dynamic_loader")
     assert deps1.found_models == []
     assert [node.type for node in deps1.non_builtin_nodes] == [DYNAMIC_LOADER_NODE]
 
     _write_generated_metadata(test_env)
 
-    deps2 = test_env.workflow_manager.analyze_workflow("dynamic_loader")
+    deps2, _ = test_env.workflow_manager.analyze_and_resolve_workflow("dynamic_loader")
 
     assert [ref.widget_value for ref in deps2.found_models] == [DYNAMIC_MODEL]
     assert [node.type for node in deps2.builtin_nodes] == [DYNAMIC_LOADER_NODE]

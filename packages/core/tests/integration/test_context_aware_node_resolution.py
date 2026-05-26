@@ -77,8 +77,7 @@ class TestWorkflowWithPropertiesField:
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow_data)
 
         # ACT: Analyze and resolve workflow
-        analysis = test_env.workflow_manager.analyze_workflow("test_workflow")
-        resolution = test_env.workflow_manager.resolve_workflow(analysis)
+        analysis, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
 
         # ASSERT: Should resolve from properties
         assert len(resolution.nodes_resolved) > 0, "Should have resolved nodes"
@@ -138,8 +137,7 @@ class TestWorkflowWithPropertiesField:
 
         simulate_comfyui_save_workflow(test_env, "test_workflow_alias", workflow_data)
 
-        analysis = test_env.workflow_manager.analyze_workflow("test_workflow_alias")
-        resolution = test_env.workflow_manager.resolve_workflow(analysis)
+        analysis, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow_alias")
 
         rgthree_resolved = [n for n in resolution.nodes_resolved if n.package_id == "rgthree-comfy"]
         assert len(rgthree_resolved) == 1
@@ -197,7 +195,7 @@ class TestSessionDeduplication:
         simulate_comfyui_save_workflow(test_env, "test_dedup", workflow_data)
 
         # ACT: Analyze and resolve
-        analysis = test_env.workflow_manager.analyze_workflow("test_dedup")
+        analysis, _ = test_env.workflow_manager.analyze_and_resolve_workflow("test_dedup")
 
         # Check that we only have 2 unique builtin node types
         assert len(analysis.builtin_nodes) == 20, "Should find 20 total builtin nodes"
@@ -272,8 +270,7 @@ class TestHeuristicFallback:
         simulate_comfyui_save_workflow(test_env, "old_workflow", workflow_data)
 
         # ACT: Analyze and resolve
-        analysis = test_env.workflow_manager.analyze_workflow("old_workflow")
-        resolution = test_env.workflow_manager.resolve_workflow(analysis)
+        analysis, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("old_workflow")
 
         # ASSERT: CHANGED - should NOT resolve via heuristic, should be unresolved
         assert len(resolution.nodes_unresolved) > 0, "Should be unresolved (no auto-resolve)"
