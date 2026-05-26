@@ -7,6 +7,9 @@ Tests that context hash correctly captures workflow-specific changes:
 - Model metadata changes are captured
 - Model index changes are captured
 """
+import json
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -411,3 +414,96 @@ class TestContextHashModelFilenameNormalization:
         cache_with_mocks.model_repository.find_by_filename.assert_called_once_with(
             "qwen_3_4b.safetensors"
         )
+
+
+class TestContextHashModelIndexCandidateDetails:
+    """Test model index context includes enough candidate identity to avoid stale matches."""
+
+    def test_context_hash_changes_when_candidate_path_changes(
+        self,
+        cache_with_mocks,
+        sample_dependencies
+    ):
+        """Same filename/hash at a different path should invalidate resolution cache."""
+        sample_dependencies.found_models = [
+            WorkflowNodeWidgetRef(
+                node_id="1",
+                node_type="CheckpointLoaderSimple",
+                widget_index=0,
+                widget_value="shared.safetensors",
+            )
+        ]
+        cache_with_mocks.model_repository.find_by_filename.return_value = [
+            SimpleNamespace(
+                hash="same-hash",
+                relative_path="checkpoints/shared.safetensors",
+                category="checkpoints",
+            )
+        ]
+
+        hash1 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        cache_with_mocks.model_repository.find_by_filename.return_value = [
+            SimpleNamespace(
+                hash="same-hash",
+                relative_path="loras/shared.safetensors",
+                category="loras",
+            )
+        ]
+
+        hash2 = cache_with_mocks._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        assert hash2 != hash1
+
+
+class TestContextHashRegistryData:
+    """Test registry mapping data participates in workflow resolution cache context."""
+
+    def test_context_hash_changes_when_registry_mappings_change(
+        self,
+        tmp_path,
+        mock_pyproject_manager,
+        mock_model_repository,
+        sample_dependencies
+    ):
+        mappings_path = tmp_path / "node_mappings.json"
+        mappings_path.write_text(
+            json.dumps({
+                "version": "1",
+                "mappings": {"NodeTypeA::_": [{"package_id": "pkg-1", "rank": 1}]},
+                "packages": {"pkg-1": {"repository": "https://example.com/pkg-1"}},
+            })
+        )
+        node_mapping_repository = cast(Any, SimpleNamespace(mappings_path=mappings_path))
+        cache = WorkflowCacheRepository(
+            db_path=tmp_path / "cache.db",
+            pyproject_manager=mock_pyproject_manager,
+            model_repository=mock_model_repository,
+            node_mapping_repository=node_mapping_repository,
+        )
+
+        hash1 = cache._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        mappings_path.write_text(
+            json.dumps({
+                "version": "2",
+                "mappings": {"NodeTypeA::_": [{"package_id": "pkg-2", "rank": 1}]},
+                "packages": {"pkg-2": {"repository": "https://example.com/pkg-2"}},
+            })
+        )
+
+        hash2 = cache._compute_resolution_context_hash(
+            sample_dependencies,
+            "workflow_a",
+        )
+
+        assert hash2 != hash1

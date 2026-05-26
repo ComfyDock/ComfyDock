@@ -125,6 +125,17 @@ class WorkflowManager:
         # Use injected model downloader from workspace
         self.downloader = model_downloader
 
+    def refresh_runtime_metadata_context(self) -> None:
+        """Reload resolver state derived from local ComfyUI metadata files."""
+        self.model_resolver = ModelResolver(
+            model_repository=self.model_repository,
+            cec_path=self.cec_path,
+        )
+        self.workflow_resolution_service = WorkflowResolutionService(
+            self.global_node_resolver,
+            self.model_resolver,
+        )
+
     @staticmethod
     def _normalize_model_relative_path(relative_path: str) -> str:
         """Normalize and validate a path relative to the configured models directory."""
@@ -1352,6 +1363,7 @@ class WorkflowManager:
                 self.manifest_reconciler.apply_resolution(resolution, config=edit.config)
                 edit.mark_changed()
         else:
+            assert config is not None
             self.manifest_reconciler.apply_resolution(resolution, config=config)
 
         # Phase 3: Update workflow JSON with resolved paths

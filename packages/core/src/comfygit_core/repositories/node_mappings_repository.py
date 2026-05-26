@@ -64,6 +64,11 @@ class NodeMappingsRepository:
         """Get cached GitHub URL to package mapping."""
         return self._build_github_to_registry_map(self.global_mappings)
 
+    def clear_cached_data(self) -> None:
+        """Clear in-memory registry data after the backing cache file changes."""
+        self.__dict__.pop("global_mappings", None)
+        self.__dict__.pop("github_to_registry", None)
+
     def _load_mappings(self) -> GlobalNodeMappings:
         """Load global mappings from JSON file.
 

@@ -529,7 +529,10 @@ class Environment:
             cache_db_path,
             pyproject_manager=self.pyproject,
             model_repository=self.model_repository,
-            workspace_config_manager=self.workspace_config_manager
+            workspace_config_manager=self.workspace_config_manager,
+            cec_path=self.cec_path,
+            node_mapping_repository=self.node_mapping_repository,
+            builtin_versions_repository=self.comfyui_builtin_versions_repository,
         )
 
     @cached_property
@@ -3400,5 +3403,14 @@ class Environment:
             )
         except Exception as e:
             logger.warning(f"Failed to refresh model loaders: {e}", exc_info=True)
+
+        if any((
+            result["builtins_refreshed"],
+            result["folder_paths_refreshed"],
+            result["model_loaders_refreshed"],
+        )):
+            self.workflow_cache.invalidate(self.name)
+            if "workflow_manager" in self.__dict__:
+                self.workflow_manager.refresh_runtime_metadata_context()
 
         return result

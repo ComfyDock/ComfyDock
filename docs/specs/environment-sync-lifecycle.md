@@ -322,6 +322,23 @@ package writeback cannot drift across multiple call sites. Workflow JSON path
 rewriting, cache invalidation, and pending download execution are separate side
 effects that should remain outside the manifest reconciler.
 
+### CGSYNC-WF-02 [LIVE]: Workflow caches are invalidated by semantic analysis and resolution inputs
+Validation: TEST
+
+Workflow dependency and resolution caches may use file metadata as fast lookup
+keys, but cache correctness must be based on the semantic inputs that affect
+parsing and resolution. Workflow dependency analysis must be invalidated when the
+workflow file content changes or when local derived ComfyUI metadata that affects
+parsing changes, including built-in node inventory, folder path mappings, and
+generated model-loader metadata.
+
+Workflow resolution may reuse cached dependency analysis only when the analysis
+inputs are still valid. Resolution must be recomputed when manifest workflow
+model/node data, model index candidates, registry node mappings, package aliases,
+or resolver policy versions change. Refreshing local ComfyUI metadata must
+invalidate cached workflow analysis/resolution and refresh resolver state that
+was constructed from that metadata.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes

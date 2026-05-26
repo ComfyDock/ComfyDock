@@ -496,7 +496,13 @@ class Workspace:
         Returns:
             True if successful, False otherwise
         """
-        return self.registry_data_manager.force_update()
+        success = self.registry_data_manager.force_update()
+        if success:
+            if "node_mapping_repository" in self.__dict__:
+                self.node_mapping_repository.clear_cached_data()
+            if "comfyui_builtin_versions_repository" in self.__dict__:
+                self.comfyui_builtin_versions_repository.clear_cached_data()
+        return success
 
     def get_registry_info(self) -> dict:
         """Get information about cached registry data.
