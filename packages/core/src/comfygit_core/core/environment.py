@@ -2124,34 +2124,11 @@ class Environment:
         model_hash: str,
     ) -> bool:
         """Mark a workflow download intent as resolved after a model download succeeds."""
-        models = list(self.get_workflow_manifest_models(workflow_name))
-
-        for model in models:
-            if not (model.filename == filename and model.status == "unresolved" and model.sources):
-                continue
-
-            resolved_model = self.workspace.get_indexed_model(model_hash)
-            if resolved_model is None:
-                return False
-
-            manifest_model = ManifestModel(
-                hash=model_hash,
-                filename=resolved_model.filename,
-                relative_path=resolved_model.relative_path,
-                category=model.category,
-                size=resolved_model.file_size,
-                sources=model.sources,
-            )
-            self.pyproject.models.add_model(manifest_model)
-
-            model.hash = model_hash
-            model.status = "resolved"
-            model.sources = []
-            model.relative_path = None
-            self.pyproject.workflows.set_workflow_models(workflow_name, models)
-            return True
-
-        return False
+        return self.workflow_manager.mark_model_download_resolved_by_filename(
+            workflow_name,
+            filename=filename,
+            model_hash=model_hash,
+        )
 
     def resolve_workflow(
         self,

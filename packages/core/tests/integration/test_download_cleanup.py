@@ -15,8 +15,8 @@ from helpers.workflow_builder import WorkflowBuilder
 class TestDownloadCleanup:
     """Test that workflow model entries are cleaned after successful downloads."""
 
-    def test_update_model_hash_atomic_updates(self, test_env, test_workspace):
-        """Test that _update_model_hash atomically updates global and workflow models.
+    def test_mark_model_download_resolved_by_reference_atomic_updates(self, test_env, test_workspace):
+        """Test that download resolution atomically updates global and workflow models.
 
         The fix ensures global table is updated BEFORE clearing workflow model fields,
         preventing data loss if there are any interruptions or errors.
@@ -53,10 +53,14 @@ class TestDownloadCleanup:
         )
         test_env.pyproject.workflows.add_workflow_model("test", download_intent)
 
-        # ACT - Call _update_model_hash (will fail with current repository setup)
-        # This test documents the expected behavior even if repository is inaccessible
+        # ACT - Call the manager facade (will fail with current repository setup)
+        # This test documents the expected behavior even if repository is inaccessible.
         try:
-            test_env.workflow_manager._update_model_hash("test", ref, model_hash)
+            test_env.workflow_manager.mark_model_download_resolved_by_reference(
+                "test",
+                ref,
+                model_hash,
+            )
             # If it succeeds (model was in repository), verify cleanup
             models_after = test_env.pyproject.workflows.get_workflow_models("test")
             assert models_after[0].sources == [], "Sources should be cleared"
@@ -69,8 +73,8 @@ class TestDownloadCleanup:
             assert models_after[0].sources == [download_url], \
                 "Sources should be preserved when update fails"
 
-    def test_update_model_hash_fails_if_not_in_repository(self, test_env):
-        """Test that _update_model_hash raises error if model not found in repository.
+    def test_mark_model_download_resolved_by_reference_fails_if_not_in_repository(self, test_env):
+        """Test that download resolution raises if model is not found in repository.
 
         This ensures we never lose download source metadata due to silent failures.
         """
@@ -103,10 +107,13 @@ class TestDownloadCleanup:
         # ACT & ASSERT - Should raise ValueError
         fake_hash = "abc123"
         with pytest.raises(ValueError, match="not found in repository"):
-            test_env.workflow_manager._update_model_hash("test", ref, fake_hash)
+            test_env.workflow_manager.mark_model_download_resolved_by_reference(
+                "test",
+                ref,
+                fake_hash,
+            )
 
         # Verify sources are NOT lost (still in workflow model)
         models_after = test_env.pyproject.workflows.get_workflow_models("test")
         assert models_after[0].sources == [download_url], \
             "Sources should be preserved when update fails"
-

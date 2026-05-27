@@ -207,7 +207,7 @@ def test_mark_workflow_model_download_resolved_updates_manifest_tables(test_env,
     )
 
     test_env.set_workflow_manifest_models("flow", [unresolved])
-    monkeypatch.setattr(test_env.workspace, "get_indexed_model", lambda model_hash: indexed)
+    monkeypatch.setattr(test_env.model_repository, "get_model", lambda model_hash: indexed)
 
     changed = test_env.mark_workflow_model_download_resolved(
         "flow",
