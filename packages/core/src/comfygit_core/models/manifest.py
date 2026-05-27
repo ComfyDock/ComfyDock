@@ -111,8 +111,8 @@ class ManifestWorkflowModel:
         ]
 
         return cls(
-            filename=data["filename"],
-            category=data["category"],
+            filename=str(data.get("filename") or ""),
+            category=str(data.get("category") or "unknown"),
             criticality=data.get("criticality", "flexible"),
             status=data.get("status", "resolved"),
             nodes=nodes,

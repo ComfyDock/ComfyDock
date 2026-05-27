@@ -99,10 +99,15 @@ parallel policy implementations.
 
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
-custom-node exclusions without Manager- or CLI-specific UI decisions. Workflow
-source candidate discovery now routes through public Environment/Workspace
-facades instead of manager reach-throughs. Deploy/build integration remains
-follow-on work.
+custom-node exclusions without Manager- or CLI-specific UI decisions. Core also
+exposes a build-readiness projection that turns a typed manifest snapshot or
+`pyproject.toml` into dependency proof items for Python packages, custom nodes,
+workflow models, cache/catalog hits, and optional source validation. Cloud owns
+target class, base runtime, persistence, source-validator configuration, and
+deployment orchestration, but should consume core manifest-derived proof
+semantics instead of reimplementing them. Workflow source candidate discovery
+now routes through public Environment/Workspace facades instead of manager
+reach-throughs.
 
 ## Provider Credentials And External Auth
 

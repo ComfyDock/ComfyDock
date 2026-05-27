@@ -393,18 +393,19 @@ probe host.
 
 ## Readiness And Handoff
 
-### CGSYNC-READY-01 [PARTIAL]: Core exposes a UI-agnostic readiness result
+### CGSYNC-READY-01 [PARTIAL]: Core exposes UI-agnostic readiness results
 Validation: MIXED
 
-Core should provide a structured readiness result that callers can use for
-export, push, build planning, and future deploy gates. The result should
+Core should provide structured readiness results that callers can use for
+export, push, build planning, and future deploy gates. These results should
 separate hard source-state blockers from reproducibility warnings and should not
-contain CLI or manager presentation decisions.
+contain CLI, manager, or Cloud presentation decisions.
 
 Core now exposes the local handoff readiness result used by Manager export,
-Manager push preview, and CLI export flows. This remains partial until workflow
-contract readiness, runtime readiness, and build-plan readiness consume
-the same shape.
+Manager push preview, and CLI export flows. Core also exposes a build-readiness
+projection that consumes the same typed manifest snapshot and produces dependency
+proof items for build/runtime planners. This remains partial until runtime
+readiness and source-candidate repair consume the same result family.
 
 Workflow contract readiness includes API prompt artifact availability. If a
 manifest execution contract references `workflow_api/<name>.api.json`, handoff
@@ -420,8 +421,9 @@ deploy, and runtime adapter code should not reimplement divergent rules for the 
 manifest state.
 
 Core now owns the current model-source and custom-node provenance semantics used
-by Manager and CLI handoff flows. Source candidate discovery and
-dependency-proof integration are still planned.
+by Manager and CLI handoff flows. Build-readiness dependency proof now consumes
+these manifest semantics for custom-node criticality and source availability.
+Source candidate discovery is still planned.
 
 ### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
 Validation: MIXED
@@ -456,12 +458,20 @@ directory; absolute paths or path traversal should be invalid.
 
 ## Build Compatibility
 
-### CGSYNC-BUILD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
+### CGSYNC-BUILD-01 [PARTIAL]: Build readiness uses the same manifest semantics as local sync
 Validation: MIXED
 
 Build planning should read the same manifest fields core writes locally. If a
 runtime needs a field for reproducibility, core/manager should make that field
 first-class rather than relying on adapter-specific heuristics.
+
+Core now exposes build-readiness helpers that classify Python dependencies,
+custom node package provenance and criticality, workflow model source/cache
+availability, and workflow contract summaries from `EnvironmentManifestSnapshot`
+or parsed `pyproject.toml`. Cloud and runtime adapters may add target class,
+base runtime, source validation policy, asset catalog state, persistence, and
+deployment orchestration around that proof, but should not fork the
+manifest-derived dependency semantics.
 
 Materialization is the local/headless hydration step that build and runtime
 adapters can call before running smoke tests or serve endpoints. It should not
@@ -474,4 +484,5 @@ Validation: MIXED
 Users should be able to see and fix missing required model/node source metadata
 before pushing a commit that another runtime cannot build. Manager has a first-pass
 readiness surface for export/push handoff backed by a core readiness service;
-build planner integration is still planned.
+build planners can now consume core build-readiness proofs. Source-candidate
+repair UI remains follow-on work.

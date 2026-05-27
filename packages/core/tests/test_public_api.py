@@ -87,6 +87,7 @@ def test_public_facade_modules_export_declared_symbols():
         "comfygit_core.runtime",
         "comfygit_core.workflow",
         "comfygit_core.assets",
+        "comfygit_core.build_readiness",
     ]
 
     for module_name in public_modules:
@@ -109,9 +110,14 @@ def test_runtime_public_helpers_are_available():
 
 def test_common_adapter_types_are_public():
     """Types used by CLI/Manager adapters should be available from public facades."""
+    from comfygit_core.build_readiness import build_readiness_from_manifest_snapshot
     from comfygit_core.confirmation import AutoConfirmStrategy, ConfirmationStrategy
     from comfygit_core.models import (
         BatchDownloadCallbacks,
+        BuildAssetCatalog,
+        BuildDependencyProof,
+        BuildReadiness,
+        BuildSourceValidator,
         CDDependencyConflictError,
         CDExportError,
         CDNodeConflictError,
@@ -165,6 +171,10 @@ def test_common_adapter_types_are_public():
 
     assert AutoConfirmStrategy.__name__ == "AutoConfirmStrategy"
     assert BatchDownloadCallbacks.__name__ == "BatchDownloadCallbacks"
+    assert BuildAssetCatalog.__name__ == "BuildAssetCatalog"
+    assert BuildDependencyProof.__name__ == "BuildDependencyProof"
+    assert BuildReadiness.__name__ == "BuildReadiness"
+    assert BuildSourceValidator.__name__ == "BuildSourceValidator"
     assert CDDependencyConflictError.__name__ == "CDDependencyConflictError"
     assert CDExportError.__name__ == "CDExportError"
     assert CDNodeConflictError.__name__ == "CDNodeConflictError"
@@ -214,6 +224,7 @@ def test_common_adapter_types_are_public():
     assert WorkflowDependencies.__name__ == "WorkflowDependencies"
     assert WorkflowExecutionContract.__name__ == "WorkflowExecutionContract"
     assert WorkflowSyncStatus.__name__ == "WorkflowSyncStatus"
+    assert callable(build_readiness_from_manifest_snapshot)
     assert callable(collect_node_provenance_warnings)
 
 
