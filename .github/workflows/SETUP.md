@@ -2,12 +2,14 @@
 
 ## Package Naming
 
-Your packages are now consistently named with underscores to match your existing PyPI package:
+ComfyGit publishes three lockstep Python packages:
 
-- `comfygit_core` (was: comfygit-core)
-- `comfygit_cli` (new)
+- `comfygit-core`: reusable core library.
+- `comfygit-studio`: shared Studio/contract API runtime and bundled Studio SPA.
+- `comfygit`: CLI package.
 
-**Note:** PyPI normalizes names, so `comfygit_core` and `comfygit-core` are treated as the same package. Users can install with either:
+**Note:** PyPI normalizes names, so underscores and hyphens are treated as the
+same package separator. Users can install with either normalized form:
 ```bash
 pip install comfygit_core  # Matches package name
 pip install comfygit-core  # Also works (normalized)
@@ -36,23 +38,33 @@ For **comfygit_core**:
 2. Add publisher:
    - **Owner**: comfygit-ai
    - **Repository name**: comfygit
-   - **Workflow name**: publish-core.yml
+   - **Workflow name**: publish.yml
    - **Environment name**: pypi
 
-For **comfygit_cli** (new project):
+For **comfygit_studio**:
 1. Go to https://pypi.org/manage/account/publishing/
 2. Click "Add a new pending publisher"
 3. Fill in:
-   - **PyPI Project Name**: comfygit_cli
+   - **PyPI Project Name**: comfygit_studio
    - **Owner**: comfygit-ai
    - **Repository name**: comfygit
-   - **Workflow name**: publish-cli.yml
+   - **Workflow name**: publish.yml
+   - **Environment name**: pypi
+
+For **comfygit**:
+1. Go to https://pypi.org/manage/account/publishing/
+2. Click "Add a new pending publisher"
+3. Fill in:
+   - **PyPI Project Name**: comfygit
+   - **Owner**: comfygit-ai
+   - **Repository name**: comfygit
+   - **Workflow name**: publish.yml
    - **Environment name**: pypi
 
 ### 3. Test Locally
 
 ```bash
-# Test building both packages
+# Test building all release packages
 make build-all
 
 # Inspect artifacts
@@ -61,87 +73,47 @@ ls -lh dist/
 # Should see:
 # comfygit_core-1.0.0-py3-none-any.whl
 # comfygit_core-1.0.0.tar.gz
-# comfygit_cli-1.0.0-py3-none-any.whl
-# comfygit_cli-1.0.0.tar.gz
+# comfygit_studio-1.0.0-py3-none-any.whl
+# comfygit_studio-1.0.0.tar.gz
+# comfygit-1.0.0-py3-none-any.whl
+# comfygit-1.0.0.tar.gz
 ```
 
 ## Publishing Workflow
 
-### Option 1: Publish Core Only
+### Publish Lockstep Release
 
 ```bash
 # 1. Bump version
-make bump-package PACKAGE=core VERSION=1.0.1
-
-# 2. Test build
-make build-core
-
-# 3. Commit and push
-git add packages/core/pyproject.toml
-git commit -m "bump: core v1.0.1"
-git push
-
-# 4. Go to GitHub Actions and trigger "Publish Core Package"
-```
-
-### Option 2: Publish CLI Only
-
-```bash
-# 1. Bump version
-make bump-package PACKAGE=cli VERSION=1.0.1
-
-# 2. Test build
-make build-cli
-
-# 3. Commit and push
-git add packages/cli/pyproject.toml
-git commit -m "bump: cli v1.0.1"
-git push
-
-# 4. Go to GitHub Actions and trigger "Publish CLI Package"
-```
-
-### Option 3: Publish Both (Major Release)
-
-**Important:** Publish core first, wait, then publish CLI.
-
-```bash
-# 1. Bump both versions
-make bump-package PACKAGE=core VERSION=1.1.0
-make bump-package PACKAGE=cli VERSION=1.1.0
+make bump-version VERSION=1.0.1
 
 # 2. Test builds
 make build-all
 
 # 3. Commit and push
-git add packages/*/pyproject.toml
-git commit -m "bump: v1.1.0 release"
+git add packages/core/pyproject.toml packages/studio-runtime/pyproject.toml packages/cli/pyproject.toml packages/studio/package.json uv.lock
+git commit -m "bump: v1.0.1 release"
 git push
 
-# 4. Publish core first
-#    Go to Actions → "Publish Core Package" → Run workflow
-
-# 5. Wait 2-3 minutes for PyPI to index
-
-# 6. Publish CLI
-#    Go to Actions → "Publish CLI Package" → Run workflow
+# 4. Go to Actions → "Publish Packages" → Run workflow
 ```
 
 ## Troubleshooting
 
-### CLI Build Fails: "comfygit_core not found"
+### CLI Build Fails: "comfygit_core" or "comfygit_studio" not found
 
-The CLI depends on core from PyPI. Make sure:
+The CLI depends on core and Studio runtime from PyPI. Make sure:
 1. Core has been published to PyPI first
-2. The version matches (or CLI allows the core version range)
-3. Wait 2-3 minutes after publishing core for PyPI to index
+2. Studio runtime has been published to PyPI after core
+3. All package versions match exactly
+4. Wait 2-3 minutes after publishing each dependency for PyPI to index
 
 ### Workflow Fails: "Trusted publishing exchange failure"
 
 Make sure you've configured the trusted publisher on PyPI correctly:
 - Correct repository owner and name
-- Exact workflow filename (publish-core.yml or publish-cli.yml)
-- Environment name left blank
+- Exact workflow filename (`publish.yml`)
+- Environment name `pypi`
 
 ### Permission Denied
 

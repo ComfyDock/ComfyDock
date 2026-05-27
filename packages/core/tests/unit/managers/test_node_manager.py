@@ -257,6 +257,29 @@ class TestNodeManagerDevLink:
         assert len(list((pyproject_path.parent / "backups" / "custom_nodes").iterdir())) == backup_count
         assert first.backup_path is not None
 
+    def test_dev_link_syncs_with_local_overlays_when_requirements_change(self, tmp_path):
+        manager, _, _, custom_nodes_dir, mock_uv = self._create_node_manager(tmp_path)
+        manager.node_lookup.scan_requirements.return_value = ["comfygit-studio==0.4.2"]
+
+        installed = custom_nodes_dir / "RegistryNode"
+        installed.mkdir()
+
+        dev_repo = tmp_path / "dev-registry-node"
+        dev_repo.mkdir()
+        (dev_repo / "nodes.py").write_text("# dev")
+
+        manager.link_development_node(
+            "registry-node",
+            dev_repo,
+            replace_existing=True,
+        )
+
+        mock_uv.add_requirements_with_sources.assert_called_once()
+        assert mock_uv.add_requirements_with_sources.call_args.kwargs["frozen"] is True
+        assert "no_sync" not in mock_uv.add_requirements_with_sources.call_args.kwargs
+        mock_uv.sync_project.assert_called_once()
+        assert mock_uv.sync_project.call_args.kwargs["skip_optional_overlays"] is False
+
 
 class TestNodeManagerProbeMode:
     """Tests for permissive dependency probe behavior."""

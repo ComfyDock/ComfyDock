@@ -146,23 +146,20 @@ removed.
 
 ## Runtime Adapter Boundary
 
-### CGSERVE-RUN-01 [PARTIAL]: `cg serve` fronts ComfyUI with contract-shaped endpoints
+### CGSERVE-RUN-01 [PARTIAL]: Studio runtime fronts ComfyUI with contract-shaped endpoints
 Validation: MIXED
 
-A serve runtime should expose HTTP endpoints shaped around ComfyGit workflow
-contracts while communicating with a local ComfyUI server through ComfyUI's
+A Studio runtime should expose HTTP endpoints shaped around ComfyGit workflow
+contracts while communicating with a running ComfyUI server through ComfyUI's
 normal API. External callers should send contract inputs to ComfyGit; ComfyGit
 should translate those inputs into a ComfyUI prompt and map the resulting
 artifacts back to contract outputs.
 
-The CLI now provides a first `cg serve` adapter that resolves the active or
-`-e <env>` environment, serves contract metadata, converts contract-shaped run
-requests through legacy core prompt-building logic, submits prompts to a
-configured ComfyUI API URL, optionally waits for history, and returns local
-output references. The adapter is implemented as an `aiohttp` runtime in the
-CLI package so it can grow into static UI serving, progress streams, websocket
-bridging, and output delivery without moving transport concerns into core. This
-adapter does not launch ComfyUI.
+The shared `comfygit-studio` runtime owns the contract HTTP surface, local
+upload staging, run/gallery/session state, output proxying, and ComfyUI API
+execution adapters. The CLI `cg serve` command and ComfyGit Manager embedded
+Studio routes are hosts for that runtime. The runtime does not launch ComfyUI;
+it targets a configured or current running ComfyUI API URL.
 
 For media/file contract inputs backed by ComfyUI loader nodes, Studio uploads
 file bytes to the serve upload endpoint first, receives an opaque `file_ref`,
@@ -176,21 +173,22 @@ Inline base64/data URL uploads are retired from the Studio execution path.
 Contract run requests should stay small JSON control-plane messages; callers
 with binary media must upload first and submit an upload reference.
 
-This adapter should move to loading stored Manager-captured API prompt artifacts
+This runtime should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.
 
-### CGSERVE-RUN-01A [PARTIAL]: `cg serve` root hosts the contract studio UI
+### CGSERVE-RUN-01A [PARTIAL]: Runtime hosts the contract Studio UI
 Validation: TEST
 
-The `cg serve` root path renders a browser UI for the served environment, not a
-blank or API-only landing. This hosted contract studio is a thin client over the
-same contract metadata and run endpoints that external callers use. It must not
-introduce a second execution path or workflow-specific graph builder.
+The served Studio UI is a browser playground for the selected environment, not a
+separate execution system. It is a thin client over the same contract metadata
+and run endpoints that external callers use. It must not introduce a second
+execution path or workflow-specific graph builder.
 
-Current local serve hosts the packaged Studio SPA from the CLI wheel, injects
-host-specific runtime configuration, and falls back to the same API surface used
-by non-browser clients. This remains partial while the UI and runtime endpoint
-surface continue to evolve.
+Current local serve hosts the packaged Studio SPA from the `comfygit-studio`
+wheel, injects host-specific runtime configuration, and falls back to the same
+API surface used by non-browser clients. Manager may host the same Studio SPA
+under namespaced ComfyUI routes. This remains partial while the UI and runtime
+endpoint surface continue to evolve.
 
 ### CGSERVE-RUN-01B [PARTIAL]: Studio frontend is a shared packaged static asset
 Validation: STATIC
@@ -199,24 +197,39 @@ The contract Studio source should live in a first-class frontend package that
 can be consumed by both `cg serve` and hosted Cloud published endpoints. The
 CLI is one host for Studio, not the owner of the Studio source.
 
-Release builds should emit static assets that can be copied into the Python CLI
-package so `cg serve` can serve Studio without requiring Node.js at runtime.
-Cloud may consume the same package source or published bundle and should
+Release builds should emit static assets that can be copied into the Python
+`comfygit-studio` runtime package so `cg serve`, Manager, and future adapters
+can serve Studio without requiring Node.js at runtime. Cloud may consume the
+same package source or published bundle and should
 implement the same endpoint-first Studio API surface instead of maintaining a
 parallel playground UI. The packaged UI may use design patterns inspired by J
 AI Studio, but ComfyGit's UI remains contract-driven rather than
 model/profile-driven.
 
 During local development, the frontend may be built independently and served by
-the CLI `aiohttp` adapter from its emitted asset directory. The serve adapter
-owns static file routing, SPA fallback, and output proxy URLs; core continues to
-own only contract interpretation and prompt/output semantics.
+the Studio runtime from its emitted asset directory. The runtime owns static
+file routing, SPA fallback, and output proxy URLs; core continues to own only
+contract interpretation and prompt/output semantics.
 
 Studio must receive host-specific runtime configuration instead of hard-coding
 one deployment context. Local `cg serve` should configure an empty API base
 path, while Cloud should configure the published endpoint path such as
 `/e/{environment_public_id}/{endpoint_slug}`. Studio request, upload, gallery,
 run, and output URLs should be derived from that API base path.
+
+### CGSERVE-RUN-01C [LIVE]: Manager embeds Studio without requiring the CLI package
+Validation: TEST
+
+ComfyGit Manager should be able to open Studio for a managed environment from a
+running ComfyUI process without requiring the `comfygit` CLI package or a
+separate `cg serve` child process in that environment. Manager should register
+namespaced ComfyGit Studio UI and runtime API routes on the current ComfyUI
+server and point the Studio frontend at those routes.
+
+Manager-embedded Studio is a host for the shared `comfygit-studio` runtime. It
+must use the same contract-shaped metadata, upload, run, gallery, and output
+semantics as `cg serve`, while preserving Manager's user flow for users who
+installed only the custom node.
 
 The CLI release artifact should contain the synced static output from the same
 Studio source version as the release. Installed users should not need Node.js or

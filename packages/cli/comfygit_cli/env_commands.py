@@ -952,7 +952,7 @@ class EnvironmentCommands:
     @with_env_logging("serve")
     def serve(self, args: argparse.Namespace, logger=None) -> None:
         """Serve workflow contracts for the specified environment."""
-        from .serve_runtime import ServeConfig, serve_environment
+        from comfygit_studio.runtime import ServeConfig, serve_environment
 
         env = self._get_env(args)
         config = ServeConfig(

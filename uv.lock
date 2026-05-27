@@ -6,6 +6,7 @@ requires-python = ">=3.10"
 members = [
     "comfygit",
     "comfygit-core",
+    "comfygit-studio",
 ]
 
 [manifest.dependency-groups]
@@ -401,17 +402,17 @@ name = "comfygit"
 version = "0.4.2"
 source = { editable = "packages/cli" }
 dependencies = [
-    { name = "aiohttp" },
     { name = "argcomplete" },
     { name = "comfygit-core" },
+    { name = "comfygit-studio" },
     { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.13.4" },
     { name = "argcomplete", specifier = ">=3.5.0" },
     { name = "comfygit-core", editable = "packages/core" },
+    { name = "comfygit-studio", editable = "packages/studio-runtime" },
     { name = "requests", specifier = ">=2.33.0" },
 ]
 
@@ -449,6 +450,21 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.3" }]
+
+[[package]]
+name = "comfygit-studio"
+version = "0.4.2"
+source = { editable = "packages/studio-runtime" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "comfygit-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.4" },
+    { name = "comfygit-core", editable = "packages/core" },
+]
 
 [[package]]
 name = "coverage"

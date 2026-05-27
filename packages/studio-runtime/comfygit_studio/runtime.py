@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import aiohttp
@@ -21,7 +21,7 @@ from comfygit_core import Environment
 from comfygit_core.models import NamedWorkflowContract
 from comfygit_core.workflow import build_manifest_contract_prompt
 
-from .serve_executor import (
+from .executor import (
     PROXY_AUTH_HEADER,
     ComfyGitServeTimeoutError,
     ComfyUIClient,
@@ -38,7 +38,7 @@ from .serve_executor import (
     output_kind,
     workflow_contract_output_from_payload,
 )
-from .serve_state import (
+from .state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
     ServeRunOutputSlot,
@@ -208,6 +208,7 @@ class ServeState:
 
 SERVE_STATE_KEY = web.AppKey("serve_state", ServeState)
 STUDIO_STATIC_DIR_KEY = web.AppKey("studio_static_dir", Path)
+STUDIO_API_BASE_PATH_KEY = web.AppKey("studio_api_base_path", str)
 
 
 def serve_environment(env: Environment, config: ServeConfig) -> None:
@@ -246,35 +247,85 @@ async def _serve_environment_async(env: Environment, config: ServeConfig) -> Non
             state.state_store.close()
 
 
-def create_app(state: ServeState) -> web.Application:
+def create_app(
+    state: ServeState,
+    *,
+    static_dir: Path | None = None,
+    api_base_path: str = "",
+) -> web.Application:
     """Create the aiohttp application for a ComfyGit serve runtime."""
 
     app = web.Application(client_max_size=_max_request_bytes(state))
     app[SERVE_STATE_KEY] = state
-    static_dir = _studio_static_dir()
-    app[STUDIO_STATIC_DIR_KEY] = static_dir
-    app.router.add_get("/", studio_index_handler)
-    if (static_dir / "assets").exists():
-        app.router.add_static("/assets/", static_dir / "assets", append_version=True)
-    app.router.add_get("/favicon.ico", favicon_handler)
-    app.router.add_get("/health", health_handler)
-    app.router.add_get("/contracts", contracts_handler)
-    app.router.add_get("/contracts/{workflow}/{contract}", single_contract_handler)
-    app.router.add_post("/uploads/prepare", upload_prepare_handler)
-    app.router.add_put("/uploads/{upload_id}", upload_put_handler)
-    app.router.add_get("/uploads/{upload_id}/status", upload_status_handler)
-    app.router.add_get("/gallery", gallery_handler)
-    app.router.add_delete("/gallery/{item_id}", gallery_delete_handler)
-    app.router.add_get("/runs", runs_handler)
-    app.router.add_get("/runs/{run_id}", single_run_handler)
-    app.router.add_post("/runs/{run_id}/cancel", cancel_run_handler)
-    app.router.add_post("/worker-callback/runs/{run_id}", worker_callback_handler)
-    app.router.add_post("/contracts/{workflow}/{contract}/run", run_contract_handler)
-    app.router.add_get("/outputs/view", output_view_handler)
-    app.router.add_get("/{tail:.*}", studio_index_handler)
+    register_studio_routes(
+        app,
+        static_dir=static_dir,
+        api_base_path=api_base_path,
+    )
     app.on_startup.append(_recover_active_runs_on_startup)
     app.on_cleanup.append(_cleanup_background_tasks)
     return app
+
+
+def register_studio_routes(
+    app: web.Application,
+    *,
+    static_dir: Path | None = None,
+    route_api_prefix: str = "",
+    route_ui_prefix: str = "",
+    api_base_path: str | None = None,
+    include_spa_fallback: bool = True,
+) -> None:
+    """Register Studio UI and contract API routes on an aiohttp application.
+
+    `route_api_prefix` and `route_ui_prefix` are server-side route prefixes.
+    `api_base_path` is the browser-facing API prefix injected into Studio.
+    They can differ when a host such as ComfyUI exposes registered routes under
+    a public `/api/...` prefix.
+    """
+
+    static_dir = static_dir or _studio_static_dir()
+    app[STUDIO_STATIC_DIR_KEY] = static_dir
+    app[STUDIO_API_BASE_PATH_KEY] = _normalize_public_prefix(
+        api_base_path if api_base_path is not None else route_api_prefix
+    )
+
+    api_prefix = _normalize_route_prefix(route_api_prefix)
+    ui_prefix = _normalize_route_prefix(route_ui_prefix)
+
+    app.router.add_get(_route_path(ui_prefix, "/"), studio_index_handler)
+    if ui_prefix:
+        app.router.add_get(ui_prefix, studio_index_handler)
+    if (static_dir / "assets").exists():
+        app.router.add_static(_route_path(ui_prefix, "/assets/"), static_dir / "assets", append_version=True)
+    app.router.add_get(_route_path(ui_prefix, "/favicon.ico"), favicon_handler)
+
+    app.router.add_get(_route_path(api_prefix, "/health"), health_handler)
+    app.router.add_get(_route_path(api_prefix, "/contracts"), contracts_handler)
+    app.router.add_get(
+        _route_path(api_prefix, "/contracts/{workflow}/{contract}"),
+        single_contract_handler,
+    )
+    app.router.add_post(_route_path(api_prefix, "/uploads/prepare"), upload_prepare_handler)
+    app.router.add_put(_route_path(api_prefix, "/uploads/{upload_id}"), upload_put_handler)
+    app.router.add_get(_route_path(api_prefix, "/uploads/{upload_id}/status"), upload_status_handler)
+    app.router.add_get(_route_path(api_prefix, "/gallery"), gallery_handler)
+    app.router.add_delete(_route_path(api_prefix, "/gallery/{item_id}"), gallery_delete_handler)
+    app.router.add_get(_route_path(api_prefix, "/runs"), runs_handler)
+    app.router.add_get(_route_path(api_prefix, "/runs/{run_id}"), single_run_handler)
+    app.router.add_post(_route_path(api_prefix, "/runs/{run_id}/cancel"), cancel_run_handler)
+    app.router.add_post(
+        _route_path(api_prefix, "/worker-callback/runs/{run_id}"),
+        worker_callback_handler,
+    )
+    app.router.add_post(
+        _route_path(api_prefix, "/contracts/{workflow}/{contract}/run"),
+        run_contract_handler,
+    )
+    app.router.add_get(_route_path(api_prefix, "/outputs/view"), output_view_handler)
+
+    if include_spa_fallback:
+        app.router.add_get(_route_path(ui_prefix, "/{tail:.*}"), studio_index_handler)
 
 
 def create_proxy_app(state: ServeState) -> web.Application:
@@ -300,7 +351,7 @@ async def _cleanup_background_tasks(app: web.Application) -> None:
     background_tasks = getattr(state, "background_tasks", None)
     if not isinstance(background_tasks, set):
         return
-    tasks = list(background_tasks)
+    tasks = [task for task in background_tasks if isinstance(task, asyncio.Task)]
     for task in tasks:
         task.cancel()
     if tasks:
@@ -576,7 +627,27 @@ def _serve_artifact_dir(env: Environment, config: ServeConfig) -> Path:
 
 
 def _studio_static_dir() -> Path:
-    return Path(str(resources.files("comfygit_cli").joinpath("studio_static")))
+    return Path(str(resources.files("comfygit_studio").joinpath("static")))
+
+
+def _normalize_route_prefix(prefix: str) -> str:
+    normalized = "/" + str(prefix or "").strip("/")
+    return "" if normalized == "/" else normalized
+
+
+def _normalize_public_prefix(prefix: str | None) -> str:
+    normalized = "/" + str(prefix or "").strip("/")
+    return "" if normalized == "/" else normalized
+
+
+def _route_path(prefix: str, path: str) -> str:
+    if not path.startswith("/"):
+        path = f"/{path}"
+    if not prefix:
+        return path
+    if path == "/":
+        return f"{prefix}/"
+    return f"{prefix}{path}"
 
 
 async def studio_index_handler(request: web.Request) -> web.StreamResponse:
@@ -586,7 +657,7 @@ async def studio_index_handler(request: web.Request) -> web.StreamResponse:
         html = index_path.read_text(encoding="utf-8")
         env_name = getattr(_state(request).env, "name", "Environment")
         config = {
-            "apiBasePath": "",
+            "apiBasePath": request.app.get(STUDIO_API_BASE_PATH_KEY, ""),
             "authMode": "none",
             "endpointName": env_name if isinstance(env_name, str) else "Environment",
         }
@@ -1311,6 +1382,7 @@ def _localize_worker_callback_outputs(
         for artifact_index, artifact in enumerate(artifacts):
             if not isinstance(artifact, dict):
                 continue
+            artifact = cast(dict[str, Any], artifact)
             field_name = str(artifact.get("upload_field") or f"artifact_{output_index}_{artifact_index}")
             upload = uploads.get(field_name)
             if upload is None:
@@ -1766,6 +1838,7 @@ async def _worker_callback_outputs_and_uploads(
         for artifact_index, artifact in enumerate(artifacts):
             if not isinstance(artifact, dict):
                 continue
+            artifact = cast(dict[str, Any], artifact)
             filename = str(artifact.get("filename") or "")
             if not filename:
                 continue

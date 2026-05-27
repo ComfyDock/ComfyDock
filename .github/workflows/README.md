@@ -6,10 +6,12 @@ This directory contains workflows for publishing ComfyGit packages and documenta
 
 ### Package Publishing
 
-- **`publish-core.yml`** - Publishes `comfygit-core` to PyPI
-- **`publish-cli.yml`** - Publishes `comfygit-cli` to PyPI
+- **`publish.yml`** - Validates lockstep versions, then publishes
+  `comfygit-core`, `comfygit-studio`, and `comfygit` to PyPI in dependency
+  order.
 
-Both use manual triggers (`workflow_dispatch`) and trusted publishing via PyPI.
+The workflow uses manual triggers (`workflow_dispatch`) and trusted publishing
+via PyPI. It also runs on `main` when package version files change.
 
 ### Documentation Publishing
 
@@ -56,11 +58,8 @@ No secrets needed - uses PyPI trusted publishing with OIDC.
 
 ### Via GitHub CLI
 ```bash
-# Publish core package
-gh workflow run publish-core.yml
-
-# Publish CLI package
-gh workflow run publish-cli.yml
+# Publish Python packages in dependency order
+gh workflow run publish.yml
 
 # Publish documentation
 gh workflow run publish-docs.yml

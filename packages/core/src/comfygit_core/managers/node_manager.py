@@ -779,7 +779,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=new_group,
-                    no_sync=True,
+                    frozen=True,
                     raw=True,
                 )
 
@@ -793,7 +793,12 @@ class NodeManager:
                 self.pyproject.uv_config.cleanup_orphaned_sources(existing_node.dependency_sources)
 
             if requirements_changed:
-                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(
+                    quiet=True,
+                    all_groups=True,
+                    pytorch_manager=self.pytorch_manager,
+                    skip_optional_overlays=False,
+                )
 
         except Exception:
             logger.warning("Dev-link failed for '%s', rolling back", node_name, exc_info=True)

@@ -1,6 +1,6 @@
 # Makefile - Development automation
 .PHONY: help install dev test lint format clean show-versions bump-major bump-package check-versions
-.PHONY: build-core build-cli build-studio build-all
+.PHONY: build-core build-studio-runtime build-cli build-studio build-all
 .PHONY: docs-serve docs-build docs-deploy docs-clean
 .PHONY: merge-and-sync
 .PHONY: test-cross-platform test-linux test-windows test-platforms
@@ -30,6 +30,7 @@ help:
 	@echo ""
 	@echo "Build & Publishing:"
 	@echo "  make build-core   - Build comfygit-core package"
+	@echo "  make build-studio-runtime - Build comfygit-studio package"
 	@echo "  make build-cli    - Build comfygit package"
 	@echo "  make build-studio - Build bundled Studio frontend"
 	@echo "  make build-all    - Build all packages"
@@ -56,6 +57,7 @@ dev: install
 # Run all tests (local)
 test:
 	uv run pytest packages/core/tests
+	uv run pytest packages/studio-runtime/tests
 	uv run pytest packages/cli/tests
 
 # Run E2E tests (requires fixtures)
@@ -115,6 +117,7 @@ clean:
 show-versions:
 	@echo "Current package versions:"
 	@echo -n "  comfygit-core: " && grep '^version =' packages/core/pyproject.toml | grep -oP 'version = "\K[^"]+'
+	@echo -n "  comfygit-studio: " && grep '^version =' packages/studio-runtime/pyproject.toml | grep -oP 'version = "\K[^"]+'
 	@echo -n "  comfygit (cli): " && grep '^version =' packages/cli/pyproject.toml | grep -oP 'version = "\K[^"]+'
 	@echo -n "  @comfygit/studio: " && grep '"version":' packages/studio/package.json | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/'
 
@@ -132,11 +135,15 @@ bump-version:
 	fi
 	@echo "Bumping all release artifacts to version $(VERSION) (lockstep)..."
 	@sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' packages/core/pyproject.toml
+	@sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' packages/studio-runtime/pyproject.toml
+	@sed -i 's/comfygit-core==[^"]*/comfygit-core==$(VERSION)/' packages/studio-runtime/pyproject.toml
 	@sed -i 's/^version = "[^"]*"/version = "$(VERSION)"/' packages/cli/pyproject.toml
 	@sed -i 's/comfygit-core==[^"]*/comfygit-core==$(VERSION)/' packages/cli/pyproject.toml
+	@sed -i 's/comfygit-studio==[^"]*/comfygit-studio==$(VERSION)/' packages/cli/pyproject.toml
 	@npm --prefix packages/studio version "$(VERSION)" --no-git-tag-version --allow-same-version >/dev/null
 	@echo "✓ Updated all release artifacts to $(VERSION)"
-	@echo "✓ Updated CLI dependency: comfygit-core==$(VERSION)"
+	@echo "✓ Updated Studio runtime dependency: comfygit-core==$(VERSION)"
+	@echo "✓ Updated CLI dependencies: comfygit-core==$(VERSION), comfygit-studio==$(VERSION)"
 	@make show-versions
 
 # Bump major version for all packages
@@ -162,6 +169,13 @@ build-core:
 	uv build --package comfygit-core --no-sources
 	@echo "✓ Built comfygit-core (see dist/)"
 
+build-studio-runtime:
+	@$(MAKE) build-studio
+	@echo "Building comfygit-studio..."
+	@rm -rf dist/
+	uv build --package comfygit-studio --no-sources
+	@echo "✓ Built comfygit-studio (see dist/)"
+
 build-cli:
 	@$(MAKE) build-studio
 	@echo "Building comfygit..."
@@ -173,7 +187,7 @@ build-studio:
 	@echo "Building bundled Studio frontend..."
 	npm --prefix packages/studio run build
 	python3 dev/scripts/sync-studio-static.py
-	@echo "✓ Built @comfygit/studio and synced CLI static assets"
+	@echo "✓ Built @comfygit/studio and synced Studio runtime static assets"
 
 build-all:
 	@echo "Building all packages..."
@@ -182,7 +196,9 @@ build-all:
 	@echo "✓ Built comfygit-core"
 	npm --prefix packages/studio run build
 	python3 dev/scripts/sync-studio-static.py
-	@echo "✓ Built @comfygit/studio and synced CLI static assets"
+	@echo "✓ Built @comfygit/studio and synced Studio runtime static assets"
+	uv build --package comfygit-studio --no-sources
+	@echo "✓ Built comfygit-studio"
 	uv build --package comfygit --no-sources
 	@echo "✓ Built comfygit"
 	@echo "✓ All release artifacts built"

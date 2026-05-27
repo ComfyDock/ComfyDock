@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import quote, urlencode
 
 import aiohttp
@@ -550,6 +550,7 @@ class ProxyComfyExecutor:
             for artifact_index, artifact in enumerate(artifacts):
                 if not isinstance(artifact, dict):
                     continue
+                artifact = cast(dict[str, Any], artifact)
                 artifact_id = str(artifact.get("proxy_artifact_id") or "")
                 if not artifact_id:
                     continue
@@ -777,6 +778,7 @@ async def _localize_client_outputs(
         for artifact_index, artifact in enumerate(artifacts):
             if not isinstance(artifact, dict):
                 continue
+            artifact = cast(dict[str, Any], artifact)
             if artifact.get("serve_artifact"):
                 continue
             if temp_only and str(artifact.get("type") or "").lower() != "temp":

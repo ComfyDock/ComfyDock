@@ -6,39 +6,44 @@ to adjacent packages such as ComfyGit Manager.
 
 ## Lockstep Artifacts
 
-### CGREL-LOCK-01 [LIVE]: Core, CLI, and bundled Studio use lockstep release versions
+### CGREL-LOCK-01 [LIVE]: Core, Studio runtime, CLI, and bundled Studio use lockstep release versions
 Validation: STATIC
 
 Every ComfyGit monorepo release uses one version for `comfygit-core`,
-`comfygit`, and `@comfygit/studio`. The CLI package must pin
-`comfygit-core==<same version>`, and release checks must fail when these versions
-diverge.
+`comfygit-studio`, `comfygit`, and `@comfygit/studio`. The Studio runtime
+package must pin `comfygit-core==<same version>`, the CLI package must pin
+`comfygit-core==<same version>` and `comfygit-studio==<same version>`, and
+release checks must fail when these versions diverge.
 
-### CGREL-STUDIO-01 [LIVE]: CLI releases include the built Studio static bundle
+### CGREL-STUDIO-01 [LIVE]: Studio runtime releases include the built Studio static bundle
 Validation: STATIC
 
-The Studio source package is not a runtime dependency of the installed CLI.
-Before building or publishing the CLI release artifact, release tooling must
-build `packages/studio`, sync the emitted static assets into
-`packages/cli/comfygit_cli/studio_static`, and package those assets with the CLI
-wheel so `cg serve` can host Studio without Node.js.
+The Studio source package is not a runtime dependency of installed Python
+adapters. Before building or publishing the Python Studio runtime artifact,
+release tooling must build `packages/studio`, sync the emitted static assets
+into `packages/studio-runtime/comfygit_studio/static`, and package those assets
+with the `comfygit-studio` wheel so `cg serve` and Manager can host Studio
+without Node.js.
 
-### CGREL-PUB-01 [LIVE]: Core is published before the CLI
+### CGREL-PUB-01 [LIVE]: Core is published before Studio runtime and CLI
 Validation: STATIC
 
-Because the CLI pins `comfygit-core==<release version>`, the release workflow
-must publish `comfygit-core` first and wait until that version is visible on
-PyPI before building and publishing `comfygit`.
+Because `comfygit-studio` pins `comfygit-core==<release version>` and the CLI
+pins both `comfygit-core==<release version>` and
+`comfygit-studio==<release version>`, the release workflow must publish
+`comfygit-core` first, wait until that version is visible on PyPI, publish
+`comfygit-studio`, wait until that version is visible on PyPI, then build and
+publish `comfygit`.
 
 ## Adjacent Releases
 
-### CGREL-MGR-01 [PARTIAL]: Manager releases depend on published core versions
+### CGREL-MGR-01 [PARTIAL]: Manager releases depend on published core and Studio runtime versions
 Validation: HUMAN_REVIEW
 
 The ComfyGit Manager release is owned by the sibling manager repository, but it
-must not pin or publish against a `comfygit-core` version that is unavailable on
-PyPI. Manager release preparation should happen after the corresponding core
-release is published and visible.
+must not pin or publish against `comfygit-core` or `comfygit-studio` versions
+that are unavailable on PyPI. Manager release preparation should happen after
+the corresponding core and Studio runtime releases are published and visible.
 
 This remains partial until cross-repository automation enforces the ordering.
 

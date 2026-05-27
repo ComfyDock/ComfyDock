@@ -1,7 +1,7 @@
-"""Runtime state adapters for `cg serve`.
+"""Runtime state adapters for ComfyGit Studio.
 
-This module is intentionally part of the CLI/serve adapter, not core. The data
-recorded here describes Studio sessions and runtime output history, not
+This module is intentionally part of the Studio runtime package, not core. The
+data recorded here describes Studio sessions and runtime output history, not
 portable environment truth.
 """
 
