@@ -15,13 +15,10 @@ from ..models.workflow import (
     BatchDownloadCallbacks,
     DetailedWorkflowStatus,
     DownloadResult,
-    ModelResolutionContext,
-    NodeResolutionContext,
     ResolutionResult,
     ResolvedModel,
     ScoredMatch,
     WorkflowAnalysisStatus,
-    WorkflowNode,
     WorkflowNodeWidgetRef,
     WorkflowSyncStatus,
 )
@@ -38,6 +35,7 @@ from ..services.workflow_node_package_policy import WorkflowNodePackagePolicy
 from ..services.workflow_resolution_context_builder import (
     WorkflowResolutionContextBuilder,
 )
+from ..services.workflow_resolution_fixer import WorkflowResolutionFixer
 from ..services.workflow_resolution_service import (
     WorkflowResolutionService,
 )
@@ -45,7 +43,7 @@ from ..services.workflow_state_cleanup import WorkflowStateCleanup
 
 if TYPE_CHECKING:
     from ..caching.workflow_cache import WorkflowCacheRepository
-    from ..models.workflow import ResolvedNodePackage, WorkflowDependencies
+    from ..models.workflow import WorkflowDependencies
     from ..repositories.comfyui_builtin_versions_repository import (
         ComfyUIBuiltinVersionsRepository,
     )
@@ -146,6 +144,39 @@ class WorkflowManager:
             downloader=self.downloader,
             model_sources=self.model_repository,
             dependencies=self._workflow_model_dependencies,
+        )
+        self.workflow_resolution_fixer = WorkflowResolutionFixer(
+            nodes=self.pyproject.nodes,
+            workflows=self.pyproject.workflows,
+            models=self.pyproject.models,
+            search_packages=lambda *args, **kwargs: self.global_node_resolver.search_packages(
+                *args,
+                **kwargs,
+            ),
+            search_models=lambda query, node_type=None, limit=9: self.search_models(
+                query,
+                node_type,
+                limit,
+            ),
+            downloader=self.downloader,
+            consensus_custom_node_map=lambda workflow_name: self._get_consensus_custom_node_map(
+                workflow_name,
+            ),
+            normalize_package_id=lambda package_id: self._normalize_package_id(
+                package_id,
+            ),
+            write_single_node_resolution=lambda workflow_name, package_id: self._write_single_node_resolution(
+                workflow_name,
+                package_id,
+            ),
+            write_model_resolution_grouped=lambda workflow_name, resolved, refs: self._write_model_resolution_grouped(
+                workflow_name,
+                resolved,
+                refs,
+            ),
+            update_workflow_model_paths=lambda result: self.update_workflow_model_paths(
+                result,
+            ),
         )
 
     def refresh_runtime_metadata_context(self) -> None:
@@ -639,232 +670,11 @@ class WorkflowManager:
         Returns:
             Updated ResolutionResult with fixes applied
         """
-        workflow_name = resolution.workflow_name
-
-        # Start with what was already resolved
-        nodes_to_add = list(resolution.nodes_resolved)
-        nodes_version_gated = list(resolution.nodes_version_gated)
-        nodes_uninstallable = list(resolution.nodes_uninstallable)
-        node_guidance = dict(resolution.node_guidance)
-        models_to_add = list(resolution.models_resolved)
-
-        remaining_nodes_ambiguous: list[list[ResolvedNodePackage]] = []
-        remaining_nodes_unresolved: list[WorkflowNode] = []
-        remaining_models_ambiguous: list[list[ResolvedModel]] = []
-        remaining_models_unresolved: list[WorkflowNodeWidgetRef] = []
-
-        # ========== NODE RESOLUTION (UNIFIED) ==========
-
-        if not node_strategy:
-            # No strategy - keep everything as unresolved
-            remaining_nodes_ambiguous = list(resolution.nodes_ambiguous)
-            remaining_nodes_unresolved = list(resolution.nodes_unresolved)
-        else:
-            # Build context with search function
-            node_context = NodeResolutionContext(
-                installed_packages=self.pyproject.nodes.get_existing(),
-                custom_mappings={
-                    **self._get_consensus_custom_node_map(workflow_name),
-                    **self.pyproject.workflows.get_custom_node_map(workflow_name),
-                },
-                workflow_name=workflow_name,
-                search_fn=self.global_node_resolver.search_packages,
-                auto_select_ambiguous=True  # TODO: Make configurable
-            )
-
-            # Unified loop: handle both ambiguous and unresolved nodes
-            all_unresolved_nodes: list[tuple[str, list[ResolvedNodePackage]]] = []
-
-            # Ambiguous nodes (have candidates)
-            for packages in resolution.nodes_ambiguous:
-                if packages:
-                    node_type = packages[0].node_type
-                    all_unresolved_nodes.append((node_type, packages))
-
-            # Missing nodes (no candidates)
-            for node in resolution.nodes_unresolved:
-                all_unresolved_nodes.append((node.type, []))
-
-            # Resolve each node
-            for node_type, candidates in all_unresolved_nodes:
-                try:
-                    selected = node_strategy.resolve_unknown_node(node_type, candidates, node_context)
-
-                    if selected is None:
-                        # User skipped - remains unresolved
-                        if candidates:
-                            remaining_nodes_ambiguous.append(candidates)
-                        else:
-                            # Create WorkflowNode for unresolved tracking
-                            remaining_nodes_unresolved.append(WorkflowNode(id="", type=node_type))
-                        logger.debug(f"Skipped: {node_type}")
-                        continue
-
-                    # Handle optional nodes
-                    if selected.match_type == 'optional':
-                        # PROGRESSIVE: Save optional node mapping
-                        if workflow_name:
-                            self.pyproject.workflows.set_custom_node_mapping(
-                                workflow_name, node_type, None
-                            )
-                        logger.info(f"Marked node '{node_type}' as optional")
-                        continue
-
-                    # Handle resolved nodes
-                    nodes_to_add.append(selected)
-                    node_id = selected.package_data.id if selected.package_data else selected.package_id
-
-                    if not node_id:
-                        logger.warning(f"No package ID for resolved node '{node_type}'")
-                        continue
-
-                    normalized_id = self._normalize_package_id(node_id)
-
-                    # PROGRESSIVE: Save user-confirmed node mapping
-                    user_intervention_types = ("user_confirmed", "manual", "heuristic")
-                    if selected.match_type in user_intervention_types and workflow_name:
-                        self.pyproject.workflows.set_custom_node_mapping(
-                            workflow_name, node_type, normalized_id
-                        )
-                        logger.info(f"Saved custom_node_map: {node_type} -> {normalized_id}")
-
-                    # PROGRESSIVE: Write to workflow.nodes immediately
-                    if workflow_name:
-                        self._write_single_node_resolution(workflow_name, normalized_id)
-
-                    logger.info(f"Resolved node: {node_type} -> {normalized_id}")
-
-                except Exception as e:
-                    logger.error(f"Failed to resolve {node_type}: {e}")
-                    if candidates:
-                        remaining_nodes_ambiguous.append(candidates)
-                    else:
-                        remaining_nodes_unresolved.append(WorkflowNode(id="", type=node_type))
-
-        # ========== MODEL RESOLUTION (NEW UNIFIED FLOW) ==========
-
-        if not model_strategy:
-            # No strategy - keep everything as unresolved
-            remaining_models_ambiguous = list(resolution.models_ambiguous)
-            remaining_models_unresolved = list(resolution.models_unresolved)
-        else:
-            # Get global models table for download intent creation
-            global_models_dict = {}
-            try:
-                all_global_models = self.pyproject.models.get_all()
-                for model in all_global_models:
-                    global_models_dict[model.hash] = model
-            except Exception as e:
-                logger.warning(f"Failed to load global models table: {e}")
-
-            # Build context with search function and downloader
-            model_context = ModelResolutionContext(
-                workflow_name=workflow_name,
-                global_models=global_models_dict,
-                search_fn=self.search_models,
-                downloader=self.downloader,
-                auto_select_ambiguous=True  # TODO: Make configurable
-            )
-
-            # Unified loop: handle both ambiguous and unresolved models
-            all_unresolved_models: list[tuple[WorkflowNodeWidgetRef, list[ResolvedModel]]] = []
-
-            # Ambiguous models (have candidates)
-            for resolved_model_list in resolution.models_ambiguous:
-                if resolved_model_list:
-                    model_ref = resolved_model_list[0].reference
-                    all_unresolved_models.append((model_ref, resolved_model_list))
-
-            # Missing models (no candidates)
-            for model_ref in resolution.models_unresolved:
-                all_unresolved_models.append((model_ref, []))
-
-            # DEDUPLICATION: Group by (widget_value, node_type)
-            model_groups: dict[tuple[str, str], list[tuple[WorkflowNodeWidgetRef, list[ResolvedModel]]]] = {}
-
-            for model_ref, candidates in all_unresolved_models:
-                # Group key: (widget_value, node_type)
-                # This ensures same model in same loader type gets resolved once
-                key = (model_ref.widget_value, model_ref.node_type)
-                if key not in model_groups:
-                    model_groups[key] = []
-                model_groups[key].append((model_ref, candidates))
-
-            # Resolve each group (one prompt per unique model)
-            for (widget_value, _node_type), group in model_groups.items():
-                # Extract all refs and candidates
-                all_refs_in_group = [ref for ref, _ in group]
-                primary_ref, primary_candidates = group[0]
-
-                # Log deduplication for debugging
-                if len(all_refs_in_group) > 1:
-                    node_ids = ", ".join(f"#{ref.node_id}" for ref in all_refs_in_group)
-                    logger.info(f"Deduplicating model '{widget_value}' found in nodes: {node_ids}")
-
-                try:
-                    # Prompt user once for this model
-                    resolved = model_strategy.resolve_model(primary_ref, primary_candidates, model_context)
-
-                    if resolved is None:
-                        # User skipped - remains unresolved for ALL refs
-                        for ref in all_refs_in_group:
-                            remaining_models_unresolved.append(ref)
-                        logger.debug(f"Skipped: {widget_value}")
-                        continue
-
-                    # PROGRESSIVE: Write with ALL refs at once
-                    if workflow_name:
-                        self._write_model_resolution_grouped(workflow_name, resolved, all_refs_in_group)
-
-                    # Add to results for ALL refs (needed for update_workflow_model_paths)
-                    for ref in all_refs_in_group:
-                        # Create ResolvedModel for each ref pointing to same resolved model
-                        ref_resolved = ResolvedModel(
-                            workflow=workflow_name,
-                            reference=ref,
-                            resolved_model=resolved.resolved_model,
-                            model_source=resolved.model_source,
-                            is_optional=resolved.is_optional,
-                            match_type=resolved.match_type,
-                            match_confidence=resolved.match_confidence,
-                            target_path=resolved.target_path,
-                            needs_path_sync=resolved.needs_path_sync
-                        )
-                        models_to_add.append(ref_resolved)
-
-                    # Log result
-                    if resolved.is_optional:
-                        logger.info(f"Marked as optional: {widget_value}")
-                    elif resolved.resolved_model:
-                        logger.info(f"Resolved: {widget_value} → {resolved.resolved_model.filename}")
-                    else:
-                        logger.info(f"Marked as optional (unresolved): {widget_value}")
-
-                except Exception as e:
-                    logger.error(f"Failed to resolve {widget_value}: {e}")
-                    for ref in all_refs_in_group:
-                        remaining_models_unresolved.append(ref)
-
-        # Build updated result
-        result = ResolutionResult(
-            workflow_name=workflow_name,
-            nodes_resolved=nodes_to_add,
-            nodes_version_gated=nodes_version_gated,
-            nodes_uninstallable=nodes_uninstallable,
-            nodes_unresolved=remaining_nodes_unresolved,
-            nodes_ambiguous=remaining_nodes_ambiguous,
-            node_guidance=node_guidance,
-            models_resolved=models_to_add,
-            models_unresolved=remaining_models_unresolved,
-            models_ambiguous=remaining_models_ambiguous,
+        return self.workflow_resolution_fixer.fix_resolution(
+            resolution,
+            node_strategy,
+            model_strategy,
         )
-
-        # Batch update workflow JSON with all resolved model paths
-        # This ensures all model paths are synced after interactive resolution
-        # Uses consistent node IDs from same parse session (no cache mismatch issues)
-        self.update_workflow_model_paths(result)
-
-        return result
 
     def apply_resolution(
         self,
