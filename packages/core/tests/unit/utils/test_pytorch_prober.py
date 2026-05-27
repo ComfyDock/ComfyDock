@@ -36,7 +36,7 @@ class TestFindUvBinary:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr("builtins.__import__", mock_import)
-        monkeypatch.setattr(pytorch_prober.shutil, "which", lambda _: "/usr/local/bin/uv")
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.which", lambda _: "/usr/local/bin/uv")
 
         binary = _find_uv_binary()
         assert binary == "/usr/local/bin/uv"
@@ -81,6 +81,25 @@ class TestGetExactPythonVersion:
         with patch("comfygit_core.utils.pytorch_prober.run_command", return_value=mock_result):
             with pytest.raises(PyTorchProbeError):
                 get_exact_python_version("3.12")
+
+
+def test_run_command_streams_output_callback() -> None:
+    from comfygit_core.utils.common import run_command
+
+    lines: list[str] = []
+
+    result = run_command(
+        [
+            __import__("sys").executable,
+            "-c",
+            "print('first'); print('second')",
+        ],
+        output_callback=lines.append,
+    )
+
+    assert result.returncode == 0
+    assert lines == ["first", "second"]
+    assert "first" in result.stdout
 
 
 class TestParseDryRunOutput:
@@ -176,8 +195,8 @@ Would install 30 packages
         probe_dir.mkdir()
 
         monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
-        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
-        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", lambda *a, **k: None)
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.tempfile.mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.rmtree", lambda *a, **k: None)
 
         versions, backend = probe_pytorch_versions("3.12.11", "cu128")
 
@@ -219,13 +238,62 @@ Would install 30 packages
         probe_dir.mkdir()
 
         monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
-        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
-        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", lambda *a, **k: None)
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.tempfile.mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.rmtree", lambda *a, **k: None)
 
         versions, backend = probe_pytorch_versions("3.12", "auto")
 
         assert backend == "cu128"  # Auto-detected from version suffix
         assert versions["torch"] == "2.9.1+cu128"
+
+    @pytest.mark.skipif(
+        "COMFYGIT_INTEGRATION" in __import__("os").environ,
+        reason="Probe tests use mocking that conflicts with integration environment"
+    )
+    def test_auto_probe_falls_back_to_cpu_when_auto_backend_fails(self, monkeypatch, tmp_path):
+        """Auto probing should fall back to CPU if uv's auto backend cannot resolve."""
+        from comfygit_core.utils import pytorch_prober
+        from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
+
+        dry_run_backends: list[str] = []
+
+        def mock_run_command(cmd, *args, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            result.stdout = ""
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+
+            if "uv python find" in cmd_str:
+                result.stdout = "/path/to/cpython-3.12.11/bin/python"
+            elif "uv venv" in cmd_str:
+                result.stdout = "Created venv"
+            elif "uv pip install" in cmd_str:
+                backend_arg = next(arg for arg in cmd if str(arg).startswith("--torch-backend="))
+                backend = backend_arg.split("=", 1)[1]
+                dry_run_backends.append(backend)
+                if backend == "auto":
+                    result.returncode = 1
+                    result.stderr = "Failed to fetch: https://download.pytorch.org/whl/cu112/triton/"
+                else:
+                    result.stdout = """ + torch==2.9.1
+ + torchvision==0.24.1
+ + torchaudio==2.9.1
+"""
+            return result
+
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.tempfile.mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.rmtree", lambda *a, **k: None)
+
+        versions, backend = probe_pytorch_versions("3.12", "auto")
+
+        assert dry_run_backends == ["auto", "cpu"]
+        assert backend == "cpu"
+        assert versions["torch"] == "2.9.1"
 
     @pytest.mark.skipif(
         "COMFYGIT_INTEGRATION" in __import__("os").environ,
@@ -261,8 +329,8 @@ Would install 30 packages
         probe_dir.mkdir()
 
         monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
-        monkeypatch.setattr(pytorch_prober.tempfile, "mkdtemp", lambda **_: str(probe_dir))
-        monkeypatch.setattr(pytorch_prober.shutil, "rmtree", mock_rmtree)
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.tempfile.mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.rmtree", mock_rmtree)
 
         probe_pytorch_versions("3.12", "cu128")
 

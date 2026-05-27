@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -210,6 +211,7 @@ class UVProjectManager:
         overlay_names: list[str] | None = None,
         skip_optional_overlays: bool = False,
         backend_override: str | None = None,
+        output_callback: Callable[[str], None] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
         **flags
@@ -226,6 +228,7 @@ class UVProjectManager:
             skip_optional_overlays: If True, only apply pytorch overlays and
                                     skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            output_callback: Optional callback for streaming uv output lines when verbose
             extras: Optional list of extras to install
             all_extras: Install all optional extras
             **flags: Additional uv sync flags
@@ -269,12 +272,19 @@ class UVProjectManager:
             return self.disposable_project.sync(
                 overlays,
                 verbose=verbose,
+                output_callback=output_callback,
                 extras=extras,
                 all_extras=all_extras,
                 **flags,
             )
 
-        result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
+        result = self.uv.sync(
+            verbose=verbose,
+            output_callback=output_callback,
+            extra=extras,
+            all_extras=all_extras,
+            **flags,
+        )
         return result.stdout
 
     def lock_project(self, **flags) -> str:

@@ -1,6 +1,8 @@
 """Common utilities for ComfyUI Environment Capture."""
 
 import subprocess
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from ..logging.logging_config import get_logger
@@ -17,7 +19,8 @@ def run_command(
     capture_output: bool = True,
     text: bool = True,
     check: bool = False,
-    env: dict | None = None
+    env: dict | None = None,
+    output_callback: Callable[[str], None] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with proper error handling.
 
@@ -29,6 +32,7 @@ def run_command(
         text: Whether to decode output as text
         check: Whether to raise exception on non-zero exit code
         env: Environment variables to pass to subprocess
+        output_callback: Optional callback for streaming decoded output lines
 
     Returns:
         CompletedProcess instance
@@ -43,15 +47,59 @@ def run_command(
         if cwd:
             logger.debug(f"Working directory: {cwd}")
 
-        result = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd else None,
-            check=check,
-            timeout=timeout,
-            capture_output=capture_output,
-            text=text,
-            env=env
-        )
+        if output_callback is not None:
+            if not text:
+                raise ValueError("output_callback requires text=True")
+
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(cwd) if cwd else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1,
+            )
+            output_parts: list[str] = []
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    output_parts.append(line)
+                    if not capture_output:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                    stripped = line.rstrip("\r\n")
+                    if stripped:
+                        output_callback(redact_sensitive_text(stripped))
+                returncode = process.wait(timeout=timeout)
+            except Exception:
+                process.kill()
+                process.wait()
+                raise
+
+            result = subprocess.CompletedProcess(
+                args=cmd,
+                returncode=returncode,
+                stdout="".join(output_parts),
+                stderr="",
+            )
+            if check and result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    cmd,
+                    output=result.stdout,
+                    stderr=result.stderr,
+                )
+        else:
+            result = subprocess.run(
+                cmd,
+                cwd=str(cwd) if cwd else None,
+                check=check,
+                timeout=timeout,
+                capture_output=capture_output,
+                text=text,
+                env=env
+            )
 
         return result
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,6 +118,7 @@ class DisposableUvProject:
         overlays: list[OverlayConfig],
         *,
         verbose: bool = False,
+        output_callback: Callable[[str], None] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
         **flags,
@@ -128,6 +130,7 @@ class DisposableUvProject:
             temp_uv = self.uv.for_cwd(temp_path)
             result = temp_uv.sync(
                 verbose=verbose,
+                output_callback=output_callback,
                 extra=extras,
                 all_extras=all_extras,
                 **flags,

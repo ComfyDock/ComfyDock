@@ -259,6 +259,17 @@ should read or auto-probe the environment-local backend when no override is
 given. A `--torch-backend` override on those commands is a one-time sync input
 and should not rewrite the saved backend file.
 
+### CGSYNC-LOCAL-03A [LIVE]: Auto PyTorch backend probing falls back to CPU
+Validation: TEST
+
+When create/import/materialize ask for PyTorch backend `auto`, backend detection
+should prefer uv's auto-detected backend but should not fail the whole
+environment setup solely because that auto-selected PyTorch wheel index is
+temporarily unavailable or unsupported on the current machine. If the auto probe
+fails before resolving versions, core may retry the probe with the `cpu` backend
+and save that resolved backend locally. Explicit backend selections such as
+`cu128` or `rocm6.3` should still fail loudly when their probe cannot resolve.
+
 ### CGSYNC-LOCAL-04 [LIVE]: Overlay-aware uv resolution uses disposable project copies
 Validation: TEST
 

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -207,14 +208,27 @@ class UVCommand:
 
         return cmd
 
-    def _execute(self, cmd: list[str], expect_failure: bool = False, verbose: bool = False) -> CommandResult:
+    def _execute(
+        self,
+        cmd: list[str],
+        expect_failure: bool = False,
+        verbose: bool = False,
+        output_callback: Callable[[str], None] | None = None,
+    ) -> CommandResult:
         try:
             env = self._base_env.copy()
             if verbose:
                 # Show full output with progress and summary
                 env.pop("UV_NO_PROGRESS", None)
                 env.pop("NO_COLOR", None)
-                result = run_command(cmd, cwd=self._cwd, timeout=self.timeout, env=env, capture_output=False)
+                result = run_command(
+                    cmd,
+                    cwd=self._cwd,
+                    timeout=self.timeout,
+                    env=env,
+                    capture_output=False,
+                    output_callback=output_callback,
+                )
             else:
                 # Default: quiet mode (capture output, only show on error)
                 result = run_command(cmd, cwd=self._cwd, timeout=self.timeout, env=self._base_env, capture_output=True)
@@ -253,9 +267,14 @@ class UVCommand:
         cmd = self._build_command(["remove"] + packages, **flags)
         return self._execute(cmd)
 
-    def sync(self, verbose: bool = False, **flags) -> CommandResult:
+    def sync(
+        self,
+        verbose: bool = False,
+        output_callback: Callable[[str], None] | None = None,
+        **flags,
+    ) -> CommandResult:
         cmd = self._build_command(["sync"], **flags)
-        return self._execute(cmd, verbose=verbose)
+        return self._execute(cmd, verbose=verbose, output_callback=output_callback)
 
     def lock(self, **flags) -> CommandResult:
         cmd = self._build_command(["lock"], **flags)

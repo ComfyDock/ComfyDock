@@ -89,6 +89,13 @@ class EnvironmentFactory:
             if progress:
                 progress.on_phase_complete(phase, success, error)
 
+        def _log(message: str) -> None:
+            if not progress:
+                return
+            on_log = getattr(progress, "on_log", None)
+            if callable(on_log):
+                on_log(message)
+
         # Phase: Initialize structure (0-5%)
         _progress("init_structure", "Creating environment structure", 0)
 
@@ -300,6 +307,7 @@ class EnvironmentFactory:
             skip_optional_overlays=True,
             extras=extras,
             all_extras=all_extras,
+            output_callback=_log,
         )
 
         _complete("install_dependencies")
