@@ -466,12 +466,15 @@ runtime needs a field for reproducibility, core/manager should make that field
 first-class rather than relying on adapter-specific heuristics.
 
 Core now exposes build-readiness helpers that classify Python dependencies,
-custom node package provenance and criticality, workflow model source/cache
-availability, and workflow contract summaries from `EnvironmentManifestSnapshot`
-or parsed `pyproject.toml`. Cloud and runtime adapters may add target class,
-base runtime, source validation policy, asset catalog state, persistence, and
-deployment orchestration around that proof, but should not fork the
-manifest-derived dependency semantics.
+tracked uv source mappings, custom node package provenance and criticality,
+workflow model source/cache availability, and workflow contract summaries from
+`EnvironmentManifestSnapshot` or parsed `pyproject.toml`. Local path/workspace
+uv sources are not portable build inputs and should block build readiness unless
+they are moved into machine-local overlay configuration or replaced with a remote
+source. Cloud and runtime adapters may add target class, base runtime, source
+validation policy, asset catalog state, persistence, and deployment
+orchestration around that proof, but should not fork the manifest-derived
+dependency semantics.
 
 Materialization is the local/headless hydration step that build and runtime
 adapters can call before running smoke tests or serve endpoints. It should not

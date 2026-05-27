@@ -416,6 +416,118 @@ comfygit-system = ["uv>=0.7"]
     assert {item.status for item in python_proofs} == {"available_registry"}
 
 
+def test_build_readiness_blocks_local_uv_python_sources():
+    readiness = build_readiness_from_pyproject_toml(
+        f"""
+[project]
+name = "comfygit-env-test-env"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = ["local-package"]
+
+[tool.comfygit]
+schema_version = 2
+comfyui_version = "v0.19.3"
+python_version = "3.11"
+
+[tool.comfygit.nodes.test-node]
+name = "test-node"
+repository = "{NODE_SOURCE}"
+version = "dev"
+source = "development"
+
+[tool.comfygit.workflows.simple_txt2img]
+path = "workflows/simple_txt2img.json"
+
+[[tool.comfygit.workflows.simple_txt2img.models]]
+filename = "model.safetensors"
+category = "checkpoints"
+criticality = "required"
+sources = ["https://huggingface.co/example/repo/resolve/main/model.safetensors"]
+
+[tool.uv.sources]
+local-package = {{ path = "../local-package", editable = true }}
+"""
+    )
+
+    local_package = [
+        item
+        for item in _proofs_by_kind(readiness, "python_package")
+        if item.name == "local-package"
+    ][0]
+    assert readiness.status == "blocked"
+    assert local_package.status == "blocked_incompatible"
+    assert local_package.source == "../local-package"
+    assert "local uv source" in local_package.detail
+
+
+def test_build_readiness_classifies_remote_uv_python_sources():
+    readiness = build_readiness_from_pyproject_toml(
+        f"""
+[project]
+name = "comfygit-env-test-env"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = ["remote-package"]
+
+[tool.comfygit]
+schema_version = 2
+comfyui_version = "v0.19.3"
+python_version = "3.11"
+
+[tool.comfygit.nodes.test-node]
+name = "test-node"
+repository = "{NODE_SOURCE}"
+version = "dev"
+source = "development"
+
+[tool.comfygit.workflows.simple_txt2img]
+path = "workflows/simple_txt2img.json"
+
+[[tool.comfygit.workflows.simple_txt2img.models]]
+filename = "model.safetensors"
+category = "checkpoints"
+criticality = "required"
+sources = ["https://huggingface.co/example/repo/resolve/main/model.safetensors"]
+
+[tool.uv.sources]
+remote-package = {{ git = "https://github.com/example/remote-package.git", rev = "abc123" }}
+"""
+    )
+
+    remote_package = [
+        item
+        for item in _proofs_by_kind(readiness, "python_package")
+        if item.name == "remote-package"
+    ][0]
+    assert readiness.status == "ready"
+    assert remote_package.status == "available_source"
+    assert remote_package.source == "https://github.com/example/remote-package.git"
+
+
+def test_build_readiness_blocks_local_direct_python_sources():
+    readiness = build_readiness_from_pyproject_toml(
+        _base_manifest(
+            model_block="""
+[[tool.comfygit.workflows.simple_txt2img.models]]
+filename = "model.safetensors"
+category = "checkpoints"
+criticality = "required"
+sources = ["https://huggingface.co/example/repo/resolve/main/model.safetensors"]
+""",
+        ).replace(
+            'dependencies = ["torch", "comfygit-core"]',
+            'dependencies = ["local-package @ file:///home/user/local-package"]',
+        )
+    )
+
+    local_package = _proofs_by_kind(readiness, "python_package")[0]
+    assert readiness.status == "blocked"
+    assert local_package.status == "blocked_incompatible"
+    assert local_package.source == "file:///home/user/local-package"
+    assert "non-portable direct source" in local_package.detail
+
+
 def test_build_readiness_can_start_from_snapshot():
     snapshot = EnvironmentManifestSnapshot.from_toml_dict(
         {
@@ -437,3 +549,25 @@ def test_build_readiness_reports_invalid_toml_as_failed():
 
     assert readiness.status == "failed"
     assert "not valid TOML" in readiness.blockers[0]
+
+
+def test_build_readiness_reports_malformed_manifest_shape_as_failed():
+    readiness = build_readiness_from_pyproject_toml(
+        """
+[project]
+name = "comfygit-env-bad"
+requires-python = "==3.11.*"
+
+[tool.comfygit]
+schema_version = 2
+python_version = "3.11"
+
+[tool.comfygit.models]
+abc123 = {filename = "bad.safetensors"}
+"""
+    )
+
+    assert readiness.status == "failed"
+    assert readiness.environment_name == "bad"
+    assert readiness.python_version == "3.11"
+    assert "manifest could not be interpreted" in readiness.blockers[0]

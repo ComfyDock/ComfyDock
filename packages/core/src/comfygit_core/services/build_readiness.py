@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlparse
 
 import tomllib
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from ..models.build_readiness import (
     BuildAssetCatalog,
@@ -80,12 +82,21 @@ def build_readiness_from_manifest_dict(
     has_comfygit_manifest = bool(
         _dict_value(_dict_value(plain_manifest, "tool"), "comfygit")
     )
-    snapshot = EnvironmentManifestSnapshot.from_toml_dict(plain_manifest)
-    readiness = build_readiness_from_manifest_snapshot(
-        snapshot,
-        asset_catalog=asset_catalog,
-        source_validator=source_validator,
-    )
+    try:
+        snapshot = EnvironmentManifestSnapshot.from_toml_dict(plain_manifest)
+        readiness = build_readiness_from_manifest_snapshot(
+            snapshot,
+            asset_catalog=asset_catalog,
+            source_validator=source_validator,
+        )
+    except Exception as exc:
+        return BuildReadiness(
+            status="failed",
+            environment_name=_raw_environment_name(plain_manifest),
+            python_version=_raw_manifest_python_version(plain_manifest),
+            comfyui_version=_raw_comfyui_version(plain_manifest),
+            blockers=(f"pyproject.toml manifest could not be interpreted: {exc}",),
+        )
     if has_comfygit_manifest:
         return readiness
 
@@ -135,7 +146,12 @@ def build_readiness_from_manifest_snapshot(
     blockers: list[str] = []
 
     for dependency in python_dependencies:
-        dependency_proof.append(_classify_python_dependency(dependency))
+        proof = _classify_python_dependency(
+            dependency,
+            uv_sources=snapshot.uv.sources,
+        )
+        dependency_proof.append(proof)
+        _collect_issue(proof, warnings=warnings, blockers=blockers)
 
     for node in custom_nodes:
         proof = _classify_custom_node(node, source_validator=source_validator)
@@ -174,8 +190,35 @@ def build_readiness_from_manifest_snapshot(
     )
 
 
-def _classify_python_dependency(dependency: str) -> BuildDependencyProof:
-    source = _source_from_dependency(dependency)
+def _classify_python_dependency(
+    dependency: str,
+    *,
+    uv_sources: Mapping[str, Any],
+) -> BuildDependencyProof:
+    package_name = _package_name_from_dependency(dependency)
+    direct_source = _source_from_dependency(dependency)
+    source_entry = _uv_source_for_dependency(package_name, uv_sources)
+    if direct_source and not _is_accepted_source(direct_source):
+        return BuildDependencyProof(
+            kind="python_package",
+            name=dependency,
+            status="blocked_incompatible",
+            required=True,
+            source=direct_source,
+            detail="Python dependency uses a non-portable direct source that cloud build readiness cannot reproduce.",
+        )
+    if source_entry is not None:
+        source_status = _classify_uv_source(package_name or dependency, source_entry)
+        return BuildDependencyProof(
+            kind="python_package",
+            name=dependency,
+            status=cast(Any, source_status["status"]),
+            required=True,
+            source=source_status.get("source"),
+            detail=source_status["detail"],
+        )
+
+    source = direct_source
     return BuildDependencyProof(
         kind="python_package",
         name=dependency,
@@ -512,10 +555,108 @@ def _collect_issue(
 
 
 def _source_from_dependency(dependency: str) -> str | None:
-    if " @ " not in dependency:
+    try:
+        source = Requirement(dependency).url
+    except InvalidRequirement:
+        source = dependency.split(" @ ", 1)[1].strip() if " @ " in dependency else None
+    return source or None
+
+
+def _package_name_from_dependency(dependency: str) -> str | None:
+    try:
+        return canonicalize_name(Requirement(dependency).name)
+    except InvalidRequirement:
+        if " @ " in dependency:
+            name = dependency.split(" @ ", 1)[0].strip()
+            return canonicalize_name(name) if name else None
         return None
-    source = dependency.split(" @ ", 1)[1].strip()
-    return source if _is_accepted_source(source) else None
+
+
+def _uv_source_for_dependency(
+    package_name: str | None,
+    uv_sources: Mapping[str, Any],
+) -> Any | None:
+    if not package_name:
+        return None
+    for name, source in uv_sources.items():
+        if canonicalize_name(str(name)) == package_name:
+            return source
+    return None
+
+
+def _classify_uv_source(package_name: str, source_entry: Any) -> dict[str, str | None]:
+    entries: Sequence[Any]
+    if isinstance(source_entry, list):
+        entries = source_entry
+    else:
+        entries = (source_entry,)
+
+    remote_source: str | None = None
+    index_source: str | None = None
+    local_source: str | None = None
+    unsupported_source: str | None = None
+
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            unsupported_source = str(entry)
+            continue
+        if entry.get("workspace") is True:
+            local_source = "workspace"
+            continue
+        for key in ("path", "editable", "directory"):
+            value = entry.get(key)
+            if value:
+                local_source = str(value)
+                break
+        if local_source:
+            continue
+        for key in ("git", "url"):
+            value = str(entry.get(key) or "").strip()
+            if value and _is_accepted_source(value):
+                remote_source = value
+                break
+        if remote_source:
+            continue
+        value = str(entry.get("index") or "").strip()
+        if value:
+            index_source = f"uv-index:{value}"
+            continue
+        unsupported_source = str(dict(entry))
+
+    if local_source:
+        return {
+            "status": "blocked_incompatible",
+            "source": local_source,
+            "detail": (
+                f"Python dependency '{package_name}' uses a local uv source. "
+                "Local path/workspace sources are machine-local and cannot be reproduced by a cloud build."
+            ),
+        }
+    if unsupported_source:
+        return {
+            "status": "blocked_incompatible",
+            "source": unsupported_source,
+            "detail": (
+                f"Python dependency '{package_name}' uses an unsupported uv source shape for build readiness."
+            ),
+        }
+    if remote_source:
+        return {
+            "status": "available_source",
+            "source": remote_source,
+            "detail": "Python package will be installed from its tracked uv source during image construction.",
+        }
+    if index_source:
+        return {
+            "status": "available_registry",
+            "source": index_source,
+            "detail": "Python package will be installed from a tracked uv index during image construction.",
+        }
+    return {
+        "status": "available_registry",
+        "source": None,
+        "detail": "Python package will be installed during image construction.",
+    }
 
 
 def _accepted_sources(values: list[str]) -> list[str]:
@@ -548,6 +689,33 @@ def _normalize_requires_python(value: str | None) -> str | None:
 
 def _environment_name(snapshot: EnvironmentManifestSnapshot) -> str:
     return (snapshot.project.name or "").removeprefix("comfygit-env-")
+
+
+def _raw_environment_name(manifest: Mapping[str, Any]) -> str:
+    project = _dict_value(manifest, "project")
+    name = str(project.get("name") or "")
+    return name.removeprefix("comfygit-env-")
+
+
+def _raw_manifest_python_version(manifest: Mapping[str, Any]) -> str | None:
+    comfygit = _dict_value(_dict_value(manifest, "tool"), "comfygit")
+    if comfygit.get("python_version") is not None:
+        return str(comfygit["python_version"])
+    project = _dict_value(manifest, "project")
+    return _normalize_requires_python(
+        str(project["requires-python"])
+        if project.get("requires-python") is not None
+        else None
+    )
+
+
+def _raw_comfyui_version(manifest: Mapping[str, Any]) -> str | None:
+    comfygit = _dict_value(_dict_value(manifest, "tool"), "comfygit")
+    return (
+        str(comfygit["comfyui_version"])
+        if comfygit.get("comfyui_version") is not None
+        else None
+    )
 
 
 def _is_required(criticality: str | None) -> bool:
