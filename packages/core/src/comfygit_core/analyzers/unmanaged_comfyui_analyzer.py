@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any
 import tomlkit
 from tomlkit.exceptions import TOMLKitError
 
+from ..configs.model_config import ModelConfig, ModelLoaderWidgetMapping
 from ..models.unmanaged_import import (
     NodeRegistryLookup,
     UnmanagedComfyUIImportPreview,
@@ -28,42 +30,6 @@ WORKFLOW_SOURCE_DIRS = (
     Path("workflows"),
 )
 
-MODEL_FILE_EXTENSIONS = (
-    ".safetensors",
-    ".sft",
-    ".ckpt",
-    ".pt",
-    ".pth",
-    ".gguf",
-    ".bin",
-    ".onnx",
-)
-
-MODEL_WIDGET_CATEGORY_HINTS = {
-    "ckpt": "checkpoints",
-    "checkpoint": "checkpoints",
-    "unet": "diffusion_models",
-    "diffusion_model": "diffusion_models",
-    "clip": "text_encoders",
-    "text_encoder": "text_encoders",
-    "vae": "vae",
-    "lora": "loras",
-    "control_net": "controlnet",
-    "controlnet": "controlnet",
-}
-
-MODEL_NODE_WIDGET_FALLBACKS = {
-    "CheckpointLoaderSimple": [(0, "checkpoints")],
-    "CheckpointLoader": [(0, "checkpoints")],
-    "UNETLoader": [(0, "diffusion_models")],
-    "DualCLIPLoader": [(0, "text_encoders"), (1, "text_encoders")],
-    "TripleCLIPLoader": [(0, "text_encoders"), (1, "text_encoders"), (2, "text_encoders")],
-    "CLIPLoader": [(0, "text_encoders")],
-    "VAELoader": [(0, "vae")],
-    "LoraLoader": [(0, "loras")],
-    "LoraLoaderModelOnly": [(0, "loras")],
-    "ControlNetLoader": [(0, "controlnet")],
-}
 
 @dataclass(frozen=True)
 class CustomNodePyprojectMetadata:
@@ -129,6 +95,7 @@ def scan_unmanaged_comfyui(
         warnings=warnings,
     )
 
+
 def _looks_like_comfyui_root(path: Path) -> bool:
     return (
         (path / "main.py").exists()
@@ -145,6 +112,7 @@ def _scan_workflows(
     workflows: list[UnmanagedWorkflowScan] = []
     model_references: list[UnmanagedModelReferenceScan] = []
     models_scanned = True
+    model_config = _load_model_config_for_unmanaged_comfyui(comfyui_path)
 
     for relative_dir in WORKFLOW_SOURCE_DIRS:
         workflow_dir = comfyui_path / relative_dir
@@ -154,7 +122,7 @@ def _scan_workflows(
             if path.name in seen:
                 continue
             seen.add(path.name)
-            refs, scanned = _scan_workflow_model_references(path)
+            refs, scanned = _scan_workflow_model_references(path, model_config)
             if not scanned:
                 models_scanned = False
                 warnings.append(f"Could not scan model references for workflow '{path.stem}'.")
@@ -171,7 +139,34 @@ def _scan_workflows(
     return workflows, model_references, models_scanned
 
 
-def _scan_workflow_model_references(path: Path) -> tuple[list[UnmanagedModelReferenceScan], bool]:
+def _load_model_config_for_unmanaged_comfyui(comfyui_path: Path) -> ModelConfig:
+    """Build model-loader policy from the unmanaged ComfyUI checkout when possible."""
+    from ..utils.folder_paths_extractor import extract_folder_paths
+    from ..utils.model_loader_extractor import extract_comfyui_model_loaders
+
+    with tempfile.TemporaryDirectory(prefix="comfygit-unmanaged-model-config-") as temp_dir:
+        cec_path = Path(temp_dir)
+
+        try:
+            extract_folder_paths(comfyui_path, cec_path / "comfyui_folder_paths.json")
+        except Exception:
+            pass
+
+        try:
+            extract_comfyui_model_loaders(comfyui_path, cec_path / "comfyui_model_loaders.json")
+        except Exception:
+            pass
+
+        if (cec_path / "comfyui_folder_paths.json").exists() or (cec_path / "comfyui_model_loaders.json").exists():
+            return ModelConfig.load(cec_path=cec_path)
+
+    return ModelConfig.load()
+
+
+def _scan_workflow_model_references(
+    path: Path,
+    model_config: ModelConfig,
+) -> tuple[list[UnmanagedModelReferenceScan], bool]:
     """Return model references from a saved workflow without resolving availability."""
     try:
         from comfygit_core.workflow import WorkflowDependencyParser
@@ -179,10 +174,11 @@ def _scan_workflow_model_references(path: Path) -> tuple[list[UnmanagedModelRefe
         dependencies = WorkflowDependencyParser(
             path,
             workflow_name=path.stem,
+            model_config=model_config,
             version_agnostic=True,
         ).analyze_dependencies()
     except Exception:
-        return _scan_workflow_model_references_from_json(path)
+        return _scan_workflow_model_references_from_json(path, model_config)
 
     refs: list[UnmanagedModelReferenceScan] = []
     seen: set[tuple[str, str | None, str | None, int | None]] = set()
@@ -213,7 +209,10 @@ def _scan_workflow_model_references(path: Path) -> tuple[list[UnmanagedModelRefe
     return refs, True
 
 
-def _scan_workflow_model_references_from_json(path: Path) -> tuple[list[UnmanagedModelReferenceScan], bool]:
+def _scan_workflow_model_references_from_json(
+    path: Path,
+    model_config: ModelConfig,
+) -> tuple[list[UnmanagedModelReferenceScan], bool]:
     """Fallback scanner for older core installs or partial workflow metadata."""
     import json
 
@@ -256,11 +255,16 @@ def _scan_workflow_model_references_from_json(path: Path) -> tuple[list[Unmanage
             current_node_type = _string_value(value.get("type")) or _string_value(value.get("class_type")) or node_type
             widgets_values = value.get("widgets_values") or value.get("widget_values")
             if current_node_type and isinstance(widgets_values, list):
-                for widget_index, category in MODEL_NODE_WIDGET_FALLBACKS.get(current_node_type, []):
+                mappings = model_config.get_model_loader_widgets(current_node_type)
+                for mapping in mappings:
+                    widget_index = _fallback_widget_index(mapping, mappings, widgets_values)
+                    if widget_index is None:
+                        continue
                     if widget_index >= len(widgets_values):
                         continue
                     widget_value = widgets_values[widget_index]
-                    if isinstance(widget_value, str) and _looks_like_model_value(widget_value):
+                    category = mapping.directories[0] if mapping.directories else None
+                    if isinstance(widget_value, str) and _looks_like_model_value(widget_value, model_config):
                         add_ref(widget_value, category, current_node_type)
 
             property_models = value.get("models")
@@ -269,10 +273,12 @@ def _scan_workflow_model_references_from_json(path: Path) -> tuple[list[Unmanage
                     if not isinstance(model_entry, dict):
                         continue
                     name = _string_value(model_entry.get("name"))
-                    if name and _looks_like_model_value(name):
+                    if name and _looks_like_model_value(name, model_config):
                         add_ref(
                             name,
-                            _string_value(model_entry.get("directory")) or _category_for_model_key(name),
+                            _string_value(model_entry.get("directory"))
+                            or _category_for_model_path(name, model_config)
+                            or _category_for_model_key(name, model_config),
                             current_node_type,
                             _string_value(model_entry.get("url")),
                         )
@@ -286,28 +292,50 @@ def _scan_workflow_model_references_from_json(path: Path) -> tuple[list[Unmanage
             return
 
         if isinstance(value, str) and key:
-            category = _category_for_model_key(key)
-            if category and _looks_like_model_value(value):
+            category = _category_for_model_key(key, model_config) or _category_for_model_path(value, model_config)
+            if category and _looks_like_model_value(value, model_config):
                 add_ref(value, category, node_type)
 
     walk(data)
     return refs, True
 
 
-def _category_for_model_key(key: str) -> str | None:
-    normalized = key.lower().replace("-", "_")
-    for hint, category in MODEL_WIDGET_CATEGORY_HINTS.items():
-        if hint in normalized:
-            return category
+def _fallback_widget_index(
+    mapping: ModelLoaderWidgetMapping,
+    mappings: list[ModelLoaderWidgetMapping],
+    widgets_values: list[Any],
+) -> int | None:
+    if mapping.widget_index is not None:
+        return mapping.widget_index
+    if len(mappings) == 1 and len(widgets_values) == 1:
+        return 0
     return None
 
 
-def _looks_like_model_value(value: str) -> bool:
+def _category_for_model_key(key: str, model_config: ModelConfig) -> str | None:
+    normalized = key.lower().replace("-", "_")
+    for directory in model_config.standard_directories:
+        directory_key = directory.lower().replace("-", "_")
+        if directory_key in normalized:
+            return directory
+    return None
+
+
+def _category_for_model_path(value: str, model_config: ModelConfig) -> str | None:
+    normalized = value.replace("\\", "/")
+    first_part = normalized.split("/", 1)[0].lower()
+    for directory in model_config.standard_directories:
+        if first_part == directory.lower():
+            return directory
+    return None
+
+
+def _looks_like_model_value(value: str, model_config: ModelConfig) -> bool:
     stripped = value.strip()
     if not stripped or stripped.startswith(("http://", "https://")):
         return False
     return (
-        stripped.lower().endswith(MODEL_FILE_EXTENSIONS)
+        model_config.is_model_file(Path(stripped))
         or "/" in stripped
         or "\\" in stripped
     )

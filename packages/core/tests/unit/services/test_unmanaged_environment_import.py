@@ -231,6 +231,57 @@ def test_scan_current_environment_reports_workflow_model_references(tmp_path: Pa
     assert refs["vae-ft-mse.safetensors"].source_url == "https://huggingface.co/example/vae/resolve/main/vae-ft-mse.safetensors"
 
 
+def test_scan_current_environment_uses_source_model_loader_metadata(tmp_path: Path) -> None:
+    source = _make_comfyui_source(tmp_path / "source")
+    (source / "folder_paths.py").write_text(
+        "\n".join([
+            "import os",
+            'models_dir = "models"',
+            "folder_names_and_paths = {}",
+            "supported_pt_extensions = set()",
+            'folder_names_and_paths["diffusion_models"] = ([os.path.join(models_dir, "diffusion_models")], supported_pt_extensions)',
+            "",
+        ])
+    )
+    (source / "nodes.py").write_text(
+        "\n".join([
+            "import folder_paths",
+            "",
+            "class QwenGGUFLoader:",
+            "    @classmethod",
+            "    def INPUT_TYPES(cls):",
+            "        return {",
+            "            'required': {",
+            "                'gguf_name': (folder_paths.get_filename_list('diffusion_models'),),",
+            "            }",
+            "        }",
+            "",
+            'NODE_CLASS_MAPPINGS = {"QwenGGUFLoader": QwenGGUFLoader}',
+            "",
+        ])
+    )
+    workflow_path = source / "user" / "default" / "workflows" / "demo.json"
+    workflow_path.write_text(json.dumps({
+        "nodes": [
+            {
+                "id": 1,
+                "type": "QwenGGUFLoader",
+                "widgets_values": ["qwen-image-edit.gguf"],
+            }
+        ],
+        "links": [],
+    }))
+
+    preview = scan_current_environment(source)
+
+    assert preview.models_scanned is True
+    assert preview.total_model_references == 1
+    ref = preview.model_references[0]
+    assert ref.filename == "qwen-image-edit.gguf"
+    assert ref.node_type == "QwenGGUFLoader"
+    assert ref.category == "diffusion_models"
+
+
 def test_scan_current_environment_does_not_inherit_parent_comfyui_git_remote(tmp_path: Path) -> None:
     source = _make_comfyui_source(tmp_path / "source")
     _make_local_node(source / "custom_nodes" / "nested-node")
