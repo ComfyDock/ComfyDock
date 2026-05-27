@@ -21,6 +21,8 @@ _EXPORTS: dict[str, str] = {
     "get_node_git_info": "node_git_analyzer",
     "RefDiffAnalyzer": "ref_diff_analyzer",
     "StatusScanner": "status_scanner",
+    "detect_unmanaged_comfyui_path": "unmanaged_comfyui_analyzer",
+    "scan_unmanaged_comfyui": "unmanaged_comfyui_analyzer",
     "WorkflowDependencyParser": "workflow_dependency_parser",
 }
 
@@ -39,4 +41,3 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted(set(globals()) | set(__all__))
-

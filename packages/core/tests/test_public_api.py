@@ -82,6 +82,7 @@ def test_public_facade_modules_export_declared_symbols():
         "comfygit_core.confirmation",
         "comfygit_core.core",
         "comfygit_core.git",
+        "comfygit_core.imports",
         "comfygit_core.models",
         "comfygit_core.readiness",
         "comfygit_core.runtime",
@@ -112,6 +113,7 @@ def test_common_adapter_types_are_public():
     """Types used by CLI/Manager adapters should be available from public facades."""
     from comfygit_core.build_readiness import build_readiness_from_manifest_snapshot
     from comfygit_core.confirmation import AutoConfirmStrategy, ConfirmationStrategy
+    from comfygit_core.imports import import_unmanaged_comfyui_environment, scan_unmanaged_comfyui
     from comfygit_core.models import (
         BatchDownloadCallbacks,
         BuildAssetCatalog,
@@ -160,6 +162,12 @@ def test_common_adapter_types_are_public():
         TorchBackendDetection,
         TorchBackendSelection,
         TorchBackendStatus,
+        UnmanagedComfyUIImportPreview,
+        UnmanagedComfyUIImportResult,
+        UnmanagedCustomNodeScan,
+        UnmanagedDevelopmentNodeLink,
+        UnmanagedModelReferenceScan,
+        UnmanagedWorkflowScan,
         UVCommandContext,
         UVCommandError,
         WorkflowAnalysisStatus,
@@ -220,12 +228,20 @@ def test_common_adapter_types_are_public():
     assert TorchBackendStatus.__name__ == "TorchBackendStatus"
     assert UVCommandContext.__name__ == "UVCommandContext"
     assert UVCommandError.__name__ == "UVCommandError"
+    assert UnmanagedComfyUIImportPreview.__name__ == "UnmanagedComfyUIImportPreview"
+    assert UnmanagedComfyUIImportResult.__name__ == "UnmanagedComfyUIImportResult"
+    assert UnmanagedCustomNodeScan.__name__ == "UnmanagedCustomNodeScan"
+    assert UnmanagedDevelopmentNodeLink.__name__ == "UnmanagedDevelopmentNodeLink"
+    assert UnmanagedModelReferenceScan.__name__ == "UnmanagedModelReferenceScan"
+    assert UnmanagedWorkflowScan.__name__ == "UnmanagedWorkflowScan"
     assert WorkflowAnalysisStatus.__name__ == "WorkflowAnalysisStatus"
     assert WorkflowDependencies.__name__ == "WorkflowDependencies"
     assert WorkflowExecutionContract.__name__ == "WorkflowExecutionContract"
     assert WorkflowSyncStatus.__name__ == "WorkflowSyncStatus"
     assert callable(build_readiness_from_manifest_snapshot)
     assert callable(collect_node_provenance_warnings)
+    assert callable(import_unmanaged_comfyui_environment)
+    assert callable(scan_unmanaged_comfyui)
 
 
 def test_git_remote_refs_model_round_trips_to_public_json_shape():

@@ -16,6 +16,7 @@ _EXPORTS: dict[str, str] = {
     "ModelDownloader": "model_downloader",
     "NodeLookupService": "node_lookup_service",
     "RegistryDataManager": "registry_data_manager",
+    "import_unmanaged_comfyui_environment": "unmanaged_environment_import",
     "detect_workflow_input_format": "workflow_input",
     "normalize_workflow_input": "workflow_input",
     "build_contract_prompt": "workflow_execution",

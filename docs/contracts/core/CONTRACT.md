@@ -43,9 +43,10 @@ Validation: STATIC
 
 The stable import surface is defined by `comfygit_core`, `comfygit_core.models`,
 and other deliberately documented facade modules such as readiness, workflow,
-runtime, assets, and git. Importable implementation packages such as managers,
-repositories, analyzers, resolvers, integrations, configs, caching, and generic
-utils are internal unless they are re-exported through a public facade.
+runtime, assets, git, and imports. Importable implementation packages such as
+managers, repositories, analyzers, resolvers, integrations, configs, caching,
+and generic utils are internal unless they are re-exported through a public
+facade.
 
 Model files may contain both public and internal dataclasses. A model type is
 public only when it is exported from `comfygit_core.models` or another documented
@@ -108,6 +109,12 @@ source-validator configuration, and deployment orchestration, but should consume
 core manifest-derived proof semantics instead of reimplementing them. Workflow source candidate discovery
 now routes through public Environment/Workspace facades instead of manager
 reach-throughs.
+
+Unmanaged ComfyUI adoption scanning and import orchestration is reusable core
+behavior exposed through `comfygit_core.imports`. Adapter-specific policy, such
+as ignoring or development-linking the adapter's own custom node during import,
+should be passed into core through typed options instead of being hard-coded in
+the scanner.
 
 ## Provider Credentials And External Auth
 
