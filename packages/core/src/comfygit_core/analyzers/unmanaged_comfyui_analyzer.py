@@ -180,26 +180,43 @@ def _scan_workflow_model_references(
     except Exception:
         return _scan_workflow_model_references_from_json(path, model_config)
 
+    if not dependencies.found_models:
+        return _scan_workflow_model_references_from_json(path, model_config)
+
     refs: list[UnmanagedModelReferenceScan] = []
-    seen: set[tuple[str, str | None, str | None, int | None]] = set()
+    seen: set[tuple[str, str | None, str | None, int | None, str | None]] = set()
     for ref in dependencies.found_models:
-        filename = _string_value(getattr(ref, "widget_value", None))
-        if not filename:
+        widget_value = _string_value(getattr(ref, "widget_value", None))
+        if not widget_value:
             continue
-        category = _string_value(getattr(ref, "property_directory", None))
+        normalized_ref = _normalize_model_reference(
+            widget_value,
+            _string_value(getattr(ref, "property_directory", None)),
+            model_config,
+        )
+        if normalized_ref is None:
+            continue
         node_type = _string_value(getattr(ref, "node_type", None))
         widget_index = getattr(ref, "widget_index", None)
         widget_index = widget_index if isinstance(widget_index, int) else None
         source_url = _string_value(getattr(ref, "property_url", None))
-        key = (filename, category, node_type, widget_index)
+        key = (
+            normalized_ref.filename,
+            normalized_ref.category,
+            node_type,
+            widget_index,
+            normalized_ref.relative_path,
+        )
         if key in seen:
             continue
         seen.add(key)
         refs.append(
             UnmanagedModelReferenceScan(
-                filename=filename,
+                filename=normalized_ref.filename,
                 workflow=path.stem,
-                category=category,
+                category=normalized_ref.category,
+                relative_path=normalized_ref.relative_path,
+                widget_value=normalized_ref.widget_value,
                 node_type=node_type,
                 widget_index=widget_index,
                 source_url=source_url,
@@ -222,10 +239,18 @@ def _scan_workflow_model_references_from_json(
         return [], False
 
     refs: list[UnmanagedModelReferenceScan] = []
-    ref_index: dict[tuple[str, str | None, str | None], int] = {}
+    ref_index: dict[tuple[str, str | None, str | None, str | None], int] = {}
 
-    def add_ref(filename: str, category: str | None, node_type: str | None, source_url: str | None = None) -> None:
-        key = (filename, category, node_type)
+    def add_ref(widget_value: str, category: str | None, node_type: str | None, source_url: str | None = None) -> None:
+        normalized_ref = _normalize_model_reference(widget_value, category, model_config)
+        if normalized_ref is None:
+            return
+        key = (
+            normalized_ref.filename,
+            normalized_ref.category,
+            node_type,
+            normalized_ref.relative_path,
+        )
         if key in ref_index:
             existing_index = ref_index[key]
             existing = refs[existing_index]
@@ -234,6 +259,8 @@ def _scan_workflow_model_references_from_json(
                     filename=existing.filename,
                     workflow=existing.workflow,
                     category=existing.category,
+                    relative_path=existing.relative_path,
+                    widget_value=existing.widget_value,
                     node_type=existing.node_type,
                     widget_index=existing.widget_index,
                     source_url=source_url,
@@ -242,9 +269,11 @@ def _scan_workflow_model_references_from_json(
         ref_index[key] = len(refs)
         refs.append(
             UnmanagedModelReferenceScan(
-                filename=filename,
+                filename=normalized_ref.filename,
                 workflow=path.stem,
-                category=category,
+                category=normalized_ref.category,
+                relative_path=normalized_ref.relative_path,
+                widget_value=normalized_ref.widget_value,
                 node_type=node_type,
                 source_url=source_url,
             )
@@ -277,8 +306,7 @@ def _scan_workflow_model_references_from_json(
                         add_ref(
                             name,
                             _string_value(model_entry.get("directory"))
-                            or _category_for_model_path(name, model_config)
-                            or _category_for_model_key(name, model_config),
+                            or _category_for_model_path(name, model_config),
                             current_node_type,
                             _string_value(model_entry.get("url")),
                         )
@@ -292,7 +320,10 @@ def _scan_workflow_model_references_from_json(
             return
 
         if isinstance(value, str) and key:
-            category = _category_for_model_key(key, model_config) or _category_for_model_path(value, model_config)
+            category = _category_for_model_input_key(node_type, key, model_config) or _category_for_model_path(
+                value,
+                model_config,
+            )
             if category and _looks_like_model_value(value, model_config):
                 add_ref(value, category, node_type)
 
@@ -312,22 +343,79 @@ def _fallback_widget_index(
     return None
 
 
-def _category_for_model_key(key: str, model_config: ModelConfig) -> str | None:
-    normalized = key.lower().replace("-", "_")
-    for directory in model_config.standard_directories:
-        directory_key = directory.lower().replace("-", "_")
-        if directory_key in normalized:
-            return directory
-    return None
-
-
 def _category_for_model_path(value: str, model_config: ModelConfig) -> str | None:
-    normalized = value.replace("\\", "/")
+    normalized = _normalize_model_path_value(value)
     first_part = normalized.split("/", 1)[0].lower()
     for directory in model_config.standard_directories:
         if first_part == directory.lower():
             return directory
     return None
+
+
+def _category_for_model_input_key(node_type: str | None, key: str, model_config: ModelConfig) -> str | None:
+    if not node_type:
+        return None
+
+    mappings = model_config.get_model_loader_widgets(node_type)
+    if not mappings:
+        return None
+
+    normalized_key = key.lower().replace("-", "_")
+    for mapping in mappings:
+        widget_name = mapping.widget_name
+        if widget_name and widget_name.lower().replace("-", "_") == normalized_key:
+            return mapping.directories[0] if mapping.directories else None
+
+    first_dirs = {
+        mapping.directories[0]
+        for mapping in mappings
+        if mapping.directories
+    }
+    if len(first_dirs) == 1:
+        return next(iter(first_dirs))
+
+    return None
+
+
+@dataclass(frozen=True)
+class NormalizedModelReference:
+    filename: str
+    category: str | None
+    relative_path: str | None
+    widget_value: str
+
+
+def _normalize_model_path_value(value: str) -> str:
+    return value.strip().replace("\\", "/").strip("/")
+
+
+def _normalize_model_reference(
+    widget_value: str,
+    category: str | None,
+    model_config: ModelConfig,
+) -> NormalizedModelReference | None:
+    normalized_value = _normalize_model_path_value(widget_value)
+    if not normalized_value:
+        return None
+
+    path_category = _category_for_model_path(normalized_value, model_config)
+    resolved_category = path_category or category
+    filename = normalized_value.rsplit("/", 1)[-1]
+    if not filename:
+        return None
+
+    relative_path = None
+    if path_category:
+        relative_path = normalized_value
+    elif resolved_category:
+        relative_path = f"{resolved_category}/{normalized_value}"
+
+    return NormalizedModelReference(
+        filename=filename,
+        category=resolved_category,
+        relative_path=relative_path,
+        widget_value=normalized_value,
+    )
 
 
 def _looks_like_model_value(value: str, model_config: ModelConfig) -> bool:
@@ -370,6 +458,7 @@ def _scan_custom_nodes(
         provenance_detail = None
         source_type = "git" if repository else "local"
         warning = None
+        requires_review = False
 
         if repository:
             install_spec = _git_install_spec(repository, commit)
@@ -393,6 +482,7 @@ def _scan_custom_nodes(
                 install_spec = metadata.repository
                 provenance_detail = "repository URL from node pyproject metadata"
                 if metadata.version:
+                    requires_review = True
                     warning = (
                         "Found repository metadata but no matching registry package version; "
                         "the imported environment will use the Git source and may not pin the exact local revision."
@@ -403,6 +493,7 @@ def _scan_custom_nodes(
                     )
 
         if source_type == "local":
+            requires_review = True
             warning = "No Git remote detected; copied as a local development node."
             warnings.append(f"Custom node '{path.name}' has no Git remote and will need manual provenance review.")
 
@@ -419,6 +510,7 @@ def _scan_custom_nodes(
                 pinned_commit=commit,
                 warning=warning,
                 provenance_detail=provenance_detail,
+                requires_review=requires_review,
             )
         )
 

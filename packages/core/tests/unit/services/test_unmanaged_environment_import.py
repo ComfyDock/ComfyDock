@@ -139,6 +139,7 @@ def test_scan_current_environment_reports_workflows_and_nodes(tmp_path: Path) ->
     assert nodes["git-node"].repository == "https://github.com/example/git-node.git"
     assert nodes["git-node"].pinned_commit
     assert nodes["local-node"].source_type == "local"
+    assert nodes["local-node"].requires_review is True
     assert "manual provenance review" in " ".join(preview.warnings)
 
 
@@ -282,6 +283,68 @@ def test_scan_current_environment_uses_source_model_loader_metadata(tmp_path: Pa
     assert ref.category == "diffusion_models"
 
 
+def test_scan_current_environment_preserves_model_subpaths(tmp_path: Path) -> None:
+    source = _make_comfyui_source(tmp_path / "source")
+    workflow_path = source / "user" / "default" / "workflows" / "demo.json"
+    workflow_path.write_text(json.dumps({
+        "nodes": [
+            {
+                "id": 1,
+                "type": "LoraLoaderModelOnly",
+                "widgets_values": ["fusionx-lora/wan2.1-t2v-14b-fusionx-lora.safetensors"],
+            }
+        ],
+        "links": [],
+    }))
+
+    preview = scan_current_environment(source)
+
+    assert preview.total_model_references == 1
+    ref = preview.model_references[0]
+    assert ref.filename == "wan2.1-t2v-14b-fusionx-lora.safetensors"
+    assert ref.category == "loras"
+    assert ref.relative_path == "loras/fusionx-lora/wan2.1-t2v-14b-fusionx-lora.safetensors"
+    assert ref.widget_value == "fusionx-lora/wan2.1-t2v-14b-fusionx-lora.safetensors"
+
+
+def test_scan_current_environment_does_not_guess_category_from_unknown_input_key(tmp_path: Path) -> None:
+    source = _make_comfyui_source(tmp_path / "source")
+    workflow_path = source / "user" / "default" / "workflows" / "demo.json"
+    workflow_path.write_text(json.dumps({
+        "1": {
+            "class_type": "UnknownCustomLoader",
+            "inputs": {
+                "lora_name": "maybe-a-lora.safetensors",
+            },
+        },
+    }))
+
+    preview = scan_current_environment(source)
+
+    assert preview.total_model_references == 0
+
+
+def test_scan_current_environment_uses_known_loader_for_api_input_keys(tmp_path: Path) -> None:
+    source = _make_comfyui_source(tmp_path / "source")
+    workflow_path = source / "user" / "default" / "workflows" / "demo.json"
+    workflow_path.write_text(json.dumps({
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {
+                "ckpt_name": "sdxl_base.safetensors",
+            },
+        },
+    }))
+
+    preview = scan_current_environment(source)
+
+    assert preview.total_model_references == 1
+    ref = preview.model_references[0]
+    assert ref.filename == "sdxl_base.safetensors"
+    assert ref.category == "checkpoints"
+    assert ref.relative_path == "checkpoints/sdxl_base.safetensors"
+
+
 def test_scan_current_environment_does_not_inherit_parent_comfyui_git_remote(tmp_path: Path) -> None:
     source = _make_comfyui_source(tmp_path / "source")
     _make_local_node(source / "custom_nodes" / "nested-node")
@@ -350,6 +413,7 @@ def test_scan_current_environment_uses_pyproject_repository_when_registry_versio
     scanned = {node.name: node for node in preview.custom_nodes}["ComfyUI-KJNodes"]
     assert scanned.source_type == "git"
     assert scanned.install_spec == "https://github.com/kijai/ComfyUI-KJNodes"
+    assert scanned.requires_review is True
     assert "no matching registry version" in " ".join(preview.warnings)
 
 

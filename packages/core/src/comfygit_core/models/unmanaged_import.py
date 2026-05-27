@@ -48,6 +48,8 @@ class UnmanagedModelReferenceScan:
     filename: str
     workflow: str
     category: str | None = None
+    relative_path: str | None = None
+    widget_value: str | None = None
     node_type: str | None = None
     widget_index: int | None = None
     source_url: str | None = None
@@ -69,6 +71,7 @@ class UnmanagedCustomNodeScan:
     pinned_commit: str | None = None
     warning: str | None = None
     provenance_detail: str | None = None
+    requires_review: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
