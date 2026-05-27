@@ -124,24 +124,51 @@ def test_workflow_resolution_facades_delegate_to_workflow_manager(test_env, monk
     fix = Mock(return_value=fixed_resolution)
     update_paths = Mock(return_value=2)
     search_models = Mock(return_value=["model-match"])
+    aliases = Mock(return_value={"OldNodePack": "new-node-pack"})
+    analyze_json = Mock(return_value=(dependencies, resolution))
+    search_node_packages = Mock(return_value=["node-match"])
+    resolve_node_packages = Mock(return_value=["node-resolution"])
 
     monkeypatch.setattr(workflow_manager, "analyze_and_resolve_workflow", analyze)
+    monkeypatch.setattr(workflow_manager, "analyze_and_resolve_workflow_json", analyze_json)
     monkeypatch.setattr(workflow_manager, "resolve_dependencies", resolve)
     monkeypatch.setattr(workflow_manager, "fix_resolution", fix)
     monkeypatch.setattr(workflow_manager, "update_workflow_model_paths", update_paths)
     monkeypatch.setattr(workflow_manager, "search_models", search_models)
+    monkeypatch.setattr(workflow_manager, "get_package_aliases", aliases)
+    monkeypatch.setattr(workflow_manager, "search_node_packages", search_node_packages)
+    monkeypatch.setattr(workflow_manager, "resolve_node_packages", resolve_node_packages)
 
     assert test_env.analyze_workflow_dependencies("flow") == (dependencies, resolution)
+    assert test_env.analyze_workflow_json({"nodes": []}, workflow_name="draft") == (
+        dependencies,
+        resolution,
+    )
     assert test_env.resolve_workflow_dependencies(dependencies) is resolution
     assert test_env.fix_workflow_resolution(resolution, node_strategy, model_strategy) is fixed_resolution
     assert test_env.update_workflow_model_paths(resolution) == 2
     assert test_env.search_workflow_models("film", node_type="LoadFoo", limit=3) == ["model-match"]
+    assert test_env.get_workflow_package_aliases() == {"OldNodePack": "new-node-pack"}
+    assert test_env.search_workflow_node_packages(
+        "KSampler",
+        include_registry=False,
+        limit=5,
+    ) == ["node-match"]
+    assert test_env.resolve_workflow_node_packages("node", "context") == ["node-resolution"]
 
     analyze.assert_called_once_with("flow")
+    analyze_json.assert_called_once_with({"nodes": []}, workflow_name="draft")
     resolve.assert_called_once_with(dependencies)
     fix.assert_called_once_with(resolution, node_strategy, model_strategy)
     update_paths.assert_called_once_with(resolution)
     search_models.assert_called_once_with("film", "LoadFoo", 3)
+    aliases.assert_called_once_with()
+    search_node_packages.assert_called_once_with(
+        "KSampler",
+        include_registry=False,
+        limit=5,
+    )
+    resolve_node_packages.assert_called_once_with("node", "context")
 
 
 def test_node_operation_facades_delegate_to_node_manager(test_env, monkeypatch):

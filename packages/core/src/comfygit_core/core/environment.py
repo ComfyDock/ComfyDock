@@ -2012,11 +2012,7 @@ class Environment:
 
     def get_workflow_package_aliases(self) -> Mapping[str, str]:
         """Return global node package alias metadata used during workflow resolution."""
-        resolver = getattr(self.workflow_manager, "global_node_resolver", None)
-        repository = getattr(resolver, "repository", None)
-        global_mappings = getattr(repository, "global_mappings", None)
-        aliases = getattr(global_mappings, "package_aliases", None)
-        return aliases if isinstance(aliases, dict) else {}
+        return self.workflow_manager.get_package_aliases()
 
     def analyze_workflow_dependencies(
         self,
@@ -2032,18 +2028,10 @@ class Environment:
         workflow_name: str = "unsaved",
     ) -> tuple[WorkflowDependencies, ResolutionResult]:
         """Analyze and resolve workflow JSON that has not necessarily been saved yet."""
-        from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
-        from ..models.workflow import Workflow
-
-        workflow = Workflow.from_json(dict(workflow_data))
-        parser = WorkflowDependencyParser(
-            workflow=workflow,
+        return self.workflow_manager.analyze_and_resolve_workflow_json(
+            workflow_data,
             workflow_name=workflow_name,
-            cec_path=self.cec_path,
-            builtin_versions_repository=self.workflow_manager.builtin_versions_repository,
         )
-        dependencies = parser.analyze_dependencies()
-        return dependencies, self.resolve_workflow_dependencies(dependencies)
 
     def resolve_workflow_dependencies(
         self,
@@ -2075,11 +2063,10 @@ class Environment:
         limit: int = 10,
     ) -> list[ScoredPackageMatch]:
         """Search node packages for workflow resolution without exposing the resolver."""
-        return self.workflow_manager.global_node_resolver.search_packages(
+        return self.workflow_manager.search_node_packages(
             query,
-            dict(self.list_manifest_nodes()),
-            include_registry,
-            limit,
+            include_registry=include_registry,
+            limit=limit,
         )
 
     def resolve_workflow_node_packages(
@@ -2088,7 +2075,7 @@ class Environment:
         context: NodeResolutionContext,
     ) -> list[ResolvedNodePackage] | None:
         """Resolve one workflow node type without exposing the resolver object."""
-        return self.workflow_manager.global_node_resolver.resolve_single_node_with_context(
+        return self.workflow_manager.resolve_node_packages(
             node,
             context,
         )

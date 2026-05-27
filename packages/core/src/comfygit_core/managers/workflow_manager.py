@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,7 +44,13 @@ from ..services.workflow_state_cleanup import WorkflowStateCleanup
 
 if TYPE_CHECKING:
     from ..caching.workflow_cache import WorkflowCacheRepository
-    from ..models.workflow import WorkflowDependencies
+    from ..models.workflow import (
+        NodeResolutionContext,
+        ResolvedNodePackage,
+        ScoredPackageMatch,
+        WorkflowDependencies,
+        WorkflowNode,
+    )
     from ..repositories.comfyui_builtin_versions_repository import (
         ComfyUIBuiltinVersionsRepository,
     )
@@ -613,6 +620,26 @@ class WorkflowManager:
             self.resolve_dependencies,
         )
 
+    def analyze_and_resolve_workflow_json(
+        self,
+        workflow_data: Mapping[str, object],
+        *,
+        workflow_name: str = "unsaved",
+    ) -> tuple[WorkflowDependencies, ResolutionResult]:
+        """Analyze and resolve workflow JSON that has not necessarily been saved."""
+        from ..analyzers.workflow_dependency_parser import WorkflowDependencyParser
+        from ..models.workflow import Workflow
+
+        workflow = Workflow.from_json(dict(workflow_data))
+        parser = WorkflowDependencyParser(
+            workflow=workflow,
+            workflow_name=workflow_name,
+            cec_path=self.cec_path,
+            builtin_versions_repository=self.builtin_versions_repository,
+        )
+        dependencies = parser.analyze_dependencies()
+        return dependencies, self.resolve_dependencies(dependencies)
+
     def resolve_dependencies(self, analysis: WorkflowDependencies) -> ResolutionResult:
         """Attempt automatic resolution of workflow dependencies.
 
@@ -647,6 +674,39 @@ class WorkflowManager:
         self._get_workflow_model_path_policy().annotate_resolution(resolution)
 
         return resolution
+
+    def get_package_aliases(self) -> Mapping[str, str]:
+        """Return global node package alias metadata used during workflow resolution."""
+        repository = getattr(self.global_node_resolver, "repository", None)
+        global_mappings = getattr(repository, "global_mappings", None)
+        aliases = getattr(global_mappings, "package_aliases", None)
+        return aliases if isinstance(aliases, dict) else {}
+
+    def search_node_packages(
+        self,
+        query: str,
+        *,
+        include_registry: bool = True,
+        limit: int = 10,
+    ) -> list[ScoredPackageMatch]:
+        """Search node packages using current manifest nodes for installed-package context."""
+        return self.global_node_resolver.search_packages(
+            query,
+            self.pyproject.nodes.get_existing(),
+            include_registry,
+            limit,
+        )
+
+    def resolve_node_packages(
+        self,
+        node: WorkflowNode,
+        context: NodeResolutionContext,
+    ) -> list[ResolvedNodePackage] | None:
+        """Resolve one workflow node type through the configured node resolver."""
+        return self.global_node_resolver.resolve_single_node_with_context(
+            node,
+            context,
+        )
 
     def fix_resolution(
         self,
