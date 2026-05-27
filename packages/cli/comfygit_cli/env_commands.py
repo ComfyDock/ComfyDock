@@ -605,7 +605,7 @@ class EnvironmentCommands:
         if torch_backend == "cpu" and "--cpu" not in comfyui_args:
             comfyui_args = ["--cpu", *comfyui_args]
 
-        switch_source_env: str | None = None
+        switch_source_env = self._consume_startup_switch_request(env)
         while True:
             current_branch = env.get_current_branch()
             branch_display = f" (on {current_branch})" if current_branch else " (detached HEAD)"
@@ -914,6 +914,40 @@ class EnvironmentCommands:
         timer = threading.Timer(8.0, cleanup)
         timer.daemon = True
         timer.start()
+
+    def _consume_startup_switch_request(self, env: Environment) -> str | None:
+        """Continue a switch request after an external supervisor restarted into `cg run`.
+
+        This covers Docker/dev launchers where the unmanaged ComfyUI process is
+        PID 1. The Manager writes the switch request, the process exits, and the
+        launcher restarts into `cg run -e <target>`. At that point `cg run` owns
+        the rest of the handoff and should publish normal switch progress.
+        """
+        metadata_dir = self.workspace.path / ".metadata"
+        request_file = metadata_dir / ".switch_request.json"
+        if not request_file.exists():
+            return None
+
+        try:
+            request = json.loads(request_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"⚠️  Could not read pending environment switch request: {exc}")
+            return None
+
+        target_env = request.get("target_env")
+        if target_env != env.name:
+            return None
+
+        source_env = request.get("source_env") or "unmanaged"
+        self._write_switch_status(
+            state="preparing",
+            progress=20,
+            message=f"Preparing to switch to {env.name}...",
+            target_env=env.name,
+            source_env=source_env,
+        )
+        request_file.unlink(missing_ok=True)
+        return source_env
 
     @with_env_logging("serve")
     def serve(self, args: argparse.Namespace, logger=None) -> None:

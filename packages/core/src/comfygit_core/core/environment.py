@@ -1893,6 +1893,11 @@ class Environment:
         """Return workflow file sync status without exposing the workflow manager."""
         return self.workflow_manager.get_workflow_sync_status()
 
+    @_requires_env_lock
+    def copy_workflows_to_manifest(self) -> dict[str, Path | str | None]:
+        """Copy saved ComfyUI workflow files into tracked `.cec` workflow storage."""
+        return self.workflow_manager.copy_all_workflows()
+
     def get_workflow_status(self) -> DetailedWorkflowStatus:
         """Return analyzed workflow status without exposing the workflow manager."""
         return self.workflow_manager.get_workflow_status()
