@@ -103,6 +103,7 @@ _EXPORTS: dict[str, str] = {
     "MergeValidation": "merge_plan",
     "NodeVersionConflict": "merge_plan",
     "WorkflowContractInput": "workflow_contract",
+    "WorkflowContractInputControl": "workflow_contract",
     "WorkflowContractOutput": "workflow_contract",
     "NamedWorkflowContract": "workflow_contract",
     "WorkflowExecutionContract": "workflow_contract",

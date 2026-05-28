@@ -102,6 +102,19 @@ them back to numeric values when loading typed workflow contract models. This
 keeps the manifest parseable by strict TOML readers without losing numeric
 precision for runtime and UI consumers.
 
+### CGSPEC-MAN-07A [LIVE]: String contract input presentation is explicit metadata
+Validation: TEST
+
+Workflow contract inputs with `type = "string"` may store `ui_control` as
+`"textarea"` or `"input"` to tell Studio-like consumers whether to render a
+multiline or single-line text control. This field is presentation metadata for
+contract clients; it must not change runtime coercion, API prompt patching, or
+the portable value type, which remains `string`.
+
+When `ui_control` is absent on a string input, Studio-like consumers should
+prefer the less restrictive multiline control. They should not infer multiline
+behavior from input names such as `prompt`, `text`, or `description`.
+
 ### CGSPEC-MAN-08 [LIVE]: Core exposes a typed read-only manifest snapshot
 Validation: TEST
 

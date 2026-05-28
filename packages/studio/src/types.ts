@@ -3,6 +3,7 @@ export type ContractInput = {
   type: string;
   required?: boolean;
   display_name?: string;
+  ui_control?: "input" | "textarea";
   default?: string | number | boolean | null;
   min?: number;
   max?: number;

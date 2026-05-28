@@ -132,7 +132,7 @@ export function ContractInputControl({
     );
   }
 
-  const longText = input.type === "string" && /prompt|text|description/i.test(input.name);
+  const textControl = stringTextControl(input);
   return (
     <Field
       label={label}
@@ -142,13 +142,18 @@ export function ContractInputControl({
         </>
       }
     >
-      {longText ? (
+      {textControl === "textarea" ? (
         <textarea id={id} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
       ) : (
         <input id={id} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} />
       )}
     </Field>
   );
+}
+
+function stringTextControl(input: ContractInput) {
+  if (input.type !== "string") return "input";
+  return input.ui_control === "input" ? "input" : "textarea";
 }
 
 function fileMatchesInputType(file: File, type: string) {
