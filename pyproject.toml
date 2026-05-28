@@ -16,6 +16,7 @@ dev-dependencies = [
 # Define workspace members
 members = [
     "packages/core",
+    "packages/studio-runtime",
     "packages/cli",
 ]
 
@@ -53,6 +54,7 @@ ignore = [
 # (run: ./tests/e2e/scripts/setup-fixtures.sh, then: uv run pytest tests/e2e/tests/)
 testpaths = [
     "packages/core/tests",
+    "packages/studio-runtime/tests",
     "packages/cli/tests",
 ]
 # Ensure core conftest is importable from cli/integration tests
@@ -69,6 +71,8 @@ addopts = [
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "registry: marks tests that use the ComfyUI registry cache or network",
+    "network: marks tests that may need external network access",
 ]
 
 [tool.mypy]

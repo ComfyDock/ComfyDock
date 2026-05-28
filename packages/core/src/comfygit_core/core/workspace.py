@@ -2,9 +2,10 @@
 
 import json
 import re
+from collections.abc import Callable, Mapping
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from comfygit_core.repositories.comfyui_builtin_versions_repository import (
     ComfyUIBuiltinVersionsRepository,
@@ -27,7 +28,14 @@ from ..models.materialization import (
     MaterializeSourceType,
     ModelMaterializationStrategy,
 )
-from ..models.shared import ModelDeleteResult, ModelDetails, ModelWithLocation
+from ..models.shared import (
+    ModelDeleteResult,
+    ModelDetails,
+    ModelIndexSource,
+    ModelIndexStats,
+    ModelLocation,
+    ModelWithLocation,
+)
 from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
 from ..services.registry_data_manager import RegistryDataManager
@@ -39,8 +47,10 @@ from ..utils.environment_cleanup import (
 from .environment import Environment
 
 if TYPE_CHECKING:
+    from ..models.git import GitRemoteRefs
     from ..models.protocols import EnvironmentCreateProgress, ImportCallbacks
     from ..models.shared import LegacyCleanupResult
+    from ..services.model_downloader import DownloadRequest, DownloadResult
 
 logger = get_logger(__name__)
 
@@ -192,6 +202,61 @@ class Workspace:
         """
         self.paths = paths
 
+    @classmethod
+    def open(cls, path: Path | None = None) -> "Workspace":
+        """Open an existing workspace.
+
+        This is the public discovery entry point for callers. It delegates to
+        the current factory implementation while keeping factory internals out
+        of adapter code.
+        """
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.find(path)
+
+    @classmethod
+    def create(cls, path: Path | None = None) -> "Workspace":
+        """Create a new workspace on disk and return it."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.create(path)
+
+    @classmethod
+    def from_path(cls, path: Path) -> "Workspace":
+        """Construct a workspace object when the caller already has a root path.
+
+        Normal callers should prefer ``Workspace.open(path)`` or
+        ``Workspace.create(path)``. This classmethod exists for embedding
+        contexts that infer the workspace root from runtime state and need to
+        wrap that resolved root without exposing ``WorkspacePaths``.
+        """
+        return cls(WorkspacePaths(path))
+
+    @classmethod
+    def open_or_create(cls, path: Path | None = None) -> "Workspace":
+        """Open an existing workspace, or create it if it does not exist."""
+        from ..factories.workspace_factory import WorkspaceFactory
+        from ..models.exceptions import CDWorkspaceNotFoundError
+
+        try:
+            return WorkspaceFactory.find(path)
+        except CDWorkspaceNotFoundError:
+            return WorkspaceFactory.create(path)
+
+    @classmethod
+    def default_root(cls, path: Path | None = None) -> Path:
+        """Return the workspace root that would be used for ``path``."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.get_paths(path).root
+
+    @classmethod
+    def exists(cls, path: Path | None = None) -> bool:
+        """Return whether a workspace exists at the resolved root."""
+        from ..factories.workspace_factory import WorkspaceFactory
+
+        return WorkspaceFactory.get_paths(path).exists()
+
     def get_schema_version(self) -> int:
         """Get workspace schema version.
 
@@ -317,6 +382,38 @@ class Workspace:
             default_models_path=self.paths.models
         )
 
+    def get_civitai_token(self) -> str | None:
+        """Return the configured Civitai token, honoring environment overrides."""
+        return self.workspace_config_manager.get_civitai_token()
+
+    def set_civitai_token(self, token: str | None) -> None:
+        """Set or clear the persisted Civitai token."""
+        self.workspace_config_manager.set_civitai_token(token)
+
+    def get_huggingface_token(self) -> str | None:
+        """Return the configured Hugging Face token, honoring environment overrides."""
+        return self.workspace_config_manager.get_huggingface_token()
+
+    def set_huggingface_token(self, token: str | None) -> None:
+        """Set or clear the persisted Hugging Face token."""
+        self.workspace_config_manager.set_huggingface_token(token)
+
+    def get_github_token(self) -> str | None:
+        """Return the configured GitHub token, honoring environment overrides."""
+        return self.workspace_config_manager.get_github_token()
+
+    def set_github_token(self, token: str | None) -> None:
+        """Set or clear the persisted GitHub token."""
+        self.workspace_config_manager.set_github_token(token)
+
+    def get_external_uv_cache(self) -> Path | None:
+        """Return the configured external UV cache path, if one is set."""
+        return self.workspace_config_manager.get_external_uv_cache()
+
+    def set_external_uv_cache(self, path: Path | None) -> None:
+        """Set or clear the external UV cache path."""
+        self.workspace_config_manager.set_external_uv_cache(path)
+
     @cached_property
     def registry_data_manager(self) -> RegistryDataManager:
         return RegistryDataManager(self.paths.cache)
@@ -357,6 +454,33 @@ class Workspace:
             workspace_config=self.workspace_config_manager
         )
 
+    def suggest_model_download_path(
+        self,
+        url: str,
+        *,
+        category: str | None = None,
+        node_type: str | None = None,
+        filename_hint: str | None = None,
+    ) -> Path:
+        """Suggest a model path relative to the configured models directory."""
+        if category:
+            filename = self.model_downloader._extract_filename(url, filename_hint)
+            return Path(category) / filename
+
+        return self.model_downloader.suggest_path(
+            url,
+            node_type=node_type,
+            filename_hint=filename_hint,
+        )
+
+    def download_model_request(
+        self,
+        request: "DownloadRequest",
+        progress_callback: Callable[[int, int], Any] | None = None,
+    ) -> "DownloadResult":
+        """Download a model and index it in the workspace model repository."""
+        return self.model_downloader.download(request, progress_callback=progress_callback)
+
     @cached_property
     def import_analyzer(self):
         """Get import analysis service."""
@@ -372,7 +496,13 @@ class Workspace:
         Returns:
             True if successful, False otherwise
         """
-        return self.registry_data_manager.force_update()
+        success = self.registry_data_manager.force_update()
+        if success:
+            if "node_mapping_repository" in self.__dict__:
+                self.node_mapping_repository.clear_cached_data()
+            if "comfyui_builtin_versions_repository" in self.__dict__:
+                self.comfyui_builtin_versions_repository.clear_cached_data()
+        return success
 
     def get_registry_info(self) -> dict:
         """Get information about cached registry data.
@@ -439,6 +569,12 @@ class Workspace:
             path=env_path,
             workspace=self
         )
+
+    def list_remote_refs(self, url: str) -> "GitRemoteRefs":
+        """List importable refs for a remote Git environment URL."""
+        from comfygit_core.git import list_remote_refs
+
+        return list_remote_refs(url, self.path)
 
     def create_environment(
         self,
@@ -1032,8 +1168,8 @@ class Workspace:
 
         # Same model, possibly multiple locations - use any result to get the model info
         model = results[0]
-        sources = self.model_repository.get_sources(model.hash)
-        locations = self.model_repository.get_locations(model.hash)
+        sources = self.get_model_sources(model.hash)
+        locations = self.get_model_locations(model.hash)
 
         return ModelDetails(
             model=model,
@@ -1041,16 +1177,129 @@ class Workspace:
             sources=sources
         )
 
+    def get_indexed_model(self, model_hash: str) -> ModelWithLocation | None:
+        """Return one indexed model location by exact model hash."""
+        return self.model_repository.get_model(model_hash)
+
+    def has_model(self, model_hash: str) -> bool:
+        """Return whether a model hash exists in the workspace index."""
+        return self.model_repository.has_model(model_hash)
+
+    def get_model_locations(self, model_hash: str) -> list[ModelLocation]:
+        """Return indexed filesystem locations for a model hash."""
+        return [
+            ModelLocation.from_dict(location)
+            for location in self.model_repository.get_locations(model_hash)
+        ]
+
+    def get_model_sources(self, model_hash: str) -> list[ModelIndexSource]:
+        """Return indexed source metadata for a model hash."""
+        return [
+            ModelIndexSource.from_dict({**source, "model_hash": model_hash})
+            for source in self.model_repository.get_sources(model_hash)
+        ]
+
+    def model_has_sources(self, model_hash: str) -> bool:
+        """Return whether a model hash has at least one indexed source URL."""
+        return bool(self.get_model_sources(model_hash))
+
+    def find_model_by_source_url(self, url: str) -> ModelWithLocation | None:
+        """Return an indexed model whose source URL exactly matches ``url``."""
+        return self.model_repository.find_by_source_url(url)
+
     @staticmethod
-    def _path_for_model_location(location: dict) -> Path:
+    def classify_model_source_url(url: str) -> str:
+        """Classify a model source URL as civitai, huggingface, or custom."""
+        url_lower = url.lower()
+        if "civitai.com" in url_lower:
+            return "civitai"
+        if "huggingface.co" in url_lower or "hf.co" in url_lower:
+            return "huggingface"
+        return "custom"
+
+    def add_indexed_model_source(
+        self,
+        model_hash: str,
+        source_url: str,
+        source_type: str | None = None,
+    ) -> str:
+        """Attach a source URL to a model in the workspace index.
+
+        Args:
+            model_hash: Exact indexed model hash.
+            source_url: Source or download URL to store.
+            source_type: Optional provider classification. If omitted, core
+                classifies the URL as ``civitai``, ``huggingface``, or
+                ``custom``.
+
+        Returns:
+            The source type written to the index.
+
+        Raises:
+            KeyError: If the model hash is not indexed.
+        """
+        if not self.has_model(model_hash):
+            raise KeyError(f"Model not found in workspace index: {model_hash}")
+
+        resolved_source_type = source_type or self.classify_model_source_url(source_url)
+        self.model_repository.add_source(
+            model_hash=model_hash,
+            source_type=resolved_source_type,
+            source_url=source_url,
+        )
+        return resolved_source_type
+
+    def remove_indexed_model_source(self, model_hash: str, source_url: str) -> bool:
+        """Remove one source URL from a model in the workspace index."""
+        return self.model_repository.remove_source(model_hash, source_url)
+
+    def ensure_model_hashes(self, identifier: str) -> "ModelDetails":
+        """Compute and store missing full hashes for an indexed local model.
+
+        Args:
+            identifier: Model hash, hash prefix, filename, or path.
+
+        Returns:
+            Refreshed model details after any missing hashes are stored.
+
+        Raises:
+            ValueError: Multiple matches found or location is unsafe.
+            KeyError: No model found matching identifier.
+            FileNotFoundError: The indexed model file is not present on disk.
+        """
+        details = self.get_model_details(identifier)
+        model = details.model
+        model_path = self._primary_model_path(details)
+
+        if not model.blake3_hash:
+            blake3_hash = self.model_repository.compute_blake3(model_path)
+            self.model_repository.update_blake3(model.hash, blake3_hash)
+
+        if not model.sha256_hash:
+            sha256_hash = self.model_repository.compute_sha256(model_path)
+            self.model_repository.update_sha256(model.hash, sha256_hash)
+
+        return self.get_model_details(model.hash)
+
+    def _primary_model_path(self, details: ModelDetails) -> Path:
+        """Return the first on-disk file path for indexed model details."""
+        for location in details.all_locations:
+            try:
+                model_path = self._path_for_model_location(location)
+            except ValueError:
+                continue
+            if model_path.is_file():
+                return model_path
+        raise FileNotFoundError(f"Model file not found on disk: {details.model.filename}")
+
+    @staticmethod
+    def _path_for_model_location(location: ModelLocation) -> Path:
         """Resolve an indexed model location to a safe filesystem path."""
-        base_directory = location.get("base_directory")
-        relative_path = location.get("relative_path")
-        if not base_directory or not relative_path:
+        if not location.base_directory or not location.relative_path:
             raise ValueError("Model location is missing base directory or relative path")
 
-        base_path = Path(base_directory).expanduser()
-        target_path = base_path / str(relative_path).replace("\\", "/")
+        base_path = Path(location.base_directory).expanduser()
+        target_path = base_path / location.relative_path.replace("\\", "/")
         base_resolved = base_path.resolve(strict=False)
         parent_resolved = target_path.parent.resolve(strict=False)
 
@@ -1060,6 +1309,92 @@ class Workspace:
             raise ValueError(f"Refusing to delete model outside indexed base directory: {target_path}") from exc
 
         return target_path
+
+    @staticmethod
+    def _normalize_location_relative_path(value: object) -> str:
+        return str(value or "").replace("\\", "/").strip("/")
+
+    @classmethod
+    def _same_model_location(cls, location: ModelLocation, selector: Mapping[str, object]) -> bool:
+        requested_id = selector.get("location_id")
+        if requested_id is None:
+            requested_id = selector.get("id")
+        if requested_id is not None and location.id is not None:
+            try:
+                return int(str(requested_id)) == int(str(location.id))
+            except (TypeError, ValueError):
+                return False
+
+        requested_base = selector.get("base_directory")
+        requested_relative = selector.get("relative_path")
+        if requested_base and requested_relative and location.base_directory and location.relative_path:
+            return (
+                Path(str(requested_base)).expanduser() == Path(location.base_directory).expanduser()
+                and cls._normalize_location_relative_path(requested_relative)
+                == cls._normalize_location_relative_path(location.relative_path)
+            )
+
+        requested_path = selector.get("path")
+        if requested_path:
+            indexed_path = location.full_path
+            if indexed_path and Path(str(requested_path)).expanduser() == Path(str(indexed_path)).expanduser():
+                return True
+
+        return False
+
+    @classmethod
+    def _find_indexed_model_location(
+        cls,
+        locations: list[ModelLocation],
+        selector: Mapping[str, object],
+    ) -> ModelLocation | None:
+        for location in locations:
+            if cls._same_model_location(location, selector):
+                return location
+        return None
+
+    def _delete_indexed_model_location(self, location: ModelLocation, result: ModelDeleteResult) -> None:
+        try:
+            model_path = self._path_for_model_location(location)
+        except ValueError as exc:
+            result.errors.append({
+                "path": location.full_path or location.relative_path,
+                "error": str(exc),
+            })
+            return
+
+        path_str = str(model_path)
+        try:
+            if model_path.exists() or model_path.is_symlink():
+                if not model_path.is_file() and not model_path.is_symlink():
+                    result.errors.append({
+                        "path": path_str,
+                        "error": "Indexed model location is not a file",
+                    })
+                    return
+                model_path.unlink()
+                result.deleted_paths.append(path_str)
+            else:
+                result.missing_paths.append(path_str)
+
+            if location.id is not None:
+                self.model_repository.remove_location_by_id(int(location.id))
+            else:
+                if location.base_directory is None:
+                    result.errors.append({
+                        "path": location.full_path or location.relative_path,
+                        "error": "Indexed model location is missing base directory",
+                    })
+                    return
+                self.model_repository.remove_location_for_directory(
+                    Path(location.base_directory),
+                    location.relative_path,
+                )
+        except Exception as exc:
+            result.errors.append({
+                "path": path_str,
+                "error": str(exc),
+            })
 
     def delete_model(self, identifier: str) -> ModelDeleteResult:
         """Delete every indexed file location for a model and clean index rows.
@@ -1075,62 +1410,72 @@ class Workspace:
             KeyError: No model found matching identifier.
         """
         details = self.get_model_details(identifier)
-        model_repo = self.model_repository
         result = ModelDeleteResult(
             model_hash=details.model.hash,
             filename=details.model.filename,
         )
 
         for location in details.all_locations:
-            try:
-                model_path = self._path_for_model_location(location)
-            except ValueError as exc:
-                result.errors.append({
-                    "path": str(location.get("path") or location.get("relative_path") or ""),
-                    "error": str(exc),
-                })
-                continue
+            self._delete_indexed_model_location(location, result)
 
-            path_str = str(model_path)
-            try:
-                if model_path.exists() or model_path.is_symlink():
-                    if not model_path.is_file() and not model_path.is_symlink():
-                        result.errors.append({
-                            "path": path_str,
-                            "error": "Indexed model location is not a file",
-                        })
-                        continue
-                    model_path.unlink()
-                    result.deleted_paths.append(path_str)
-                else:
-                    result.missing_paths.append(path_str)
-
-                location_id = location.get("id")
-                if location_id is not None:
-                    model_repo.remove_location_by_id(int(location_id))
-                else:
-                    model_repo.remove_location_for_directory(
-                        Path(location["base_directory"]),
-                        location["relative_path"],
-                    )
-            except Exception as exc:
-                result.errors.append({
-                    "path": path_str,
-                    "error": str(exc),
-                })
-
-        model_repo.clear_orphaned_models()
-        model_repo.clear_orphaned_model_sources()
-        result.remaining_locations = len(model_repo.get_locations(details.model.hash))
+        self.model_repository.clear_orphaned_models()
+        self.model_repository.clear_orphaned_model_sources()
+        result.remaining_locations = len(self.model_repository.get_locations(details.model.hash))
         return result
 
-    def get_model_stats(self):
+    def delete_model_location(
+        self,
+        identifier: str,
+        *,
+        location_id: int | str | None = None,
+        base_directory: str | Path | None = None,
+        relative_path: str | None = None,
+        path: str | Path | None = None,
+    ) -> ModelDeleteResult:
+        """Delete one indexed file location for a model and clean stale rows.
+
+        Args:
+            identifier: Model hash, hash prefix, filename, or path.
+            location_id: Optional location row id.
+            base_directory: Optional indexed base directory.
+            relative_path: Optional indexed relative path.
+            path: Optional full path for the indexed file.
+
+        Returns:
+            Deletion result with deleted, missing, errored, and remaining paths.
+
+        Raises:
+            ValueError: Multiple models matched identifier.
+            KeyError: Model or location was not found.
+        """
+        details = self.get_model_details(identifier)
+        selector: dict[str, object] = {
+            "location_id": location_id,
+            "base_directory": base_directory,
+            "relative_path": relative_path,
+            "path": path,
+        }
+        location = self._find_indexed_model_location(list(details.all_locations), selector)
+        if location is None:
+            raise KeyError("Indexed model location not found")
+
+        result = ModelDeleteResult(
+            model_hash=details.model.hash,
+            filename=details.model.filename,
+        )
+        self._delete_indexed_model_location(location, result)
+        self.model_repository.clear_orphaned_models()
+        self.model_repository.clear_orphaned_model_sources()
+        result.remaining_locations = len(self.model_repository.get_locations(details.model.hash))
+        return result
+
+    def get_model_stats(self) -> ModelIndexStats:
         """Get model index statistics for current directory.
 
         Returns:
-            Dictionary with model statistics
+            Typed model statistics
         """
-        return self.model_repository.get_stats()
+        return ModelIndexStats.from_dict(self.model_repository.get_stats())
 
     # === Model Directory Management ===
 

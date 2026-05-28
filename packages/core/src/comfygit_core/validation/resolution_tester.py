@@ -104,9 +104,9 @@ class ResolutionTester:
                         # Fallback: Add concise error from stderr
                         if e.stderr:
                             # Extract key error lines from stderr
-                            stderr_lines = [l.strip() for l in e.stderr.strip().split('\n') if l.strip()]
+                            stderr_lines = [line.strip() for line in e.stderr.strip().split('\n') if line.strip()]
                             # Find the main error message (usually has × or ERROR:)
-                            error_line = next((l for l in stderr_lines if '×' in l or 'ERROR:' in l.upper()), None)
+                            error_line = next((line for line in stderr_lines if '×' in line or 'ERROR:' in line.upper()), None)
                             if error_line:
                                 result.warnings.append(error_line[:300])
                             else:

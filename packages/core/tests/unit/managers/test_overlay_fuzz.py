@@ -1,17 +1,16 @@
-"""Fuzz and edge-case tests for overlay parsing, collection, and injection."""
+"""Fuzz and edge-case tests for overlay parsing, collection, and materialization."""
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import tomlkit
-
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.uv_project_manager import UVProjectManager
+from comfygit_core.manifest import overlays as manifest_overlays
 from comfygit_core.models.overlay import OverlayConfig
 
 
@@ -142,7 +141,7 @@ def test_overlay_parser_rejects_malformed_toml(tmp_path):
         OverlayConfig.from_toml(bad)
 
 
-def test_duplicate_dependencies_are_deduplicated_during_injection(tmp_path):
+def test_duplicate_dependencies_are_deduplicated_during_materialization(tmp_path):
     pyproject_path = tmp_path / "pyproject.toml"
     _write_pyproject(pyproject_path)
     manager = PyprojectManager(pyproject_path)
@@ -153,11 +152,11 @@ def test_duplicate_dependencies_are_deduplicated_during_injection(tmp_path):
         dependencies=["torch", "torch", "Torch"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay]):
-        injected = manager.load(force_reload=True)
-        deps = [dep for dep in injected["project"]["dependencies"] if dep.lower() == "torch"]
-        assert len(deps) == 1
-        assert deps[0].lower() == "torch"
+    manager.apply_uv_overlays([overlay])
+    materialized = manager.load(force_reload=True)
+    deps = [dep for dep in materialized["project"]["dependencies"] if dep.lower() == "torch"]
+    assert len(deps) == 1
+    assert deps[0].lower() == "torch"
 
 
 def test_marker_qualified_overlay_replaces_base_dep(tmp_path):
@@ -171,12 +170,12 @@ def test_marker_qualified_overlay_replaces_base_dep(tmp_path):
         dependencies=["triton>=3.0 ; sys_platform == 'linux'"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay]):
-        injected = manager.load(force_reload=True)
-        deps = injected["project"]["dependencies"]
-        assert "triton>=3.0 ; sys_platform == 'linux'" in deps
-        assert "triton" not in deps
-        assert "numpy>=1.0" in deps
+    manager.apply_uv_overlays([overlay])
+    materialized = manager.load(force_reload=True)
+    deps = materialized["project"]["dependencies"]
+    assert "triton>=3.0 ; sys_platform == 'linux'" in deps
+    assert "triton" not in deps
+    assert "numpy>=1.0" in deps
 
 
 def test_version_tightening_overlay_replaces_base_dep(tmp_path):
@@ -190,11 +189,11 @@ def test_version_tightening_overlay_replaces_base_dep(tmp_path):
         dependencies=["torch==2.1.0"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay]):
-        injected = manager.load(force_reload=True)
-        deps = injected["project"]["dependencies"]
-        assert "torch==2.1.0" in deps
-        assert "torch>=2.0" not in deps
+    manager.apply_uv_overlays([overlay])
+    materialized = manager.load(force_reload=True)
+    deps = materialized["project"]["dependencies"]
+    assert "torch==2.1.0" in deps
+    assert "torch>=2.0" not in deps
 
 
 def test_extras_overlay_replaces_base_dep(tmp_path):
@@ -208,11 +207,11 @@ def test_extras_overlay_replaces_base_dep(tmp_path):
         dependencies=["torch[cuda]>=2.1"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay]):
-        injected = manager.load(force_reload=True)
-        deps = injected["project"]["dependencies"]
-        assert "torch[cuda]>=2.1" in deps
-        assert "torch" not in deps
+    manager.apply_uv_overlays([overlay])
+    materialized = manager.load(force_reload=True)
+    deps = materialized["project"]["dependencies"]
+    assert "torch[cuda]>=2.1" in deps
+    assert "torch" not in deps
 
 
 def test_multiple_overlays_last_wins(tmp_path):
@@ -231,12 +230,12 @@ def test_multiple_overlays_last_wins(tmp_path):
         dependencies=["triton>=3.0 ; sys_platform == 'linux'"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay_one, overlay_two]):
-        injected = manager.load(force_reload=True)
-        deps = injected["project"]["dependencies"]
-        assert "triton>=3.0 ; sys_platform == 'linux'" in deps
-        assert "triton>=2.0" not in deps
-        assert "triton" not in deps
+    manager.apply_uv_overlays([overlay_one, overlay_two])
+    materialized = manager.load(force_reload=True)
+    deps = materialized["project"]["dependencies"]
+    assert "triton>=3.0 ; sys_platform == 'linux'" in deps
+    assert "triton>=2.0" not in deps
+    assert "triton" not in deps
 
 
 def test_exact_duplicate_still_deduped(tmp_path):
@@ -250,11 +249,11 @@ def test_exact_duplicate_still_deduped(tmp_path):
         dependencies=["torch", "torch", "Torch"],
     )
 
-    with manager.uv_injection_context(overlays=[overlay]):
-        injected = manager.load(force_reload=True)
-        deps = [dep for dep in injected["project"]["dependencies"] if dep.lower() == "torch"]
-        assert len(deps) == 1
-        assert deps[0].lower() == "torch"
+    manager.apply_uv_overlays([overlay])
+    materialized = manager.load(force_reload=True)
+    deps = [dep for dep in materialized["project"]["dependencies"] if dep.lower() == "torch"]
+    assert len(deps) == 1
+    assert deps[0].lower() == "torch"
 
 
 def test_merge_last_wins_for_sources_indexes_constraints_and_case(tmp_path):
@@ -285,18 +284,18 @@ def test_merge_last_wins_for_sources_indexes_constraints_and_case(tmp_path):
         indexes=[{"name": "gpu", "url": "https://gpu.second/simple"}],
     )
 
-    with manager.uv_injection_context(overlays=[overlay_one, overlay_two]):
-        injected = manager.load(force_reload=True)
-        uv_config = injected["tool"]["uv"]
+    manager.apply_uv_overlays([overlay_one, overlay_two])
+    materialized = manager.load(force_reload=True)
+    uv_config = materialized["tool"]["uv"]
 
-        matching_source_keys = [
-            key for key in uv_config["sources"]
-            if key.lower().replace("-", "").replace("_", "") == "sageattention"
-        ]
-        assert len(matching_source_keys) == 1
-        assert uv_config["sources"][matching_source_keys[0]]["url"] == "https://second.example/simple"
-        assert uv_config["constraint-dependencies"][-1] == "sageattention==2.0.0"
-        assert uv_config["index"][-1]["url"] == "https://gpu.second/simple"
+    matching_source_keys = [
+        key for key in uv_config["sources"]
+        if key.lower().replace("-", "").replace("_", "") == "sageattention"
+    ]
+    assert len(matching_source_keys) == 1
+    assert uv_config["sources"][matching_source_keys[0]]["url"] == "https://second.example/simple"
+    assert uv_config["constraint-dependencies"][-1] == "sageattention==2.0.0"
+    assert uv_config["index"][-1]["url"] == "https://gpu.second/simple"
 
 
 def test_empty_overlay_in_merge_chain_has_no_effect(tmp_path):
@@ -311,9 +310,9 @@ def test_empty_overlay_in_merge_chain_has_no_effect(tmp_path):
         sources={"example": {"url": "https://example.com/simple"}},
     )
 
-    with manager.uv_injection_context(overlays=[empty_overlay, populated_overlay]):
-        injected = manager.load(force_reload=True)
-        assert injected["tool"]["uv"]["sources"]["example"]["url"] == "https://example.com/simple"
+    manager.apply_uv_overlays([empty_overlay, populated_overlay])
+    materialized = manager.load(force_reload=True)
+    assert materialized["tool"]["uv"]["sources"]["example"]["url"] == "https://example.com/simple"
 
 
 def test_collect_overlays_orders_pytorch_last_and_pytorch_wins(tmp_path):
@@ -339,13 +338,13 @@ def test_collect_overlays_orders_pytorch_last_and_pytorch_wins(tmp_path):
     assert [overlay.name for overlay in overlays] == ["alpha", "beta", "gamma", ".pytorch"]
 
     pyproject = PyprojectManager(cec_path / "pyproject.toml")
-    with pyproject.uv_injection_context(overlays=overlays):
-        injected = pyproject.load(force_reload=True)
-        assert injected["tool"]["uv"]["sources"]["torch"]["index"] == "pytorch-cu128"
-        assert injected["tool"]["uv"]["constraint-dependencies"][-1] == "torch==2.6.0+cu128"
+    pyproject.apply_uv_overlays(overlays)
+    materialized = pyproject.load(force_reload=True)
+    assert materialized["tool"]["uv"]["sources"]["torch"]["index"] == "pytorch-cu128"
+    assert materialized["tool"]["uv"]["constraint-dependencies"][-1] == "torch==2.6.0+cu128"
 
 
-def test_injection_handles_empty_pyproject_existing_fields_and_strip_without_existing_pytorch(tmp_path):
+def test_materialization_handles_empty_pyproject_existing_fields_and_strip_without_existing_pytorch(tmp_path):
     pyproject_path = tmp_path / "pyproject.toml"
     pyproject_path.write_text(
         """
@@ -379,17 +378,17 @@ def test_injection_handles_empty_pyproject_existing_fields_and_strip_without_exi
         is_local=True,
     )
 
-    with manager.uv_injection_context(overlays=[overlay, pytorch_overlay]):
-        injected = manager.load(force_reload=True)
-        assert "requests>=2.0" in injected["project"]["dependencies"]
-        assert injected["tool"]["uv"]["sources"]["requests"]["index"] == "custom"
-        assert injected["tool"]["uv"]["sources"]["torch"]["index"] == "pytorch-cu128"
-        assert injected["tool"]["uv"]["no-build-isolation-package"] == ["requests"]
-        assert injected["tool"]["uv"]["dependency-metadata"][0]["name"] == "requests"
-        assert any(index["name"] == "custom" for index in injected["tool"]["uv"]["index"])
+    manager.apply_uv_overlays([overlay, pytorch_overlay])
+    materialized = manager.load(force_reload=True)
+    assert "requests>=2.0" in materialized["project"]["dependencies"]
+    assert materialized["tool"]["uv"]["sources"]["requests"]["index"] == "custom"
+    assert materialized["tool"]["uv"]["sources"]["torch"]["index"] == "pytorch-cu128"
+    assert materialized["tool"]["uv"]["no-build-isolation-package"] == ["requests"]
+    assert materialized["tool"]["uv"]["dependency-metadata"][0]["name"] == "requests"
+    assert any(index["name"] == "custom" for index in materialized["tool"]["uv"]["index"])
 
 
-def test_injection_restores_after_failure(tmp_path):
+def test_materialization_leaves_file_unchanged_when_overlay_application_fails(tmp_path, monkeypatch):
     pyproject_path = tmp_path / "pyproject.toml"
     _write_pyproject(pyproject_path, dependencies=["numpy>=1.0"])
     manager = PyprojectManager(pyproject_path)
@@ -400,48 +399,14 @@ def test_injection_restores_after_failure(tmp_path):
         dependencies=["requests>=2.0"],
     )
 
+    def fail_apply(*_args, **_kwargs):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(manifest_overlays, "inject_overlay_payload", fail_apply)
+
     with pytest.raises(RuntimeError, match="forced failure"):
-        with manager.uv_injection_context(overlays=[overlay]):
-            raise RuntimeError("forced failure")
+        manager.apply_uv_overlays([overlay])
 
-    assert pyproject_path.read_text(encoding="utf-8") == original
-
-
-def test_concurrent_injection_contexts_restore_original_file(tmp_path):
-    pyproject_path = tmp_path / "pyproject.toml"
-    _write_pyproject(pyproject_path, dependencies=["base"])
-    original = pyproject_path.read_text(encoding="utf-8")
-
-    manager_a = PyprojectManager(pyproject_path)
-    manager_b = PyprojectManager(pyproject_path)
-    overlay_a = OverlayConfig(name="a", path=tmp_path / "a.toml", dependencies=["dep-a"])
-    overlay_b = OverlayConfig(name="b", path=tmp_path / "b.toml", dependencies=["dep-b"])
-
-    entered_a = threading.Event()
-    entered_b = threading.Event()
-    release = threading.Event()
-    errors: list[Exception] = []
-
-    def _worker(manager: PyprojectManager, overlay: OverlayConfig, entered: threading.Event) -> None:
-        try:
-            with manager.uv_injection_context(overlays=[overlay]):
-                entered.set()
-                assert release.wait(timeout=2)
-        except Exception as exc:  # pragma: no cover - assertion uses errors list
-            errors.append(exc)
-
-    thread_a = threading.Thread(target=_worker, args=(manager_a, overlay_a, entered_a), daemon=True)
-    thread_b = threading.Thread(target=_worker, args=(manager_b, overlay_b, entered_b), daemon=True)
-    thread_a.start()
-    assert entered_a.wait(timeout=2)
-    thread_b.start()
-    # Allow first worker to exit; second worker should enter after lock release.
-    release.set()
-    assert entered_b.wait(timeout=2)
-    thread_a.join(timeout=2)
-    thread_b.join(timeout=2)
-
-    assert not errors
     assert pyproject_path.read_text(encoding="utf-8") == original
 
 

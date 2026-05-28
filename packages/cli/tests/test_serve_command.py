@@ -15,7 +15,7 @@ import pytest
 from aiohttp import ClientSession, web
 from comfygit_cli.cli import create_parser
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_cli.serve_executor import (
+from comfygit_studio.executor import (
     ComfyUIClient,
     ComfyUIExecutionError,
     LocalComfyExecutor,
@@ -29,7 +29,7 @@ from comfygit_cli.serve_executor import (
     _stamp_output_cache_busters,
     _video_dimensions_from_ffprobe_json,
 )
-from comfygit_cli.serve_runtime import (
+from comfygit_studio.runtime import (
     ServeConfig,
     _content_type_for_filename,
     _ensure_active_run_recovery,
@@ -41,7 +41,7 @@ from comfygit_cli.serve_runtime import (
     create_app,
     create_proxy_app,
 )
-from comfygit_cli.serve_state import (
+from comfygit_studio.state import (
     EphemeralServeStateStore,
     ServeGalleryItem,
     ServeRunOutputSlot,
@@ -173,7 +173,7 @@ def test_serve_parser_accepts_max_request_size() -> None:
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
-@patch("comfygit_cli.serve_runtime.serve_environment")
+@patch("comfygit_studio.runtime.serve_environment")
 def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> None:
     mock_env = MagicMock()
     mock_env.name = "demo"
@@ -199,7 +199,7 @@ def test_serve_command_uses_selected_environment(mock_serve, mock_workspace) -> 
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
-@patch("comfygit_cli.serve_runtime.serve_environment")
+@patch("comfygit_studio.runtime.serve_environment")
 def test_serve_command_uses_configured_request_size(mock_serve, mock_workspace) -> None:
     mock_env = MagicMock()
     mock_env.name = "demo"
@@ -216,7 +216,7 @@ def test_serve_command_uses_configured_request_size(mock_serve, mock_workspace) 
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
-@patch("comfygit_cli.serve_runtime.serve_environment")
+@patch("comfygit_studio.runtime.serve_environment")
 def test_serve_command_uses_configured_run_timeout(mock_serve, mock_workspace) -> None:
     mock_env = MagicMock()
     mock_env.name = "demo"
@@ -233,7 +233,7 @@ def test_serve_command_uses_configured_run_timeout(mock_serve, mock_workspace) -
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
-@patch("comfygit_cli.serve_runtime.serve_environment")
+@patch("comfygit_studio.runtime.serve_environment")
 def test_serve_command_uses_configured_state_store(mock_serve, mock_workspace, tmp_path) -> None:
     mock_env = MagicMock()
     mock_env.name = "demo"
@@ -265,7 +265,7 @@ def test_serve_command_uses_configured_state_store(mock_serve, mock_workspace, t
 
 
 @patch("comfygit_cli.env_commands.get_workspace_or_exit")
-@patch("comfygit_cli.serve_runtime.serve_environment")
+@patch("comfygit_studio.runtime.serve_environment")
 def test_serve_command_uses_proxy_executor_config(mock_serve, mock_workspace, tmp_path) -> None:
     mock_env = MagicMock()
     mock_env.name = "demo"

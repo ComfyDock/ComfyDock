@@ -374,6 +374,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
 
     # Legacy flags - still supported at root level for backward compatibility
     config_parser.add_argument("--civitai-key", type=str, help="Set Civitai API key (use empty string to clear)")
+    config_parser.add_argument("--huggingface-token", type=str, help="Set Hugging Face token for gated model downloads (use empty string to clear)")
     config_parser.add_argument("--github-token", type=str, help="Set GitHub token for private git repository access (use empty string to clear)")
     config_parser.add_argument("--uv-cache", type=str, help="Set external UV cache path (use empty string to clear)")
     config_parser.add_argument("--show", action="store_true", help="Show current configuration")

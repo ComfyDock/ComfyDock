@@ -271,7 +271,7 @@ class TestWorkflowResolutionPipeline:
         simulate_comfyui_save_workflow(test_env, "test_multi", workflow)
 
         # ACT: Analyze dependencies
-        analysis = test_env.workflow_manager.analyze_workflow("test_multi")
+        analysis, _ = test_env.workflow_manager.analyze_and_resolve_workflow("test_multi")
 
         # ASSERT: Should extract 2 model refs from same node
         assert len(analysis.found_models) == 2, \

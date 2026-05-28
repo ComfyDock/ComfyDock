@@ -1,7 +1,7 @@
 """Tests for CLI error formatter."""
 
 from comfygit_cli.formatters.error_formatter import NodeErrorFormatter
-from comfygit_core.models.exceptions import (
+from comfygit_core.models import (
     CDNodeConflictError,
     NodeAction,
     NodeConflictContext,

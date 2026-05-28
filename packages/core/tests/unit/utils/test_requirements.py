@@ -7,6 +7,7 @@ from comfygit_core.utils.requirements import (
     _get_valid_requirements_lines,
     parse_pyproject_toml,
     parse_requirements_file,
+    read_comfyui_requirements_with_supplements,
 )
 
 
@@ -90,6 +91,26 @@ class TestGetValidRequirementsLines:
         lines = ["# Comment 1", "# Comment 2", ""]
         result = _get_valid_requirements_lines(lines, Path("test.txt"))
         assert result == []
+
+
+class TestComfyUIRequirementsWithSupplements:
+    def test_adds_requests_when_older_comfyui_requirements_omit_it(self, tmp_path):
+        requirements_path = tmp_path / "requirements.txt"
+        requirements_path.write_text("aiohttp>=3.11.8\nPillow\n")
+
+        result = read_comfyui_requirements_with_supplements(requirements_path)
+
+        assert "aiohttp>=3.11.8" in result
+        assert "Pillow" in result
+        assert "requests" in result
+
+    def test_does_not_duplicate_requests(self, tmp_path):
+        requirements_path = tmp_path / "requirements.txt"
+        requirements_path.write_text("requests>=2\nnumpy\n")
+
+        result = read_comfyui_requirements_with_supplements(requirements_path)
+
+        assert result == ["requests>=2", "numpy"]
 
 
 class TestParsePyprojectToml:

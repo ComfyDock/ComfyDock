@@ -174,16 +174,15 @@ class DependencyResolutionPreviewService:
         )
         pytorch_config: dict[str, Any] | None = None
         if pytorch_manager.has_backend():
-            config = pyproject.load()
-            python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+            python_version = pyproject.manifest.get_python_version()
             pytorch_config = pytorch_manager.get_pytorch_config(
                 python_version=python_version,
             )
 
         overlays = overlay_manager.collect_overlays(pytorch_config=pytorch_config)
         if overlays:
-            with pyproject.uv_injection_context(overlays=overlays):
-                uv.lock()
+            pyproject.apply_uv_overlays(overlays)
+            uv.lock()
             return
 
         uv.lock()

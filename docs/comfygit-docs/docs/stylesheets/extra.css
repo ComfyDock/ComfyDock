@@ -24,6 +24,32 @@
   --cd-warning: #fbbf24;             /* Warning yellow */
   --cd-error: #ef4444;               /* Error red */
   --cd-success: #10b981;             /* Success green */
+  --cg-doc-grid-width: 82rem;
+  --cg-sidebar-width: 15rem;
+  --cg-sidebar-inner-width: 14.4rem;
+  --cg-article-width-without-toc: 46rem;
+}
+
+/* Keep typography stable as the viewport expands. */
+html {
+  font-size: 125%;
+}
+
+@media screen and (min-width: 100em), screen and (min-width: 125em) {
+  html {
+    font-size: 125%;
+  }
+}
+
+/* Make long-form documentation easier to read without resizing the whole shell. */
+.md-typeset {
+  font-size: 0.96rem;
+}
+
+.md-typeset pre,
+.md-typeset code,
+.md-typeset kbd {
+  font-size: 0.82em;
 }
 
 /* Light Mode - Clean and Professional */
@@ -168,6 +194,68 @@
 
 /* Navigation enhancements for larger screens */
 @media screen and (min-width: 76.25em) {
+  .md-header__inner.md-grid,
+  .md-tabs > .md-grid,
+  .md-main__inner.md-grid {
+    max-width: var(--cg-doc-grid-width);
+  }
+
+  /* Let the centered Material grid breathe between nav, article, and TOC rails. */
+  .md-main__inner {
+    column-gap: 2.25rem;
+  }
+
+  .md-sidebar--primary {
+    width: var(--cg-sidebar-width);
+  }
+
+  [dir="ltr"] .md-sidebar--primary .md-sidebar__inner {
+    padding-right: calc(100% - var(--cg-sidebar-inner-width));
+  }
+
+  [dir="rtl"] .md-sidebar--primary .md-sidebar__inner {
+    padding-left: calc(100% - var(--cg-sidebar-inner-width));
+  }
+
+  .md-header__title {
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+
+  .md-header__button.md-logo img,
+  .md-header__button.md-logo svg {
+    height: 1.45rem;
+  }
+
+  .md-header__button,
+  .md-source {
+    font-size: 0.82rem;
+  }
+
+  .md-search__form {
+    height: 2.05rem;
+  }
+
+  .md-search__input {
+    font-size: 0.9rem;
+  }
+
+  .md-search__icon[for="__search"] {
+    top: 0.42rem;
+  }
+
+  .md-tabs__link {
+    font-size: 0.82rem;
+    margin-top: 0.72rem;
+  }
+
+  @supports not (column-gap: 1rem) {
+    .md-content {
+      margin-left: 2.25rem;
+      margin-right: 2.25rem;
+    }
+  }
+
   /* Reduce nav font size for more content */
   .md-nav--primary .md-nav {
     font-size: 0.75rem;
@@ -193,9 +281,45 @@
     margin-top: 1em;
   }
 
+  .md-nav--primary .md-nav__item--section > .md-nav > .md-nav__list {
+    padding-top: 0.25rem;
+  }
+
   /* Force full viewport height for consistent layout */
   .md-main {
     min-height: 100vh;
+  }
+}
+
+/* Once the TOC rail disappears, keep it hidden at narrower sizes too. */
+@media screen and (max-width: 92em) {
+  .md-sidebar--secondary {
+    display: none !important;
+  }
+}
+
+/* Keep the article from expanding edge-to-edge after the TOC rail is hidden. */
+@media screen and (min-width: 76.25em) and (max-width: 92em) {
+  .md-content {
+    flex-grow: 0;
+    max-width: var(--cg-article-width-without-toc);
+    width: min(100%, var(--cg-article-width-without-toc));
+  }
+
+  [dir="ltr"] .md-content {
+    margin-right: 2.5rem;
+  }
+
+  [dir="rtl"] .md-content {
+    margin-left: 2.5rem;
+  }
+}
+
+/* Preserve page breathing room after the sidebars collapse. */
+@media screen and (max-width: 76.1875em) {
+  .md-content__inner {
+    margin-left: 1rem;
+    margin-right: 1rem;
   }
 }
 
@@ -203,6 +327,26 @@
 .md-nav__link--active {
   font-weight: bold;
   color: var(--md-accent-fg-color);
+}
+
+.md-nav__link .cg-nav-icon {
+  color: var(--md-default-fg-color--light);
+  flex-shrink: 0;
+  height: 1rem;
+  margin-right: 0.5rem;
+  opacity: 0.85;
+  width: 1rem;
+}
+
+.md-nav__link .cg-nav-icon svg {
+  height: 100%;
+  width: 100%;
+}
+
+.md-nav__link--active .cg-nav-icon,
+.md-nav__link:hover .cg-nav-icon {
+  color: var(--md-accent-fg-color);
+  opacity: 1;
 }
 
 /* Prevent selection of code prompts and output */
@@ -223,15 +367,32 @@
   margin: 1.5rem 0;
 }
 
-.grid.cards > * {
+.grid.cards > *,
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
   border: 1px solid var(--md-default-fg-color--lightest);
   border-radius: 0.2rem;
   padding: 1rem;
-  transition: box-shadow 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.grid.cards > *:hover {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+.md-typeset .grid.cards > *:focus-within,
+.md-typeset .grid.cards > *:hover,
+.md-typeset .grid.cards > ol > li:focus-within,
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:focus-within,
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-default-fg-color--light);
+  box-shadow: 0 0 0 1px var(--md-default-fg-color--lightest);
+}
+
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > *:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > *:hover,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ol > li:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ol > li:hover,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ul > li:focus-within,
+[data-md-color-scheme="comfygit-dark"] .md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--cd-canvas);
 }
 
 

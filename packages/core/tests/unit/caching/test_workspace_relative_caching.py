@@ -12,6 +12,7 @@ from comfygit_core.caching.api_cache import APICacheManager
 from comfygit_core.caching.base import CacheBase, ContentCacheBase
 from comfygit_core.caching.comfyui_cache import ComfyUICacheManager
 from comfygit_core.caching.custom_node_cache import CustomNodeCacheManager
+from comfygit_core.models.exceptions import ComfyDockError
 
 
 class TestWorkspaceRelativeCaching:
@@ -85,5 +86,5 @@ class TestWorkspaceRelativeCaching:
             invalid_path.write_text("blocking file")
 
             # Trying to create cache should raise error
-            with pytest.raises(Exception):  # ComfyDockError
+            with pytest.raises(ComfyDockError):
                 APICacheManager(cache_base_path=invalid_path / "subdir")

@@ -31,10 +31,10 @@ ComfyGit currently has separate mechanisms for related ideas:
 
 - `pyproject.toml` is the portable source manifest committed by environment
   authors.
-- PyTorch backend selection is machine-local and temporarily injected for uv
-  operations.
-- Overlays can inject machine-local uv sources, packages, indexes, and optional
-  accelerator dependencies during sync/run.
+- PyTorch backend selection is machine-local and materialized only in disposable
+  uv projects.
+- Overlays can materialize machine-local uv sources, packages, indexes, and
+  optional accelerator dependencies during sync/run.
 - `comfygit-manager` may be useful in authoring environments but undesirable in
   runtime or deployment materializations.
 
@@ -53,7 +53,7 @@ The service would produce an operation-local manifest view from the committed
 source manifest plus explicit projection inputs:
 
 1. A named profile, initially at least `authoring` and `runtime`.
-2. Machine-local PyTorch backend injection.
+2. Machine-local PyTorch backend materialization.
 3. Selected overlays, including `.local` and optional accelerator overlays such
    as xformers or sageattention.
 
@@ -82,7 +82,7 @@ The projection pipeline would conceptually be:
 ```text
 source pyproject.toml
   -> apply profile filter
-  -> inject PyTorch backend policy
+  -> materialize PyTorch backend policy
   -> apply selected overlays
   -> write temporary projected manifest for uv/materialize/run/export
   -> discard projected manifest after operation
@@ -147,7 +147,7 @@ Future implementation should add tests proving:
 - source `pyproject.toml` is restored or untouched after projection-backed sync.
 - `authoring` profile preserves current dependency behavior.
 - `runtime` profile excludes `comfygit-manager` without mutating source truth.
-- overlays and PyTorch injection are applied after profile filtering and remain
+- overlays and PyTorch materialization are applied after profile filtering and remain
   absent from committed source manifest state.
 - materialization from a runtime projection creates an environment that boots
   without Manager when workflows and contracts do not require it.

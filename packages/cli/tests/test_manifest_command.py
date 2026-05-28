@@ -25,7 +25,7 @@ class TestManifest:
                 }
             }
         }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.load_manifest_config.return_value = mock_config
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -53,7 +53,7 @@ class TestManifest:
             'project': {'name': 'test-env', 'version': '0.1.0'},
             'tool': {'comfygit': {'comfyui_version': 'v0.3.68'}}
         }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.load_manifest_config.return_value = mock_config
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -88,7 +88,7 @@ class TestManifest:
                 }
             }
         }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.load_manifest_config.return_value = mock_config
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -118,7 +118,7 @@ class TestManifest:
             'project': {'name': 'test-env'},
             'tool': {'comfygit': {}}
         }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.load_manifest_config.return_value = mock_config
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -144,7 +144,7 @@ class TestManifest:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.pyproject.path = Path("/fake/path/.cec/pyproject.toml")
+        mock_env.get_manifest_path.return_value = Path("/fake/path/.cec/pyproject.toml")
 
         cmd = EnvironmentCommands()
         args = Namespace(
@@ -159,7 +159,7 @@ class TestManifest:
         # Should call subprocess.run with editor and path
         mock_run.assert_called_once_with(["code", "/fake/path/.cec/pyproject.toml"])
         # Should not load config (early return)
-        mock_env.pyproject.load.assert_not_called()
+        mock_env.load_manifest_config.assert_not_called()
 
     @patch('subprocess.run')
     @patch.dict('os.environ', {'EDITOR': 'vim'})
@@ -171,7 +171,7 @@ class TestManifest:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.pyproject.path = Path("/fake/path/.cec/pyproject.toml")
+        mock_env.get_manifest_path.return_value = Path("/fake/path/.cec/pyproject.toml")
 
         cmd = EnvironmentCommands()
         args = Namespace(

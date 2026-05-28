@@ -11,7 +11,7 @@ from comfygit_cli.strategies.conflict_resolver import (
     AutoConflictResolver,
     InteractiveConflictResolver,
 )
-from comfygit_core.models.ref_diff import (
+from comfygit_core.models import (
     DependencyChanges,
     RefDiff,
     WorkflowChange,

@@ -1,12 +1,12 @@
 [project]
 name = "comfygit"
-version = "0.4.2"
+version = "0.5.0"
 description = "ComfyGit - Git-based environment management for ComfyUI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "comfygit-core==0.4.2",
-    "aiohttp>=3.13.4",
+    "comfygit-core==0.5.0",
+    "comfygit-studio==0.5.0",
     "argcomplete>=3.5.0",
     "requests>=2.33.0",
 ]
@@ -37,3 +37,4 @@ include = [
 
 [tool.uv.sources]
 comfygit-core = { workspace = true }
+comfygit-studio = { workspace = true }

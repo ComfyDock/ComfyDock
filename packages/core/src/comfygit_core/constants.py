@@ -80,7 +80,7 @@ MANAGER_GITHUB_URL = 'https://github.com/comfygit-ai/comfygit-manager'
 # Schema version for environment pyproject.toml format.
 # Increment when making breaking changes to the pyproject.toml structure.
 # v1: Original format with inline PyTorch config (indexes, sources, constraints)
-# v2: PyTorch config moved to .pytorch-backend file, injected at sync time
+# v2: PyTorch config moved to .pytorch-backend file, materialized in disposable sync projects
 PYPROJECT_SCHEMA_VERSION = 2
 
 # Default values
@@ -93,7 +93,7 @@ GITHUB_COMFYUI_BUILTINS_BY_VERSION_URL = "https://raw.githubusercontent.com/comf
 
 MAX_REGISTRY_DATA_AGE_HOURS = 24
 
-# Prevent infinite loops for optional group removal
+# Prevent infinite loops when retrying sync with failing optional groups skipped.
 MAX_OPT_GROUP_RETRIES = 10
 
 # PyTorch core packages
@@ -101,3 +101,6 @@ PYTORCH_CORE_PACKAGES = ["torch", "torchvision", "torchaudio"]
 
 # PyTorch index base URL
 PYTORCH_INDEX_BASE_URL = "https://download.pytorch.org/whl"
+
+SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
+SYSTEM_UV_DEPENDENCY = "uv>=0.11.8"

@@ -273,7 +273,7 @@ class StatusScanner:
         Returns:
             Expected environment state from configuration
         """
-        self._pyproject.load()
+        self._pyproject.get_manifest_snapshot()
 
         # Get expected custom nodes from pyproject
         node_infos = self._pyproject.nodes.get_existing()
@@ -408,7 +408,7 @@ class StatusScanner:
         """
         try:
             # Use UV's dry-run to check if sync would change anything
-            # PyTorch injection ensures the check uses the correct backend
+            # Disposable PyTorch overlay materialization ensures the check uses the correct backend.
             extras, all_extras = self._pyproject.resolve_sync_extras(None, False)
             self._uv.sync_project(
                 dry_run=True,

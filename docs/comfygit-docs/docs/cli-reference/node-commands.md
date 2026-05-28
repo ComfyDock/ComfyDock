@@ -1,98 +1,68 @@
 # Node Commands
 
-> Commands for managing custom nodes within an environment.
+Use node commands to add, update, link, remove, and inspect ComfyUI custom
+nodes in the selected environment.
 
-
-## `node`
-
-**Usage:**
+## Add Nodes
 
 ```bash
-cg node [-h] {add,remove,prune,list,update} ...
+cg node add NODE [NODE...]
+cg node add NODE@VERSION
+cg node add https://github.com/owner/repo.git
+cg node add https://github.com/owner/repo.git@main
 ```
 
-### Subcommands
-
-
-### `add`
-
-**Usage:**
+Useful options:
 
 ```bash
-cg node add [-h] [--dev] [--no-test] [--force] [--verbose] [--strict]
-                   [--extra EXTRA] [--all-extras]
-                   node_names [node_names ...]
+cg node add NODE --strict
+cg node add NODE --no-test
+cg node add NODE --force
+cg node add NODE --extra EXTRA
+cg node add NODE --all-extras
+cg node add NODE --resolve-with-overlays
 ```
 
-**Arguments:**
+Batch add operations are sequential. If one node fails, earlier successful nodes
+are not automatically rolled back.
 
-- `node_names` - Node identifier(s): registry-id[@version], github-url[@ref], or directory name (multiple values allowed)
-
-**Options:**
-
-- `--dev` - Track existing local development node (default: `False`)
-- `--no-test` - Don't test resolution (default: `False`)
-- `--force` - Force overwrite existing directory (default: `False`)
-- `--verbose, -v` - Show full UV error output for dependency conflicts (default: `False`)
-- `--strict` - Fail on dependency conflicts instead of auto-resolving (default: `False`)
-- `--extra` - Install optional dependency extra during sync (can be repeated)
-- `--all-extras` - Install all optional dependency extras during sync (default: `False`)
-
-
-### `remove`
-
-**Usage:**
+## Development Links
 
 ```bash
-cg node remove [-h] [--dev] [--untrack] node_names [node_names ...]
+cg node dev-link NODE --path ~/dev/node-checkout --replace-existing
+cg node dev-link NODE --path ~/dev/node-checkout --name custom_nodes_name
 ```
 
-**Arguments:**
+Use `dev-link` when an environment already tracks a node and you want the
+runtime to use your local checkout while preserving the manifest identity.
 
-- `node_names` - Node registry ID(s) or name(s) (multiple values allowed)
-
-**Options:**
-
-- `--dev` - Remove development node specifically (default: `False`)
-- `--untrack` - Only remove from tracking, leave filesystem unchanged (default: `False`)
-
-
-### `prune`
-
-**Usage:**
+## Remove Nodes
 
 ```bash
-cg node prune [-h] [--exclude PACKAGE [PACKAGE ...]] [-y]
+cg node remove NODE [NODE...]
+cg node remove NODE --dev
+cg node remove NODE --untrack
 ```
 
-**Options:**
+Development node removal and `--untrack` leave filesystem contents alone. Normal
+tracked registry/Git node removal cleans manifest references and the materialized
+node directory.
 
-- `--exclude` - Package IDs to keep even if unused
-- `-y, --yes` - Skip confirmation prompt (default: `False`)
-
-
-### `list`
-
-**Usage:**
+## Update, List, Prune
 
 ```bash
-cg node list [-h]
+cg node list
+cg node update NODE [--yes] [--no-test]
+cg node prune [--exclude PACKAGE...] [--yes]
 ```
 
+## Manager Node
 
-### `update`
-
-**Usage:**
+`comfygit-manager` is managed through the dedicated manager commands:
 
 ```bash
-cg node update [-h] [-y] [--no-test] node_name
+cg manager status
+cg manager update --yes
 ```
 
-**Arguments:**
-
-- `node_name` - Node identifier or name to update
-
-**Options:**
-
-- `-y, --yes` - Auto-confirm updates (skip prompts) (default: `False`)
-- `--no-test` - Don't test resolution (default: `False`)
+Do not confuse `comfygit-manager` with ComfyUI-Manager.

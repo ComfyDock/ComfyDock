@@ -5,14 +5,17 @@ invalidation based on resolution context changes.
 """
 import json
 import time
-from dataclasses import asdict, fields
+from dataclasses import asdict, dataclass, fields
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from ..infrastructure.sqlite_manager import SQLiteManager
 from ..logging.logging_config import get_logger
 from ..models.workflow import ResolutionResult, WorkflowDependencies
+from ..services.workflow_resolution_context_builder import (
+    WorkflowResolutionContextBuilder,
+)
 from ..utils.workflow_hash import compute_workflow_hash
 
 
@@ -25,18 +28,35 @@ def _get_version() -> str:
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
+    from ..repositories.comfyui_builtin_versions_repository import (
+        ComfyUIBuiltinVersionsRepository,
+    )
     from ..repositories.model_repository import ModelRepository
+    from ..repositories.node_mappings_repository import NodeMappingsRepository
     from ..repositories.workspace_config_repository import WorkspaceConfigRepository
 
 logger = get_logger(__name__)
 
-# Bump when DB schema OR resolution format changes
-# Breaking changes requiring version bump:
-# - Database: Add/remove/rename columns
-# - Resolution: Change node ID format (e.g., subgraph scoping), WorkflowNodeWidgetRef structure, etc.
-# - Model index: Hash algorithm changes (blake3 -> xxhash)
-# Migration: Wipes cache and rebuilds (cache is ephemeral)
-SCHEMA_VERSION = 6  # Invalidate after custom-node consensus mapping context change
+# Database migrations wipe this ephemeral cache. Behavioral changes should usually
+# bump the analysis or resolution policy version instead.
+DB_SCHEMA_VERSION = 7
+ANALYSIS_CACHE_VERSION = 1
+RESOLUTION_CACHE_VERSION = 2
+_MODELS_SYNC_TIME_UNSET = object()
+
+
+@dataclass(frozen=True)
+class WorkflowCacheSessionKey:
+    """In-memory cache key for one workflow under one semantic context."""
+
+    environment_name: str
+    workflow_name: str
+    workflow_mtime: float
+    workflow_size: int
+    pyproject_mtime: float
+    models_sync_time: str | None
+    analysis_context_hash: str
+    resolution_state_hash: str
 
 
 class CachedWorkflowAnalysis:
@@ -68,7 +88,10 @@ class WorkflowCacheRepository:
         db_path: Path,
         pyproject_manager: "PyprojectManager | None" = None,
         model_repository: "ModelRepository | None" = None,
-        workspace_config_manager: "WorkspaceConfigRepository | None" = None
+        workspace_config_manager: "WorkspaceConfigRepository | None" = None,
+        cec_path: Path | None = None,
+        node_mapping_repository: "NodeMappingsRepository | None" = None,
+        builtin_versions_repository: "ComfyUIBuiltinVersionsRepository | None" = None,
     ):
         """Initialize workflow cache repository.
 
@@ -77,16 +100,47 @@ class WorkflowCacheRepository:
             pyproject_manager: Manager for pyproject.toml access (for context hashing)
             model_repository: Model repository (for context hashing)
             workspace_config_manager: Workspace config for model sync timestamp (for context hashing)
+            cec_path: Environment .cec directory for generated ComfyUI metadata fingerprints
+            node_mapping_repository: Registry mappings repository for resolution fingerprints
+            builtin_versions_repository: Builtin version metadata for analysis fingerprints
         """
         self.db_path = db_path
         self.sqlite = SQLiteManager(db_path)
         self.pyproject_manager = pyproject_manager
         self.model_repository = model_repository
         self.workspace_config_manager = workspace_config_manager
-        self._session_cache: dict[str, CachedWorkflowAnalysis] = {}
+        self.cec_path = cec_path
+        self.node_mapping_repository = node_mapping_repository
+        self.builtin_versions_repository = builtin_versions_repository
+        self._session_cache: dict[WorkflowCacheSessionKey, CachedWorkflowAnalysis] = {}
+        self._file_fingerprint_cache: dict[tuple[Path, int, int], str] = {}
+        self._analysis_context_hash_cache: tuple[tuple[object, ...], str] | None = None
+        self._resolution_state_hash_cache: tuple[tuple[object, ...], str] | None = None
+        self._models_sync_time_cache: tuple[tuple[str, int, int] | tuple[str, None], str | None] | None = None
+        self.resolution_context_builder = (
+            WorkflowResolutionContextBuilder(
+                pyproject=pyproject_manager,
+                model_repository=model_repository,
+                cec_path=cec_path,
+                builtin_versions_repository=builtin_versions_repository,
+                normalize_package_id=self._normalize_cache_package_id,
+            )
+            if pyproject_manager and model_repository
+            else None
+        )
 
         # Ensure schema exists
         self._ensure_schema()
+
+    def _normalize_cache_package_id(self, package_id: str) -> str:
+        """Canonicalize package IDs used by cache-only consensus fingerprints."""
+        if self.node_mapping_repository is None:
+            return package_id
+        canonicalize = getattr(self.node_mapping_repository, "canonicalize_package_id", None)
+        if not callable(canonicalize):
+            return package_id
+        canonical_package_id = canonicalize(package_id)
+        return canonical_package_id if isinstance(canonical_package_id, str) else package_id
 
     def _get_current_models_sync_time(self) -> str | None:
         """Return the model-index sync timestamp that affects resolution caches."""
@@ -94,13 +148,33 @@ class WorkflowCacheRepository:
             return None
 
         try:
+            config_path = getattr(self.workspace_config_manager, "config_file_path", None)
+            config_stat_key = self._file_stat_key(config_path if isinstance(config_path, Path) else None)
+            if self._models_sync_time_cache and self._models_sync_time_cache[0] == config_stat_key:
+                return self._models_sync_time_cache[1]
+
             config = self.workspace_config_manager.load()
             if config.global_model_directory and config.global_model_directory.last_sync:
-                return config.global_model_directory.last_sync
+                sync_time = config.global_model_directory.last_sync
+                self._models_sync_time_cache = (config_stat_key, sync_time)
+                return sync_time
+
+            self._models_sync_time_cache = (config_stat_key, None)
         except Exception as e:
             logger.warning(f"Failed to check current model sync time: {e}")
 
         return None
+
+    @staticmethod
+    def _file_stat_key(path: Path | None) -> tuple[str, int, int] | tuple[str, None]:
+        """Return a cheap file identity key for memoizing content fingerprints."""
+        if path is None:
+            return ("<none>", None)
+        try:
+            stat = path.stat()
+        except OSError:
+            return (str(path), None)
+        return (str(path), stat.st_mtime_ns, stat.st_size)
 
     def _ensure_schema(self) -> None:
         """Create database schema if needed."""
@@ -113,8 +187,8 @@ class WorkflowCacheRepository:
 
         # Check version and migrate if needed
         current_version = self._get_schema_version()
-        if current_version != SCHEMA_VERSION:
-            self._migrate_schema(current_version, SCHEMA_VERSION)
+        if current_version != DB_SCHEMA_VERSION:
+            self._migrate_schema(current_version, DB_SCHEMA_VERSION)
         else:
             # Create v2 schema if not exists
             self._create_v2_schema()
@@ -139,7 +213,9 @@ class WorkflowCacheRepository:
                 workflow_hash TEXT NOT NULL,
                 workflow_mtime REAL NOT NULL,
                 workflow_size INTEGER NOT NULL,
+                analysis_context_hash TEXT NOT NULL,
                 resolution_context_hash TEXT NOT NULL,
+                resolution_state_hash TEXT NOT NULL,
                 pyproject_mtime REAL NOT NULL,
                 models_sync_time TEXT,
                 comfygit_version TEXT NOT NULL,
@@ -230,14 +306,18 @@ class WorkflowCacheRepository:
             except OSError as e:
                 logger.debug(f"Could not stat pyproject for session cache key; using default mtime: {e}")
         current_models_sync_time = self._get_current_models_sync_time()
+        analysis_context_hash = self._compute_analysis_context_hash()
+        resolution_state_hash = self._compute_resolution_state_hash(current_models_sync_time)
 
-        # Phase 1: Check session cache. Include every external state value that
-        # can change resolution while workflow bytes stay the same. Long-running
-        # Manager/serve processes otherwise keep stale model resolutions after
-        # pyproject writes or model-index syncs.
-        session_key = (
-            f"{env_name}:{workflow_name}:{mtime}:{size}:"
-            f"{pyproject_mtime_for_session}:{current_models_sync_time}"
+        session_key = WorkflowCacheSessionKey(
+            environment_name=env_name,
+            workflow_name=workflow_name,
+            workflow_mtime=mtime,
+            workflow_size=size,
+            pyproject_mtime=pyproject_mtime_for_session,
+            models_sync_time=current_models_sync_time,
+            analysis_context_hash=analysis_context_hash,
+            resolution_state_hash=resolution_state_hash,
         )
 
         if session_key in self._session_cache:
@@ -249,7 +329,8 @@ class WorkflowCacheRepository:
         query_start = time.perf_counter()
         query = """
             SELECT workflow_hash, dependencies_json, resolution_json,
-                   resolution_context_hash, pyproject_mtime, models_sync_time, comfygit_version
+                   analysis_context_hash, resolution_context_hash, resolution_state_hash,
+                   pyproject_mtime, models_sync_time, comfygit_version
             FROM workflow_cache
             WHERE environment_name = ? AND workflow_name = ?
               AND workflow_mtime = ? AND workflow_size = ?
@@ -292,6 +373,14 @@ class WorkflowCacheRepository:
             logger.debug(f"[CACHE] MISS (workflow content changed) for '{workflow_name}' ({elapsed:.2f}ms total)")
             return None
 
+        if cached_row['analysis_context_hash'] != analysis_context_hash:
+            elapsed = (time.perf_counter() - start_time) * 1000
+            logger.debug(
+                f"[CACHE] MISS (analysis context changed) for '{workflow_name}' "
+                f"({elapsed:.2f}ms total)"
+            )
+            return None
+
         # Deserialize dependencies (always valid if workflow content matches)
         deser_start = time.perf_counter()
         dependencies = self._deserialize_dependencies(cached_row['dependencies_json'])
@@ -315,34 +404,16 @@ class WorkflowCacheRepository:
             pyproject_mtime = pyproject_path.stat().st_mtime
             cached_pyproject_mtime = cached_row['pyproject_mtime']
             mtime_diff = abs(pyproject_mtime - cached_pyproject_mtime)
+            cached_sync_time = cached_row.get('models_sync_time')
+            cached_resolution_state_hash = cached_row.get('resolution_state_hash')
 
             logger.debug(f"[CACHE] Pyproject mtime check for '{workflow_name}': current={pyproject_mtime:.6f}, cached={cached_pyproject_mtime:.6f}, diff={mtime_diff:.6f}s")
 
-            # Fast reject: if pyproject hasn't been touched, context can't have changed
-            # UNLESS the model index has changed (checked via models_sync_time)
-            if pyproject_mtime == cached_pyproject_mtime:
-                # Check if model index has changed since cache was created
-                cached_sync_time = cached_row.get('models_sync_time')
-                current_sync_time = current_models_sync_time
-
-                # Compare sync times (both might be None, which is fine)
-                if cached_sync_time != current_sync_time:
-                    # Model index changed - invalidate cache
-                    logger.debug(
-                        f"[CACHE] Model index changed for '{workflow_name}': "
-                        f"cached_sync={cached_sync_time}, current_sync={current_sync_time}"
-                    )
-                    cached = CachedWorkflowAnalysis(
-                        dependencies=dependencies,
-                        resolution=None,
-                        needs_reresolution=True
-                    )
-                    self._session_cache[session_key] = cached
-                    elapsed = (time.perf_counter() - start_time) * 1000
-                    logger.debug(f"[CACHE] PARTIAL HIT (model index changed) for '{workflow_name}' ({elapsed:.2f}ms total)")
-                    return cached
-
-                # Nothing changed - full cache hit
+            if (
+                pyproject_mtime == cached_pyproject_mtime
+                and cached_sync_time == current_models_sync_time
+                and cached_resolution_state_hash == resolution_state_hash
+            ):
                 resolution = self._deserialize_resolution(cached_row['resolution_json']) if cached_row['resolution_json'] else None
                 cached = CachedWorkflowAnalysis(
                     dependencies=dependencies,
@@ -351,25 +422,32 @@ class WorkflowCacheRepository:
                 )
                 self._session_cache[session_key] = cached
                 elapsed = (time.perf_counter() - start_time) * 1000
-                logger.debug(f"[CACHE] FULL HIT (pyproject unchanged, model index unchanged) for '{workflow_name}' ({elapsed:.2f}ms total)")
+                logger.debug(f"[CACHE] FULL HIT (semantic context unchanged) for '{workflow_name}' ({elapsed:.2f}ms total)")
                 return cached
 
-            logger.debug(f"[CACHE] Pyproject mtime changed for '{workflow_name}', computing context hash...")
+            logger.debug(f"[CACHE] Resolution context changed for '{workflow_name}', computing workflow-specific hash...")
 
-            # Pyproject changed - check if it affects THIS workflow
             if self.pyproject_manager and self.model_repository:
                 context_start = time.perf_counter()
                 current_context_hash = self._compute_resolution_context_hash(
                     dependencies,
-                    workflow_name
+                    workflow_name,
+                    resolution_state_hash=resolution_state_hash,
+                    models_sync_time=current_models_sync_time,
                 )
                 context_elapsed = (time.perf_counter() - context_start) * 1000
                 logger.debug(f"[CACHE] Context hash computation took {context_elapsed:.2f}ms for '{workflow_name}'")
 
                 if current_context_hash == cached_row['resolution_context_hash']:
-                    # Pyproject changed but not for THIS workflow - still valid
-                    # Update pyproject_mtime to avoid recomputing context hash next time
-                    self._update_pyproject_mtime(env_name, workflow_name, pyproject_mtime)
+                    # Context changed globally, but not for this workflow. Update
+                    # fast-path metadata to avoid recomputing on the next lookup.
+                    self._update_fast_path_metadata(
+                        env_name,
+                        workflow_name,
+                        pyproject_mtime,
+                        current_models_sync_time,
+                        resolution_state_hash,
+                    )
 
                     resolution = self._deserialize_resolution(cached_row['resolution_json']) if cached_row['resolution_json'] else None
                     cached = CachedWorkflowAnalysis(
@@ -384,6 +462,18 @@ class WorkflowCacheRepository:
                 else:
                     elapsed = (time.perf_counter() - start_time) * 1000
                     logger.debug(f"[CACHE] PARTIAL HIT (context changed) for '{workflow_name}' - need re-resolution ({elapsed:.2f}ms total)")
+        else:
+            if cached_row.get('resolution_state_hash') == resolution_state_hash:
+                resolution = self._deserialize_resolution(cached_row['resolution_json']) if cached_row['resolution_json'] else None
+                cached = CachedWorkflowAnalysis(
+                    dependencies=dependencies,
+                    resolution=resolution,
+                    needs_reresolution=False
+                )
+                self._session_cache[session_key] = cached
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.debug(f"[CACHE] FULL HIT (no pyproject path, context unchanged) for '{workflow_name}' ({elapsed:.2f}ms total)")
+                return cached
 
         # Context changed or can't verify - return dependencies but signal re-resolution needed
         cached = CachedWorkflowAnalysis(
@@ -439,16 +529,19 @@ class WorkflowCacheRepository:
             except OSError as e:
                 logger.debug(f"Could not stat pyproject for persistent cache metadata; using default mtime: {e}")
 
-        # Compute resolution context hash
+        # Get models_sync_time for cache invalidation check
+        models_sync_time = self._get_current_models_sync_time()
+        analysis_context_hash = self._compute_analysis_context_hash()
+        resolution_state_hash = self._compute_resolution_state_hash(models_sync_time)
+
         resolution_context_hash = ""
         if self.pyproject_manager and self.model_repository:
             resolution_context_hash = self._compute_resolution_context_hash(
                 dependencies,
-                workflow_name
+                workflow_name,
+                resolution_state_hash=resolution_state_hash,
+                models_sync_time=models_sync_time,
             )
-
-        # Get models_sync_time for cache invalidation check
-        models_sync_time = self._get_current_models_sync_time()
 
         # Serialize data
         dependencies_json = self._serialize_dependencies(dependencies)
@@ -459,22 +552,29 @@ class WorkflowCacheRepository:
         query = """
             INSERT OR REPLACE INTO workflow_cache
             (environment_name, workflow_name, workflow_hash, workflow_mtime,
-             workflow_size, resolution_context_hash, pyproject_mtime, models_sync_time,
+             workflow_size, analysis_context_hash, resolution_context_hash,
+             resolution_state_hash, pyproject_mtime, models_sync_time,
              comfygit_version, dependencies_json, resolution_json, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         cached_at = int(time.time())
         self.sqlite.execute_write(
             query,
             (env_name, workflow_name, workflow_hash, workflow_mtime, workflow_size,
-             resolution_context_hash, pyproject_mtime, models_sync_time, comfygit_version,
-             dependencies_json, resolution_json, cached_at)
+             analysis_context_hash, resolution_context_hash, resolution_state_hash,
+             pyproject_mtime, models_sync_time, comfygit_version, dependencies_json,
+             resolution_json, cached_at)
         )
 
-        # Update session cache with all state that can affect resolution.
-        session_key = (
-            f"{env_name}:{workflow_name}:{workflow_mtime}:{workflow_size}:"
-            f"{pyproject_mtime}:{models_sync_time}"
+        session_key = WorkflowCacheSessionKey(
+            environment_name=env_name,
+            workflow_name=workflow_name,
+            workflow_mtime=workflow_mtime,
+            workflow_size=workflow_size,
+            pyproject_mtime=pyproject_mtime,
+            models_sync_time=models_sync_time,
+            analysis_context_hash=analysis_context_hash,
+            resolution_state_hash=resolution_state_hash,
         )
         self._session_cache[session_key] = CachedWorkflowAnalysis(
             dependencies=dependencies,
@@ -496,10 +596,10 @@ class WorkflowCacheRepository:
             query = "DELETE FROM workflow_cache WHERE environment_name = ? AND workflow_name = ?"
             self.sqlite.execute_write(query, (env_name, workflow_name))
 
-            # Clear from session cache - need to clear all mtime variants
-            # Session keys now include mtime: "env:workflow:mtime"
-            prefix = f"{env_name}:{workflow_name}:"
-            keys_to_remove = [k for k in self._session_cache if k.startswith(prefix)]
+            keys_to_remove = [
+                key for key in self._session_cache
+                if key.environment_name == env_name and key.workflow_name == workflow_name
+            ]
             for key in keys_to_remove:
                 del self._session_cache[key]
 
@@ -509,31 +609,36 @@ class WorkflowCacheRepository:
             query = "DELETE FROM workflow_cache WHERE environment_name = ?"
             self.sqlite.execute_write(query, (env_name,))
 
-            # Clear matching session cache entries
-            keys_to_remove = [k for k in self._session_cache if k.startswith(f"{env_name}:")]
+            keys_to_remove = [
+                key for key in self._session_cache
+                if key.environment_name == env_name
+            ]
             for key in keys_to_remove:
                 del self._session_cache[key]
 
             logger.debug(f"Invalidated cache for environment '{env_name}'")
 
-    def _update_pyproject_mtime(self, env_name: str, workflow_name: str, new_mtime: float) -> None:
-        """Update pyproject_mtime in cache after successful context check.
-
-        This optimization avoids recomputing context hash on subsequent runs
-        when pyproject hasn't changed.
-
-        Args:
-            env_name: Environment name
-            workflow_name: Workflow name
-            new_mtime: New pyproject mtime to store
-        """
+    def _update_fast_path_metadata(
+        self,
+        env_name: str,
+        workflow_name: str,
+        new_mtime: float,
+        models_sync_time: str | None,
+        resolution_state_hash: str,
+    ) -> None:
+        """Update fast-path metadata after a successful context check."""
         query = """
             UPDATE workflow_cache
-            SET pyproject_mtime = ?
+            SET pyproject_mtime = ?,
+                models_sync_time = ?,
+                resolution_state_hash = ?
             WHERE environment_name = ? AND workflow_name = ?
         """
-        self.sqlite.execute_write(query, (new_mtime, env_name, workflow_name))
-        logger.debug(f"Updated pyproject_mtime for '{workflow_name}' to {new_mtime}")
+        self.sqlite.execute_write(
+            query,
+            (new_mtime, models_sync_time, resolution_state_hash, env_name, workflow_name)
+        )
+        logger.debug(f"Updated workflow cache fast-path metadata for '{workflow_name}'")
 
     def _serialize_dependencies(self, dependencies: WorkflowDependencies) -> str:
         """Serialize WorkflowDependencies to JSON string.
@@ -585,7 +690,7 @@ class WorkflowCacheRepository:
             kwargs["version_gated_nodes"] = version_gated_nodes
 
         return WorkflowDependencies(
-            **kwargs
+            **cast(Any, kwargs)
         )
 
     def _serialize_resolution(self, resolution: ResolutionResult) -> str:
@@ -648,14 +753,14 @@ class WorkflowCacheRepository:
                     for k, v in versions.items()
                 }
             return GlobalNodePackage(
-                **{**pkg_data, 'versions': versions}
+                **cast(Any, {**pkg_data, 'versions': versions})
             )
 
         # Reconstruct ResolvedNodePackage with nested package_data
         def reconstruct_node_package(node_dict: dict) -> ResolvedNodePackage:
             pkg_data = node_dict.get('package_data')
             return ResolvedNodePackage(
-                **{**node_dict, 'package_data': reconstruct_package_data(pkg_data)}
+                **cast(Any, {**node_dict, 'package_data': reconstruct_package_data(pkg_data)})
             )
 
         # Reconstruct ResolvedModel with nested objects
@@ -731,10 +836,146 @@ class WorkflowCacheRepository:
             download_results=download_results
         )
 
+    @staticmethod
+    def _fingerprint_file(path: Path | None) -> str:
+        """Return a compact content fingerprint for a semantic input file."""
+        if path is None:
+            return "none"
+        if not path.exists():
+            return "missing"
+
+        import blake3
+
+        hasher = blake3.blake3()
+        try:
+            hasher.update(path.read_bytes())
+        except OSError as e:
+            logger.warning(f"Failed to fingerprint {path}: {e}")
+            return "unreadable"
+        return hasher.hexdigest()[:16]
+
+    def _cached_fingerprint_file(self, path: Path | None) -> str:
+        if path is None:
+            return "none"
+        if not path.exists():
+            return "missing"
+
+        try:
+            stat = path.stat()
+        except OSError as e:
+            logger.warning(f"Failed to stat {path}: {e}")
+            return "unreadable"
+
+        key = (path, stat.st_mtime_ns, stat.st_size)
+        cached = self._file_fingerprint_cache.get(key)
+        if cached is not None:
+            return cached
+
+        # Keep the cache bounded and remove older fingerprints for the same file.
+        for existing_key in [
+            existing_key
+            for existing_key in self._file_fingerprint_cache
+            if existing_key[0] == path
+        ]:
+            del self._file_fingerprint_cache[existing_key]
+
+        fingerprint = self._fingerprint_file(path)
+        self._file_fingerprint_cache[key] = fingerprint
+        return fingerprint
+
+    @staticmethod
+    def _hash_context(context: dict) -> str:
+        import blake3
+
+        context_json = json.dumps(context, sort_keys=True)
+        hasher = blake3.blake3()
+        hasher.update(context_json.encode("utf-8"))
+        return hasher.hexdigest()[:16]
+
+    def _metadata_file_fingerprints(self) -> dict[str, str]:
+        if self.cec_path is None:
+            return {}
+
+        return {
+            "comfyui_builtins": self._cached_fingerprint_file(self.cec_path / "comfyui_builtins.json"),
+            "comfyui_folder_paths": self._cached_fingerprint_file(self.cec_path / "comfyui_folder_paths.json"),
+            "comfyui_model_loaders": self._cached_fingerprint_file(self.cec_path / "comfyui_model_loaders.json"),
+        }
+
+    def _metadata_file_stat_keys(self) -> dict[str, tuple[str, int, int] | tuple[str, None]]:
+        if self.cec_path is None:
+            return {}
+
+        return {
+            "comfyui_builtins": self._file_stat_key(self.cec_path / "comfyui_builtins.json"),
+            "comfyui_folder_paths": self._file_stat_key(self.cec_path / "comfyui_folder_paths.json"),
+            "comfyui_model_loaders": self._file_stat_key(self.cec_path / "comfyui_model_loaders.json"),
+        }
+
+    def _compute_analysis_context_hash(self) -> str:
+        """Hash inputs that affect workflow dependency parsing."""
+        cache_key = (
+            ANALYSIS_CACHE_VERSION,
+            _get_version(),
+            tuple(sorted(self._metadata_file_stat_keys().items())),
+            self._file_stat_key(getattr(self.builtin_versions_repository, "builtins_path", None)),
+        )
+        if self._analysis_context_hash_cache and self._analysis_context_hash_cache[0] == cache_key:
+            return self._analysis_context_hash_cache[1]
+
+        context = {
+            "analysis_cache_version": ANALYSIS_CACHE_VERSION,
+            "comfygit_version": _get_version(),
+            "generated_metadata": self._metadata_file_fingerprints(),
+            "builtin_versions": self._cached_fingerprint_file(
+                getattr(self.builtin_versions_repository, "builtins_path", None)
+            ),
+        }
+        context_hash = self._hash_context(context)
+        self._analysis_context_hash_cache = (cache_key, context_hash)
+        return context_hash
+
+    def _compute_resolution_state_hash(
+        self,
+        models_sync_time: str | None | object = _MODELS_SYNC_TIME_UNSET,
+    ) -> str:
+        """Hash global inputs that affect resolution before workflow-specific data."""
+        if models_sync_time is _MODELS_SYNC_TIME_UNSET:
+            models_sync_time = self._get_current_models_sync_time()
+
+        cache_key = (
+            RESOLUTION_CACHE_VERSION,
+            _get_version(),
+            tuple(sorted(self._metadata_file_stat_keys().items())),
+            self._file_stat_key(getattr(self.node_mapping_repository, "mappings_path", None)),
+            self._file_stat_key(getattr(self.builtin_versions_repository, "builtins_path", None)),
+            models_sync_time,
+        )
+        if self._resolution_state_hash_cache and self._resolution_state_hash_cache[0] == cache_key:
+            return self._resolution_state_hash_cache[1]
+
+        context = {
+            "resolution_cache_version": RESOLUTION_CACHE_VERSION,
+            "comfygit_version": _get_version(),
+            "generated_metadata": self._metadata_file_fingerprints(),
+            "registry_mappings": self._cached_fingerprint_file(
+                getattr(self.node_mapping_repository, "mappings_path", None)
+            ),
+            "builtin_versions": self._cached_fingerprint_file(
+                getattr(self.builtin_versions_repository, "builtins_path", None)
+            ),
+            "models_sync_time": models_sync_time,
+        }
+        context_hash = self._hash_context(context)
+        self._resolution_state_hash_cache = (cache_key, context_hash)
+        return context_hash
+
     def _compute_resolution_context_hash(
         self,
         dependencies: WorkflowDependencies,
-        workflow_name: str
+        workflow_name: str,
+        resolution_state_hash: str | None = None,
+        models_sync_time: str | None | object = _MODELS_SYNC_TIME_UNSET,
     ) -> str:
         """Compute workflow-specific resolution context hash.
 
@@ -747,148 +988,28 @@ class WorkflowCacheRepository:
         Returns:
             16-character hex hash of resolution context
         """
-        if not self.pyproject_manager or not self.model_repository:
+        if self.resolution_context_builder is None:
             return ""
 
         import time
 
-        import blake3
-
         context_start = time.perf_counter()
-        context = {}
-
-        # 1. Custom node mappings for nodes in THIS workflow
-        step_start = time.perf_counter()
-        node_types = {n.type for n in dependencies.non_builtin_nodes}
-        custom_map = self.pyproject_manager.workflows.get_custom_node_map(workflow_name)
-        context["custom_mappings"] = {
-            node_type: custom_map[node_type]
-            for node_type in node_types
-            if node_type in custom_map
-        }
-        workflow_configs = self.pyproject_manager.workflows.get_all_with_resolutions()
-        consensus_candidates: dict[str, set[str | bool]] = {}
-        for other_name, workflow_data in workflow_configs.items():
-            if other_name == workflow_name:
-                continue
-
-            other_custom_map = workflow_data.get("custom_node_map", {})
-            for node_type in node_types:
-                if node_type in other_custom_map:
-                    package_id = other_custom_map[node_type]
-                    if isinstance(package_id, (str, bool)):
-                        consensus_candidates.setdefault(node_type, set()).add(package_id)
-
-        context["consensus_custom_mappings"] = {
-            node_type: next(iter(package_ids))
-            for node_type, package_ids in consensus_candidates.items()
-            if node_type not in custom_map and len(package_ids) == 1
-        }
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 1 (custom mappings) took {step_elapsed:.2f}ms")
-
-        # 2. Declared packages for nodes THIS workflow uses
-        # Use authoritative workflow.nodes list instead of inferring from workflow content
-        step_start = time.perf_counter()
-
-        # Read nodes list from workflow config (written by apply_resolution)
-        workflow_config = workflow_configs.get(workflow_name, {})
-        relevant_packages = set(workflow_config.get('nodes', []))
-
-        # Get global package metadata
-        declared_packages = self.pyproject_manager.nodes.get_existing()
-
-        context["declared_packages"] = {
-            pkg: {
-                "version": declared_packages[pkg].version,
-                "repository": declared_packages[pkg].repository,
-                "source": declared_packages[pkg].source
-            }
-            for pkg in relevant_packages
-            if pkg in declared_packages
-        }
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 2 (declared packages) took {step_elapsed:.2f}ms")
-
-        # 3. Model entries from pyproject for THIS workflow
-        step_start = time.perf_counter()
-        workflow_models = self.pyproject_manager.workflows.get_workflow_models(workflow_name)
-        model_pyproject_data = {}
-        for manifest_model in workflow_models:
-            nodes = getattr(manifest_model, "nodes", None) or []
-            if not nodes:
-                key_source = (
-                    getattr(manifest_model, "relative_path", None)
-                    or getattr(manifest_model, "hash", None)
-                    or getattr(manifest_model, "filename", None)
-                    or "unknown"
-                )
-                model_pyproject_data[f"manual:{key_source}"] = {
-                    "hash": manifest_model.hash,
-                    "status": manifest_model.status,
-                    "criticality": manifest_model.criticality,
-                    "sources": manifest_model.sources,
-                    "relative_path": manifest_model.relative_path,
-                    "declared_by": getattr(manifest_model, "declared_by", None),
-                }
-                continue
-
-            for ref in nodes:
-                ref_key = f"{ref.node_id}_{ref.widget_index}"
-                model_pyproject_data[ref_key] = {
-                    "hash": manifest_model.hash,
-                    "status": manifest_model.status,
-                    "criticality": manifest_model.criticality,
-                    "sources": manifest_model.sources,
-                    "relative_path": manifest_model.relative_path,
-                }
-
-        context["workflow_models_pyproject"] = model_pyproject_data
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 3 (workflow models) took {step_elapsed:.2f}ms")
-
-        # 4. Model index subset (only models THIS workflow references)
-        step_start = time.perf_counter()
-        model_index_subset = {}
-        for model_ref in dependencies.found_models:
-            normalized_value = model_ref.widget_value.replace("\\", "/")
-            filename = normalized_value.rsplit("/", 1)[-1]
-            models = self.model_repository.find_by_filename(filename)
-            if models:
-                model_index_subset[filename] = [m.hash for m in models]
-
-        context["model_index_subset"] = model_index_subset
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 4 (model index queries, {len(dependencies.found_models)} models) took {step_elapsed:.2f}ms")
-
-        # 5. Model index sync time (invalidate when model index changes)
-        step_start = time.perf_counter()
-        if self.workspace_config_manager:
-            try:
-                config = self.workspace_config_manager.load()
-                if config.global_model_directory and config.global_model_directory.last_sync:
-                    context["models_sync_time"] = config.global_model_directory.last_sync
-                else:
-                    context["models_sync_time"] = None
-            except Exception as e:
-                logger.warning(f"Failed to get model sync time: {e}")
-                context["models_sync_time"] = None
-        else:
-            context["models_sync_time"] = None
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 5 (model sync time) took {step_elapsed:.2f}ms")
-
-        # 6. Comfygit version (global invalidator)
-        context["comfygit_version"] = _get_version()
-
-        # Hash the normalized context
-        step_start = time.perf_counter()
-        context_json = json.dumps(context, sort_keys=True)
-        hasher = blake3.blake3()
-        hasher.update(context_json.encode('utf-8'))
-        hash_result = hasher.hexdigest()[:16]
-        step_elapsed = (time.perf_counter() - step_start) * 1000
-        logger.debug(f"[CONTEXT] Step 6 (JSON + hash) took {step_elapsed:.2f}ms")
+        current_models_sync_time = (
+            self._get_current_models_sync_time()
+            if models_sync_time is _MODELS_SYNC_TIME_UNSET
+            else models_sync_time
+        )
+        if not isinstance(current_models_sync_time, str | type(None)):
+            current_models_sync_time = None
+        context = self.resolution_context_builder.build_cache_fingerprint_context(
+            dependencies,
+            workflow_name=workflow_name,
+            resolution_state_hash=resolution_state_hash
+            if resolution_state_hash is not None
+            else self._compute_resolution_state_hash(current_models_sync_time),
+            models_sync_time=current_models_sync_time,
+        )
+        hash_result = self._hash_context(context)
 
         total_elapsed = (time.perf_counter() - context_start) * 1000
         logger.debug(f"[CONTEXT] Total context hash computation: {total_elapsed:.2f}ms")

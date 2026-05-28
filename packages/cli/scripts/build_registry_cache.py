@@ -277,7 +277,7 @@ class RegistryCacheBuilder:
 
             # Process batch concurrently
             tasks = []
-            for node_id, node, versions_needed in batch:
+            for node_id, _node, versions_needed in batch:
                 task = asyncio.create_task(
                     self._fetch_node_metadata(client, node_id, versions_needed)
                 )

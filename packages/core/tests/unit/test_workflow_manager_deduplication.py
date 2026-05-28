@@ -4,7 +4,7 @@ When the same model appears in multiple nodes, the user should only be prompted 
 and all node references should be grouped together in a single ManifestWorkflowModel entry.
 """
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from comfygit_core.managers.workflow_manager import WorkflowManager
@@ -15,6 +15,9 @@ from comfygit_core.models.workflow import (
     WorkflowDependencies,
     WorkflowNodeWidgetRef,
 )
+from comfygit_core.services.workflow_manifest_reconciler import WorkflowManifestReconciler
+from comfygit_core.services.workflow_manual_model_policy import WorkflowManualModelPolicy
+from comfygit_core.services.workflow_resolution_service import ResolutionContext
 
 
 class TestModelDeduplication:
@@ -33,8 +36,18 @@ class TestModelDeduplication:
 
         # Make the actual methods we're testing real
         manager._write_model_resolution_grouped = WorkflowManager._write_model_resolution_grouped.__get__(manager)
-        manager._get_category_for_node_ref = Mock(return_value="vae")
-        manager._get_default_criticality = Mock(return_value="flexible")
+        node_package_policy = Mock()
+        node_package_policy.normalize_package_id.side_effect = lambda value: value
+        model_path_policy = Mock()
+        model_path_policy.category_for_node_ref.return_value = "vae"
+        model_path_policy.default_criticality.return_value = "flexible"
+        manager.manifest_reconciler = WorkflowManifestReconciler(
+            pyproject=manager.pyproject,
+            model_repository=manager.model_repository,
+            node_package_policy=node_package_policy,
+            model_path_policy=model_path_policy,
+            manual_model_policy=WorkflowManualModelPolicy(),
+        )
 
         return manager
 
@@ -258,15 +271,14 @@ class TestDeduplicationIntegration:
         assert len(groups[("model_a.safetensors", "CheckpointLoaderSimple")]) == 1
 
 
-class TestResolveWorkflowDeduplication:
-    """Test that resolve_workflow() deduplicates model refs in status reporting."""
+class TestResolveDependenciesDeduplication:
+    """Test that resolve_dependencies() deduplicates model refs in status reporting."""
 
-    @patch('comfygit_core.managers.workflow_manager.WorkflowRepository')
-    def test_resolve_workflow_deduplicates_model_refs_in_unresolved_list(self, mock_workflow_repo):
+    def test_resolve_dependencies_deduplicates_model_refs_in_unresolved_list(self):
         """When same model appears in multiple nodes, models_unresolved should contain unique refs only.
 
         This test verifies that status reporting shows accurate counts by deduplicating
-        model references at the resolve_workflow() level, not just in fix_resolution().
+        model references at the resolve_dependencies() level, not just in fix_resolution().
 
         Example: If workflow has qwen_image_vae.safetensors in nodes #39 and #337,
         models_unresolved should contain 1 representative ref, not 2 duplicate refs.
@@ -314,6 +326,7 @@ class TestResolveWorkflowDeduplication:
         manager.pyproject.workflows = Mock()
         manager.pyproject.workflows.get_custom_node_map.return_value = {}
         manager.pyproject.workflows.get_workflow_models.return_value = []
+        manager._get_consensus_custom_node_map = Mock(return_value={})
         manager.pyproject_manager = Mock()
         manager.pyproject_manager.models = Mock()
         manager.pyproject_manager.models.get_all.return_value = {}
@@ -323,19 +336,21 @@ class TestResolveWorkflowDeduplication:
         manager.workflow_cache = Mock()
         manager.builtin_versions_repository = None
         manager.get_workflow_path = Mock(return_value=Path("/fake/path.json"))
-
-        # Mock WorkflowRepository to avoid file I/O
-        mock_workflow_repo.load.return_value = None
+        manager.workflow_resolution_context_builder = Mock()
+        manager.workflow_resolution_context_builder.build_runtime_context.return_value = ResolutionContext(
+            workflow_name="test_workflow",
+        )
 
         # All models unresolved (return None)
         manager.model_resolver.resolve_model.return_value = None
 
-        # Bind actual resolve_workflow method
-        manager.resolve_workflow = WorkflowManager.resolve_workflow.__get__(manager)
-        manager._check_path_needs_sync = Mock(return_value=False)
+        # Bind actual resolve_dependencies method
+        manager.resolve_dependencies = WorkflowManager.resolve_dependencies.__get__(manager)
+        policy = Mock()
+        manager._get_workflow_model_path_policy = Mock(return_value=policy)
 
         # ACT: Resolve workflow
-        result = manager.resolve_workflow(analysis)
+        result = manager.resolve_dependencies(analysis)
 
         # ASSERT: Should have 2 unique unresolved models, not 4
         # Current bug: This will fail because models_unresolved contains all 4 refs
@@ -355,8 +370,7 @@ class TestResolveWorkflowDeduplication:
             f"Expected unique model keys {expected_keys}, got {unresolved_keys}"
         )
 
-    @patch('comfygit_core.managers.workflow_manager.WorkflowRepository')
-    def test_resolve_workflow_checks_path_sync_for_unsaved_workflow(self, _mock_workflow_repo):
+    def test_resolve_dependencies_checks_path_sync_for_unsaved_workflow(self):
         """Path sync should still be evaluated for unsaved workflows analyzed from JSON."""
         ref = WorkflowNodeWidgetRef(
             node_id="301",
@@ -380,6 +394,7 @@ class TestResolveWorkflowDeduplication:
         manager.pyproject.workflows = Mock()
         manager.pyproject.workflows.get_custom_node_map.return_value = {}
         manager.pyproject.workflows.get_workflow_models.return_value = []
+        manager._get_consensus_custom_node_map = Mock(return_value={})
         manager.pyproject_manager = Mock()
         manager.pyproject_manager.models = Mock()
         manager.pyproject_manager.models.get_all.return_value = {}
@@ -389,6 +404,10 @@ class TestResolveWorkflowDeduplication:
         manager.workflow_cache = Mock()
         manager.builtin_versions_repository = None
         manager.get_workflow_path = Mock(side_effect=FileNotFoundError("unsaved workflow"))
+        manager.workflow_resolution_context_builder = Mock()
+        manager.workflow_resolution_context_builder.build_runtime_context.return_value = ResolutionContext(
+            workflow_name="unsaved",
+        )
 
         resolved_model = ModelWithLocation(
             hash="hash-123",
@@ -412,12 +431,17 @@ class TestResolveWorkflowDeduplication:
             )
         ]
 
-        manager.resolve_workflow = WorkflowManager.resolve_workflow.__get__(manager)
-        manager._check_path_needs_sync = Mock(return_value=True)
-        manager._check_category_mismatch = Mock(return_value=(False, [], None))
+        manager.resolve_dependencies = WorkflowManager.resolve_dependencies.__get__(manager)
+        policy = Mock()
 
-        result = manager.resolve_workflow(analysis)
+        def annotate_resolution(resolution):
+            resolution.models_resolved[0].needs_path_sync = True
+
+        policy.annotate_resolution.side_effect = annotate_resolution
+        manager._get_workflow_model_path_policy = Mock(return_value=policy)
+
+        result = manager.resolve_dependencies(analysis)
 
         assert len(result.models_resolved) == 1
         assert result.models_resolved[0].needs_path_sync is True
-        manager._check_path_needs_sync.assert_called_once_with(result.models_resolved[0])
+        policy.annotate_resolution.assert_called_once_with(result)

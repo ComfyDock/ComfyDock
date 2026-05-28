@@ -68,8 +68,7 @@ class TestModelSourcePreservation:
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow)
 
         # ACT - Resolve workflow (progressive mode)
-        deps = test_env.workflow_manager.analyze_workflow("test_workflow")
-        resolution = test_env.workflow_manager.resolve_workflow(deps)
+        _deps, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
 
         # Apply resolution writes to pyproject
         test_env.workflow_manager.apply_resolution(resolution)
@@ -132,8 +131,7 @@ class TestModelSourcePreservation:
         simulate_comfyui_save_workflow(test_env, "multi_model", workflow)
 
         # ACT - Resolve in bulk
-        deps = test_env.workflow_manager.analyze_workflow("multi_model")
-        resolution = test_env.workflow_manager.resolve_workflow(deps)
+        _deps, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("multi_model")
         test_env.workflow_manager.apply_resolution(resolution)
 
         # ASSERT - Correct behavior: sources in global table, not workflow models
@@ -198,8 +196,7 @@ class TestModelSourcePreservation:
         simulate_comfyui_save_workflow(test_env, "shared_wf", workflow)
 
         # Dev A resolves and commits
-        deps = test_env.workflow_manager.analyze_workflow("shared_wf")
-        resolution = test_env.workflow_manager.resolve_workflow(deps)
+        _deps, resolution = test_env.workflow_manager.analyze_and_resolve_workflow("shared_wf")
         test_env.workflow_manager.apply_resolution(resolution)
 
         # Check what Dev A commits to pyproject.toml

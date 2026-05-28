@@ -59,7 +59,7 @@ class WorkflowResolutionService:
         analysis: WorkflowDependencies,
         context: ResolutionContext | None = None,
     ) -> ResolutionResult:
-        """Core resolution logic extracted from WorkflowManager.resolve_workflow()."""
+        """Core resolution logic extracted from WorkflowManager.resolve_dependencies()."""
         context = context or ResolutionContext()
 
         nodes_resolved: list[ResolvedNodePackage] = []

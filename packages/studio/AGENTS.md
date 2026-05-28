@@ -2,9 +2,10 @@
 
 This directory is the shared ComfyGit Studio Vite/React frontend package. It is
 consumed by local `cg serve` and by hosted Cloud published endpoints. The CLI
-serves a built static copy from `packages/cli/comfygit_cli/studio_static/`;
-Cloud should import or serve the same package instead of maintaining a parallel
-playground UI.
+and Manager serve a built static copy from
+`packages/studio-runtime/comfygit_studio/static/` through the shared
+`comfygit-studio` Python runtime. Cloud should import or serve the same package
+instead of maintaining a parallel playground UI.
 
 ## File Layout
 
@@ -37,8 +38,8 @@ playground UI.
 - Put broadly reusable primitives in `src/components/ui/` only when they are
   genuinely general UI building blocks.
 - Keep generated/static output changes intentional. Running `npm run build`
-  rewrites files under `dist/static/`; CLI packaging copies that build into
-  `packages/cli/comfygit_cli/studio_static/`.
+  rewrites files under `dist/static/`; release packaging copies that build into
+  `packages/studio-runtime/comfygit_studio/static/`.
 - If changing image/video/gallery behavior, check `GalleryTile`,
   `OutputViewer`, `Media`, and the gallery styles before creating a parallel
   implementation.

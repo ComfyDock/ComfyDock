@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import tomlkit
-
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.models.overlay import OverlayConfig
 
@@ -58,7 +57,7 @@ def test_migrates_legacy_local_uv_config(tmp_path):
     assert (cec / "overlays/.local.toml").exists()
 
     local_overlay = manager.load_overlay(".local")
-    payload = local_overlay.to_injection_payload()
+    payload = local_overlay.to_uv_payload()
     assert payload["sources"]["sageattention"]["path"] == "/tmp/SageAttention"
     assert payload["indexes"][0]["name"] == "corp"
     assert payload["constraints"] == ["torch<2.7"]

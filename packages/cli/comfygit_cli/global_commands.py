@@ -5,16 +5,26 @@ import sys
 from functools import cached_property
 from pathlib import Path
 
-from comfygit_core.core.workspace import Workspace
-from comfygit_core.factories.workspace_factory import WorkspaceFactory
-from comfygit_core.models.protocols import ImportCallbacks
+from comfygit_core import Workspace
+from comfygit_core.models import CDWorkspaceNotFoundError, ImportCallbacks
 
 from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
 from .logging.logging_config import get_logger
-from .utils import create_progress_callback, paginate, show_civitai_auth_help, show_download_stats
+from .utils import (
+    create_progress_callback,
+    format_size,
+    paginate,
+    show_civitai_auth_help,
+    show_download_stats,
+)
 
 logger = get_logger(__name__)
+
+
+def _is_git_url(value: str) -> bool:
+    """Return whether a command argument looks like a git URL."""
+    return value.startswith(("https://", "http://", "git@", "ssh://"))
 
 
 
@@ -38,11 +48,8 @@ class GlobalCommands:
         Returns:
             Workspace instance (existing or newly created)
         """
-        from comfygit_core.factories.workspace_factory import WorkspaceFactory
-        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-
         try:
-            workspace = WorkspaceFactory.find()
+            workspace = Workspace.open()
             WorkspaceLogger.set_workspace_path(workspace.path)
             return workspace
 
@@ -70,7 +77,7 @@ class GlobalCommands:
             self.init(init_args)
 
             # Get the newly created workspace
-            workspace = WorkspaceFactory.find()
+            workspace = Workspace.open()
             WorkspaceLogger.set_workspace_path(workspace.path)
 
             print("\n✓ Workspace initialized! Continuing with command...\n")
@@ -78,12 +85,10 @@ class GlobalCommands:
 
     def _get_or_create_workspace_at(self, workspace_path: Path | None, models_dir: Path | None = None) -> Workspace:
         """Get or create a workspace at an explicit path for non-interactive commands."""
-        from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-
         try:
-            workspace = WorkspaceFactory.find(workspace_path)
+            workspace = Workspace.open(workspace_path)
         except CDWorkspaceNotFoundError:
-            workspace = WorkspaceFactory.create(workspace_path)
+            workspace = Workspace.create(workspace_path)
 
         WorkspaceLogger.set_workspace_path(workspace.path)
 
@@ -116,13 +121,13 @@ class GlobalCommands:
         # Determine workspace path
         path = args.path if (hasattr(args, "path") and args.path) else None
 
-        workspace_paths = WorkspaceFactory.get_paths(path)
+        workspace_root = Workspace.default_root(path)
 
-        print(f"\n🎯 Initializing ComfyGit workspace at: {workspace_paths.root}")
+        print(f"\n🎯 Initializing ComfyGit workspace at: {workspace_root}")
 
         try:
             # Create workspace
-            workspace = WorkspaceFactory.create(workspace_paths.root)
+            workspace = Workspace.create(workspace_root)
 
             # Set workspace path for logging after creation
             WorkspaceLogger.set_workspace_path(workspace.path)
@@ -288,8 +293,6 @@ class GlobalCommands:
             workspace: The workspace instance
             models_path: Path to the models directory to scan
         """
-        from comfygit_core.utils.common import format_size
-
         from comfygit_cli.utils.progress import create_model_sync_progress
 
         try:
@@ -298,7 +301,7 @@ class GlobalCommands:
 
             # Get stats to show summary
             stats = workspace.get_model_stats()
-            total_models = stats.get('total_models', 0)
+            total_models = stats.total_models
 
             if total_models > 0:
                 # Calculate total size
@@ -349,7 +352,7 @@ class GlobalCommands:
         import json
 
         import tomlkit
-        from comfygit_core.services.workflow_analysis_service import WorkflowAnalysisService
+        from comfygit_core.workflow import WorkflowAnalysisService
 
         workspace = get_workspace_optional()
         if workspace:
@@ -562,8 +565,6 @@ class GlobalCommands:
         """Import a ComfyGit environment from a tarball or git repository."""
         from pathlib import Path
 
-        from comfygit_core.utils.git import is_git_url
-
         # Ensure workspace exists, creating it if necessary
         workspace = self._get_or_create_workspace(args)
 
@@ -573,7 +574,7 @@ class GlobalCommands:
             sys.exit(1)
 
         # Detect if this is a git URL or local tarball
-        is_git = is_git_url(args.path)
+        is_git = _is_git_url(args.path)
 
         if is_git:
             print("📦 Importing environment from git repository")
@@ -902,9 +903,7 @@ class GlobalCommands:
         print(f"📦 Exporting environment: {env.name}")
         print()
 
-        from comfygit_core.services.environment_readiness import build_environment_readiness
-
-        readiness = build_environment_readiness(env, include_blocking=True)
+        readiness = env.get_readiness(include_blocking=True)
         blocking_issues = [
             issue
             for issue in readiness.blocking_issues
@@ -982,7 +981,7 @@ class GlobalCommands:
 
         except Exception as e:
             # Handle CDExportError with rich context
-            from comfygit_core.models.exceptions import CDExportError
+            from comfygit_core.models import CDExportError
 
             if isinstance(e, CDExportError):
                 print(f"✗ {str(e)}")
@@ -1016,8 +1015,6 @@ class GlobalCommands:
         """List all indexed models."""
         from collections import defaultdict
         from pathlib import Path
-
-        from comfygit_core.utils.common import format_size
 
         logger.info("Listing all indexed models")
 
@@ -1071,8 +1068,8 @@ class GlobalCommands:
 
             # Build header
             stats = self.workspace.get_model_stats()
-            total_models = stats.get('total_models', 0)
-            total_locations = stats.get('total_locations', 0)
+            total_models = stats.total_models
+            total_locations = stats.total_locations
 
             if args.duplicates:
                 duplicate_count = len(results)
@@ -1091,8 +1088,6 @@ class GlobalCommands:
     @with_workspace_logging("model index find")
     def model_index_find(self, args: argparse.Namespace) -> None:
         """Search for models by hash or filename."""
-        from comfygit_core.utils.common import format_size
-
         query = args.query
         logger.info(f"Searching models for query: '{query}'")
 
@@ -1157,8 +1152,6 @@ class GlobalCommands:
         """Show detailed information about a specific model."""
         from datetime import datetime
 
-        from comfygit_core.utils.common import format_size
-
         identifier = args.identifier
         logger.info(f"Showing details for model: '{identifier}'")
 
@@ -1185,25 +1178,23 @@ class GlobalCommands:
             # Locations
             print(f"\n  Locations ({len(locations)}):")
             for loc in locations:
-                from pathlib import Path
-                mtime = datetime.fromtimestamp(loc['mtime']).strftime("%Y-%m-%d %H:%M:%S")
-                if loc.get('base_directory'):
-                    full_path = Path(loc['base_directory']) / loc['relative_path']
-                    print(f"    • {full_path}")
+                mtime = datetime.fromtimestamp(loc.mtime).strftime("%Y-%m-%d %H:%M:%S")
+                if loc.full_path:
+                    print(f"    • {loc.full_path}")
                 else:
-                    print(f"    • {loc['relative_path']}")
+                    print(f"    • {loc.relative_path}")
                 print(f"      Modified: {mtime}")
 
             # Sources
             if sources:
                 print(f"\n  Sources ({len(sources)}):")
                 for source in sources:
-                    print(f"    • {source['type'].title()}")
-                    print(f"      URL: {source['url']}")
-                    if source['metadata']:
-                        for key, value in source['metadata'].items():
+                    print(f"    • {source.type.title()}")
+                    print(f"      URL: {source.url}")
+                    if source.metadata:
+                        for key, value in source.metadata.items():
                             print(f"      {key}: {value}")
-                    added = datetime.fromtimestamp(source['added_time']).strftime("%Y-%m-%d %H:%M:%S")
+                    added = datetime.fromtimestamp(source.added_time).strftime("%Y-%m-%d %H:%M:%S")
                     print(f"      Added: {added}")
             else:
                 print("\n  Sources: None")
@@ -1369,8 +1360,8 @@ class GlobalCommands:
                 print("   Run 'cg model index dir <path>' to set your models directory")
                 return
 
-            total_models = stats.get('total_models', 0)
-            total_locations = stats.get('total_locations', 0)
+            total_models = stats.total_models
+            total_locations = stats.total_locations
             print(f"   Total Models: {total_models} unique models")
             print(f"   Total Files: {total_locations} files indexed")
 
@@ -1386,7 +1377,7 @@ class GlobalCommands:
     @with_workspace_logging("model download")
     def model_download(self, args: argparse.Namespace) -> None:
         """Download model from URL with interactive path confirmation."""
-        from comfygit_core.services.model_downloader import DownloadRequest
+        from comfygit_core.assets import DownloadRequest
 
         url = args.url
         logger.info(f"Downloading model from: {url}")
@@ -1394,19 +1385,17 @@ class GlobalCommands:
         try:
             # Get models directory
             models_dir = self.workspace.get_models_directory()
-            downloader = self.workspace.model_downloader
 
             # Determine target path
             if args.path:
                 # User specified explicit path
                 suggested_path = Path(args.path)
             elif args.category:
-                # User specified category - extract filename from URL
-                filename = downloader._extract_filename(url, None)
-                suggested_path = Path(args.category) / filename
+                # User specified category - keep the filename from the URL
+                suggested_path = self.workspace.suggest_model_download_path(url, category=args.category)
             else:
                 # Auto-suggest based on URL/filename
-                suggested_path = downloader.suggest_path(url, node_type=None, filename_hint=None)
+                suggested_path = self.workspace.suggest_model_download_path(url)
 
             # Path confirmation loop (unless --yes)
             while not args.yes:
@@ -1443,7 +1432,7 @@ class GlobalCommands:
             # Download with progress callback
             print(f"\n📥 Downloading to: {suggested_path}")
             progress_callback = create_progress_callback()
-            result = downloader.download(request, progress_callback=progress_callback)
+            result = self.workspace.download_model_request(request, progress_callback=progress_callback)
             print()  # New line after progress
 
             # Handle result
@@ -1476,7 +1465,15 @@ class GlobalCommands:
     @with_workspace_logging("model add-source")
     def model_add_source(self, args: argparse.Namespace) -> None:
         """Add download source URLs to models."""
-        env = self.workspace.get_active_environment()
+        if getattr(args, "target_env", None):
+            env = self.workspace.get_environment(args.target_env)
+        else:
+            env = self.workspace.get_active_environment()
+
+        if not env:
+            print("✗ No active environment. Use: cg use <name>", file=sys.stderr)
+            print("   Or specify with: cg -e <name> model add-source", file=sys.stderr)
+            sys.exit(1)
 
         # Mode detection: direct vs interactive
         if args.model and args.url:
@@ -1489,8 +1486,6 @@ class GlobalCommands:
     @with_workspace_logging("model delete")
     def model_delete(self, args: argparse.Namespace) -> None:
         """Delete model files from disk and clean their index entries."""
-        from comfygit_core.utils.common import format_size
-
         identifier = args.identifier
         logger.info(f"Deleting model: '{identifier}'")
 
@@ -1516,12 +1511,10 @@ class GlobalCommands:
         print(f"  Size: {format_size(model.file_size)}")
         print(f"  Locations: {len(locations)}")
         for location in locations:
-            base_directory = location.get("base_directory")
-            relative_path = location.get("relative_path")
-            if base_directory and relative_path:
-                print(f"    • {Path(base_directory) / relative_path}")
+            if location.full_path:
+                print(f"    • {location.full_path}")
             else:
-                print(f"    • {location.get('path') or relative_path or 'unknown'}")
+                print(f"    • {location.relative_path or 'unknown'}")
 
         if not args.yes:
             choice = input("\nDelete these model file(s) and clean index entries? [y/N]: ").strip().lower()
@@ -1651,6 +1644,10 @@ class GlobalCommands:
             self._set_civitai_key(args.civitai_key)
             return
 
+        if hasattr(args, 'huggingface_token') and args.huggingface_token is not None:
+            self._set_huggingface_token(args.huggingface_token)
+            return
+
         if hasattr(args, 'github_token') and args.github_token is not None:
             self._set_github_token(args.github_token)
             return
@@ -1669,19 +1666,28 @@ class GlobalCommands:
     def _set_civitai_key(self, key: str):
         """Set Civitai API key."""
         if key == "":
-            self.workspace.workspace_config_manager.set_civitai_token(None)
+            self.workspace.set_civitai_token(None)
             print("✓ Civitai API key cleared")
         else:
-            self.workspace.workspace_config_manager.set_civitai_token(key)
+            self.workspace.set_civitai_token(key)
             print("✓ Civitai API key saved")
+
+    def _set_huggingface_token(self, token: str):
+        """Set Hugging Face token."""
+        if token == "":
+            self.workspace.set_huggingface_token(None)
+            print("✓ Hugging Face token cleared")
+        else:
+            self.workspace.set_huggingface_token(token)
+            print("✓ Hugging Face token saved")
 
     def _set_github_token(self, token: str):
         """Set GitHub token."""
         if token == "":
-            self.workspace.workspace_config_manager.set_github_token(None)
+            self.workspace.set_github_token(None)
             print("✓ GitHub token cleared")
         else:
-            self.workspace.workspace_config_manager.set_github_token(token)
+            self.workspace.set_github_token(token)
             print("✓ GitHub token saved")
 
     def _set_uv_cache(self, path_str: str):
@@ -1689,7 +1695,7 @@ class GlobalCommands:
         from pathlib import Path
 
         if path_str == "":
-            self.workspace.workspace_config_manager.set_external_uv_cache(None)
+            self.workspace.set_external_uv_cache(None)
             print("✓ External UV cache cleared (using workspace-local cache)")
         else:
             path = Path(path_str).expanduser().resolve()
@@ -1699,7 +1705,7 @@ class GlobalCommands:
             if not path.is_dir():
                 print(f"Error: Path is not a directory: {path}")
                 return
-            self.workspace.workspace_config_manager.set_external_uv_cache(path)
+            self.workspace.set_external_uv_cache(path)
             print(f"✓ External UV cache set to: {path}")
 
     def _show_config(self):
@@ -1710,7 +1716,7 @@ class GlobalCommands:
         print(f"  Workspace Path:  {self.workspace.paths.root}")
 
         # Civitai API Key
-        token = self.workspace.workspace_config_manager.get_civitai_token()
+        token = self.workspace.get_civitai_token()
         if token:
             # Mask key showing last 4 chars
             masked = f"••••••••{token[-4:]}" if len(token) > 4 else "••••"
@@ -1718,8 +1724,16 @@ class GlobalCommands:
         else:
             print("  Civitai API Key: Not set")
 
+        # Hugging Face token
+        huggingface_token = self.workspace.get_huggingface_token()
+        if huggingface_token:
+            masked = f"••••••••{huggingface_token[-4:]}" if len(huggingface_token) > 4 else "••••"
+            print(f"  Hugging Face:    {masked}")
+        else:
+            print("  Hugging Face:    Not set")
+
         # GitHub token
-        github_token = self.workspace.workspace_config_manager.get_github_token()
+        github_token = self.workspace.get_github_token()
         if github_token:
             masked = f"••••••••{github_token[-4:]}" if len(github_token) > 4 else "••••"
             print(f"  GitHub Token:    {masked}")
@@ -1727,7 +1741,7 @@ class GlobalCommands:
             print("  GitHub Token:    Not set")
 
         # External UV cache
-        uv_cache = self.workspace.workspace_config_manager.get_external_uv_cache()
+        uv_cache = self.workspace.get_external_uv_cache()
         if uv_cache:
             print(f"  UV Cache:        {uv_cache}")
         else:
@@ -1737,7 +1751,7 @@ class GlobalCommands:
         """Interactive configuration menu."""
         while True:
             # Get current config
-            civitai_token = self.workspace.workspace_config_manager.get_civitai_token()
+            civitai_token = self.workspace.get_civitai_token()
 
             # Display menu
             print("\nComfyGit Configuration\n")
@@ -1772,7 +1786,7 @@ class GlobalCommands:
             print("  Cancelled")
             return
 
-        self.workspace.workspace_config_manager.set_civitai_token(key)
+        self.workspace.set_civitai_token(key)
         print("✓ API key saved")
 
     def _interactive_clear_setting(self):
@@ -1784,7 +1798,7 @@ class GlobalCommands:
         choice = input("Choice: ").strip().lower()
 
         if choice == "1":
-            self.workspace.workspace_config_manager.set_civitai_token(None)
+            self.workspace.set_civitai_token(None)
             print("✓ Civitai API key cleared")
         elif choice == "c" or choice == "":
             print("  Cancelled")
@@ -1979,7 +1993,7 @@ class GlobalCommands:
 
     def orch_clean(self, args: argparse.Namespace) -> None:
         """Clean orchestrator state files."""
-        from comfygit_core.lifecycle.switch_observer import SWITCH_STATUS_FILE
+        from comfygit_core.runtime import SWITCH_STATUS_FILE
 
         from .utils.orchestrator import (
             cleanup_orchestrator_state,

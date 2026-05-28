@@ -12,7 +12,7 @@ def test_maybe_print_update_notice_prints_once(monkeypatch, capsys):
         notified["latest"] = latest
 
     monkeypatch.setattr(update_notice.update_checker, "mark_notified", _mark)
-    monkeypatch.setattr(update_notice.update_checker, "format_update_notice", lambda c, l: f"{c}->{l}")
+    monkeypatch.setattr(update_notice.update_checker, "format_update_notice", lambda current, latest: f"{current}->{latest}")
 
     done = threading.Event()
     done.set()
@@ -56,7 +56,7 @@ def test_maybe_print_update_notice_waits_for_result(monkeypatch, capsys):
         notified["latest"] = latest
 
     monkeypatch.setattr(update_notice.update_checker, "mark_notified", _mark)
-    monkeypatch.setattr(update_notice.update_checker, "format_update_notice", lambda c, l: f"{c}->{l}")
+    monkeypatch.setattr(update_notice.update_checker, "format_update_notice", lambda current, latest: f"{current}->{latest}")
 
     handle = update_notice.UpdateCheckHandle(done=threading.Event(), result=None)
 

@@ -54,7 +54,7 @@ Check existing managers/services before adding new abstractions.
 
 | Manager | File | Main responsibility |
 | --- | --- | --- |
-| `PyprojectManager` | `managers/pyproject_manager.py` | Manifest CRUD and temporary uv/PyTorch injection. |
+| `PyprojectManager` | `managers/pyproject_manager.py` | Manifest CRUD and disposable UV overlay materialization. |
 | `UVProjectManager` | `managers/uv_project_manager.py` | uv sync/add/remove operations. |
 | `OverlayManager` | `managers/overlay_manager.py` | Overlay loading and legacy `.local-uv-config` migration. |
 | `PyTorchBackendManager` | `managers/pytorch_backend_manager.py` | `.pytorch-backend`, GPU probing, torch source config. |
@@ -76,9 +76,9 @@ Machine-local sync inputs are not portable manifest truth:
 - Local uv overrides now flow through overlays, with legacy `.local-uv-config`
   migrated by `OverlayManager`.
 
-`PyprojectManager.uv_injection_context()` temporarily merges local overlays and
-PyTorch backend config into `pyproject.toml` for uv operations, then restores the
-tracked manifest in a `finally` path. Preserve that invariant.
+`UVProjectManager` copies the tracked manifest into a disposable project before
+materializing local overlays and PyTorch backend config for uv operations. Keep
+machine-local overlay materialization out of the tracked manifest.
 
 ## Dependency Criticality
 
@@ -101,7 +101,7 @@ Run tests from the repo root with uv:
 ```bash
 uv run pytest packages/core/tests/ -v
 uv run pytest packages/core/tests/unit/managers/test_pyproject_manager.py -v
-uv run pytest packages/core/tests/ -k "injection" -v
+uv run pytest packages/core/tests/ -k "overlay or pytorch" -v
 ```
 
 Core tests should usually exercise core APIs and fixtures rather than subprocess

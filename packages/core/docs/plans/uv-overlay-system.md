@@ -7,25 +7,37 @@
 
 ComfyGit environments currently embed ALL dependencies (including platform-specific packages like `sageattention`) directly in pyproject.toml. UV resolves all dependencies — including optional ones — during `uv sync`, which means packages that cannot be built on the local machine (e.g., CUDA-only packages on macOS) cause resolution failures even when the user never requested that extra.
 
-The existing injection system has two separate mechanisms for machine-local config:
+The earlier machine-local dependency system had two separate mechanisms:
 - `.pytorch-backend` — auto-detected PyTorch backend (custom format, auto-gitignored)
 - `.local-uv-config` — machine-specific UV sources/indexes (TOML, auto-gitignored)
 
-These are hard-coded into `uv_injection_context()` with separate code paths. There's no way for users to create their own injectable dependency sets (e.g., "GPU acceleration packages" or "development tools") that layer on top of the base environment.
+Those paths have converged on overlays. Sync/run copy the tracked
+`pyproject.toml` into a disposable project, materialize overlay-derived UV
+configuration there, run uv from the disposable project, then discard it.
+The tracked manifest is not mutated by local overlays.
 
-**The goal:** A composable overlay system where `.toml` files can inject additional dependencies, UV sources, constraints, and settings into the resolution — layered on top of the base pyproject.toml. Some overlays are shareable (checked into git), others are machine-local (gitignored). This enables environments to ship minimal portable dependencies while letting users opt into platform-specific acceleration packages.
+**The goal:** A composable overlay system where `.toml` files can add
+additional dependencies, UV sources, constraints, and settings into resolution,
+layered on top of the base pyproject.toml in a disposable project. Some
+overlays are shareable (checked into git), others are machine-local
+(gitignored). This enables environments to ship minimal portable dependencies
+while letting users opt into platform-specific acceleration packages.
 
 ## Proposed Solution
 
 ### Concept: UV Overlays
 
-An **overlay** is a standalone TOML file that declares additional packages and UV configuration to merge into pyproject.toml during sync/run. Overlays compose additively — multiple overlays can be stacked.
+An **overlay** is a standalone TOML file that declares additional packages and
+UV configuration to merge into a disposable pyproject during sync/run. Overlays
+compose additively — multiple overlays can be stacked.
 
 **Two types:**
 1. **Shared overlays** — Checked into git alongside the environment (e.g., `sageattention.toml`). Available to anyone who clones the environment. Opt-in at runtime.
 2. **Local overlays** — Machine-specific, auto-gitignored (e.g., dev source paths, private indexes). Always active when present.
 
-**PyTorch becomes a special-cased auto-generated overlay** — the probing logic stays, but it produces config in the same format as any other overlay, and the injection pipeline treats it uniformly.
+**PyTorch becomes a special-cased auto-generated overlay** — the probing logic
+stays, but it produces config in the same format as any other overlay, and
+disposable materialization treats it uniformly.
 
 ### Overlay File Format
 
@@ -38,7 +50,7 @@ Overlays use a flat TOML structure (similar to `uv.toml`, not the nested `[tool.
 description = "SageAttention GPU acceleration for CUDA systems"
 
 [dependencies]
-# Packages to inject into [project.dependencies]
+# Packages to materialize into [project.dependencies]
 packages = ["sageattention"]
 
 [sources]
@@ -57,7 +69,7 @@ requires-dist = ["torch"]
 requires-python = ">=3.9"
 
 [constraints]
-# Version constraints to inject (maps to [tool.uv.constraint-dependencies])
+# Version constraints to materialize (maps to [tool.uv.constraint-dependencies])
 packages = []
 
 [[index]]
@@ -89,7 +101,7 @@ Overlays can be activated three ways:
 
 1. **CLI flag (one-time):** `cg run --overlay sageattention` or `cg sync --overlay sageattention`
 2. **Persistent config:** `cg env-config overlays enable sageattention` (writes to `.overlay-config.toml`)
-3. **Always-on local:** `.local.toml` overlay is always injected when present (replaces `.local-uv-config`)
+3. **Always-on local:** `.local.toml` overlay is always applied when present (replaces `.local-uv-config`)
 
 `.overlay-config.toml` format:
 ```toml
@@ -114,11 +126,11 @@ Overlays merge **additively** in order: base pyproject.toml → local overlay �
 
 ### PyTorch Integration
 
-PyTorch stays special-cased for **probing** (auto-detection logic remains in `PyTorchBackendManager`), but the injection now goes through the same overlay pipeline:
+PyTorch stays special-cased for **probing** (auto-detection logic remains in `PyTorchBackendManager`), but materialization now goes through the same overlay pipeline:
 
 1. `PyTorchBackendManager.get_pytorch_config()` returns the same dict format it does now
-2. The injection pipeline converts it to overlay format internally
-3. PyTorch is always injected **last** so it wins on torch/torchvision/torchaudio conflicts
+2. The overlay manager converts it to overlay format internally
+3. PyTorch is always applied **last** so it wins on torch/torchvision/torchaudio conflicts
 
 The `.pytorch-backend` file stays as-is (probing state storage). No migration needed — it's an implementation detail of the PyTorch overlay generation.
 
@@ -132,7 +144,7 @@ Per project philosophy of "no legacy/backwards-compatible code": auto-migrate on
 
 1. **Create `OverlayConfig` model** — Dataclass for parsed overlay
    - Fields: description, dependencies, sources, settings, dependency_metadata, constraints, indexes
-   - `to_injection_payload() -> dict` — Convert to the existing `_inject_uv_config()` payload format
+   - `to_uv_payload() -> dict` — Convert to the UV pyproject payload format
    - Files: `packages/core/src/comfygit_core/models/overlay.py`
 
 2. **Create `OverlayManager`** — New manager class
@@ -144,12 +156,12 @@ Per project philosophy of "no legacy/backwards-compatible code": auto-migrate on
    - Auto-migrate `.local-uv-config` to `.cec/overlays/.local.toml` on first access
    - Files: `packages/core/src/comfygit_core/managers/overlay_manager.py`
 
-3. **Refactor `uv_injection_context()`** — Generalize to accept overlays
-   - New signature: `uv_injection_context(overlays: list[OverlayConfig])`
-   - Add dependency injection support (inject into `[project.dependencies]`)
-   - Add `dependency-metadata` injection into `[[tool.uv.dependency-metadata]]`
-   - Add `no-build-isolation-package` injection
-   - Keep strip-before-inject pattern for PyTorch
+3. **Materialize overlays into disposable projects**
+   - Use `PyprojectManager.apply_uv_overlays(overlays)` on generated project copies
+   - Add dependency materialization support for `[project.dependencies]`
+   - Add `dependency-metadata` materialization into `[[tool.uv.dependency-metadata]]`
+   - Add `no-build-isolation-package` materialization
+   - Keep strip-before-apply pattern for PyTorch
    - Files: `packages/core/src/comfygit_core/managers/pyproject_manager.py` (lines 466-539, 766-854)
 
 4. **Update `UVProjectManager.sync_project()`** — Use overlay pipeline
@@ -203,7 +215,7 @@ Per project philosophy of "no legacy/backwards-compatible code": auto-migrate on
 |------|---------|
 | `packages/core/src/comfygit_core/managers/overlay_manager.py` | **NEW** — Overlay loading, activation, collection |
 | `packages/core/src/comfygit_core/models/overlay.py` | **NEW** — OverlayConfig dataclass |
-| `packages/core/src/comfygit_core/managers/pyproject_manager.py` | Refactor `uv_injection_context()` and injection methods |
+| `packages/core/src/comfygit_core/managers/pyproject_manager.py` | Overlay materialization methods |
 | `packages/core/src/comfygit_core/managers/uv_project_manager.py` | Update sync to use overlay pipeline |
 | `packages/core/src/comfygit_core/core/environment.py` | Wire overlay collection into sync/run |
 | `packages/core/src/comfygit_core/managers/pytorch_backend_manager.py` | No changes — generates config consumed as overlay internally |
@@ -215,9 +227,9 @@ Per project philosophy of "no legacy/backwards-compatible code": auto-migrate on
 ## Testing Strategy
 
 - **Unit tests for OverlayManager:** Load/parse overlay files, collect in correct order, validate format
-- **Unit tests for overlay injection:** Verify dependencies, sources, constraints, metadata merge correctly into pyproject config
+- **Unit tests for overlay materialization:** Verify dependencies, sources, constraints, metadata merge correctly into pyproject config
 - **Unit test for migration:** `.local-uv-config` auto-migrates to `.local.toml`
-- **Integration test:** End-to-end sync with overlay applied, verify pyproject restored after sync
+- **Integration test:** End-to-end sync with overlay applied, verify tracked pyproject remains clean after sync
 - **2-3 tests per component** per project guidelines
 
 ## Open Questions

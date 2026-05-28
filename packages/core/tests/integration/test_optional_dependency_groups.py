@@ -9,6 +9,19 @@ from unittest.mock import patch
 from comfygit_core.models.exceptions import UVCommandError
 
 
+def run_sync_with_mocked_uv(test_env, sync_fn):
+    """Run env sync while mocking both durable and disposable uv sync paths."""
+    class FakeDisposableUV:
+        def sync(self, verbose=False, **flags):
+            return sync_fn(verbose=verbose, **flags)
+
+    with (
+        patch.object(test_env.uv_manager.uv, 'sync', side_effect=sync_fn),
+        patch.object(test_env.uv_manager.uv, 'for_cwd', return_value=FakeDisposableUV()),
+    ):
+        return test_env.sync()
+
+
 class TestOptionalDependencyGroups:
     """Test progressive dependency group installation with graceful fallback."""
 
@@ -46,8 +59,7 @@ class TestOptionalDependencyGroups:
             # Otherwise return success
             return CommandResult(stdout="", stderr="", returncode=0, success=True)
 
-        with patch.object(test_env.uv_manager.uv, 'sync', side_effect=mock_sync):
-            result = test_env.sync()
+        result = run_sync_with_mocked_uv(test_env, mock_sync)
 
         # ASSERT: Sync should succeed overall despite optional group failure
         assert result.success, "Sync should succeed despite optional group failure"
@@ -56,6 +68,11 @@ class TestOptionalDependencyGroups:
         # Failed optional groups should be tracked
         assert len(result.dependency_groups_failed) == 1
         assert result.dependency_groups_failed[0][0] == "optional-cuda"
+        assert result.dependency_groups_skipped == ["optional-cuda"]
+
+        # Portable manifest intent should be preserved.
+        groups_after_sync = test_env.pyproject.dependencies.get_groups()
+        assert "optional-cuda" in groups_after_sync
 
         # Required groups should succeed (installed in second call without optional-cuda)
         assert "comfyui-test-node" in result.dependency_groups_installed
@@ -84,8 +101,7 @@ class TestOptionalDependencyGroups:
                 )
             return CommandResult(stdout="", stderr="", returncode=0, success=True)
 
-        with patch.object(test_env.uv_manager.uv, 'sync', side_effect=mock_sync):
-            result = test_env.sync()
+        result = run_sync_with_mocked_uv(test_env, mock_sync)
 
         # ASSERT: Sync should fail (result.success = False)
         assert not result.success, "Sync should fail when required group fails"
@@ -109,8 +125,7 @@ class TestOptionalDependencyGroups:
             sync_calls.append(flags.copy())
             return CommandResult(stdout="", stderr="", returncode=0, success=True)
 
-        with patch.object(test_env.uv_manager.uv, 'sync', side_effect=track_sync):
-            result = test_env.sync()
+        result = run_sync_with_mocked_uv(test_env, track_sync)
 
         # ASSERT: Should have ONE sync call with all groups
         assert len(sync_calls) == 1, f"Expected 1 sync call, got {len(sync_calls)}"
@@ -159,8 +174,7 @@ class TestOptionalDependencyGroups:
                 )
             return CommandResult(stdout="", stderr="", returncode=0, success=True)
 
-        with patch.object(test_env.uv_manager.uv, 'sync', side_effect=selective_mock_sync):
-            result = test_env.sync()
+        result = run_sync_with_mocked_uv(test_env, selective_mock_sync)
 
         # ASSERT: Should track both successes and failures
         assert result.success, "Overall sync should succeed"
@@ -173,6 +187,8 @@ class TestOptionalDependencyGroups:
         assert len(result.dependency_groups_failed) == 1
         failed_group, error = result.dependency_groups_failed[0]
         assert failed_group == "optional-bad"
+        assert result.dependency_groups_skipped == ["optional-bad"]
+        assert "optional-bad" in test_env.pyproject.dependencies.get_groups()
 
     def test_all_optional_groups_fail_sync_still_succeeds(self, test_env):
         """If all optional groups fail but base deps succeed, sync should succeed."""
@@ -205,12 +221,15 @@ class TestOptionalDependencyGroups:
             # Succeed when no groups (base deps only)
             return CommandResult(stdout="", stderr="", returncode=0, success=True)
 
-        with patch.object(test_env.uv_manager.uv, 'sync', side_effect=fail_optional_sync):
-            result = test_env.sync()
+        result = run_sync_with_mocked_uv(test_env, fail_optional_sync)
 
         # ASSERT
         assert result.success, "Sync should succeed even if all optional groups fail"
         assert len(result.dependency_groups_failed) >= 1, "Should track at least one failed group"
+        assert set(result.dependency_groups_skipped) >= {"optional-a", "optional-b"}
+        groups_after_sync = test_env.pyproject.dependencies.get_groups()
+        assert "optional-a" in groups_after_sync
+        assert "optional-b" in groups_after_sync
         assert result.packages_synced, "Base dependencies should be installed"
 
     def test_empty_dependency_groups_works(self, test_env):

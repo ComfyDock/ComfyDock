@@ -278,7 +278,7 @@ class RegistryDataManager:
                     builtins_meta = metadata.get('builtin_versions', {})
                     if isinstance(builtins_meta, dict):
                         info['builtins_version'] = builtins_meta.get('version')
-            except:
+            except Exception:
                 pass
 
         return info

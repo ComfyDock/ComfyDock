@@ -60,7 +60,7 @@ def test_import_passes_no_manager_to_workspace(tmp_path: Path):
     )
 
     with patch.object(global_cmds, "_get_or_create_workspace", return_value=mock_workspace):
-        with patch("comfygit_core.utils.git.is_git_url", return_value=False):
+        with patch("comfygit_cli.global_commands._is_git_url", return_value=False):
             with pytest.raises(SystemExit) as exc:
                 global_cmds.import_env(args)
 

@@ -16,7 +16,17 @@ Validation: TEST
 
 Sync is allowed to recreate or replace the managed virtual environment. Users
 should not rely on manually installed packages surviving unless they are captured
-in manifest dependencies or local injection configuration.
+in manifest dependencies or local overlay configuration.
+
+### CGSYNC-LIFE-02A [PARTIAL]: Dry-run sync is a read-only planning path
+Validation: TEST
+
+Dry-run sync should build and return a reconciliation plan without mutating the
+tracked manifest, local overlay configuration, virtual environment, custom-node
+checkout directories, workflow copies, symlinks, completion markers, cache
+state, or gitignore entries. Implementation may still share planning code with
+real sync, but write-capable phases should be explicit and skipped unless the
+caller requested apply mode.
 
 ### CGSYNC-LIFE-03 [LIVE]: Run syncs unless explicitly bypassed
 Validation: TEST
@@ -137,6 +147,209 @@ Process-specific lifecycle authorities, such as `cg run` and the Manager
 orchestrator, may still decide when to stop, sync, and restart ComfyUI. They
 should not duplicate the status/log schema or observer server implementation.
 
+### CGSYNC-LIFE-10 [LIVE]: Environment mutations are serialized by an environment-local operation lock
+Validation: TEST
+
+Mutating environment operations should run under the environment operation lock
+so concurrent CLI, Manager, or runtime calls do not interleave writes to
+manifest, lockfiles, node checkouts, workflow copies, symlinks, and git state.
+The lock should cover sync, manager update, model/node/workflow mutations, git
+handoff operations, import finalization where practical, and destructive
+operations that reconcile runtime state.
+
+### CGSYNC-LIFE-10A [PARTIAL]: Sync orchestration has explicit plan and apply phases
+Validation: MIXED
+
+Environment sync is implemented as a small public facade over a coordinator with
+named apply phases. It should continue moving toward explicit plan/apply
+separation across the phases: plan environment state, reconcile Python
+dependencies, reconcile custom nodes, restore workflows, resolve or prepare
+models, configure symlinks, and mark completion. Each phase should report
+typed outcome data and make side effects explicit so import, pull/checkout,
+repair, materialization, and run supervision can reuse the same lifecycle
+without duplicating policy in `Environment`.
+
+### CGSYNC-LIFE-11 [LIVE]: Incomplete environments are hidden and cleaned up
+Validation: TEST
+
+Create, import, and materialization should mark an environment complete only
+after tracked source state and derived runtime state are sufficiently
+initialized. Workspace listing should exclude environments without the
+completion marker. Failure paths should attempt to remove incomplete
+environment directories while preserving completed environments and explicit
+user-data deletion semantics.
+
+## Import
+
+### CGSYNC-IMPORT-01 [LIVE]: Import is an authoring setup flow
+Validation: MIXED
+
+Normal import should prepare an editable local environment for a human user:
+preserve git identity/remotes for git imports, initialize or restore tracked
+source state for bundle and directory imports, restore workflows into ComfyUI,
+install/register Manager unless headless mode is requested, and permit
+import-specific commits and softer sync failure handling. Materialization remains
+the runtime hydration flow with stricter defaults described in
+`docs/specs/environment-materialization-lifecycle.md`.
+
+## Custom Node Lifecycle
+
+### CGSYNC-NODE-01 [LIVE]: Node install and update mutate manifest, filesystem, and uv as one lifecycle
+Validation: TEST
+
+Adding or updating a registry/git custom node should prepare lookup metadata,
+cached source contents, requirement metadata, manifest changes, filesystem
+changes, and uv sync as one guarded operation. On install/update failure, core
+should restore the previous manifest state and best-effort restore the previous
+materialized node directory.
+
+### CGSYNC-NODE-02 [LIVE]: Core reviewed dependency apply is fingerprint-guarded
+Validation: TEST
+
+Applying a reviewed node dependency change must regenerate the preview under the
+environment operation lock and verify the accepted baseline, diff, and proposed
+fingerprints before mutating the environment. Stale accepted previews must fail
+instead of applying to a changed environment.
+
+### CGSYNC-NODE-03 [PARTIAL]: CLI reviewed dependency apply remains future work
+Validation: HUMAN_REVIEW
+
+Core and Manager support reviewed dependency apply. CLI may detect and display
+dependency conflicts and dependency previews, but it does not yet expose the
+same first-class reviewed apply flow.
+
+### CGSYNC-NODE-04 [LIVE]: Optional dependency fallback does not rewrite portable intent
+Validation: TEST
+
+If a uv sync operation discovers that an optional dependency group fails on the
+current machine, core should return typed outcome data describing the failed and
+skipped groups. Retrying the current sync while excluding those groups is a
+local operation choice. The portable dependency group remains in
+`pyproject.toml` unless the user explicitly edits or removes that optional
+dependency intent.
+
+## Local Configuration And Overlays
+
+### CGSYNC-LOCAL-01 [LIVE]: Overlay materialization is disposable local dependency configuration
+Validation: TEST
+
+Local, shared, stock, and PyTorch overlays may materialize dependencies,
+sources, indexes, constraints, and uv settings only in disposable uv project
+copies during uv resolution.
+`overlays/.local.toml` and `.overlay-config.toml` are machine-local activation
+state; shared non-local overlays may be portable source files.
+
+Overlay application must never mutate the tracked manifest file for sync/run
+resolution.
+
+### CGSYNC-LOCAL-02 [LIVE]: Overlay collection order is deterministic and PyTorch wins last
+Validation: TEST
+
+Overlay collection should apply in deterministic order: local overlay first,
+active overlays sorted canonically, CLI one-time overlays, then generated
+PyTorch overlay. Platform-incompatible overlays should be skipped rather than
+forcing invalid local dependency state.
+
+### CGSYNC-LOCAL-03 [LIVE]: Operation commands do not persist PyTorch backend overrides
+Validation: TEST
+
+Create/import/materialize may auto-detect and save a backend in
+`.pytorch-backend`. Runtime operation commands such as sync, run, and pull
+should read or auto-probe the environment-local backend when no override is
+given. A `--torch-backend` override on those commands is a one-time sync input
+and should not rewrite the saved backend file.
+
+### CGSYNC-LOCAL-03A [LIVE]: Auto PyTorch backend probing falls back to CPU
+Validation: TEST
+
+When create/import/materialize ask for PyTorch backend `auto`, backend detection
+should prefer uv's auto-detected backend but should not fail the whole
+environment setup solely because that auto-selected PyTorch wheel index is
+temporarily unavailable or unsupported on the current machine. If the auto probe
+fails before resolving versions, core may retry the probe with the `cpu` backend
+and save that resolved backend locally. Explicit backend selections such as
+`cu128` or `rocm6.3` should still fail loudly when their probe cannot resolve.
+
+### CGSYNC-LOCAL-04 [LIVE]: Overlay-aware uv resolution uses disposable project copies
+Validation: TEST
+
+Sync, run-preflight sync, pull reconciliation, materialization, and other
+overlay-aware uv resolution paths should build a disposable project copy before
+running uv with materialized local state. The disposable project should live under a
+gitignored environment-local scratch directory such as `.cec/.comfygit-tmp/`,
+and each new operation should remove stale transaction directories before
+creating a fresh one.
+
+The project copy should include the files uv needs to resolve consistently:
+`pyproject.toml`, `.python-version`, `package_config.toml`, `.pytorch-backend`,
+`.overlay-config.toml`, shared/local overlay files, and any existing `uv.lock`.
+Overlays are applied only to the copied `pyproject.toml`. The tracked
+environment manifest must not be modified by overlay application, even
+temporarily.
+
+The uv process may still target the real managed virtualenv by setting
+`UV_PROJECT_ENVIRONMENT` to the environment's runtime venv while using the
+disposable project directory as the uv project root. If uv writes a lockfile, core
+may copy the resulting `uv.lock` back to `.cec/uv.lock` only because that lockfile
+is machine-local runtime state. The temporary `pyproject.toml` must never be
+copied back after sync/run.
+
+Relative local path sources need explicit handling when copied into a temporary
+project root. Core should either persist local source paths as absolute paths or
+rewrite relative local paths in the disposable copy so the solve refers to the
+same source location as the real environment.
+
+### CGSYNC-LOCAL-05 [PLANNED]: Dependency mutation separates manifest edits from overlay-aware sync
+Validation: TEST
+
+Commands that intentionally mutate portable dependency intent, such as
+`cg py add`, should write only the requested portable manifest change to the real
+environment `pyproject.toml`. They should not apply local overlays or PyTorch
+backend state directly to that tracked file.
+
+After the portable manifest edit is recorded, the command should perform
+resolution and installation through the same disposable overlay-aware uv project
+used by sync. This makes dependency mutation respect local backend/source/index
+policy while preserving the manifest boundary between portable intent and
+machine-local solve inputs.
+
+For simple additive dependency writes, core may use uv in a manifest-only mode
+such as `uv add --frozen` when supported, then run normal overlay-aware sync.
+Operations that cannot be represented as a manifest-only uv edit should use an
+equivalent core-owned manifest mutation plus overlay-aware sync, rather than
+mutating the tracked manifest with local overlay state.
+
+## Workflow Resolution
+
+### CGSYNC-WF-01 [LIVE]: Workflow resolution writeback is owned by one manifest reconciler
+Validation: TEST
+
+Workflow resolution may discover custom-node package mappings, built-in node
+usage, model dependencies, manual model dependencies, download intents,
+criticality, and path/category fixes. The conversion from a resolution result to
+portable manifest edits should be owned by one core reconciler so criticality,
+manual dependency preservation, source/download intent persistence, and node
+package writeback cannot drift across multiple call sites. Workflow JSON path
+rewriting, cache invalidation, and pending download execution are separate side
+effects that should remain outside the manifest reconciler.
+
+### CGSYNC-WF-02 [LIVE]: Workflow caches are invalidated by semantic analysis and resolution inputs
+Validation: TEST
+
+Workflow dependency and resolution caches may use file metadata as fast lookup
+keys, but cache correctness must be based on the semantic inputs that affect
+parsing and resolution. Workflow dependency analysis must be invalidated when the
+workflow file content changes or when local derived ComfyUI metadata that affects
+parsing changes, including built-in node inventory, folder path mappings, and
+generated model-loader metadata.
+
+Workflow resolution may reuse cached dependency analysis only when the analysis
+inputs are still valid. Resolution must be recomputed when manifest workflow
+model/node data, model index candidates, registry node mappings, package aliases,
+or resolver policy versions change. Refreshing local ComfyUI metadata must
+invalidate cached workflow analysis/resolution and refresh resolver state that
+was constructed from that metadata.
+
 ## Git And Remote Flows
 
 ### CGSYNC-GIT-01 [LIVE]: Commit records environment truth changes
@@ -158,20 +371,52 @@ Validation: TEST
 When git operations change tracked environment state, sync/repair should reconcile
 the derived runtime so the local environment matches the checked-out commit.
 
-## Readiness And Handoff
+### CGSYNC-GIT-04 [LIVE]: Git handoff operations reconcile node, package, and workflow state after tree changes
+Validation: TEST
 
-### CGSYNC-READY-01 [PARTIAL]: Core exposes a UI-agnostic readiness result
+Checkout, hard reset, branch switch, merge, revert, and pull should reconcile
+derived environment state after changing tracked `.cec` state. Reconciliation
+should reset manifest readers, reconcile custom-node filesystem state, sync uv
+with local PyTorch/overlay materialization, and restore tracked workflows into ComfyUI.
+Branch switch may preserve uncommitted workflow edits only when the target branch
+does not overwrite them.
+
+## Run Supervision
+
+### CGSYNC-RUN-01 [LIVE]: `cg run` supervises sync, restart, and environment switch lifecycle
 Validation: MIXED
 
-Core should provide a structured readiness result that callers can use for
-export, push, build planning, and future deploy gates. The result should
+`cg run` should sync before launching ComfyUI unless explicitly bypassed,
+forward ComfyUI arguments, set ComfyGit runtime environment variables, and honor
+well-known child exit codes for restart and environment switch. Restart should
+force a fresh sync before relaunch. Environment switch should consume the target
+request, sync the target environment, start target ComfyUI, and update shared
+switch status/logs.
+
+### CGSYNC-RUN-02 [LIVE]: Environment switch completion requires ComfyUI HTTP readiness
+Validation: TEST
+
+During supervisor-managed environment switching, the observer must not report
+`complete` merely because the target process was started. It should move through
+startup/validation states and only publish `complete` after the target ComfyUI
+HTTP endpoint responds, mapping wildcard listen addresses to a local readiness
+probe host.
+
+## Readiness And Handoff
+
+### CGSYNC-READY-01 [PARTIAL]: Core exposes UI-agnostic readiness results
+Validation: MIXED
+
+Core should provide structured readiness results that callers can use for
+export, push, build planning, and future deploy gates. These results should
 separate hard source-state blockers from reproducibility warnings and should not
-contain CLI or manager presentation decisions.
+contain CLI, manager, or Cloud presentation decisions.
 
 Core now exposes the local handoff readiness result used by Manager export,
-Manager push preview, and CLI export flows. This remains partial until workflow
-contract readiness, runtime readiness, and build-plan readiness consume
-the same shape.
+Manager push preview, and CLI export flows. Core also exposes a build-readiness
+projection that consumes the same typed manifest snapshot and produces dependency
+proof items for build/runtime planners. This remains partial until runtime
+readiness and source-candidate repair consume the same result family.
 
 Workflow contract readiness includes API prompt artifact availability. If a
 manifest execution contract references `workflow_api/<name>.api.json`, handoff
@@ -187,8 +432,9 @@ deploy, and runtime adapter code should not reimplement divergent rules for the 
 manifest state.
 
 Core now owns the current model-source and custom-node provenance semantics used
-by Manager and CLI handoff flows. Source candidate discovery and
-dependency-proof integration are still planned.
+by Manager and CLI handoff flows. Build-readiness dependency proof now consumes
+these manifest semantics for custom-node criticality and source availability.
+Source candidate discovery is still planned.
 
 ### CGSYNC-READY-03 [PLANNED]: Source candidate discovery supports readiness repair
 Validation: MIXED
@@ -213,14 +459,33 @@ Live import health is process-local runtime evidence. Manager and serve
 runtimes may layer that evidence into their own status surfaces, but they must
 not treat it as a core sync input or rewrite manifest criticality from it.
 
+### CGSYNC-READY-05 [LIVE]: Handoff readiness blocks invalid or missing workflow API prompt artifacts
+Validation: TEST
+
+If a workflow execution contract references a `workflow_api/*.api.json` artifact,
+export and push-readiness flows must treat missing or invalid artifact paths as
+handoff blockers. Relative artifact paths must resolve inside the manifest
+directory; absolute paths or path traversal should be invalid.
+
 ## Build Compatibility
 
-### CGSYNC-BUILD-01 [PLANNED]: Build readiness uses the same manifest semantics as local sync
+### CGSYNC-BUILD-01 [PARTIAL]: Build readiness uses the same manifest semantics as local sync
 Validation: MIXED
 
 Build planning should read the same manifest fields core writes locally. If a
 runtime needs a field for reproducibility, core/manager should make that field
 first-class rather than relying on adapter-specific heuristics.
+
+Core now exposes build-readiness helpers that classify Python dependencies,
+tracked uv source mappings, custom node package provenance and criticality,
+workflow model source/cache availability, and workflow contract summaries from
+`EnvironmentManifestSnapshot` or parsed `pyproject.toml`. Local path/workspace
+uv sources are not portable build inputs and should block build readiness unless
+they are moved into machine-local overlay configuration or replaced with a remote
+source. Cloud and runtime adapters may add target class, base runtime, source
+validation policy, asset catalog state, persistence, and deployment
+orchestration around that proof, but should not fork the manifest-derived
+dependency semantics.
 
 Materialization is the local/headless hydration step that build and runtime
 adapters can call before running smoke tests or serve endpoints. It should not
@@ -233,4 +498,5 @@ Validation: MIXED
 Users should be able to see and fix missing required model/node source metadata
 before pushing a commit that another runtime cannot build. Manager has a first-pass
 readiness surface for export/push handoff backed by a core readiness service;
-build planner integration is still planned.
+build planners can now consume core build-readiness proofs. Source-candidate
+repair UI remains follow-on work.

@@ -1,10 +1,13 @@
 """Common utilities for ComfyUI Environment Capture."""
 
 import subprocess
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import CDProcessError
+from .redaction import redact_command, redact_sensitive_text
 
 logger = get_logger(__name__)
 
@@ -16,7 +19,8 @@ def run_command(
     capture_output: bool = True,
     text: bool = True,
     check: bool = False,
-    env: dict | None = None
+    env: dict | None = None,
+    output_callback: Callable[[str], None] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a subprocess command with proper error handling.
 
@@ -28,6 +32,7 @@ def run_command(
         text: Whether to decode output as text
         check: Whether to raise exception on non-zero exit code
         env: Environment variables to pass to subprocess
+        output_callback: Optional callback for streaming decoded output lines
 
     Returns:
         CompletedProcess instance
@@ -36,28 +41,73 @@ def run_command(
         CDProcessError: If command fails and check=True
         subprocess.TimeoutExpired: If command times out
     """
+    safe_cmd = redact_command(cmd)
     try:
-        logger.debug(f"Running command: {' '.join(cmd)}")
+        logger.debug(f"Running command: {safe_cmd}")
         if cwd:
             logger.debug(f"Working directory: {cwd}")
 
-        result = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd else None,
-            check=check,
-            timeout=timeout,
-            capture_output=capture_output,
-            text=text,
-            env=env
-        )
+        if output_callback is not None:
+            if not text:
+                raise ValueError("output_callback requires text=True")
+
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(cwd) if cwd else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+                bufsize=1,
+            )
+            output_parts: list[str] = []
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    output_parts.append(line)
+                    if not capture_output:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                    stripped = line.rstrip("\r\n")
+                    if stripped:
+                        output_callback(redact_sensitive_text(stripped))
+                returncode = process.wait(timeout=timeout)
+            except Exception:
+                process.kill()
+                process.wait()
+                raise
+
+            result = subprocess.CompletedProcess(
+                args=cmd,
+                returncode=returncode,
+                stdout="".join(output_parts),
+                stderr="",
+            )
+            if check and result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    cmd,
+                    output=result.stdout,
+                    stderr=result.stderr,
+                )
+        else:
+            result = subprocess.run(
+                cmd,
+                cwd=str(cwd) if cwd else None,
+                check=check,
+                timeout=timeout,
+                capture_output=capture_output,
+                text=text,
+                env=env
+            )
 
         return result
 
     except subprocess.CalledProcessError as e:
         # Transform CalledProcessError into our custom exception
-        error_msg = f"Command failed with exit code {e.returncode}: {' '.join(cmd)}"
+        error_msg = f"Command failed with exit code {e.returncode}: {safe_cmd}"
         if e.stderr:
-            error_msg += f"\nStderr: {e.stderr}"
+            error_msg += f"\nStderr: {redact_sensitive_text(e.stderr)}"
         logger.error(error_msg)
         raise CDProcessError(
             message=error_msg,
@@ -65,14 +115,14 @@ def run_command(
             stderr=e.stderr,
             stdout=e.stdout,
             returncode=e.returncode
-        )
+        ) from e
     except subprocess.TimeoutExpired:
-        error_msg = f"Command timed out after {timeout}s: {' '.join(cmd)}"
+        error_msg = f"Command timed out after {timeout}s: {safe_cmd}"
         logger.error(error_msg)
         # Let TimeoutExpired propagate - it's specific and useful
         raise
     except Exception as e:
-        error_msg = f"Error running command {' '.join(cmd)}: {e}"
+        error_msg = f"Error running command {safe_cmd}: {redact_sensitive_text(e)}"
         logger.error(error_msg)
         raise
 
@@ -139,7 +189,7 @@ def log_requirements_content(requirements_file: Path, show_all: bool = True) -> 
         lines = content.split('\n')
 
         # Count non-comment, non-empty lines
-        package_lines = [l for l in lines if l.strip() and not l.strip().startswith('#')]
+        package_lines = [line for line in lines if line.strip() and not line.strip().startswith('#')]
 
         #
         separator = '=' * 60

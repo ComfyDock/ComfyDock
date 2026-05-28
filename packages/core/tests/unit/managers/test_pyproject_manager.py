@@ -6,7 +6,9 @@ from tempfile import TemporaryDirectory
 import pytest
 import tomlkit
 from comfygit_core.managers.pyproject_manager import PyprojectManager
+from comfygit_core.models.manifest import ManifestModel
 from comfygit_core.models.shared import NodeInfo
+from tomlkit.toml_document import TOMLDocument
 
 
 @pytest.fixture
@@ -65,7 +67,7 @@ class TestModelHandlerFormatting:
 
         # Verify inline table format (all on one line)
         lines = content.split('\n')
-        model_line = [l for l in lines if 'abc123' in l][0]
+        model_line = [line for line in lines if 'abc123' in line][0]
         assert 'filename' in model_line
         assert 'size' in model_line
         assert 'relative_path' in model_line
@@ -94,11 +96,79 @@ class TestModelHandlerFormatting:
         assert "xyz789" in content
 
 
+class TestPyprojectManifestDomainApi:
+    """Pyproject-backed manifest operations hide TOML table mechanics."""
+
+    def test_load_returns_toml_document(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        assert isinstance(manager.load(), TOMLDocument)
+
+    def test_headless_marker_preserves_child_tables(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        manager.nodes.add(
+            NodeInfo(
+                name="comfygit-manager",
+                version="0.1.2",
+                source="registry",
+                registry_id="comfygit-manager",
+            ),
+            "comfygit-manager",
+        )
+
+        manager.manifest.set_headless()
+
+        config = manager.load()
+        assert config["tool"]["comfygit"]["headless"] is True
+        assert "comfygit-manager" in config["tool"]["comfygit"]["nodes"]
+
+        assert manager.manifest.clear_headless() is True
+        assert "headless" not in manager.load()["tool"]["comfygit"]
+
+    def test_edit_batches_domain_mutations(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        manager.models.add_model(
+            ManifestModel(
+                hash="abc123",
+                filename="model.safetensors",
+                size=10,
+                relative_path="checkpoints/model.safetensors",
+                category="checkpoints",
+            )
+        )
+
+        with manager.manifest.edit() as edit:
+            edit.register_node(
+                "my-node",
+                NodeInfo(
+                    name="my-node",
+                    source="development",
+                    registry_id="my-node",
+                ),
+            )
+            edit.update_node_git_info(
+                "my-node",
+                repository="https://github.com/example/my-node.git",
+                branch="main",
+                pinned_commit="abcde12345",
+            )
+            assert edit.add_model_source("abc123", "https://example.com/model.safetensors")
+
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        node = snapshot.nodes["my-node"]
+        assert node.repository == "https://github.com/example/my-node.git"
+        assert node.branch == "main"
+        assert node.pinned_commit == "abcde12345"
+        assert snapshot.models["abc123"].sources == ["https://example.com/model.safetensors"]
+
+
 class TestWorkflowExecutionContractLoading:
     """Test workflow execution contracts load through the canonical model."""
 
     def test_get_execution_contract_loads_workflow_contract_model(self, temp_pyproject):
-        from comfygit_core.models import WorkflowExecutionContract as PublicWorkflowExecutionContract
+        from comfygit_core.models import (
+            WorkflowExecutionContract as PublicWorkflowExecutionContract,
+        )
         from comfygit_core.models.workflow_contract import WorkflowExecutionContract
 
         manager = PyprojectManager(temp_pyproject)
@@ -192,7 +262,6 @@ class TestWorkflowExecutionContractLoading:
 
     def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
         import tomllib
-
         from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
@@ -386,10 +455,17 @@ class TestWorkflowExecutionContractLoading:
         assert snapshot.models["modelhash"].relative_path == "checkpoints/model.safetensors"
 
         workflow = snapshot.workflows["simple_txt2img"]
+        assert snapshot.get_node("demo-node") == snapshot.nodes["demo-node"]
+        assert snapshot.get_model("modelhash") == snapshot.models["modelhash"]
+        assert snapshot.get_workflow("simple_txt2img") == workflow
         assert workflow.path == "workflows/simple_txt2img.json"
         assert workflow.node_packs == ("demo-node",)
         assert workflow.custom_node_map["DemoNodeType"] == "demo-node"
         assert workflow.models[0].hash == "modelhash"
+        assert snapshot.get_workflow_models("simple_txt2img") == workflow.models
+        assert snapshot.get_workflow_custom_node_map("simple_txt2img") == workflow.custom_node_map
+        assert snapshot.get_workflow_models("missing") == ()
+        assert snapshot.get_workflow_custom_node_map("missing") == {}
         assert workflow.has_execution_contract is True
         assert workflow.execution_contract is not None
         assert workflow.execution_contract.active_contract is not None
@@ -427,8 +503,8 @@ class TestWorkflowExecutionContractLoading:
         assert "req123" in content
         assert "opt456" in content
 
-    def test_remove_all_models_cleans_sections(self, temp_pyproject):
-        """Test removing all models cleans up empty sections."""
+    def test_cleanup_orphaned_models_cleans_sections(self, temp_pyproject):
+        """Test orphan cleanup removes the empty global model section."""
         from comfygit_core.models.manifest import ManifestModel
         manager = PyprojectManager(temp_pyproject)
 
@@ -438,9 +514,8 @@ class TestWorkflowExecutionContractLoading:
         manager.models.add_model(model1)
         manager.models.add_model(model2)
 
-        # Remove all models
-        manager.models.remove_model("hash1")
-        manager.models.remove_model("hash2")
+        # Remove all unreferenced models
+        manager.models.cleanup_orphans()
 
         # Read the raw TOML output
         with open(temp_pyproject) as f:
@@ -598,7 +673,7 @@ class TestWorkflowModelDeduplication:
 
         manager = PyprojectManager(temp_pyproject)
 
-        # Create unresolved model entry (what analyze_workflow creates)
+        # Create unresolved model entry (what workflow analysis/resolution creates)
         unresolved_ref = WorkflowNodeWidgetRef(
             node_id="4",
             node_type="CheckpointLoaderSimple",
@@ -795,6 +870,142 @@ class TestPyprojectCaching:
         manager2.load()
         assert manager1.get_load_stats()['instance_loads'] == 1
         assert manager2.get_load_stats()['instance_loads'] == 1
+
+    def test_edit_saves_once_on_success(self, temp_pyproject):
+        """edit() should save mutations when the context exits successfully."""
+        manager = PyprojectManager(temp_pyproject)
+
+        with manager.edit() as config:
+            config["project"]["version"] = "2.0.0"
+
+        assert manager.load(force_reload=True)["project"]["version"] == "2.0.0"
+
+    def test_edit_failure_invalidates_cache_without_saving(self, temp_pyproject):
+        """Failed edit() contexts should not leave mutated cache state behind."""
+        manager = PyprojectManager(temp_pyproject)
+        original = temp_pyproject.read_text(encoding="utf-8")
+        manager.load()
+
+        with pytest.raises(RuntimeError, match="forced edit failure"):
+            with manager.edit() as config:
+                config["project"]["version"] = "9.9.9"
+                raise RuntimeError("forced edit failure")
+
+        assert temp_pyproject.read_text(encoding="utf-8") == original
+        assert manager.load()["project"]["version"] == "0.1.0"
+
+    def test_edit_batches_handler_mutations(self, temp_pyproject, monkeypatch):
+        """Handlers that accept a config can participate in one manifest save."""
+        from comfygit_core.models.manifest import ManifestModel, ManifestWorkflowModel
+        from comfygit_core.models.workflow import WorkflowNodeWidgetRef
+
+        manager = PyprojectManager(temp_pyproject)
+        original_save = manager.save
+        save_count = 0
+
+        def counting_save(config):
+            nonlocal save_count
+            save_count += 1
+            original_save(config)
+
+        monkeypatch.setattr(manager, "save", counting_save)
+
+        with manager.edit() as config:
+            manager.workflows.set_workflow_models(
+                "batch-workflow",
+                [
+                    ManifestWorkflowModel(
+                        filename="model.safetensors",
+                        category="checkpoints",
+                        criticality="required",
+                        status="resolved",
+                        hash="abc123",
+                        nodes=[
+                            WorkflowNodeWidgetRef(
+                                node_id="1",
+                                node_type="CheckpointLoaderSimple",
+                                widget_index=0,
+                                widget_value="model.safetensors",
+                            )
+                        ],
+                    )
+                ],
+                config=config,
+            )
+            manager.models.add_model(
+                ManifestModel(
+                    hash="abc123",
+                    filename="model.safetensors",
+                    size=1024,
+                    relative_path="checkpoints/model.safetensors",
+                    category="checkpoints",
+                ),
+                config=config,
+            )
+            manager.models.cleanup_orphans(config=config)
+
+        assert save_count == 1
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        assert "batch-workflow" in snapshot.workflows
+        assert "abc123" in snapshot.models
+
+
+class TestSystemUVDependency:
+    """Test ComfyGit-managed uv dependency invariants."""
+
+    def test_ensure_system_uv_dependency_adds_required_manifest_state(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        changed = manager.ensure_system_uv_dependency()
+
+        assert changed is True
+        config = manager.load()
+        assert config["dependency-groups"]["comfygit-system"] == ["uv>=0.11.8"]
+        assert config["tool"]["uv"]["override-dependencies"] == ["uv>=0.11.8"]
+        assert "constraint-dependencies" not in config["tool"]["uv"]
+
+    def test_ensure_system_uv_dependency_noop_preserves_cache_and_file(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        PyprojectManager.reset_load_stats()
+
+        assert manager.ensure_system_uv_dependency() is True
+        cached_config = manager.load()
+        loads_after_cache_fill = manager.get_load_stats()["instance_loads"]
+        bytes_before = temp_pyproject.read_bytes()
+        mtime_before = temp_pyproject.stat().st_mtime_ns
+
+        assert manager.ensure_system_uv_dependency() is False
+
+        assert temp_pyproject.read_bytes() == bytes_before
+        assert temp_pyproject.stat().st_mtime_ns == mtime_before
+        assert manager.get_load_stats()["instance_loads"] == loads_after_cache_fill
+        assert manager.load() is cached_config
+
+    def test_ensure_system_uv_dependency_repairs_conflicting_uv_entries(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+        config = manager.load()
+        config["dependency-groups"] = {
+            "comfygit-system": ["uv==0.10.0", "example-package>=1"],
+        }
+        config["tool"]["uv"] = {
+            "constraint-dependencies": ["uv<0.11", "numpy>=2"],
+            "override-dependencies": ["requests>=2", "uv==0.10.0"],
+        }
+        manager.save(config)
+
+        changed = manager.ensure_system_uv_dependency()
+
+        assert changed is True
+        config = manager.load(force_reload=True)
+        assert config["dependency-groups"]["comfygit-system"] == [
+            "example-package>=1",
+            "uv>=0.11.8",
+        ]
+        assert config["tool"]["uv"]["constraint-dependencies"] == ["numpy>=2"]
+        assert config["tool"]["uv"]["override-dependencies"] == [
+            "requests>=2",
+            "uv>=0.11.8",
+        ]
 
 
 class TestUVConfigFormatting:
@@ -1028,76 +1239,6 @@ class TestInitialPyprojectConfig:
 
 class TestExcludeDependencies:
     """Test exclude-dependencies handling in UV config."""
-
-    def test_ensure_exclude_dependencies_adds_new(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies adds new packages."""
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add exclude dependencies
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "some-other-package"])
-
-        # Read config
-        with open(temp_pyproject) as f:
-            content = f.read()
-
-        # Verify exclusions added
-        assert "[tool.uv]" in content
-        assert "exclude-dependencies" in content
-        assert "opencv-python" in content
-        assert "some-other-package" in content
-
-    def test_ensure_exclude_dependencies_idempotent(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies is idempotent."""
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add exclusions twice
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python"])
-
-        # Load config
-        config = manager.load()
-        exclusions = config['tool']['uv'].get('exclude-dependencies', [])
-
-        # Should only appear once
-        assert exclusions.count("opencv-python") == 1
-
-    def test_ensure_exclude_dependencies_merges_with_existing(self, temp_pyproject):
-        """Test that ensure_exclude_dependencies merges with existing exclusions."""
-        # Manually create config with existing exclusions
-        initial_config = {
-            "project": {
-                "name": "test-project",
-                "version": "0.1.0",
-                "requires-python": ">=3.11",
-                "dependencies": [],
-            },
-            "tool": {
-                "comfygit": {
-                    "comfyui_version": "v0.3.60",
-                    "python_version": "3.11",
-                },
-                "uv": {
-                    "exclude-dependencies": ["existing-package"]
-                }
-            }
-        }
-
-        with open(temp_pyproject, 'w') as f:
-            tomlkit.dump(initial_config, f)
-
-        manager = PyprojectManager(temp_pyproject)
-
-        # Add new exclusions
-        manager.uv_config.ensure_exclude_dependencies(["opencv-python", "existing-package"])
-
-        # Load config
-        config = manager.load()
-        exclusions = config['tool']['uv']['exclude-dependencies']
-
-        # Should have both, no duplicates
-        assert len(exclusions) == 2
-        assert "existing-package" in exclusions
-        assert "opencv-python" in exclusions
 
     def test_set_exclude_dependencies_replaces_existing(self, temp_pyproject):
         """set_exclude_dependencies should replace, not merge."""

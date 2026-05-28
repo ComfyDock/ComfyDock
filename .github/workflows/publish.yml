@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/core/pyproject.toml"
+      - "packages/studio-runtime/pyproject.toml"
       - "packages/cli/pyproject.toml"
       - "packages/studio/package.json"
 
@@ -30,15 +31,17 @@ jobs:
         id: extract
         run: |
           CORE_VERSION=$(grep -m1 '^version' packages/core/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
+          STUDIO_RUNTIME_VERSION=$(grep -m1 '^version' packages/studio-runtime/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
           CLI_VERSION=$(grep -m1 '^version' packages/cli/pyproject.toml | sed 's/.*"\([^"]*\)".*/\1/')
           STUDIO_VERSION=$(grep -m1 '"version"' packages/studio/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')
 
           echo "Core version: $CORE_VERSION"
+          echo "Studio runtime version: $STUDIO_RUNTIME_VERSION"
           echo "CLI version: $CLI_VERSION"
           echo "Studio version: $STUDIO_VERSION"
 
-          if [ "$CORE_VERSION" != "$CLI_VERSION" ] || [ "$CORE_VERSION" != "$STUDIO_VERSION" ]; then
-            echo "::error::Version mismatch! core=$CORE_VERSION cli=$CLI_VERSION studio=$STUDIO_VERSION"
+          if [ "$CORE_VERSION" != "$STUDIO_RUNTIME_VERSION" ] || [ "$CORE_VERSION" != "$CLI_VERSION" ] || [ "$CORE_VERSION" != "$STUDIO_VERSION" ]; then
+            echo "::error::Version mismatch! core=$CORE_VERSION studio-runtime=$STUDIO_RUNTIME_VERSION cli=$CLI_VERSION studio=$STUDIO_VERSION"
             echo "Lockstep versioning requires all release artifacts to have the same version."
             echo "Run: make bump-version VERSION=X.Y.Z"
             exit 1
@@ -52,9 +55,9 @@ jobs:
         run: |
           VERSION="${{ steps.extract.outputs.version }}"
 
-          # Check if both Python packages exist on PyPI (not just core).
+          # Check if all Python packages exist on PyPI (not just core).
           ALL_PUBLISHED=true
-          for PKG in comfygit-core comfygit; do
+          for PKG in comfygit-core comfygit-studio comfygit; do
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/$PKG/$VERSION/json")
             if [ "$HTTP_STATUS" != "200" ]; then
               echo "$PKG $VERSION not found on PyPI"
@@ -86,9 +89,17 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Build comfygit-core
-        run: uv build --package comfygit-core --no-sources
+        run: |
+          VERSION="${{ needs.check-versions.outputs.version }}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/comfygit-core/$VERSION/json")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "comfygit-core $VERSION already exists on PyPI, skipping build/publish"
+            exit 0
+          fi
+          uv build --package comfygit-core --no-sources
 
       - name: Publish to PyPI
+        if: ${{ hashFiles('dist/*') != '' }}
         run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
 
   wait-for-pypi:
@@ -119,8 +130,8 @@ jobs:
           echo "::error::Timeout waiting for comfygit-core $VERSION on PyPI after $((MAX_ATTEMPTS * SLEEP_SECONDS))s"
           exit 1
 
-  publish-cli:
-    name: Publish CLI to PyPI
+  publish-studio-runtime:
+    name: Publish Studio Runtime to PyPI
     needs: [check-versions, wait-for-pypi]
     runs-on: ubuntu-latest
     environment: pypi
@@ -138,16 +149,75 @@ jobs:
           cache: npm
           cache-dependency-path: packages/studio/package-lock.json
 
-      - name: Build bundled Studio
+      - name: Build bundled Studio runtime
         run: |
+          VERSION="${{ needs.check-versions.outputs.version }}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/comfygit-studio/$VERSION/json")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "comfygit-studio $VERSION already exists on PyPI, skipping build/publish"
+            exit 0
+          fi
           npm --prefix packages/studio ci
           npm --prefix packages/studio run build
           python3 dev/scripts/sync-studio-static.py
-
-      - name: Build comfygit (CLI)
-        run: uv build --package comfygit --no-sources
+          uv build --package comfygit-studio --no-sources
 
       - name: Publish to PyPI
+        if: ${{ hashFiles('dist/*') != '' }}
+        run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
+
+  wait-for-studio-runtime:
+    name: Wait for Studio Runtime Availability
+    needs: [check-versions, publish-studio-runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for comfygit-studio on PyPI
+        run: |
+          VERSION="${{ needs.check-versions.outputs.version }}"
+          MAX_ATTEMPTS=20
+          SLEEP_SECONDS=15
+
+          echo "Waiting for comfygit-studio $VERSION to be available on PyPI..."
+
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/comfygit-studio/$VERSION/json")
+
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✓ comfygit-studio $VERSION is now available on PyPI"
+              exit 0
+            fi
+
+            echo "Attempt $i/$MAX_ATTEMPTS: Not yet available (HTTP $HTTP_STATUS), waiting ${SLEEP_SECONDS}s..."
+            sleep $SLEEP_SECONDS
+          done
+
+          echo "::error::Timeout waiting for comfygit-studio $VERSION on PyPI after $((MAX_ATTEMPTS * SLEEP_SECONDS))s"
+          exit 1
+
+  publish-cli:
+    name: Publish CLI to PyPI
+    needs: [check-versions, wait-for-studio-runtime]
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build comfygit (CLI)
+        run: |
+          VERSION="${{ needs.check-versions.outputs.version }}"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/comfygit/$VERSION/json")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "comfygit $VERSION already exists on PyPI, skipping build/publish"
+            exit 0
+          fi
+          uv build --package comfygit --no-sources
+
+      - name: Publish to PyPI
+        if: ${{ hashFiles('dist/*') != '' }}
         run: uv publish --trusted-publishing automatic --check-url https://pypi.org/simple/
 
   wait-for-cli:
@@ -180,8 +250,8 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [check-versions, publish-core, publish-cli]
-    if: always() && needs.publish-core.result == 'success' && needs.publish-cli.result == 'success'
+    needs: [check-versions, publish-core, publish-studio-runtime, publish-cli, wait-for-cli]
+    if: always() && needs.publish-core.result == 'success' && needs.publish-studio-runtime.result == 'success' && needs.publish-cli.result == 'success' && needs.wait-for-cli.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -213,7 +283,7 @@ jobs:
             echo "Generating AI summary with Claude Haiku..."
 
             # Build the prompt
-            PROMPT="You are writing release notes for ComfyGit, a git-based environment manager for ComfyUI. This release includes comfygit-core (the library), comfygit (the CLI), and the bundled ComfyGit Studio frontend served by the CLI. Given these git commits, write a brief 2-3 sentence summary of the key changes in this release. Be concise and focus on user-facing improvements. Do not use bullet points, just prose. Commits:
+            PROMPT="You are writing release notes for ComfyGit, a git-based environment manager for ComfyUI. This release includes comfygit-core (the library), comfygit-studio (the shared Studio runtime), comfygit (the CLI), and the bundled ComfyGit Studio frontend. Given these git commits, write a brief 2-3 sentence summary of the key changes in this release. Be concise and focus on user-facing improvements. Do not use bullet points, just prose. Commits:
 
             $COMMITS"
 
@@ -250,6 +320,7 @@ jobs:
             echo "## Packages"
             echo ""
             echo "- \`comfygit-core==${{ needs.check-versions.outputs.version }}\`"
+            echo "- \`comfygit-studio==${{ needs.check-versions.outputs.version }}\`"
             echo "- \`comfygit==${{ needs.check-versions.outputs.version }}\`"
             echo "- bundled \`@comfygit/studio@${{ needs.check-versions.outputs.version }}\`"
             echo ""

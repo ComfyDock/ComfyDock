@@ -9,10 +9,22 @@ This tests the refined behavior where:
 
 import argparse
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from comfygit_cli.cli import create_parser
+from comfygit_core.models import TorchBackendSelection
+
+
+def _torch_selection(backend: str, *, was_probed: bool = False) -> TorchBackendSelection:
+    return TorchBackendSelection(
+        backend=backend,
+        versions={},
+        backend_file=Path("/workspace/test-env/.pytorch-backend"),
+        is_configured=True,
+        was_probed=was_probed,
+    )
 
 
 class TestTorchBackendArgumentDefaults:
@@ -196,8 +208,7 @@ class TestSyncBehavior:
         mock_env.name = "test-env"
         mock_env.cec_path = MagicMock()
         mock_env.cec_path.__truediv__ = MagicMock(return_value=MagicMock(exists=MagicMock(return_value=True)))
-        mock_env.pytorch_manager.has_backend.return_value = True
-        mock_env.pytorch_manager.ensure_backend.return_value = "cu128"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cu128")
         mock_env.sync.return_value = MagicMock(success=True, packages_synced=0, dependency_groups_installed=[], errors=[])
 
         mock_workspace = MagicMock()
@@ -218,20 +229,19 @@ class TestSyncBehavior:
 
         cmd.sync(args)
 
-        # Should have called ensure_backend which reads from file or probes
-        mock_env.pytorch_manager.ensure_backend.assert_called()
+        # Should have called the environment facade which reads from file or probes
+        mock_env.ensure_torch_backend.assert_called()
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_sync_warns_when_no_backend_file(self, mock_get_workspace, capsys, tmp_path):
         """Sync should warn user when .pytorch-backend file doesn't exist."""
         from comfygit_cli.env_commands import EnvironmentCommands
 
-        # Setup mocks - no backend file (has_backend returns False)
+        # Setup mocks - no backend file, so the facade reports a probed backend
         mock_env = MagicMock()
         mock_env.name = "test-env"
         mock_env.cec_path = tmp_path  # For .python-version file check
-        mock_env.pytorch_manager.has_backend.return_value = False  # Key fix: mock has_backend()
-        mock_env.pytorch_manager.probe_and_set_backend.return_value = "cu126"  # Auto-detected
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cu126", was_probed=True)
         mock_env.sync.return_value = MagicMock(success=True, packages_synced=0, dependency_groups_installed=[], errors=[])
 
         mock_workspace = MagicMock()
@@ -263,8 +273,6 @@ class TestSyncBehavior:
 
         mock_env = MagicMock()
         mock_env.name = "test-env"
-        mock_env.pytorch_manager.backend_file.exists.return_value = True
-        mock_env.pytorch_manager.get_backend.return_value = "cu126"  # Currently stored
         mock_env.sync.return_value = MagicMock(success=True, packages_synced=0, dependency_groups_installed=[], errors=[])
 
         mock_workspace = MagicMock()
@@ -283,8 +291,8 @@ class TestSyncBehavior:
 
         cmd.sync(args)
 
-        # Should NOT write to file - override is one-time only
-        mock_env.pytorch_manager.set_backend.assert_not_called()
+        # Should NOT write/probe file - override is one-time only
+        mock_env.ensure_torch_backend.assert_not_called()
 
 
 class TestRunBehavior:
@@ -300,8 +308,7 @@ class TestRunBehavior:
         mock_env.get_current_branch.return_value = "main"
         mock_env.cec_path = MagicMock()
         mock_env.cec_path.__truediv__ = MagicMock(return_value=MagicMock(exists=MagicMock(return_value=True)))
-        mock_env.pytorch_manager.has_backend.return_value = True
-        mock_env.pytorch_manager.ensure_backend.return_value = "cu128"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cu128")
         mock_env.sync.return_value = MagicMock(success=True)
         mock_env.run.return_value = MagicMock(returncode=0)
 
@@ -323,8 +330,72 @@ class TestRunBehavior:
         with pytest.raises(SystemExit):
             cmd.run(args)
 
-        # Should have called ensure_backend which reads from file or probes
-        mock_env.pytorch_manager.ensure_backend.assert_called()
+        # Should have called the environment facade which reads from file or probes
+        mock_env.ensure_torch_backend.assert_called()
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_passes_cpu_flag_for_cpu_backend(self, mock_get_workspace):
+        """Run should pass ComfyUI --cpu when the configured torch backend is cpu."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+        mock_env.get_current_branch.return_value = "main"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cpu")
+        mock_env.sync.return_value = MagicMock(success=True)
+        mock_env.run.return_value = MagicMock(returncode=0)
+
+        mock_workspace = MagicMock()
+        mock_workspace.get_active_environment.return_value = mock_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend=None,
+            no_sync=False,
+            args=[]
+        )
+
+        with pytest.raises(SystemExit):
+            cmd.run(args)
+
+        mock_env.run.assert_called_once_with(["--cpu"])
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_does_not_duplicate_cpu_flag(self, mock_get_workspace):
+        """Run should not duplicate ComfyUI --cpu when users pass it explicitly."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+        mock_env.get_current_branch.return_value = "main"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cpu")
+        mock_env.sync.return_value = MagicMock(success=True)
+        mock_env.run.return_value = MagicMock(returncode=0)
+
+        mock_workspace = MagicMock()
+        mock_workspace.get_active_environment.return_value = mock_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend=None,
+            no_sync=False,
+            args=["--cpu", "--port", "8199"]
+        )
+
+        with pytest.raises(SystemExit):
+            cmd.run(args)
+
+        mock_env.run.assert_called_once_with(["--cpu", "--port", "8199"])
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_overlay_rejects_no_sync(self, mock_get_workspace):
@@ -363,8 +434,7 @@ class TestRunBehavior:
         current_env = MagicMock()
         current_env.name = "source-env"
         current_env.get_current_branch.return_value = "main"
-        current_env.pytorch_manager.has_backend.return_value = True
-        current_env.pytorch_manager.ensure_backend.return_value = "cu126"
+        current_env.ensure_torch_backend.return_value = _torch_selection("cu126")
         current_env.sync.return_value = MagicMock(success=True)
         current_env.run.return_value = MagicMock(returncode=43)
 

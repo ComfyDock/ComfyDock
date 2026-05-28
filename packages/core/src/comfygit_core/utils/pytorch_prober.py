@@ -124,24 +124,34 @@ def probe_pytorch_versions(
             )
 
         # 2. Run dry-run install with --torch-backend
-        dry_run_result = run_command(
-            [
-                uv, "pip", "install",
-                "--dry-run",
-                "--reinstall-package", "torch",
-                "--reinstall-package", "torchvision",
-                "--reinstall-package", "torchaudio",
-                f"--torch-backend={backend}",
-                "--python", temp_dir,
-                "torch", "torchvision", "torchaudio",
-            ],
-            timeout=PROBE_TIMEOUT,
+        dry_run_result = _run_torch_dry_run(
+            uv=uv,
+            temp_dir=temp_dir,
+            backend=backend,
         )
 
         if dry_run_result.returncode != 0:
-            raise PyTorchProbeError(
-                f"Dry-run probe failed: {dry_run_result.stderr}"
-            )
+            original_stderr = dry_run_result.stderr
+            if backend == "auto":
+                logger.warning(
+                    "Auto PyTorch backend probe failed; falling back to CPU backend. "
+                    f"Original error: {original_stderr}"
+                )
+                dry_run_result = _run_torch_dry_run(
+                    uv=uv,
+                    temp_dir=temp_dir,
+                    backend="cpu",
+                )
+                if dry_run_result.returncode != 0:
+                    raise PyTorchProbeError(
+                        "Dry-run probe failed for auto backend and CPU fallback. "
+                        f"Auto stderr: {original_stderr}\n"
+                        f"CPU stderr: {dry_run_result.stderr}"
+                    )
+            else:
+                raise PyTorchProbeError(
+                    f"Dry-run probe failed: {dry_run_result.stderr}"
+                )
 
         # 3. Parse output for package versions
         # uv writes dry-run output to stderr, so check both
@@ -163,6 +173,27 @@ def probe_pytorch_versions(
             shutil.rmtree(temp_dir)
         except Exception as e:
             logger.warning(f"Failed to clean up probe dir {temp_dir}: {e}")
+
+
+def _run_torch_dry_run(
+    *,
+    uv: str,
+    temp_dir: str,
+    backend: str,
+):
+    return run_command(
+        [
+            uv, "pip", "install",
+            "--dry-run",
+            "--reinstall-package", "torch",
+            "--reinstall-package", "torchvision",
+            "--reinstall-package", "torchaudio",
+            f"--torch-backend={backend}",
+            "--python", temp_dir,
+            "torch", "torchvision", "torchaudio",
+        ],
+        timeout=PROBE_TIMEOUT,
+    )
 
 
 def _parse_dry_run_output(output: str) -> tuple[dict[str, str], str]:

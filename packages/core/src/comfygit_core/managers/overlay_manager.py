@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import subprocess
-import tomllib
 from pathlib import Path
 
 import tomlkit
+import tomllib
 from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
@@ -221,7 +221,7 @@ class OverlayManager:
 
     def list_overlays(self) -> list[OverlayInfo]:
         """List overlays with metadata and activation state."""
-        active = set(canonicalize_name(name) for name in self.get_active_names())
+        active = {canonicalize_name(name) for name in self.get_active_names()}
         overlays: list[OverlayInfo] = []
         seen_names: set[str] = set()
 

@@ -3,9 +3,11 @@ export type ContractInput = {
   type: string;
   required?: boolean;
   display_name?: string;
+  ui_control?: "input" | "textarea";
   default?: string | number | boolean | null;
   min?: number;
   max?: number;
+  step?: number;
   enum_values?: string[];
   description?: string;
 };
@@ -159,6 +161,9 @@ export type GalleryResponse = {
   gallery: "private" | "shared" | string;
   session_id: string;
   items: GalleryItem[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+  limit?: number | null;
 };
 
 export type GalleryDeleteResponse = {

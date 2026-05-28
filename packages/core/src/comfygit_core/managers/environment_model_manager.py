@@ -121,13 +121,8 @@ class EnvironmentModelManager:
         # Detect source type
         source_type = self.model_downloader.detect_url_type(url)
 
-        # Update pyproject.toml
-        config = self.pyproject.load()
-        if url not in config["tool"]["comfygit"]["models"][model.hash].get("sources", []):
-            if "sources" not in config["tool"]["comfygit"]["models"][model.hash]:
-                config["tool"]["comfygit"]["models"][model.hash]["sources"] = []
-            config["tool"]["comfygit"]["models"][model.hash]["sources"].append(url)
-            self.pyproject.save(config)
+        # Update pyproject.toml through the manifest domain API.
+        self.pyproject.manifest.add_model_source(model.hash, url)
 
         # Update model repository (SQLite index) - only if model exists locally
         if self.model_repository.has_model(model.hash):
@@ -197,12 +192,8 @@ class EnvironmentModelManager:
                 model_hash=model.hash
             )
 
-        # Update pyproject.toml
-        config = self.pyproject.load()
-        current_sources = config["tool"]["comfygit"]["models"][model.hash].get("sources", [])
-        updated_sources = [s for s in current_sources if s != url]
-        config["tool"]["comfygit"]["models"][model.hash]["sources"] = updated_sources
-        self.pyproject.save(config)
+        # Update pyproject.toml through the manifest domain API.
+        self.pyproject.manifest.remove_model_source(model.hash, url)
 
         # Update model repository (SQLite index) - only if model exists locally
         if self.model_repository.has_model(model.hash):

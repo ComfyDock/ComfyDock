@@ -301,12 +301,12 @@ flowchart TB
         factories_uv["factories/uv_factory.py"]
     end
 
-    subgraph L3["LAYER 3: Managers (13 files)"]
+    subgraph L3["LAYER 3: Managers"]
         direction LR
         mgr_orchestrators["Orchestrators:<br/>environment_git_orchestrator<br/>environment_model_manager<br/>node_manager<br/>workflow_manager"]
         mgr_config["Config:<br/>pyproject_manager<br/>uv_project_manager<br/>pytorch_backend_manager<br/>git_manager"]
         mgr_symlink["Symlinks:<br/>model_symlink_manager<br/>user_content_symlink_manager<br/>system_node_symlink_manager"]
-        mgr_other["Other:<br/>export_import_manager<br/>model_download_manager"]
+        mgr_other["Other:<br/>export_import_manager"]
     end
 
     subgraph L4["LAYER 4: Services"]
@@ -405,7 +405,7 @@ flowchart TB
 |---------|---------|
 | `PyprojectManager` | All pyproject.toml operations via 5 handlers (deps, nodes, uv, workflows, models) |
 | `UVProjectManager` | UV commands + pyproject coordination |
-| `PyTorchBackendManager` | .pytorch-backend file management and config injection |
+| `PyTorchBackendManager` | .pytorch-backend file management and overlay config generation |
 | `GitManager` | High-level git workflows (commit, pull, push, branch, merge) |
 
 #### Symlink Managers
@@ -419,7 +419,6 @@ flowchart TB
 | Manager | Purpose |
 |---------|---------|
 | `ExportImportManager` | Environment bundling for portability |
-| `ModelDownloadManager` | Model downloads from various sources |
 
 ---
 

@@ -11,7 +11,6 @@ from shutil import which
 
 from .utils import update_checker
 
-
 _RELEASES_URL = "https://github.com/comfygit-ai/comfygit/releases"
 
 

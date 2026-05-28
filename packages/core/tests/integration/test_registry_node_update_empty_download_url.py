@@ -12,10 +12,10 @@ This is a regression test for the bug where:
 from unittest.mock import patch
 
 import pytest
+from comfygit_core.confirmation import AutoConfirmStrategy
 from comfygit_core.models.exceptions import CDEnvironmentError
 from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
 from comfygit_core.models.shared import NodeInfo
-from comfygit_core.strategies.confirmation import AutoConfirmStrategy
 
 
 class TestRegistryNodeUpdateEmptyDownloadUrl:

@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..managers.overlay_manager import OverlayManager
+from ..manifest.disposable_project import DisposableUvProject
 from ..models.exceptions import CDPyprojectError, UVCommandError
+from ..models.sync import UVSyncOutcome
 
 if TYPE_CHECKING:
     from ..managers.pyproject_manager import PyprojectManager
@@ -46,6 +49,7 @@ class UVProjectManager:
         self.overlay_manager = overlay_manager or OverlayManager(
             self.pyproject.path.parent
         )
+        self.disposable_project = DisposableUvProject(self.pyproject, self.uv)
 
     # ===== Properties =====
 
@@ -178,8 +182,7 @@ class UVProjectManager:
 
         # Get current dependencies to filter what actually exists
         from ..utils.dependency_parser import parse_dependency_string
-        config = self.pyproject.load()
-        current_deps = config.get('project', {}).get('dependencies', [])
+        current_deps = self.pyproject.manifest.list_project_dependencies()
         current_pkg_names = {parse_dependency_string(dep)[0].lower() for dep in current_deps}
 
         # Filter to only packages that exist
@@ -208,6 +211,7 @@ class UVProjectManager:
         overlay_names: list[str] | None = None,
         skip_optional_overlays: bool = False,
         backend_override: str | None = None,
+        output_callback: Callable[[str], None] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
         **flags
@@ -216,14 +220,15 @@ class UVProjectManager:
 
         Args:
             verbose: Show uv output in real-time
-            pytorch_manager: Optional PyTorch backend manager for temporary injection.
-                            If provided, PyTorch config is injected before sync and
-                            restored after (regardless of success/failure).
+            pytorch_manager: Optional PyTorch backend manager for disposable overlay materialization.
+                            If provided, PyTorch config is applied to the temporary
+                            sync project only.
                             Also forces reinstall of PyTorch packages to ensure correct backend.
             overlay_names: Optional one-time overlay names to include for this sync.
-            skip_optional_overlays: If True, only inject pytorch overlays and
+            skip_optional_overlays: If True, only apply pytorch overlays and
                                     skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
+            output_callback: Optional callback for streaming uv output lines when verbose
             extras: Optional list of extras to install
             all_extras: Install all optional extras
             **flags: Additional uv sync flags
@@ -251,8 +256,7 @@ class UVProjectManager:
                     lock_file.unlink()
                     logger.info(f"Deleted uv.lock for backend override to {backend_override}")
 
-            config = self.pyproject.load()
-            python_version = config.get("tool", {}).get("comfygit", {}).get("python_version")
+            python_version = self.pyproject.manifest.get_python_version()
             pytorch_config = pytorch_manager.get_pytorch_config(
                 backend_override=backend_override,
                 python_version=python_version,
@@ -265,11 +269,22 @@ class UVProjectManager:
         )
 
         if overlays:
-            with self.pyproject.uv_injection_context(overlays=overlays):
-                result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
-                return result.stdout
+            return self.disposable_project.sync(
+                overlays,
+                verbose=verbose,
+                output_callback=output_callback,
+                extras=extras,
+                all_extras=all_extras,
+                **flags,
+            )
 
-        result = self.uv.sync(verbose=verbose, extra=extras, all_extras=all_extras, **flags)
+        result = self.uv.sync(
+            verbose=verbose,
+            output_callback=output_callback,
+            extra=extras,
+            all_extras=all_extras,
+            **flags,
+        )
         return result.stdout
 
     def lock_project(self, **flags) -> str:
@@ -581,16 +596,16 @@ class UVProjectManager:
         backend_override: str | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
-    ) -> dict:
+    ) -> UVSyncOutcome:
         """Install dependencies progressively with graceful optional group handling.
 
         Installs dependencies in phases:
-        1. Base dependencies + all groups together with iterative optional group removal on failure
+        1. Base dependencies + all groups together.
 
         If optional groups fail to build, we iteratively:
         - Parse the error to identify the failing group
-        - Remove that group from pyproject.toml
-        - Delete uv.lock to force re-resolution
+        - Record the failure as local sync state
+        - Skip that group for the current sync attempt
         - Retry the sync with all remaining groups
         - Continue until success or max retries
 
@@ -598,41 +613,37 @@ class UVProjectManager:
             dry_run: If True, don't actually install
             callbacks: Optional callbacks for progress reporting
             verbose: If True, show uv output in real-time
-            pytorch_manager: Optional PyTorch backend manager for temporary injection
+            pytorch_manager: Optional PyTorch backend manager for disposable overlay materialization
             overlay_names: Optional one-time overlay names for this sync
-            skip_optional_overlays: If True, only inject pytorch overlays and
+            skip_optional_overlays: If True, only apply pytorch overlays and
                                     skip optional local/shared/extra overlays.
             backend_override: Override PyTorch backend instead of reading from file (e.g., "cu128")
             extras: Optional list of extras to install
             all_extras: Install all optional extras
 
         Returns:
-            Dict with keys:
-            - packages_synced: bool
-            - dependency_groups_installed: list[str]
-            - dependency_groups_failed: list[tuple[str, str]]
+            Typed uv sync outcome.
         """
         from ..constants import MAX_OPT_GROUP_RETRIES
         from ..utils.uv_error_handler import parse_failed_dependency_group
 
-        result = {
-            "packages_synced": False,
-            "dependency_groups_installed": [],
-            "dependency_groups_failed": []
-        }
-
+        result = UVSyncOutcome()
         attempts = 0
+        skipped_groups: list[str] = []
 
         logger.info("Installing dependencies with all groups...")
 
         while attempts < MAX_OPT_GROUP_RETRIES:
             try:
-                # Get all dependency groups (may have changed after removal)
                 dep_groups = self.pyproject.dependencies.get_groups()
+                group_list = [
+                    group_name
+                    for group_name in dep_groups
+                    if group_name not in skipped_groups
+                ]
 
-                if dep_groups:
+                if group_list:
                     # Install base + all groups together
-                    group_list = list(dep_groups.keys())
                     logger.debug(f"Syncing with groups: {group_list}")
                     self.sync_project(
                         group=group_list,
@@ -647,7 +658,7 @@ class UVProjectManager:
                     )
 
                     # Track successful installations
-                    result["dependency_groups_installed"].extend(group_list)
+                    result.dependency_groups_installed.extend(group_list)
                 else:
                     # No groups - just sync base dependencies
                     logger.debug("No dependency groups, syncing base only")
@@ -663,41 +674,39 @@ class UVProjectManager:
                         all_extras=all_extras,
                     )
 
-                result["packages_synced"] = True
+                result.packages_synced = True
+                result.dependency_groups_skipped = list(skipped_groups)
+                result.attempts = attempts + 1
                 break  # Success - exit loop
 
             except UVCommandError as e:
                 failed_group = parse_failed_dependency_group(e.stderr or "")
 
-                if failed_group and failed_group.startswith('optional-'):
+                if failed_group and failed_group.startswith('optional-') and failed_group not in skipped_groups:
                     attempts += 1
                     logger.warning(
                         f"Build failed for optional group '{failed_group}' (attempt {attempts}/{MAX_OPT_GROUP_RETRIES}), "
-                        "removing and retrying..."
+                        "skipping for this sync and retrying..."
                     )
 
-                    # Remove the problematic group
-                    try:
-                        self.pyproject.dependencies.remove_group(failed_group)
-                    except ValueError:
-                        pass  # Group already gone
+                    skipped_groups.append(failed_group)
 
-                    # Delete lockfile to force re-resolution
-                    lockfile = self.project_path / "uv.lock"
-                    if lockfile.exists():
-                        lockfile.unlink()
-                        logger.debug("Deleted uv.lock to force re-resolution")
-
-                    result["dependency_groups_failed"].append((failed_group, "Build failed (incompatible platform)"))
+                    result.dependency_groups_failed.append((failed_group, "Build failed (incompatible platform)"))
+                    result.dependency_groups_skipped = list(skipped_groups)
+                    result.attempts = attempts
 
                     if callbacks:
-                        callbacks.on_dependency_group_complete(failed_group, success=False, error="Build failed - removed")
+                        callbacks.on_dependency_group_complete(
+                            failed_group,
+                            success=False,
+                            error="Build failed - skipped for this sync",
+                        )
 
                     if attempts >= MAX_OPT_GROUP_RETRIES:
                         raise RuntimeError(
                             f"Failed to install dependencies after {MAX_OPT_GROUP_RETRIES} attempts. "
-                            f"Removed groups: {[g for g, _ in result['dependency_groups_failed']]}"
-                        )
+                            f"Skipped groups: {result.dependency_groups_skipped}"
+                        ) from e
 
                     # Loop continues for retry
                 else:

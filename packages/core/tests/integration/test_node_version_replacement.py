@@ -338,8 +338,8 @@ class TestNodeVersionReplacement:
         4. add_node would use stale cache showing v1.8.0 as latest
         5. Re-install v1.8.0 instead of v2.1.0
         """
+        from comfygit_core.confirmation import AutoConfirmStrategy
         from comfygit_core.models.registry import RegistryNodeInfo, RegistryNodeVersion
-        from comfygit_core.strategies.confirmation import AutoConfirmStrategy
 
         # ARRANGE: Install initial version 1.8.0
         node_info_v1_8_0 = NodeInfo(
@@ -407,12 +407,14 @@ class TestNodeVersionReplacement:
         (cache_path_v2 / "__init__.py").write_text("# v2.1.0")
 
         with patch.object(test_env.node_manager.node_lookup.registry_client, 'get_node') as mock_registry_get, \
+             patch.object(test_env.node_manager.node_lookup.registry_client, 'install_node') as mock_install_node, \
              patch.object(test_env.node_manager.node_lookup, 'get_node') as mock_get_node, \
              patch.object(test_env.node_manager.node_lookup, 'download_to_cache') as mock_download, \
              patch.object(test_env.node_manager.node_lookup, 'scan_requirements') as mock_scan:
 
             # Registry client returns latest v2.1.0
             mock_registry_get.return_value = registry_node_latest
+            mock_install_node.return_value = registry_node_latest.latest_version
 
             # Mock get_node to simulate cache behavior:
             # - First call (when checking in update): return stale cache (this is what happens in real bug)

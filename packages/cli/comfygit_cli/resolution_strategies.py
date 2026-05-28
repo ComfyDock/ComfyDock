@@ -4,8 +4,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from comfygit_core.models.commit import ModelResolutionRequest
-    from comfygit_core.models.shared import ModelWithLocation
+    from comfygit_core.models import ModelResolutionRequest, ModelWithLocation
 
 
 class InteractiveModelResolver:

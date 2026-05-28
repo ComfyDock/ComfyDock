@@ -13,8 +13,20 @@ from comfygit_cli.completers import (
     ref_completer,
     workflow_completer,
 )
-from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
-from comfygit_core.models.workflow import WorkflowSyncStatus
+from comfygit_core.models import (
+    CDWorkspaceNotFoundError,
+    GitBranch,
+    GitCommitSummary,
+    WorkflowSyncStatus,
+)
+
+
+def _commit(hash: str, message: str) -> GitCommitSummary:
+    return GitCommitSummary(hash=hash, message=message, date="", date_relative="")
+
+
+def _branch(name: str, is_current: bool = False) -> GitBranch:
+    return GitBranch(name=name, is_current=is_current)
 
 
 class TestSharedUtilities:
@@ -38,19 +50,19 @@ class TestSharedUtilities:
         result = filter_by_prefix(items, "xyz")
         assert result == []
 
-    @patch('comfygit_cli.completers.WorkspaceFactory.find')
-    def test_get_workspace_safe_success(self, mock_find):
+    @patch("comfygit_cli.completers.Workspace.open")
+    def test_get_workspace_safe_success(self, mock_open):
         """Test getting workspace successfully."""
         mock_workspace = Mock()
-        mock_find.return_value = mock_workspace
+        mock_open.return_value = mock_workspace
 
         result = get_workspace_safe()
         assert result == mock_workspace
 
-    @patch('comfygit_cli.completers.WorkspaceFactory.find')
-    def test_get_workspace_safe_not_found(self, mock_find):
+    @patch("comfygit_cli.completers.Workspace.open")
+    def test_get_workspace_safe_not_found(self, mock_open):
         """Test get_workspace_safe returns None when not found."""
-        mock_find.side_effect = CDWorkspaceNotFoundError("Not found")
+        mock_open.side_effect = CDWorkspaceNotFoundError("Not found")
 
         result = get_workspace_safe()
         assert result is None
@@ -265,9 +277,9 @@ class TestCommitHashCompleter:
         mock_env = Mock()
         # Simulate commit history with hash and message
         mock_env.get_commit_history.return_value = [
-            {'hash': '7725f89', 'message': '3 models queued for download'},
-            {'hash': '5439eb6', 'message': '1 models not found, 2 models queued'},
-            {'hash': '9090f70', 'message': 'Initial environment setup'},
+            _commit('7725f89', '3 models queued for download'),
+            _commit('5439eb6', '1 models not found, 2 models queued'),
+            _commit('9090f70', 'Initial environment setup'),
         ]
         mock_get_env.return_value = mock_env
 
@@ -290,9 +302,9 @@ class TestCommitHashCompleter:
 
         mock_env = Mock()
         mock_env.get_commit_history.return_value = [
-            {'hash': '7725f89', 'message': 'Some message'},
-            {'hash': '5439eb6', 'message': 'Another message'},
-            {'hash': '9090f70', 'message': 'Third message'},
+            _commit('7725f89', 'Some message'),
+            _commit('5439eb6', 'Another message'),
+            _commit('9090f70', 'Third message'),
         ]
         mock_get_env.return_value = mock_env
 
@@ -324,11 +336,11 @@ class TestBranchCompleter:
         mock_get_workspace.return_value = mock_workspace
 
         mock_env = Mock()
-        # list_branches returns list of (name, is_current) tuples
+        # list_branches returns typed branch summaries.
         mock_env.list_branches.return_value = [
-            ('main', True),
-            ('feature-x', False),
-            ('bugfix-123', False),
+            _branch('main', True),
+            _branch('feature-x'),
+            _branch('bugfix-123'),
         ]
         mock_get_env.return_value = mock_env
 
@@ -346,10 +358,10 @@ class TestBranchCompleter:
 
         mock_env = Mock()
         mock_env.list_branches.return_value = [
-            ('main', True),
-            ('feature-x', False),
-            ('feature-y', False),
-            ('bugfix-123', False),
+            _branch('main', True),
+            _branch('feature-x'),
+            _branch('feature-y'),
+            _branch('bugfix-123'),
         ]
         mock_get_env.return_value = mock_env
 
@@ -383,13 +395,13 @@ class TestRefCompleter:
         mock_env = Mock()
         # Branches
         mock_env.list_branches.return_value = [
-            ('main', True),
-            ('feature-x', False),
+            _branch('main', True),
+            _branch('feature-x'),
         ]
         # Commits
         mock_env.get_commit_history.return_value = [
-            {'hash': '7725f89', 'message': 'Recent commit'},
-            {'hash': '5439eb6', 'message': 'Older commit'},
+            _commit('7725f89', 'Recent commit'),
+            _commit('5439eb6', 'Older commit'),
         ]
         mock_get_env.return_value = mock_env
 
@@ -407,12 +419,12 @@ class TestRefCompleter:
 
         mock_env = Mock()
         mock_env.list_branches.return_value = [
-            ('main', True),
-            ('feature-x', False),
+            _branch('main', True),
+            _branch('feature-x'),
         ]
         mock_env.get_commit_history.return_value = [
-            {'hash': '7725f89', 'message': 'Recent commit'},
-            {'hash': '5439eb6', 'message': 'Older commit'},
+            _commit('7725f89', 'Recent commit'),
+            _commit('5439eb6', 'Older commit'),
         ]
         mock_get_env.return_value = mock_env
 

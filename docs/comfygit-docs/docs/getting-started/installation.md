@@ -1,301 +1,222 @@
 # Installation
 
-> Get ComfyGit installed and ready to use in just a few minutes.
+ComfyGit is installed as a command-line tool named `cg`. The tool creates and
+manages ComfyUI environments with uv, so the recommended install path is `uv
+tool install`.
 
 ## Prerequisites
 
-Before installing ComfyGit, make sure you have:
+You need:
 
-* **Python 3.10 or newer** — Check with `python --version` or `python3 --version`
-* **Operating system** — Windows 10/11, macOS 10.15+, or Linux (any modern distribution)
-* **Internet connection** — For downloading dependencies and models
+- Python 3.10 or newer
+- Git
+- Internet access for packages, ComfyUI, custom nodes, and model downloads
+- uv, the Python package manager used by ComfyGit
 
-!!! tip "GPU Support"
-    ComfyGit automatically detects your GPU (NVIDIA CUDA, AMD ROCm, Intel XPU) and installs the appropriate PyTorch backend. You can also specify backends manually with the `--torch-backend` flag.
+ComfyGit can configure PyTorch backends for CPU, NVIDIA CUDA, AMD ROCm, and
+Intel XPU environments. You can let ComfyGit choose during environment setup or
+pass a backend explicitly when needed.
 
-## Step 1: Install UV
-
-UV is a fast Python package manager that ComfyGit uses to manage environments and dependencies.
+## Install uv
 
 === "macOS/Linux"
+
     ```bash
     curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
 
-    After installation, restart your terminal or run:
+    Restart your terminal, or run:
+
     ```bash
-    source $HOME/.cargo/env
+    source "$HOME/.cargo/env"
     ```
 
 === "Windows PowerShell"
+
     ```powershell
     powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
     ```
 
-    After installation, restart PowerShell.
+    Restart PowerShell after installation.
 
-=== "Windows CMD"
-    ```cmd
-    curl -LsSf https://astral.sh/uv/install.cmd -o install.cmd && install.cmd && del install.cmd
-    ```
-
-    After installation, restart CMD.
-
-**Verify UV installation:**
+Verify uv:
 
 ```bash
 uv --version
 ```
 
-You should see output like `uv 0.4.x` or newer.
+## Install ComfyGit
 
-!!! info "Alternative: Install via pip"
-    If you prefer pip:
-    ```bash
-    pip install uv
-    ```
-
-## Step 2: Install ComfyGit CLI
-
-With UV installed, install the ComfyGit CLI tool:
+Install or upgrade the CLI:
 
 ```bash
-uv tool install comfygit
+uv tool install comfygit --upgrade
 ```
 
-This installs the `cg` command globally, making it available from anywhere in your terminal.
-
-**Verify ComfyGit installation:**
+Verify the command:
 
 ```bash
 cg --version
 ```
 
-You should see the ComfyGit version number.
+You should see the installed ComfyGit CLI version.
 
-!!! tip "Shell Completion"
-    Install tab completion for your shell:
+!!! tip "Shell completion"
+    ComfyGit can install completion for supported shells:
+
     ```bash
     cg completion install
     ```
 
-    Supports bash, zsh, and fish. Restart your shell after installing.
+    Restart your shell after installing completion.
 
-## Step 3: Initialize your workspace
+## Initialize Your Workspace
 
-Create a ComfyGit workspace directory:
+Create the default workspace at `~/comfygit`:
 
 ```bash
-# Initialize in default location (~/comfygit)
 cg init
-
-# Or specify a custom path
-cg init /path/to/my/workspace
 ```
 
-The workspace is where ComfyGit stores:
-
-- Environments (isolated ComfyUI installations)
-- Global model index
-- Cache and logs
-
-!!! note "Workspace Structure"
-    ```
-    ~/comfygit/
-    ├── environments/          # Your ComfyUI environments
-    ├── models/                # Shared models directory
-    ├── comfygit_cache/       # Registry cache
-    ├── logs/                  # Application logs
-    └── .metadata/             # Workspace configuration
-    ```
-
-## Alternative installation methods
-
-### Install from pip
-
-If you don't want to use UV tool isolation:
+If you already have a model directory, point ComfyGit at it immediately:
 
 ```bash
-pip install comfygit
+cg init --models-dir ~/ComfyUI/models --yes
 ```
 
-This makes `cg` available in your current Python environment.
-
-### Install from source
-
-For development or testing:
+Then check the active configuration:
 
 ```bash
-# Clone the repository
+cg config --show
+```
+
+The workspace stores environments, the shared model index, registry cache, logs,
+and local machine settings. Environment repositories inside the workspace hold
+the portable manifests that are meant to be committed and shared.
+
+## Create A First Environment
+
+Create an environment and make it active:
+
+```bash
+cg create my-first-env --use
+```
+
+Start ComfyUI:
+
+```bash
+cg run
+```
+
+When ComfyUI finishes starting, open the URL printed in the terminal.
+
+## Update ComfyGit
+
+Use the same uv command to update the CLI:
+
+```bash
+uv tool install comfygit --upgrade
+```
+
+If an environment includes `comfygit-manager`, update that node from inside the
+environment:
+
+```bash
+cg manager status
+cg manager update
+```
+
+Restart the environment after a manager update.
+
+## Install From Source
+
+Use the source install path when you are developing ComfyGit itself.
+
+```bash
 git clone https://github.com/comfygit-ai/comfygit.git
 cd comfygit
-
-# Install in development mode
-uv pip install -e packages/cli/
+make install
+uv run cg --version
 ```
 
-## Verifying your installation
+For normal usage, prefer `uv tool install comfygit --upgrade`. For development,
+use the repo commands so the workspace packages resolve consistently.
 
-Check that everything is working:
-
-```bash
-# Check versions
-cg --version
-uv --version
-
-# Initialize workspace (if not done)
-cg init
-
-# List environments (should be empty)
-cg list
-```
-
-You should see:
-
-```
-No environments found. Create one with: cg create <name>
-```
-
-## Platform-specific notes
+## Platform Notes
 
 ### Windows
 
-* **WSL2 recommended** — For best performance, use ComfyGit in WSL2 (Windows Subsystem for Linux)
-* **Long path support** — Enable long paths in Windows if you encounter path length errors:
-    ```powershell
-    New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
-    ```
+WSL2 is recommended for the smoothest ComfyUI and GPU workflow. Native Windows
+can work, but Python build tooling and path length behavior are more likely to
+need manual attention.
+
+If long paths cause errors, enable long path support:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+```
 
 ### macOS
 
-* **Xcode Command Line Tools** — May be required for some dependencies:
-    ```bash
-    xcode-select --install
-    ```
+Some dependencies may need Xcode Command Line Tools:
+
+```bash
+xcode-select --install
+```
 
 ### Linux
 
-* **System dependencies** — Most distributions work out of the box. If you encounter build errors, install development tools:
-
-    === "Ubuntu/Debian"
-        ```bash
-        sudo apt-get update
-        sudo apt-get install build-essential python3-dev
-        ```
-
-    === "Fedora/RHEL"
-        ```bash
-        sudo dnf install gcc gcc-c++ python3-devel
-        ```
-
-    === "Arch"
-        ```bash
-        sudo pacman -S base-devel python
-        ```
-
-## Updating ComfyGit
-
-To update to the latest version:
-
-```bash
-uv tool upgrade comfygit
-```
-
-Or with pip:
-
-```bash
-pip install --upgrade comfygit
-```
-
-## Uninstalling
-
-To remove ComfyGit:
-
-```bash
-# Remove the CLI tool
-uv tool uninstall comfygit
-
-# Optionally remove your workspace
-rm -rf ~/comfygit
-```
-
-!!! warning
-    Removing the workspace deletes all your environments and configuration. Export any important environments first with `cg export`.
-
-## Troubleshooting installation
-
-### UV not found after installation
-
-**Problem:** Running `uv` shows "command not found"
-
-**Solution:** Restart your terminal or manually source the environment:
-
-=== "macOS/Linux"
-    ```bash
-    source $HOME/.cargo/env
-    ```
-
-=== "Windows PowerShell"
-    Restart PowerShell or add to PATH manually via System Properties → Environment Variables
-
-### Permission errors on Linux/macOS
-
-**Problem:** Permission denied when installing
-
-**Solution:** Don't use `sudo` with UV or pip. If needed, fix permissions:
-
-```bash
-# Fix UV permissions
-chown -R $USER:$USER ~/.cargo
-
-# For pip (if using system Python)
-pip install --user comfygit
-```
-
-### Python version too old
-
-**Problem:** ComfyGit requires Python 3.10+
-
-**Solution:** Install a newer Python version:
+Most distributions work without extra setup. If a Python package needs to build
+native code, install your distribution's development toolchain.
 
 === "Ubuntu/Debian"
+
     ```bash
-    sudo add-apt-repository ppa:deadsnakes/ppa
     sudo apt-get update
-    sudo apt-get install python3.11
+    sudo apt-get install build-essential python3-dev
     ```
 
-=== "macOS (Homebrew)"
+=== "Fedora/RHEL"
+
     ```bash
-    brew install python@3.11
+    sudo dnf install gcc gcc-c++ python3-devel
     ```
 
-=== "Windows"
-    Download from [python.org](https://www.python.org/downloads/)
+=== "Arch"
 
-### Windows installation fails
+    ```bash
+    sudo pacman -S base-devel python
+    ```
 
-**Problem:** PowerShell execution policy blocks the install script
+## Troubleshooting
 
-**Solution:** Run PowerShell as Administrator:
+### `uv` is not found
 
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+Restart your terminal. On macOS or Linux, you can also source uv's environment:
+
+```bash
+source "$HOME/.cargo/env"
 ```
 
-Then try the installation again.
+### Permission errors during install
 
-## Next steps
+Do not use `sudo` with `uv tool install`. Fix ownership of the uv install
+location instead:
 
-Now that ComfyGit is installed:
+```bash
+chown -R "$USER:$USER" "$HOME/.cargo"
+```
 
-* [Core concepts](concepts.md) — Understand workspaces, environments, and .cec
-* [CLI reference](../cli-reference/environment-commands.md) — Explore all available commands
+### Python is too old
 
-## Getting help
+Install Python 3.10 or newer, then reinstall ComfyGit:
 
-If you encounter issues during installation:
+```bash
+uv tool install comfygit --upgrade
+```
 
-* Check the [troubleshooting guide](../troubleshooting/common-issues.md)
-* Search [GitHub Issues](https://github.com/comfygit-ai/comfygit/issues)
-* Ask on [GitHub Discussions](https://github.com/comfygit-ai/comfygit/discussions)
+## Next Steps
+
+- [Read the core concepts](../concepts/what-comfygit-manages.md)
+- [Create your first environment](quickstart.md)
+- [Learn workspace layout](../user-guide/workspaces.md)

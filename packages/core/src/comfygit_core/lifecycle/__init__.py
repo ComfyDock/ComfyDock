@@ -8,12 +8,12 @@ from .comfyui_readiness import (
     wait_for_comfyui_ready,
 )
 from .switch_observer import (
-    SWITCH_LOGS_ROUTE,
-    SWITCH_STATUS_ROUTE,
     SUPERVISOR_HEALTH_ROUTE,
     SUPERVISOR_INFO_FILE,
     SUPERVISOR_LOG_FILE,
+    SWITCH_LOGS_ROUTE,
     SWITCH_STATUS_FILE,
+    SWITCH_STATUS_ROUTE,
     SwitchObserverServer,
     append_switch_log,
     build_switch_observer_payload,

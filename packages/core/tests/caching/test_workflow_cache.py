@@ -113,9 +113,11 @@ class TestCacheHitAfterSet:
 
         # Session cache should have exactly one entry (with mtime in key)
         assert len(cache_db._session_cache) == 1, "Session cache should have one entry"
-        # Verify the key format includes env:workflow:mtime
+        # Verify the typed key includes env, workflow, and file metadata.
         session_keys = list(cache_db._session_cache.keys())
-        assert session_keys[0].startswith("test-env:test_workflow:"), "Session key should include env, workflow, and mtime"
+        assert session_keys[0].environment_name == "test-env"
+        assert session_keys[0].workflow_name == "test_workflow"
+        assert session_keys[0].workflow_mtime == sample_workflow_file.stat().st_mtime
 
 
 class TestCacheInvalidationOnContentChange:
@@ -286,10 +288,12 @@ class TestSessionCacheIsolation:
         # Should get data from SQLite
         assert result_b is not None
 
-        # Verify B's session cache was populated (with mtime in key)
+        # Verify B's session cache was populated with typed workflow state.
         assert len(cache_b._session_cache) == 1, "Cache B should have one session cache entry"
         session_keys_b = list(cache_b._session_cache.keys())
-        assert session_keys_b[0].startswith("test-env:test_workflow:"), "Session key should include mtime"
+        assert session_keys_b[0].environment_name == "test-env"
+        assert session_keys_b[0].workflow_name == "test_workflow"
+        assert session_keys_b[0].workflow_mtime == sample_workflow_file.stat().st_mtime
 
         # Verify A and B have independent session caches
         assert cache_a._session_cache is not cache_b._session_cache
@@ -560,7 +564,7 @@ class TestCacheHashVerification:
 
         # Create workflow with initial content
         workflow_path = tmp_path / "test_workflow.json"
-        initial_content = {
+        initial_content: dict[str, object] = {
             "nodes": [{"id": 1, "type": "NodeA", "widgets_values": ["value_a"]}]
         }
         with open(workflow_path, 'w') as f:
@@ -575,7 +579,7 @@ class TestCacheHashVerification:
 
         # Now modify the file content but preserve SAME mtime+size
         # This simulates the race where content changed between panel read and cache set
-        modified_content = {
+        modified_content: dict[str, object] = {
             "nodes": [{"id": 1, "type": "NodeB", "widgets_values": ["value_b"]}]
         }
 

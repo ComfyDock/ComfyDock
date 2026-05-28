@@ -101,7 +101,7 @@ class ComfyUIBuiltinVersions:
     builtins: dict[str, ComfyUIBuiltinVersionEntry]
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ComfyUIBuiltinVersions":
+    def from_dict(cls, data: dict) -> ComfyUIBuiltinVersions:
         """Build typed model from JSON dict payload."""
         builtins_raw = data.get("builtins", {})
         builtins: dict[str, ComfyUIBuiltinVersionEntry] = {}

@@ -3,10 +3,8 @@ import argparse
 from typing import Any
 
 from argcomplete.io import warn
-from comfygit_core.core.environment import Environment
-from comfygit_core.core.workspace import Workspace
-from comfygit_core.factories.workspace_factory import WorkspaceFactory
-from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
+from comfygit_core import Environment, Workspace
+from comfygit_core.models import CDWorkspaceNotFoundError
 
 # ============================================================================
 # Shared Utilities
@@ -15,7 +13,7 @@ from comfygit_core.models.exceptions import CDWorkspaceNotFoundError
 def get_workspace_safe() -> Workspace | None:
     """Get workspace or return None if not initialized."""
     try:
-        return WorkspaceFactory.find()
+        return Workspace.open()
     except CDWorkspaceNotFoundError:
         return None
     except Exception as e:
@@ -161,9 +159,8 @@ def branch_completer(prefix: str, parsed_args: argparse.Namespace, **kwargs: Any
         return []
 
     try:
-        # Get branches (returns list of (name, is_current) tuples)
         branches = env.list_branches()
-        names = [name for name, _ in branches]
+        names = [branch.name for branch in branches]
         return filter_by_prefix(names, prefix)
 
     except Exception as e:
@@ -193,7 +190,7 @@ def commit_hash_completer(prefix: str, parsed_args: argparse.Namespace, **kwargs
         history = env.get_commit_history(limit=50)
 
         # Return only hashes for clean completion
-        hashes = [commit['hash'] for commit in history]
+        hashes = [commit.hash for commit in history]
         return filter_by_prefix(hashes, prefix)
 
     except Exception as e:
@@ -224,11 +221,11 @@ def ref_completer(prefix: str, parsed_args: argparse.Namespace, **kwargs: Any) -
 
         # Priority 1: Branches (most common for checkout)
         branches = env.list_branches()
-        candidates.extend([name for name, _ in branches])
+        candidates.extend([branch.name for branch in branches])
 
         # Priority 2: Recent commits
         history = env.get_commit_history(limit=50)
-        candidates.extend([commit['hash'] for commit in history])
+        candidates.extend([commit.hash for commit in history])
 
         return filter_by_prefix(candidates, prefix)
 

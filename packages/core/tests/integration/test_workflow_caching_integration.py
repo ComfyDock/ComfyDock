@@ -142,8 +142,8 @@ class TestResolveCommandUsesCache:
         workflow = load_workflow_fixture(workflow_fixtures, "simple_txt2img")
         simulate_comfyui_save_workflow(test_env, "test_workflow", workflow)
 
-        # Analyze workflow (similar to resolve command)
-        dependencies = test_env.workflow_manager.analyze_workflow("test_workflow")
+        # Analyze and resolve workflow (similar to resolve command)
+        dependencies, _ = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
         assert dependencies is not None
 
         # Run status (should use cache from analyze)

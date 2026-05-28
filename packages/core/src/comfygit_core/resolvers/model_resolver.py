@@ -35,7 +35,7 @@ class ModelResolver:
             model_repository: ModelRepository for model lookups
             model_config: Optional pre-loaded ModelConfig instance
             cec_path: Optional path to comfy_execution_config.yaml for dynamic loading
-            download_manager: Optional ModelDownloadManager for downloading
+            download_manager: Optional adapter used by callers that still stage downloads
         """
         self.model_repository = model_repository
         self.model_config = model_config or ModelConfig.load(cec_path=cec_path)

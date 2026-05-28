@@ -17,6 +17,8 @@ COMFYUI_MODELS_CONFIG = {
         ".pth",
         ".pt2",
         ".bin",
+        ".gguf",
+        ".onnx",
         ".safetensors",
         ".pkl",
         ".sft",

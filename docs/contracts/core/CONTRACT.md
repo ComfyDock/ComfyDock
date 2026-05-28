@@ -19,12 +19,76 @@ Validation: STATIC
 Core code should not use `print()` or `input()` for normal behavior. Callers own
 rendering, prompting, progress display, and cancellation UX.
 
+### CGCORE-LIB-02A [RETIRED]: Legacy core migration notice exception
+Validation: STATIC
+
+The previous temporary exception that allowed a legacy schema migration path to
+print directly to stderr from core is retired. Core migration paths should log or
+return structured state; callers decide whether and how to render that state.
+
 ### CGCORE-LIB-03 [LIVE]: Workspace and Environment are the primary public API
 Validation: MIXED
 
 Callers should enter core behavior through Workspace and Environment APIs rather
 than directly orchestrating manager internals. Manager classes may be used for
 internal composition, tests, and advanced package-local behavior.
+
+Public workspace discovery and creation should be exposed as Workspace
+classmethods such as `Workspace.open()`, `Workspace.create()`, and
+`Workspace.open_or_create()`. Consumers should not need to import
+WorkspaceFactory for normal setup flows.
+
+### CGCORE-LIB-03A [LIVE]: Public API is defined by documented facade exports
+Validation: STATIC
+
+The stable import surface is defined by `comfygit_core`, `comfygit_core.models`,
+and other deliberately documented facade modules such as readiness, workflow,
+runtime, assets, git, and imports. Importable implementation packages such as
+managers, repositories, analyzers, resolvers, integrations, configs, caching,
+and generic utils are internal unless they are re-exported through a public
+facade.
+
+Model files may contain both public and internal dataclasses. A model type is
+public only when it is exported from `comfygit_core.models` or another documented
+public facade. Adapter packages should not depend on deep model-module imports
+for stable contracts.
+
+Git facade helpers should return typed public models for stable domain shapes
+such as remote ref discovery, and adapters should serialize those models only at
+JSON/API boundaries.
+
+Workspace model-index facade helpers such as `get_model_details()`,
+`get_model_locations()`, `get_model_sources()`, and `get_model_stats()` should
+return typed public model objects for stable index shapes. Repositories may keep
+raw database row dictionaries internally, but adapters should not depend on
+those row shapes.
+
+### CGCORE-LIB-03B [PARTIAL]: Adapters should not reach through facade objects into managers
+Validation: MIXED
+
+CLI, Manager, Cloud, and future runtime adapters should call Workspace and
+Environment methods for reusable behavior instead of touching cached manager,
+repository, or utility attributes such as `env.pyproject`,
+`env.workflow_manager`, `env.git_manager`, `env.uv_manager`, or
+`workspace.workspace_config_manager`. Existing adapters still contain legacy
+reach-throughs; new adapter needs should be served by typed facade methods and
+public result models.
+
+Environment command adapters now use facade methods for local PyTorch backend
+selection, overlays, runtime Python lookup, manifest display, dependency group
+mutation, and workflow model dependency edits. Workspace-level config/download
+configuration now uses Workspace facade methods for Civitai, Hugging Face,
+GitHub, external UV cache settings, model download path suggestion, and model
+download execution. Retired deployment-provider credentials are not part of core workspace
+configuration. Workspace model-index adapter calls now use Workspace facade
+methods for indexed source management, source lookup, hash completion, indexed
+model lookup, and model-location deletion. Manager workflow APIs now use
+Environment facades for workflow file lookup, cache invalidation, manifest model
+mutation, custom-node mapping edits, saved and unsaved workflow analysis,
+resolution fixing, model-path sync, package/model search, and post-download
+manifest finalization, workflow node package resolution, manifest debug
+inspection, and workflow model download streaming. Serve-runtime adapter
+reach-throughs remain follow-on work.
 
 ### CGCORE-LIB-04 [PARTIAL]: Core owns reusable readiness and provenance policy
 Validation: MIXED
@@ -36,9 +100,59 @@ parallel policy implementations.
 
 Core now exposes a first reusable readiness service for local handoff flows. It
 classifies model source gaps, required custom-node provenance gaps, and optional
-custom-node exclusions without Manager- or CLI-specific UI decisions. Workflow
-source candidate discovery and deploy/build integration remain follow-on
-work.
+custom-node exclusions without Manager- or CLI-specific UI decisions. Core also
+exposes a build-readiness projection that turns a typed manifest snapshot or
+`pyproject.toml` into dependency proof items for Python packages and tracked uv
+sources, custom nodes, workflow models, cache/catalog hits, and optional source
+validation. Cloud owns target class, base runtime, persistence,
+source-validator configuration, and deployment orchestration, but should consume
+core manifest-derived proof semantics instead of reimplementing them. Workflow source candidate discovery
+now routes through public Environment/Workspace facades instead of manager
+reach-throughs.
+
+Unmanaged ComfyUI adoption scanning and import orchestration is reusable core
+behavior exposed through `comfygit_core.imports`. Adapter-specific policy, such
+as ignoring or development-linking the adapter's own custom node during import,
+should be passed into core through typed options instead of being hard-coded in
+the scanner.
+
+## Provider Credentials And External Auth
+
+### CGCORE-AUTH-01 [LIVE]: Provider credentials are user-supplied local runtime configuration
+Validation: TEST
+
+Core may use workspace-local credentials, runtime environment variables, or
+caller-supplied request credentials for provider APIs such as CivitAI, Hugging
+Face, and GitHub. Core must not ship secret-like provider API keys, bearer
+tokens, or private search credentials as default constants. Features that
+require provider credentials should fail with a structured
+authentication/configuration error or disabled state until the caller or user
+supplies credentials.
+
+Git remote personal access tokens represent the calling user's git identity.
+Adapters should supply them per operation or through machine-local credential
+helpers rather than treating them as portable environment state. Model-provider
+credentials such as CivitAI and Hugging Face keys may be workspace-local backend
+configuration when backend model search or download work requires them.
+
+### CGCORE-AUTH-02 [LIVE]: Provider auth attaches only to allowlisted hosts
+Validation: TEST
+
+Core must parse provider URLs and attach provider authentication only when the
+request host is an exact provider host or an approved subdomain for that
+provider. String containment in the full URL is not sufficient. Query strings,
+paths, redirects, and arbitrary user-provided URLs must not cause CivitAI,
+Hugging Face, GitHub, or future provider credentials to be sent to another host.
+
+### CGCORE-AUTH-03 [PARTIAL]: Local credential files are hardened and redacted
+Validation: MIXED
+
+Workspace-local credential storage should be treated as sensitive local
+configuration: files containing provider tokens should be created with
+owner-only permissions where the platform supports POSIX permissions, and logs
+should redact token-like values, authorization headers, signed URL query
+parameters, and provider tokens. This remains partial until all credential
+persistence and logging paths route through shared hardening helpers.
 
 ## Portable Environment Contract
 
@@ -49,12 +163,40 @@ An environment repository's tracked `pyproject.toml` carries the portable recipe
 for recreating the environment: ComfyUI/Python intent, Python dependencies,
 custom nodes, workflows, workflow contracts, and model metadata.
 
+### CGCORE-MAN-01A [LIVE]: Manifest abstractions remain pyproject-backed
+Validation: MIXED
+
+Core may expose typed manifest snapshots, pyproject-backed manifest services,
+and manifest edit transactions so callers do not depend on TOMLKit objects or
+deep `[tool.comfygit]` table paths. These abstractions hide document mechanics,
+not the fact that `pyproject.toml` and uv dependency semantics are the canonical
+portable substrate.
+
+Public adapters should prefer Environment and Workspace facades, typed manifest
+snapshots, and domain edit affordances. Code that must inspect or mutate raw
+TOML should stay in pyproject storage, migration, merge/diff, import-inspection,
+or manifest implementation modules.
+
 ### CGCORE-MAN-02 [LIVE]: Machine-local configuration is not committed as manifest truth
 Validation: TEST
 
 Machine-specific sync inputs such as PyTorch backend selection and local UV source
 overrides belong in gitignored environment-local files, then get injected during
 sync/run. They must not become required tracked manifest state.
+
+### CGCORE-MAN-02A [LIVE]: Machine-local dependency injection is crash-safe
+Validation: TEST
+
+Core should not mutate the tracked manifest file when applying machine-local
+dependency configuration for uv resolution. Overlay and PyTorch backend data
+should be applied to a disposable project copy or equivalent transaction target
+so process crashes, host reboots, or hard kills cannot leave local-only state in
+the environment repository's `pyproject.toml`.
+
+Only explicit portable user edits, such as adding a declared Python dependency
+or changing tracked custom-node metadata, should be written to the tracked
+manifest. Generated resolution state such as `uv.lock` may be copied back only
+when it is runtime-local or otherwise covered by manifest rules.
 
 ### CGCORE-MAN-03 [PARTIAL]: Runtime directories are derived materialization
 Validation: MIXED
@@ -107,7 +249,7 @@ read/write APIs through Environment. The legacy core-side UI-workflow conversion
 path is no longer a supported contract authoring or runtime dependency; runtime
 execution should consume Manager-captured API prompt artifacts.
 
-### CGCORE-EXEC-02 [PLANNED]: Core contract execution stays transport-agnostic
+### CGCORE-EXEC-02 [LIVE]: Core contract execution stays transport-agnostic
 Validation: STATIC
 
 Core should not own HTTP routing, websocket proxying, ComfyUI process
@@ -119,25 +261,25 @@ results that those packages can adapt to their transports. Browser UI assets
 for `cg serve` are also adapter-owned; core must not depend on React, Vite,
 `aiohttp`, SQLite runtime state, or any hosted studio runtime.
 
-### CGCORE-EXEC-03 [PLANNED]: `cg serve` is a runtime adapter over stored contract semantics
+### CGCORE-EXEC-03 [PARTIAL]: `cg serve` is a runtime adapter over stored contract semantics
 Validation: MIXED
 
-A future ComfyGit serve runtime should expose contract-shaped workflow endpoints
-for a ComfyGit environment by loading manifest state, captured API prompt
-artifacts, calling core contract execution services, and communicating with a
-local ComfyUI server or another serve-owned execution adapter. The serve
-runtime may provide HTTP endpoints, progress streams, upload-slot endpoints,
-output retrieval, static browser UI assets, state/session adapters, storage
-adapters, and `RunExecutor` strategies, but it must not redefine the manifest
-or contract semantics. The CLI serve adapter may depend on concrete runtime
-tooling such as `aiohttp` for HTTP, SQLite for local serve state, and React/Vite
-for packaged browser assets; core must not depend on or expose those transport,
-persistence, execution-host, or presentation stacks.
+The CLI serve runtime exposes contract-shaped workflow endpoints for a ComfyGit
+environment by loading manifest state, using captured API prompt artifacts where
+available, and communicating with a local ComfyUI server or another serve-owned
+execution adapter. The serve runtime may provide HTTP endpoints, upload-slot
+endpoints, output retrieval, static browser UI assets, state/session adapters,
+storage adapters, and `RunExecutor` strategies, but it must not redefine the
+manifest or contract semantics. The CLI serve adapter may depend on concrete
+runtime tooling such as `aiohttp` for HTTP, SQLite for local serve state, and
+React/Vite for packaged browser assets; core must not depend on or expose those
+transport, persistence, execution-host, or presentation stacks.
 
 Direct local ComfyUI execution, local proxy execution, remote proxy execution,
 and serverless-provider execution are serve/deployment adapter choices. Core
 should remain limited to preparing contract prompts and interpreting typed
-execution results in a transport-agnostic way.
+execution results in a transport-agnostic way. This remains partial until all
+runtime paths consume the same stable typed core execution services.
 
 ### CGCORE-EXEC-04 [PARTIAL]: API prompts are captured execution artifacts
 Validation: TEST
@@ -175,7 +317,7 @@ Validation: TEST
 
 ComfyGit-managed environments use uv to resolve and sync Python dependencies.
 Manual package installs into the environment virtualenv are not durable unless
-captured in manifest dependency state or machine-local injection config.
+captured in manifest dependency state or machine-local overlay config.
 The `comfygit-system` dependency group owns uv as a ComfyGit-managed resolver
 tool and must keep it on a version new enough to support the manifest features
 ComfyGit writes, including dependency exclusions. Transitive packages may not
@@ -203,7 +345,7 @@ The initial supported flow is local-first: the model must already exist in the
 workspace model index before it can be attached to a workflow. Declaring a
 missing model by URL and target path remains future download-intent behavior.
 
-### CGCORE-DEP-02B [PLANNED]: Built-in model-loader detection uses generated ComfyUI metadata
+### CGCORE-DEP-02B [PARTIAL]: Built-in model-loader detection uses generated ComfyUI metadata
 Validation: MIXED
 
 Core should not rely only on a hand-maintained list of built-in ComfyUI model
@@ -221,7 +363,9 @@ Generated metadata is local derived state, not portable manifest truth. If
 generation is unavailable or a loader is too dynamic to classify safely, core may
 fall back to conservative static mappings and manual workflow model declarations.
 Manual declarations remain the required escape hatch for custom nodes and opaque
-runtime behavior.
+runtime behavior. The current implementation extracts and consumes conservative
+local metadata for folder-backed built-in loaders, but broad dynamic loader
+coverage remains partial.
 
 ### CGCORE-DEP-03 [LIVE]: Model criticality affects reproducibility gates
 Validation: TEST
@@ -263,6 +407,17 @@ runtime health warnings. Those warnings may use core manifest identity and
 workflow-usage metadata, but the live import signal itself is not core portable
 state and must not mutate custom-node criticality.
 
+### CGCORE-NODE-01 [LIVE]: Manager self-update prepares replacement metadata before mutating current Manager state
+Validation: TEST
+
+Because the Manager custom node depends on the running ComfyGit core package,
+Manager install/update may use the generic node lifecycle but has an additional
+ordering invariant: it must resolve replacement metadata and cached install
+contents before removing the currently tracked Manager node or its dependency
+group. Failed update preparation should leave the existing Manager manifest
+entry and dependency group intact so users can recover by retrying or manually
+updating the node.
+
 ### CGCORE-DEP-06 [PLANNED]: Model source candidate discovery is reusable core logic
 Validation: MIXED
 
@@ -302,6 +457,18 @@ commit was last materialized. At that point, checkout of an older commit should
 avoid silent toolchain migration where practical and should instead surface an
 explicit repair or migration action when current ComfyGit cannot safely operate
 with the recorded toolchain.
+
+### CGCORE-DEP-09 [PARTIAL]: Optional dependency failures are local sync state
+Validation: TEST
+
+An optional dependency group that fails to resolve, build, or install on the
+current machine should be reported as local sync state rather than silently
+removed from tracked portable manifest truth. Core may retry uv sync with
+failed optional groups skipped for the current operation, but removing or
+rewriting those groups in `pyproject.toml` requires explicit user intent. This
+remains partial until all uv sync paths return typed outcome data that records
+attempted groups, skipped groups, failed optional groups, and any manifest
+mutations.
 
 ## Resolution And Sync
 

@@ -146,23 +146,20 @@ removed.
 
 ## Runtime Adapter Boundary
 
-### CGSERVE-RUN-01 [PARTIAL]: `cg serve` fronts ComfyUI with contract-shaped endpoints
+### CGSERVE-RUN-01 [PARTIAL]: Studio runtime fronts ComfyUI with contract-shaped endpoints
 Validation: MIXED
 
-A serve runtime should expose HTTP endpoints shaped around ComfyGit workflow
-contracts while communicating with a local ComfyUI server through ComfyUI's
+A Studio runtime should expose HTTP endpoints shaped around ComfyGit workflow
+contracts while communicating with a running ComfyUI server through ComfyUI's
 normal API. External callers should send contract inputs to ComfyGit; ComfyGit
 should translate those inputs into a ComfyUI prompt and map the resulting
 artifacts back to contract outputs.
 
-The CLI now provides a first `cg serve` adapter that resolves the active or
-`-e <env>` environment, serves contract metadata, converts contract-shaped run
-requests through legacy core prompt-building logic, submits prompts to a
-configured ComfyUI API URL, optionally waits for history, and returns local
-output references. The adapter is implemented as an `aiohttp` runtime in the
-CLI package so it can grow into static UI serving, progress streams, websocket
-bridging, and output delivery without moving transport concerns into core. This
-adapter does not launch ComfyUI.
+The shared `comfygit-studio` runtime owns the contract HTTP surface, local
+upload staging, run/gallery/session state, output proxying, and ComfyUI API
+execution adapters. The CLI `cg serve` command and ComfyGit Manager embedded
+Studio routes are hosts for that runtime. The runtime does not launch ComfyUI;
+it targets a configured or current running ComfyUI API URL.
 
 For media/file contract inputs backed by ComfyUI loader nodes, Studio uploads
 file bytes to the serve upload endpoint first, receives an opaque `file_ref`,
@@ -176,23 +173,22 @@ Inline base64/data URL uploads are retired from the Studio execution path.
 Contract run requests should stay small JSON control-plane messages; callers
 with binary media must upload first and submit an upload reference.
 
-This adapter should move to loading stored Manager-captured API prompt artifacts
+This runtime should move to loading stored Manager-captured API prompt artifacts
 before the contract runtime path is considered stable.
 
-### CGSERVE-RUN-01A [PLANNED]: `cg serve` root hosts the contract studio UI
-Validation: MIXED
+### CGSERVE-RUN-01A [PARTIAL]: Runtime hosts the contract Studio UI
+Validation: TEST
 
-The `cg serve` root path should render a browser UI for the served environment,
-not a blank or API-only landing. This hosted contract studio is a thin client
-over the same contract metadata and run endpoints that external callers use. It
-must not introduce a second execution path or workflow-specific graph builder.
+The served Studio UI is a browser playground for the selected environment, not a
+separate execution system. It is a thin client over the same contract metadata
+and run endpoints that external callers use. It must not introduce a second
+execution path or workflow-specific graph builder.
 
-The first studio slice should list available contracts as cards, open a
-contract-specific generation view, render controls from contract input schema,
-submit generation requests to the matching contract run endpoint, and display
-image outputs returned by the same API response. Unsupported input or output
-types should degrade to plain fields or raw JSON instead of blocking the whole
-contract.
+Current local serve hosts the packaged Studio SPA from the `comfygit-studio`
+wheel, injects host-specific runtime configuration, and falls back to the same
+API surface used by non-browser clients. Manager may host the same Studio SPA
+under namespaced ComfyUI routes. This remains partial while the UI and runtime
+endpoint surface continue to evolve.
 
 ### CGSERVE-RUN-01B [PARTIAL]: Studio frontend is a shared packaged static asset
 Validation: STATIC
@@ -201,24 +197,67 @@ The contract Studio source should live in a first-class frontend package that
 can be consumed by both `cg serve` and hosted Cloud published endpoints. The
 CLI is one host for Studio, not the owner of the Studio source.
 
-Release builds should emit static assets that can be copied into the Python CLI
-package so `cg serve` can serve Studio without requiring Node.js at runtime.
-Cloud may consume the same package source or published bundle and should
+Release builds should emit static assets that can be copied into the Python
+`comfygit-studio` runtime package so `cg serve`, Manager, and future adapters
+can serve Studio without requiring Node.js at runtime. Cloud may consume the
+same package source or published bundle and should
 implement the same endpoint-first Studio API surface instead of maintaining a
 parallel playground UI. The packaged UI may use design patterns inspired by J
 AI Studio, but ComfyGit's UI remains contract-driven rather than
 model/profile-driven.
 
 During local development, the frontend may be built independently and served by
-the CLI `aiohttp` adapter from its emitted asset directory. The serve adapter
-owns static file routing, SPA fallback, and output proxy URLs; core continues to
-own only contract interpretation and prompt/output semantics.
+the Studio runtime from its emitted asset directory. The runtime owns static
+file routing, SPA fallback, and output proxy URLs; core continues to own only
+contract interpretation and prompt/output semantics.
 
 Studio must receive host-specific runtime configuration instead of hard-coding
 one deployment context. Local `cg serve` should configure an empty API base
 path, while Cloud should configure the published endpoint path such as
 `/e/{environment_public_id}/{endpoint_slug}`. Studio request, upload, gallery,
 run, and output URLs should be derived from that API base path.
+
+### CGSERVE-RUN-01C [LIVE]: Manager embeds Studio without requiring the CLI package
+Validation: TEST
+
+ComfyGit Manager should be able to open Studio for a managed environment from a
+running ComfyUI process without requiring the `comfygit` CLI package or a
+separate `cg serve` child process in that environment. Manager should register
+namespaced ComfyGit Studio UI and runtime API routes on the current ComfyUI
+server and point the Studio frontend at those routes.
+
+Manager-embedded Studio is a host for the shared `comfygit-studio` runtime. It
+must use the same contract-shaped metadata, upload, run, gallery, and output
+semantics as `cg serve`, while preserving Manager's user flow for users who
+installed only the custom node.
+
+If a browser opens the embedded Studio UI route before Manager has started the
+embedded runtime state in the current ComfyUI process, the route should return a
+human-readable unavailable page instead of surfacing a raw server traceback or
+implementation key error.
+
+The CLI release artifact should contain the synced static output from the same
+Studio source version as the release. Installed users should not need Node.js or
+the Studio source tree available for `cg serve` to host the packaged UI.
+
+### CGSERVE-RUN-01D [LIVE]: Studio publishes a versioned public OpenAPI contract
+Validation: TEST
+
+The shared `comfygit-studio` runtime should own a versioned OpenAPI document for
+the public contract API used by local `cg serve`, Manager-embedded Studio, and
+future hosted endpoint front doors. The public document should cover
+contract-shaped client routes such as health, contract discovery, uploads, run
+submission/status/cancellation, gallery listing/deletion, and output delivery.
+
+The OpenAPI document should describe unprefixed runtime paths and rely on
+OpenAPI server/base-path configuration so hosts can mount the same API under
+different browser-facing prefixes. Internal worker/proxy plumbing may be
+documented separately; it should not be mixed into the first public contract API
+surface.
+
+The checked-in OpenAPI artifact should be generated from a small runtime-owned
+schema module, and validation should fail when the artifact drifts from the
+generator.
 
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED
@@ -279,16 +318,18 @@ implementation detail of the local executor; the public serve API should expose
 file refs, run refs, artifact refs, and contract result objects rather than
 local filesystem paths or raw ComfyUI assumptions.
 
-Current implementation: `cg serve` has a serve-owned `RunExecutor` seam and a
-`LocalComfyExecutor` that submits prepared contract prompts to the configured
-ComfyUI HTTP API with a generated ComfyUI `client_id`, waits for history when
-requested, and normalizes ComfyUI outputs back into contract output payloads.
-The generated `client_id` keeps ComfyUI's execution context populated for
-progress and preview-aware nodes even when the run is initiated by the headless
-serve API instead of the ComfyUI frontend. Request routing, sessions, upload
-refs, run records, gallery state, and output delivery remain owned by the serve
-runtime. Executor selection is not yet exposed as a user-facing configuration
-surface, and proxy execution is not implemented.
+Current implementation: `cg serve` has a serve-owned `RunExecutor` seam,
+user-facing executor selection for local and proxy execution, and separate
+studio/front-door and proxy runtime roles. `LocalComfyExecutor` submits prepared
+contract prompts to the configured ComfyUI HTTP API with a generated ComfyUI
+`client_id`, waits for history when requested, and normalizes ComfyUI outputs
+back into contract output payloads. The generated `client_id` keeps ComfyUI's
+execution context populated for progress and preview-aware nodes even when the
+run is initiated by the headless serve API instead of the ComfyUI frontend.
+Request routing, sessions, upload refs, run records, gallery state, and output
+delivery remain owned by the serve runtime. This remains partial because event
+streams, stronger remote auth policy, remote object storage delivery, and
+provider launch integration remain future work.
 
 ### CGSERVE-RUN-05A [PLANNED]: Contract runs should be asynchronous by default
 Validation: MIXED
@@ -354,14 +395,13 @@ In ephemeral mode, active runs may remain recoverable only while the same
 identity or UI preferences, but it must not be the source of truth for run
 completion, output extraction, cancellation, or gallery records.
 
-Current implementation: serve records submitted/running runs and pending gallery
-items, exposes active runs through `/runs?active=true`, and schedules
-best-effort completion watchers for active runs at startup and when gallery/run
-state is queried. In local persistent state mode, a restarted `cg serve` process
-can resume polling ComfyUI history by persisted `prompt_id` and update the
-stored run/gallery rows when the prompt completes or fails. Recovery still uses
-one pending gallery item per run; declared output slots and lifecycle events are
-separate planned slices.
+Current implementation: serve records submitted/running runs and output slots,
+exposes active runs through `/runs?active=true`, and schedules best-effort
+completion watchers for active runs at startup and when gallery/run state is
+queried. In local persistent state mode, a restarted `cg serve` process can
+resume polling ComfyUI history by persisted `prompt_id` and update the stored
+run, slot, and gallery rows when the prompt completes or fails. Lifecycle event
+streaming remains a separate planned slice.
 
 ### CGSERVE-RUN-05D [PLANNED]: Serve should stream run lifecycle events
 Validation: MIXED
@@ -403,6 +443,23 @@ run-level cancel control under the Generate button once the run has a `run_id`.
 This is partial because cancellation is still polling-observed rather than
 event-streamed, the local executor relies on ComfyUI's prompt-id interrupt
 semantics, and shared multi-user cancellation policy is not yet configurable.
+
+### CGSERVE-RUN-05F [LIVE]: Gallery listing supports cursor pagination
+Validation: TEST
+
+`GET /gallery` should remain backward-compatible for early clients by returning
+all gallery items when no pagination query is supplied. Clients that pass
+`limit` should receive a bounded page ordered by newest item first, plus an
+opaque `next_cursor`, `has_more`, and echoed `limit` value. Passing both
+`limit` and `cursor` should return the next page using the same stable ordering.
+
+Gallery cursors should be opaque API tokens derived from serve-owned ordering
+metadata, not client-constructed offsets. The stable order is `createdAt`
+descending with gallery item id as the tie-breaker so completed runs can be
+added while clients page without duplicate or skipped rows.
+
+The Studio frontend should prefer the paginated gallery API while tolerating
+older gallery responses that lack pagination fields.
 
 ### CGSERVE-RUN-06 [PARTIAL]: Proxy execution is an optional executor mode
 Validation: HUMAN_REVIEW
@@ -646,6 +703,18 @@ URLs to front-door `/outputs/view?serve_artifact=...`, and persists those
 localized refs in run, output-slot, and gallery records. Polling mode still
 downloads completed artifacts from `/proxy/artifacts/{artifact_id}`. Remote
 object-storage artifact refs remain planned.
+
+### CGSERVE-RUN-07 [PARTIAL]: `cg serve` is the local/manual deployment replacement for the retired deploy package
+Validation: HUMAN_REVIEW
+
+The open-source ComfyGit monorepo should expose local and manually hosted
+runtime execution through `cg serve`. Provider-specific hosted deployment
+orchestration belongs to ComfyGit Cloud or external adapters, not to a revived
+`packages/deploy` package in this workspace.
+
+`packages/deploy` and `comfygit-deploy` are retired. They must not be restored
+as workspace members, release artifacts, build targets, publish targets, or
+maintained package APIs unless the truth layer is intentionally revised first.
 
 ## Runtime State And Gallery Persistence
 

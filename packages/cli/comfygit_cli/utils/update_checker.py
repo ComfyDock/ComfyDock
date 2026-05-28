@@ -10,13 +10,13 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 from typing import Any
 
 import requests
-from importlib.metadata import PackageNotFoundError, version as pkg_version
 from packaging.version import InvalidVersion, Version
-
 
 _PYPY_PROJECT = "comfygit"
 _PYPI_URL = f"https://pypi.org/pypi/{_PYPY_PROJECT}/json"

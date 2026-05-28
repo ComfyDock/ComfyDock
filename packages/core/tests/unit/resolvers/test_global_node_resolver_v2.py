@@ -480,7 +480,7 @@ class TestWorkflowManagerDisambiguation:
     def test_fuzzy_search_creates_ambiguous_list(self, test_env, monkeypatch):
         """When resolver returns multiple packages, workflow_manager puts them in ambiguous list.
 
-        This tests the workflow_manager.resolve_workflow() logic: when the resolver
+        This tests the workflow_manager.resolve_dependencies() logic: when the resolver
         returns multiple packages (e.g., from fuzzy search with no clear ranking),
         they should be placed in nodes_ambiguous rather than nodes_resolved.
         """
@@ -528,7 +528,7 @@ class TestWorkflowManagerDisambiguation:
         )
 
         # Run resolution
-        result = test_env.workflow_manager.resolve_workflow(deps)
+        result = test_env.workflow_manager.resolve_dependencies(deps)
 
         # Multiple packages should go to nodes_ambiguous, not nodes_resolved
         assert len(result.nodes_resolved) == 0, "Should not have resolved nodes"
@@ -1099,7 +1099,7 @@ class TestVersionGatedAndUninstallableHandling:
             mock_resolve,
         )
 
-        result = test_env.workflow_manager.resolve_workflow(deps)
+        result = test_env.workflow_manager.resolve_dependencies(deps)
 
         assert len(result.nodes_resolved) == 0
         assert len(result.nodes_uninstallable) == 1
@@ -1144,7 +1144,9 @@ class TestVersionGatedAndUninstallableHandling:
             def get_version_gate_info(self, node_type: str, current_version: str | None):
                 return self.database.get_version_gate_info(node_type, current_version)
 
-        test_env.workflow_manager.builtin_versions_repository = _StubRepo(db)
+        stub_repo = _StubRepo(db)
+        test_env.workflow_manager.builtin_versions_repository = stub_repo
+        test_env.workflow_manager.workflow_resolution_context_builder.builtin_versions_repository = stub_repo
 
         node = WorkflowNode(id="1", type="FutureBuiltin")
         deps = WorkflowDependencies(
@@ -1172,7 +1174,7 @@ class TestVersionGatedAndUninstallableHandling:
             mock_resolve,
         )
 
-        result = test_env.workflow_manager.resolve_workflow(deps)
+        result = test_env.workflow_manager.resolve_dependencies(deps)
 
         assert len(result.nodes_resolved) == 0
         assert len(result.nodes_uninstallable) == 0

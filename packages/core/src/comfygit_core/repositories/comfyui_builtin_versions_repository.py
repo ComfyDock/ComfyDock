@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 class ComfyUIBuiltinVersionsRepository:
     """Loads and serves version-indexed ComfyUI builtin metadata."""
 
-    def __init__(self, data_manager: "RegistryDataManager"):
+    def __init__(self, data_manager: RegistryDataManager):
         self.data_manager = data_manager
         self.builtins_path = data_manager.get_builtin_versions_path()
 
@@ -45,6 +45,10 @@ class ComfyUIBuiltinVersionsRepository:
         except Exception as e:
             logger.warning("Unexpected error loading builtins-by-version data: %s", e)
             return None
+
+    def clear_cached_data(self) -> None:
+        """Clear in-memory builtin version data after the backing cache file changes."""
+        self.__dict__.pop("database", None)
 
     def is_available(self) -> bool:
         """Return whether builtin version data is currently available."""

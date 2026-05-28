@@ -23,6 +23,7 @@ class TestAddDependenciesSubstitution:
             env.package_config = pkg_config
             env.uv_manager = MagicMock()
             env.uv_manager.add_dependency.return_value = "Added packages"
+            env.uv_manager.sync_project.return_value = ""
 
             # We need to import and use the real method
             from comfygit_core.core.environment import Environment

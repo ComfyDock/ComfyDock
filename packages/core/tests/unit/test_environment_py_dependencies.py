@@ -18,6 +18,7 @@ def mock_env():
         # Create environment instance
         env = Environment.__new__(Environment)
         env.uv_manager = MagicMock()
+        env.uv_manager.sync_project.return_value = ""
         env.pyproject = MagicMock()
 
         # Mock package_config to return packages unchanged (no substitutions)
@@ -46,8 +47,10 @@ class TestAddDependencies:
             optional=None,
             editable=False,
             bounds=None,
-            no_build_isolation=False
+            no_build_isolation=False,
+            frozen=True,
         )
+        mock_env.uv_manager.sync_project.assert_called_once()
         assert result["output"] == "Added: requests"
         assert result["substitutions"] == {}
 
@@ -67,12 +70,14 @@ class TestAddDependencies:
             optional=None,
             editable=False,
             bounds=None,
-            no_build_isolation=False
+            no_build_isolation=False,
+            frozen=True,
         )
+        mock_env.uv_manager.sync_project.assert_called_once()
         assert result["output"] == "Added: 3 packages"
 
     def test_add_dependencies_with_upgrade_flag(self, mock_env):
-        """Should pass upgrade=True when upgrade flag is set."""
+        """Should upgrade during sync after recording the manifest change."""
         mock_env.uv_manager.add_dependency.return_value = "Upgraded: requests"
 
         result = mock_env.add_dependencies(["requests"], upgrade=True)
@@ -80,13 +85,21 @@ class TestAddDependencies:
         mock_env.uv_manager.add_dependency.assert_called_once_with(
             packages=["requests"],
             requirements_file=None,
-            upgrade=True,
+            upgrade=False,
             group=None,
             dev=False,
             optional=None,
             editable=False,
             bounds=None,
-            no_build_isolation=False
+            no_build_isolation=False,
+            frozen=True,
+        )
+        mock_env.uv_manager.sync_project.assert_called_once_with(
+            pytorch_manager=None,
+            group=None,
+            dev=False,
+            extras=None,
+            upgrade=True,
         )
         assert result["output"] == "Upgraded: requests"
 
@@ -153,16 +166,11 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_project_deps(self, mock_env):
         """Should return dependencies from [project.dependencies]."""
-        mock_config = {
-            'project': {
-                'dependencies': [
-                    'requests>=2.0.0',
-                    'pillow',
-                    'tqdm>=4.0.0'
-                ]
-            }
-        }
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = [
+            'requests>=2.0.0',
+            'pillow',
+            'tqdm>=4.0.0'
+        ]
 
         deps = mock_env.list_dependencies()
 
@@ -172,8 +180,7 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_empty_when_no_deps(self, mock_env):
         """Should return empty dict when no dependencies exist."""
-        mock_config = {'project': {}}
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = []
 
         deps = mock_env.list_dependencies()
 
@@ -181,8 +188,7 @@ class TestListDependencies:
 
     def test_list_dependencies_returns_empty_when_no_project_section(self, mock_env):
         """Should return empty dict when project section doesn't exist."""
-        mock_config = {}
-        mock_env.pyproject.load.return_value = mock_config
+        mock_env.pyproject.manifest.list_project_dependencies.return_value = []
 
         deps = mock_env.list_dependencies()
 

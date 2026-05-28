@@ -6,7 +6,6 @@ import json
 import threading
 
 import pytest
-
 from comfygit_core.models.exceptions import CDEnvironmentError
 
 

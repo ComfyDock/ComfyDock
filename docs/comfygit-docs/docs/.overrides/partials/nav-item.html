@@ -1,0 +1,262 @@
+{#-
+  Based on Material for MkDocs' generated nav item partial.
+  ComfyGit adds a centralized title-to-icon map for sidebar entries so page
+  Markdown does not need presentational metadata.
+-#}
+{% macro render_status(nav_item, type) %}
+  {% set class = "md-status md-status--" ~ type %}
+  {% if config.extra.status and config.extra.status[type] %}
+    <span class="{{ class }}" title="{{ config.extra.status[type] }}">
+    </span>
+  {% else %}
+    <span class="{{ class }}"></span>
+  {% endif %}
+{% endmacro %}
+{% macro render_title(nav_item) %}
+  {% if nav_item.typeset %}
+    <span class="md-typeset">
+      {{ nav_item.typeset.title }}
+    </span>
+  {% else %}
+    {{ nav_item.title }}
+  {% endif %}
+{% endmacro %}
+{% macro icon_for_title(title) %}
+  {% if title == "Overview" %}
+    material/home-outline
+  {% elif title == "Installation" %}
+    material/download-box-outline
+  {% elif title == "Quickstart" %}
+    material/lightning-bolt-outline
+  {% elif title == "What ComfyGit Manages" %}
+    material/compass-outline
+  {% elif title == "Workspaces" %}
+    material/folder-multiple-outline
+  {% elif title == "Environments" or title == "Environment Lifecycle" or title == "Environment Commands" %}
+    material/folder-cog-outline
+  {% elif title == "Manifests" or title == "Manifest Reference" %}
+    material/file-document-outline
+  {% elif title == "Models" or title == "Model Management" or title == "Model Index" or title == "Missing Models" %}
+    material/cube-outline
+  {% elif title == "Custom Nodes" or title == "Custom Node Management" or title == "Node Commands" %}
+    material/puzzle-outline
+  {% elif title == "Workflows" or title == "Workflow Management" or title == "Workflow Commands" %}
+    material/source-branch
+  {% elif title == "Studio And Serve" or title == "Serve A Workflow" or title == "Serve And Studio" or title == "Serve API Reference" %}
+    material/application-brackets-outline
+  {% elif title == "Common Workflows" %}
+    material/list-box-outline
+  {% elif title == "Create An Environment" or title == "Add Custom Nodes" or title == "Add And Track Models" %}
+    material/plus-box-outline
+  {% elif title == "Track A Workflow" %}
+    material/source-commit
+  {% elif title == "Share An Environment" or title == "Export And Import" %}
+    material/share-variant-outline
+  {% elif title == "Running ComfyUI" %}
+    material/play-circle-outline
+  {% elif title == "Sync And Repair" %}
+    material/sync
+  {% elif title == "Local Runtime Config" or title == "Manager Reference" %}
+    material/cog-outline
+  {% elif title == "Environment History" %}
+    material/history
+  {% elif title == "Development Nodes" %}
+    material/account-hard-hat-outline
+  {% elif title == "Managing Nodes" or title == "Managing Models" %}
+    material/tools
+  {% elif title == "Node Conflicts" or title == "Dependency Conflicts" or title == "Common Issues" %}
+    material/alert-circle-outline
+  {% elif title == "Downloading Models" %}
+    material/download-outline
+  {% elif title == "Adding Sources" or title == "Git Remotes" %}
+    material/link-variant
+  {% elif title == "Workflow Resolution" %}
+    material/graph-outline
+  {% elif title == "Workflow Contracts" or title == "Workflow Contract Reference" %}
+    material/check-network-outline
+  {% elif title == "Uploads And File Refs" %}
+    material/upload-outline
+  {% elif title == "Python Dependencies" %}
+    material/package-variant
+  {% elif title == "Py Commands" or title == "Global Commands" or title == "CLI Reference" %}
+    material/console-line
+  {% elif title == "Constraints" %}
+    material/tag-outline
+  {% elif title == "Collaboration" or title == "Sharing And Collaboration" %}
+    material/source-repository-multiple
+  {% elif title == "Materialize Runtime Environments" %}
+    material/package-down
+  {% elif title == "Shell Completion" %}
+    material/keyboard-outline
+  {% elif title == "UV Errors" %}
+    material/package-variant-remove
+  {% elif title == "Environment Corruption" %}
+    material/folder-alert-outline
+  {% endif %}
+{% endmacro %}
+{% macro render_nav_icon(nav_item, ref, show_icon = true) %}
+  {% if show_icon %}
+    {% set icon = none %}
+    {% if nav_item.meta and nav_item.meta.icon %}
+      {% set icon = nav_item.meta.icon %}
+    {% else %}
+      {% set icon %}{{ icon_for_title((ref or nav_item).title) | trim }}{% endset %}
+    {% endif %}
+    {% if icon %}
+      <span class="cg-nav-icon md-icon" aria-hidden="true">
+        {% include ".icons/" ~ icon ~ ".svg" %}
+      </span>
+    {% endif %}
+  {% endif %}
+{% endmacro %}
+{% macro render_content(nav_item, ref = none, show_icon = true) %}
+  {% set ref = ref or nav_item %}
+  {{ render_nav_icon(nav_item, ref, show_icon) }}
+  <span class="md-ellipsis">
+    {{ render_title(ref) }}
+    {% if nav_item.meta and nav_item.meta.subtitle %}
+      <br>
+      <small>{{ nav_item.meta.subtitle }}</small>
+    {% endif %}
+  </span>
+  {% if nav_item.meta and nav_item.encrypted %}
+    {{ render_status(nav_item, "encrypted") }}
+  {% endif %}
+  {% if nav_item.meta and nav_item.meta.status %}
+    {{ render_status(nav_item, nav_item.meta.status) }}
+  {% endif %}
+{% endmacro %}
+{% macro render_pruned(nav_item, ref = none, icons_enabled = true) %}
+  {% set ref = ref or nav_item %}
+  {% set first = nav_item.children | first %}
+  {% if first and first.children %}
+    {{ render_pruned(first, ref, icons_enabled) }}
+  {% else %}
+    <a href="{{ first.url | url }}" class="md-nav__link">
+      {{ render_content(ref, show_icon = icons_enabled) }}
+      {% if nav_item.children | length > 0 %}
+        <span class="md-nav__icon md-icon"></span>
+      {% endif %}
+    </a>
+  {% endif %}
+{% endmacro %}
+{% macro render(nav_item, path, level, parent, icons_enabled = true) %}
+  {% set class = "md-nav__item" %}
+  {% set child_icons_enabled = icons_enabled %}
+  {% if nav_item.title in ["Common Tasks", "How-To Guides"] %}
+    {% set child_icons_enabled = false %}
+  {% endif %}
+  {% if nav_item.active %}
+    {% set class = class ~ " md-nav__item--active" %}
+  {% endif %}
+  {% if nav_item.pages %}
+    {% if page in nav_item.pages %}
+      {% set nav_item = page %}
+    {% endif %}
+  {% endif %}
+  {% if nav_item.children %}
+    {% set _ = namespace(index = none) %}
+    {% if "navigation.indexes" in features %}
+      {% for item in nav_item.children %}
+        {% if item.is_index and _.index is none %}
+          {% set _.index = item %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% set index = _.index %}
+    {% if "navigation.tabs" in features %}
+      {% if level == 1 and nav_item.active %}
+        {% set class = class ~ " md-nav__item--section" %}
+        {% set is_section = true %}
+      {% endif %}
+      {% if "navigation.sections" in features %}
+        {% if level == 2 and parent.active %}
+          {% set class = class ~ " md-nav__item--section" %}
+          {% set is_section = true %}
+        {% endif %}
+      {% endif %}
+    {% elif "navigation.sections" in features %}
+      {% if level == 1 %}
+        {% set class = class ~ " md-nav__item--section" %}
+        {% set is_section = true %}
+      {% endif %}
+    {% endif %}
+    {% if "navigation.prune" in features %}
+      {% if not is_section and not nav_item.active %}
+        {% set class = class ~ " md-nav__item--pruned" %}
+        {% set is_pruned = true %}
+      {% endif %}
+    {% endif %}
+    <li class="{{ class }} md-nav__item--nested">
+      {% if not is_pruned %}
+        {% set checked = "checked" if nav_item.active %}
+        {% if "navigation.expand" in features and not checked %}
+          {% set indeterminate = "md-toggle--indeterminate" %}
+        {% endif %}
+        <input class="md-nav__toggle md-toggle {{ indeterminate }}" type="checkbox" id="{{ path }}" {{ checked }}>
+        {% if not index %}
+          {% set tabindex = "0" if not is_section %}
+          <label class="md-nav__link" for="{{ path }}" id="{{ path }}_label" tabindex="{{ tabindex }}">
+            {{ render_content(nav_item, show_icon = icons_enabled and not is_section) }}
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        {% else %}
+          {% set class = "md-nav__link--active" if index == page %}
+          <div class="md-nav__link md-nav__container">
+            <a href="{{ index.url | url }}" class="md-nav__link {{ class }}">
+              {{ render_content(index, nav_item, show_icon = icons_enabled and not is_section) }}
+            </a>
+            {% if nav_item.children | length > 1 %}
+              {% set tabindex = "0" if not is_section %}
+              <label class="md-nav__link {{ class }}" for="{{ path }}" id="{{ path }}_label" tabindex="{{ tabindex }}">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            {% endif %}
+          </div>
+        {% endif %}
+        <nav class="md-nav" data-md-level="{{ level }}" aria-labelledby="{{ path }}_label" aria-expanded="{{ nav_item.active | tojson }}">
+          <label class="md-nav__title" for="{{ path }}">
+            <span class="md-nav__icon md-icon"></span>
+            {{ render_title(nav_item) }}
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            {% for item in nav_item.children %}
+              {% if not index or item != index %}
+                {{ render(item, path ~ "_" ~ loop.index, level + 1, nav_item, child_icons_enabled) }}
+              {% endif %}
+            {% endfor %}
+          </ul>
+        </nav>
+      {% else %}
+        {{ render_pruned(nav_item, icons_enabled = icons_enabled) }}
+      {% endif %}
+    </li>
+  {% elif nav_item == page %}
+    <li class="{{ class }}">
+      {% set toc = page.toc %}
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      {% set first = toc | first %}
+      {% if first and first.level == 1 %}
+        {% set toc = first.children %}
+      {% endif %}
+      {% if toc %}
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          {{ render_content(nav_item, show_icon = icons_enabled) }}
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      {% endif %}
+      <a href="{{ nav_item.url | url }}" class="md-nav__link md-nav__link--active">
+        {{ render_content(nav_item, show_icon = icons_enabled) }}
+      </a>
+      {% if toc %}
+        {% include "partials/toc.html" %}
+      {% endif %}
+    </li>
+  {% else %}
+    <li class="{{ class }}">
+      <a href="{{ nav_item.url | url }}" class="md-nav__link">
+        {{ render_content(nav_item, show_icon = icons_enabled) }}
+      </a>
+    </li>
+  {% endif %}
+{% endmacro %}

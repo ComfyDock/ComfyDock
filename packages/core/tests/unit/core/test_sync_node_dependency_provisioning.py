@@ -2,13 +2,11 @@
 
 from types import SimpleNamespace
 
+from comfygit_core.models.sync import UVSyncOutcome
 
-def _progressive_sync_result() -> dict:
-    return {
-        "packages_synced": True,
-        "dependency_groups_installed": [],
-        "dependency_groups_failed": [],
-    }
+
+def _progressive_sync_result() -> UVSyncOutcome:
+    return UVSyncOutcome(packages_synced=True)
 
 
 def _prepare_sync(test_env, monkeypatch):

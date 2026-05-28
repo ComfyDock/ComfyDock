@@ -14,6 +14,7 @@ work.
 | `packages/core/` | UI-agnostic library for workspaces, environments, manifests, sync, models, nodes, git, and resolution. |
 | `packages/cli/` | `comfygit` / `cg` command-line interface over core behavior. |
 | `packages/studio/` | Shared React/Vite Studio frontend bundled into CLI static assets and reused by hosted Cloud surfaces. |
+| `packages/studio-runtime/` | Python runtime for contract-shaped HTTP APIs, Studio static serving, uploads, gallery/run state, and ComfyUI execution adapters shared by CLI and Manager. |
 | `docs/contracts/` | Active truth-layer contracts. Highest-precedence behavioral guarantees. |
 | `docs/specs/` | Active truth-layer lifecycle, manifest, and dependency semantics. |
 | `docs/comfygit-docs/` | Public user documentation site. Do not treat as active architecture truth. |
@@ -144,13 +145,14 @@ make dev
 make test
 make lint
 uv run pytest packages/core/tests/ -v
+uv run pytest packages/studio-runtime/tests/ -v
 uv run pytest packages/cli/tests/ -v
 npm --prefix packages/studio run build
 uv run ruff check --fix
 uv run ty check packages/core/src/comfygit_core/models/readiness.py packages/core/src/comfygit_core/services/environment_readiness.py
 ```
 
-Core, CLI, and bundled Studio release artifacts use lockstep versioning:
+Core, Studio runtime, CLI, and bundled Studio release artifacts use lockstep versioning:
 
 ```bash
 make show-versions
@@ -159,18 +161,19 @@ make check-versions
 ```
 
 `packages/studio` is not a Python package, but it is versioned with the Python
-packages because the CLI release ships its built static output.
+packages because the `comfygit-studio` Python runtime release ships its built
+static output.
 
 Release setup for a new ComfyGit version:
 
-1. Pick one version for `comfygit-core`, `comfygit`, and
+1. Pick one version for `comfygit-core`, `comfygit-studio`, `comfygit`, and
    `@comfygit/studio`.
 2. Run `make bump-version VERSION=<version>`.
 3. Run `uv lock` from the repo root so `uv.lock` reflects the Python package
    graph.
 4. Run `make check-versions` and `make build-all`. `make build-all` builds
    Studio, syncs `packages/studio/dist/static/` into
-   `packages/cli/comfygit_cli/studio_static/`, then builds the Python
+   `packages/studio-runtime/comfygit_studio/static/`, then builds the Python
    packages.
 5. Run focused tests for the changed areas, plus truth-layer validation when
    contracts/specs changed.
@@ -178,8 +181,10 @@ Release setup for a new ComfyGit version:
    tooling/doc updates together.
 
 The publish workflow on `main` publishes `comfygit-core` first, waits until that
-version is visible on PyPI, then publishes the CLI package. This ordering
-matters because `comfygit` pins `comfygit-core==<version>`.
+version is visible on PyPI, then publishes `comfygit-studio`, then publishes the
+CLI package. This ordering matters because `comfygit-studio` pins
+`comfygit-core==<version>` and `comfygit` pins both
+`comfygit-core==<version>` and `comfygit-studio==<version>`.
 
 `packages/deploy`/`comfygit-deploy` has been retired and deleted. Do not add it
 back to workspace members, lockstep versioning, tests, build targets, or publish
@@ -187,10 +192,10 @@ workflows. Hosted deployment belongs to ComfyGit Cloud; local/manual serving
 belongs to `cg serve`.
 
 Manager release ordering is separate and dependent on this repo. After
-`comfygit-core==<version>` is published on PyPI, the sibling
-`comfygit-manager` repo can pin that exact core version, rebuild its panel, and
-publish its ComfyUI registry release. Do not publish Manager against an
-unpublished core pin.
+`comfygit-core==<version>` and `comfygit-studio==<version>` are published on
+PyPI, the sibling `comfygit-manager` repo can pin those exact versions, rebuild
+its panel, and publish its ComfyUI registry release. Do not publish Manager
+against unpublished core or Studio runtime pins.
 
 ## Validation
 
@@ -207,6 +212,7 @@ Repo validation:
 
 ```bash
 uv run pytest packages/core/tests/ -v
+uv run pytest packages/studio-runtime/tests/ -v
 uv run pytest packages/cli/tests/ -v
 npm --prefix packages/studio run build
 ```

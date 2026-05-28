@@ -167,7 +167,6 @@ This document defines the import hierarchy and functional responsibilities for t
 - `workflow_manager.py` - Workflow analysis/resolution/commit operations
 - `model_path_manager.py` - Model path configuration
 - `model_manifest_manager.py` - Model manifest operations
-- `model_download_manager.py` - Model download operations
 - `git_manager.py` - Git commit/rollback operations
 
 ---

@@ -22,6 +22,8 @@ WorkflowContractType = Literal[
     "file",
 ]
 
+WorkflowContractInputControl = Literal["input", "textarea"]
+
 CONTRACT_INPUT_TYPES: set[str] = {
     "string",
     "integer",
@@ -95,6 +97,13 @@ def _as_number(value: Any) -> ContractNumericBound | None:
     return int(parsed) if parsed.is_integer() else parsed
 
 
+def _as_positive_number(value: Any) -> ContractNumericBound | None:
+    parsed = _as_number(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
 def _normalize_contract_default(value: Any, input_type: str) -> ContractValue:
     if input_type == "integer":
         parsed = _as_int(value)
@@ -151,6 +160,14 @@ def _as_str_list(value: Any) -> list[str]:
     return [str(item) for item in value]
 
 
+def _as_input_control(value: Any) -> WorkflowContractInputControl | None:
+    if value == "input":
+        return "input"
+    if value == "textarea":
+        return "textarea"
+    return None
+
+
 @dataclass
 class WorkflowContractInput:
     """A named external input bound to a workflow node/widget field."""
@@ -167,8 +184,10 @@ class WorkflowContractInput:
     default: ContractValue = None
     min: ContractNumericBound | None = None
     max: ContractNumericBound | None = None
+    step: ContractNumericBound | None = None
     enum_values: list[str] = field(default_factory=list)
     description: str | None = None
+    ui_control: WorkflowContractInputControl | None = None
 
     @property
     def widget_index(self) -> int | None:
@@ -202,8 +221,10 @@ class WorkflowContractInput:
             "default": _toml_safe_value(self.default),
             "min": _toml_safe_value(self.min),
             "max": _toml_safe_value(self.max),
+            "step": _toml_safe_value(self.step),
             "enum_values": self.enum_values if self.enum_values else None,
             "description": self.description,
+            "ui_control": self.ui_control,
         }
         return _omit_none(payload)
 
@@ -221,13 +242,15 @@ class WorkflowContractInput:
             "default": self.default,
             "min": self.min,
             "max": self.max,
+            "step": self.step,
             "enum_values": self.enum_values if self.enum_values else None,
             "description": self.description,
+            "ui_control": self.ui_control,
         }
         return _omit_none(payload)
 
     @classmethod
-    def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowContractInput":
+    def from_toml_dict(cls, data: dict[str, Any]) -> WorkflowContractInput:
         """Deserialize from pyproject data.
 
         The durable field is `widget_idx`; `widget_index` is accepted as an
@@ -248,8 +271,10 @@ class WorkflowContractInput:
             default=_normalize_contract_default(data.get("default"), str(data["type"])),
             min=_as_number(data.get("min")),
             max=_as_number(data.get("max")),
+            step=_as_positive_number(data.get("step")),
             enum_values=_as_str_list(data.get("enum_values")),
             description=_as_str(data.get("description")),
+            ui_control=_as_input_control(data.get("ui_control")),
         )
 
 
@@ -295,7 +320,7 @@ class WorkflowContractOutput:
         return _omit_none(payload)
 
     @classmethod
-    def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowContractOutput":
+    def from_toml_dict(cls, data: dict[str, Any]) -> WorkflowContractOutput:
         return cls(
             name=str(data["name"]),
             type=str(data["type"]),
@@ -338,7 +363,7 @@ class NamedWorkflowContract:
         return _omit_none(payload)
 
     @classmethod
-    def from_toml_dict(cls, data: dict[str, Any]) -> "NamedWorkflowContract":
+    def from_toml_dict(cls, data: dict[str, Any]) -> NamedWorkflowContract:
         return cls(
             inputs=[
                 WorkflowContractInput.from_toml_dict(item)
@@ -412,7 +437,7 @@ class WorkflowExecutionContract:
         return _omit_none(payload)
 
     @classmethod
-    def from_toml_dict(cls, data: dict[str, Any]) -> "WorkflowExecutionContract":
+    def from_toml_dict(cls, data: dict[str, Any]) -> WorkflowExecutionContract:
         raw_contracts = data.get("contracts", {})
         contracts: dict[str, NamedWorkflowContract] = {}
         if isinstance(raw_contracts, dict):

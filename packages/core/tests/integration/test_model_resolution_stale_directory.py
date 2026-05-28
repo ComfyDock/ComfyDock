@@ -92,13 +92,13 @@ class TestWorkflowModelResolutionWithDirectorySwitch:
         # ASSERT: Resolution should detect that model is NOT available in current directory
 
         # Analyze workflow
-        dependencies = test_env.workflow_manager.analyze_workflow("test_workflow")
+        dependencies, _ = test_env.workflow_manager.analyze_and_resolve_workflow("test_workflow")
         assert len(dependencies.found_models) == 1
         model_ref = dependencies.found_models[0]
         assert model_ref.widget_value == model_filename
 
         # Resolve workflow
-        resolution = test_env.workflow_manager.resolve_workflow(dependencies)
+        resolution = test_env.workflow_manager.resolve_dependencies(dependencies)
 
         # DEBUG: Print what we found
         print("\n=== RESOLUTION RESULTS ===")

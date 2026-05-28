@@ -50,8 +50,8 @@ class TestModelDirectorySwitch:
 
         # Verify initial state
         initial_stats = test_workspace.get_model_stats()
-        assert initial_stats["total_models"] == 3, "Should have 3 unique models"
-        assert initial_stats["total_locations"] == 3, "Should have 3 file locations"
+        assert initial_stats.total_models == 3, "Should have 3 unique models"
+        assert initial_stats.total_locations == 3, "Should have 3 file locations"
 
         # Get hash of shared model for later verification
         shared_models = test_workspace.model_repository.find_by_filename("shared_model.safetensors")
@@ -98,12 +98,12 @@ class TestModelDirectorySwitch:
 
         # ASSERT: Verify index reflects new directory state
         final_stats = test_workspace.get_model_stats()
-        assert final_stats["total_models"] == 2, (
-            f"Should have exactly 2 models after switch. Got {final_stats['total_models']}. "
+        assert final_stats.total_models == 2, (
+            f"Should have exactly 2 models after switch. Got {final_stats.total_models}. "
             "Orphaned models from old directory should be removed."
         )
-        assert final_stats["total_locations"] == 2, (
-            f"Should have exactly 2 file locations. Got {final_stats['total_locations']}"
+        assert final_stats.total_locations == 2, (
+            f"Should have exactly 2 file locations. Got {final_stats.total_locations}"
         )
 
         # Verify shared model still exists with metadata preserved
@@ -154,7 +154,7 @@ class TestModelDirectorySwitch:
         test_workspace.set_models_directory(models_dir_1)
 
         initial_stats = test_workspace.get_model_stats()
-        assert initial_stats["total_models"] == 1
+        assert initial_stats.total_models == 1
 
         # ACT: Switch to empty directory
         empty_dir = test_workspace.paths.root / "empty_models"
@@ -163,10 +163,10 @@ class TestModelDirectorySwitch:
 
         # ASSERT: Index should be empty
         final_stats = test_workspace.get_model_stats()
-        assert final_stats["total_models"] == 0, (
+        assert final_stats.total_models == 0, (
             "Index should be empty when switching to empty directory"
         )
-        assert final_stats["total_locations"] == 0
+        assert final_stats.total_locations == 0
 
     def test_switching_back_to_original_directory_rescans_correctly(self, test_workspace):
         """Test that switching back to a previous directory re-indexes correctly."""
@@ -191,7 +191,7 @@ class TestModelDirectorySwitch:
         test_workspace.set_models_directory(dir_2)
 
         stats_dir2 = test_workspace.get_model_stats()
-        assert stats_dir2["total_models"] == 1
+        assert stats_dir2.total_models == 1
         assert len(test_workspace.model_repository.find_by_filename("model_in_dir2.safetensors")) == 1
         assert len(test_workspace.model_repository.find_by_filename("model_in_dir1.safetensors")) == 0
 
@@ -200,7 +200,7 @@ class TestModelDirectorySwitch:
 
         # ASSERT: Dir_1 model should be back
         final_stats = test_workspace.get_model_stats()
-        assert final_stats["total_models"] == 1
+        assert final_stats.total_models == 1
         assert len(test_workspace.model_repository.find_by_filename("model_in_dir1.safetensors")) == 1
         assert len(test_workspace.model_repository.find_by_filename("model_in_dir2.safetensors")) == 0
 
@@ -239,7 +239,7 @@ class TestModelDirectorySwitch:
         # Switch to dir_2 (model no longer visible)
         test_workspace.set_models_directory(dir_2)
         stats = test_workspace.get_model_stats()
-        assert stats["total_models"] == 0, "Dir 2 is empty, so no models should be visible"
+        assert stats.total_models == 0, "Dir 2 is empty, so no models should be visible"
 
         # Switch back to dir_1
         test_workspace.set_models_directory(dir_1)
@@ -323,14 +323,21 @@ class TestModelDirectorySwitch:
 
         # Should see 1 model in current directory
         stats = test_workspace.get_model_stats()
-        assert stats["total_models"] == 1
-        assert stats["total_locations"] == 1
+        assert stats.total_models == 1
+        assert stats.total_locations == 1
 
-        # But get_locations should show both locations
-        all_locations = test_workspace.model_repository.get_locations(model_hash)
+        # But the public location facade should show both indexed locations
+        all_locations = test_workspace.get_model_locations(model_hash)
         assert len(all_locations) == 2, "Should track both locations for same model"
 
         # Verify both directory paths are present
-        location_dirs = {loc['base_directory'] for loc in all_locations}
+        location_dirs = {loc.base_directory for loc in all_locations}
         assert str(dir_1.resolve()) in location_dirs
         assert str(dir_2.resolve()) in location_dirs
+
+        # Detail lookup uses the current directory for the primary model row,
+        # while still returning all known typed locations for that model hash.
+        details = test_workspace.get_model_details(model_hash[:8])
+        assert details.model.base_directory == str(dir_2.resolve())
+        assert len(details.all_locations) == 2
+        assert all(location.full_path for location in details.all_locations)

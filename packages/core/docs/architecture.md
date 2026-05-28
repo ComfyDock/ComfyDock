@@ -7,7 +7,7 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 ```
 ┌─────────────────────────────────────────┐
 │  Public API Layer                       │
-│  Workspace, Environment (core/)         │
+│  Workspace, Environment, facade exports │
 └──────────────┬──────────────────────────┘
                │
 ┌──────────────▼──────────────────────────┐
@@ -40,14 +40,16 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 | Module | Purpose | Key Concepts |
 |--------|---------|--------------|
 | **core/** | Public API | Workspace (multi-env), Environment (single env) |
-| **models/** | Type safety | Data classes, protocols, exceptions with context |
+| **models/** | Public typed contracts | Exported data classes, protocols, exceptions with context |
+| **readiness.py**, **workflow.py**, **runtime.py**, **assets.py**, **git.py** | Public facades | Reusable domain helpers promoted for adapters |
 | **managers/** | Orchestration | Environment orchestrators (Git, Model), Resource managers (Node, Workflow, Model symlinks), Config managers (PyProject, UV, PyTorch backend) |
+| **manifest/** | Internal manifest abstraction | Pyproject-backed store, section handlers, edit helpers, overlay materialization, migration cleanup |
 | **analyzers/** | Analysis | Parse workflows/git/status; classify nodes |
 | **resolvers/** | Resolution | Map workflow nodes to packages; resolve model sources |
 | **services/** | Business logic | Lookup, registry, downloads, import analysis |
 | **repositories/** | Persistence | SQLite caching, workflow cache, config storage |
 | **clients/** | External APIs | CivitAI, GitHub, ComfyUI registry |
-| **factories/** | DI | Create Workspace/Environment with dependencies |
+| **factories/** | Internal DI | Create Workspace/Environment with dependencies behind public facades |
 | **utils/** | Low-level | Git, filesystem, parsing, version, download |
 | **caching/** | Cache layer | API cache, custom node cache, workflow cache |
 | **configs/** | Reference data | Builtin nodes, model categories |
@@ -73,9 +75,10 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 ## Key Entry Points
 
 **Workspace Operations:**
+- `Workspace.open()` - Discover and load an existing workspace
 - `Workspace.create()` - Create new workspace with validation
-- `Workspace.environments()` / `get_environment()` - List/get environments
-- `WorkspaceFactory.find()` - Discover existing workspace from environment variables
+- `Workspace.open_or_create()` - Setup-friendly load-or-create entry point
+- `Workspace.list_environments()` / `get_environment()` - List/get environments
 - `Workspace.get_schema_version()` / `is_legacy_schema()` - Check workspace version
 - `Workspace.upgrade_schema_if_needed()` - Migrate to current schema
 
@@ -91,6 +94,18 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 - `GlobalNodeResolver.resolve_single_node_with_context()` - Enhanced node resolution with context
 - `GlobalNodeResolver.search_packages()` - Fuzzy search with heuristic boosting
 - `ModelResolver.resolve_model()` - Resolve model sources using multiple strategies
+
+Low-level resolvers, managers, repositories, factories, and utilities are
+implementation details unless re-exported through a public facade module.
+Adapters should import from `comfygit_core`, `comfygit_core.models`, or the
+explicit facade modules instead of deep implementation paths.
+
+The `manifest/` package is the internal boundary around the current
+`pyproject.toml` implementation. `PyprojectManager` remains the compatibility
+facade for existing core internals, but document storage, section ownership,
+overlay materialization, and disposable uv project sync should live behind
+manifest helpers. New callers should prefer `Environment.get_manifest_snapshot()`
+or the public Environment/Workspace facade methods instead of reading raw TOML.
 
 ## Dependencies
 

@@ -6,12 +6,11 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from functools import cached_property, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-import tomlkit
+from typing import TYPE_CHECKING, cast
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
@@ -29,7 +28,18 @@ from ..managers.user_content_symlink_manager import UserContentSymlinkManager
 from ..managers.uv_project_manager import UVProjectManager
 from ..managers.workflow_manager import WorkflowManager
 from ..models.environment import EnvironmentStatus
+from ..models.manifest import ManifestModel
+from ..models.overlay import OVERLAY_TEMPLATE, OverlayConfig, OverlayInfo
 from ..models.ref_diff import RefDiff
+from ..models.runtime_config import (
+    DependencyGroupRemovalResult,
+    OverlayActivationResult,
+    OverlayTemplateResult,
+    TorchBackendDetection,
+    TorchBackendSelection,
+    TorchBackendStatus,
+    UVCommandContext,
+)
 from ..models.shared import (
     ManagerStatus,
     ManagerUpdateResult,
@@ -46,10 +56,17 @@ from ..utils.common import run_command
 from ..utils.environment_lock import EnvironmentOperationLock
 from ..utils.filesystem import rmtree
 from ..utils.node_identity import resolve_installed_node_alias
+from ..utils.requirements import read_comfyui_requirements_with_supplements
 from ..validation.resolution_tester import ResolutionTester
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
+    from comfygit_core.models.git import (
+        GitBranch,
+        GitCommitSummary,
+        GitRemote,
+        GitSyncStatus,
+    )
     from comfygit_core.models.protocols import (
         ExportCallbacks,
         ImportCallbacks,
@@ -65,16 +82,28 @@ if TYPE_CHECKING:
         DependencyResolutionApplyResult,
         DependencyResolutionPreview,
     )
-    from ..models.manifest import EnvironmentManifestSnapshot
+    from ..models.manifest import (
+        EnvironmentManifestSnapshot,
+        ManifestWorkflowEntry,
+        ManifestWorkflowModel,
+    )
     from ..models.merge_plan import MergeResult, MergeValidation
+    from ..models.readiness import EnvironmentReadiness, ModelSourceCandidate
     from ..models.workflow import (
         BatchDownloadCallbacks,
         DetailedWorkflowStatus,
         NodeInstallCallbacks,
+        NodeResolutionContext,
         ResolutionResult,
+        ResolvedNodePackage,
+        ScoredMatch,
+        ScoredPackageMatch,
+        WorkflowDependencies,
+        WorkflowNode,
         WorkflowSyncStatus,
     )
     from ..models.workflow_contract import WorkflowExecutionContract
+    from ..services.model_downloader import DownloadRequest, DownloadResult
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
@@ -132,6 +161,30 @@ class Environment:
 
         # Guard against concurrent mutations of this environment.
         self._operation_lock = EnvironmentOperationLock(self.path / ".comfygit.lock")
+
+    @classmethod
+    def from_path(
+        cls,
+        path: Path,
+        workspace: Workspace,
+        *,
+        name: str | None = None,
+        torch_backend: str | None = None,
+    ) -> Environment:
+        """Construct an environment object when the caller already has a path.
+
+        Normal callers should prefer ``workspace.get_environment(name)`` or
+        ``workspace.create_environment(name)``. This classmethod exists for
+        advanced embedding and tests that already resolved the environment
+        directory.
+        """
+        resolved_path = path.resolve()
+        return cls(
+            name=name or resolved_path.name,
+            path=resolved_path,
+            workspace=workspace,
+            torch_backend=torch_backend,
+        )
 
     ## Cached properties ##
     #
@@ -195,6 +248,232 @@ class Environment:
         """Remove a default optional extra (returns True if removed)."""
         return self.pyproject.remove_sync_extra(extra)
 
+    # =====================================================
+    # Local Runtime Configuration
+    # =====================================================
+
+    def get_python_version(self, default: str = "3.12") -> str:
+        """Return the configured Python version for this environment."""
+        python_version_file = self.cec_path / ".python-version"
+        if python_version_file.exists():
+            return python_version_file.read_text(encoding="utf-8").strip()
+        return default
+
+    def is_valid_torch_backend(self, backend: str) -> bool:
+        """Return whether a PyTorch backend string has a supported format."""
+        return self.pytorch_manager.is_valid_backend(backend)
+
+    def get_torch_backend_status(self) -> TorchBackendStatus:
+        """Return local PyTorch backend state without mutating configuration."""
+        has_backend = self.pytorch_manager.has_backend()
+        backend: str | None = None
+        versions: Mapping[str, str] = {}
+        if has_backend:
+            backend = self.pytorch_manager.get_backend()
+            versions = self.pytorch_manager.get_versions()
+
+        return TorchBackendStatus(
+            backend=backend,
+            versions=versions,
+            backend_file=self.pytorch_manager.backend_file,
+            is_configured=has_backend,
+        )
+
+    def ensure_torch_backend(
+        self,
+        python_version: str | None = None,
+        override: str | None = None,
+    ) -> TorchBackendSelection:
+        """Return an explicit or configured backend, probing when no backend is configured."""
+        if override:
+            return TorchBackendSelection(
+                backend=override,
+                versions={},
+                backend_file=self.pytorch_manager.backend_file,
+                is_configured=self.pytorch_manager.has_backend(),
+                was_probed=False,
+            )
+
+        had_backend = self.pytorch_manager.has_backend()
+        backend = self.pytorch_manager.ensure_backend(
+            python_version or self.get_python_version()
+        )
+        return TorchBackendSelection(
+            backend=backend,
+            versions=self.pytorch_manager.get_versions(),
+            backend_file=self.pytorch_manager.backend_file,
+            is_configured=True,
+            was_probed=not had_backend,
+        )
+
+    def set_torch_backend(
+        self,
+        backend: str,
+        python_version: str | None = None,
+    ) -> TorchBackendStatus:
+        """Probe and persist a local PyTorch backend selection."""
+        if not self.pytorch_manager.is_valid_backend(backend):
+            raise ValueError(f"Invalid PyTorch backend: {backend}")
+        self.pytorch_manager.probe_and_set_backend(
+            python_version or self.get_python_version(),
+            backend,
+        )
+        return self.get_torch_backend_status()
+
+    def detect_torch_backend(self, python_version: str | None = None) -> TorchBackendDetection:
+        """Probe the recommended backend without persisting it."""
+        from ..utils.pytorch_prober import probe_pytorch_versions
+
+        resolved_python = python_version or self.get_python_version()
+        versions, backend = probe_pytorch_versions(resolved_python, "auto")
+        return TorchBackendDetection(
+            backend=backend,
+            versions=versions,
+            python_version=resolved_python,
+        )
+
+    def list_overlays(self, *, active_only: bool = False) -> list[OverlayInfo]:
+        """Return discovered overlays without exposing the overlay manager."""
+        overlays = self.overlay_manager.list_overlays()
+        if active_only:
+            return [overlay for overlay in overlays if overlay.is_active]
+        return overlays
+
+    def get_overlay(self, name: str) -> OverlayConfig:
+        """Resolve and load an overlay by user-provided name."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        return self.overlay_manager.load_overlay(resolved_name)
+
+    def enable_overlay(self, name: str) -> OverlayActivationResult:
+        """Enable an overlay in local activation config."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        active_names = self.overlay_manager.get_active_names()
+        active_keys = {active.lower() for active in active_names}
+        is_compatible = self.overlay_manager.is_overlay_compatible(resolved_name)
+        if resolved_name.lower() in active_keys:
+            return OverlayActivationResult(
+                name=resolved_name,
+                changed=False,
+                is_compatible=is_compatible,
+            )
+
+        self.overlay_manager.set_active_names(active_names + [resolved_name])
+        return OverlayActivationResult(
+            name=resolved_name,
+            changed=True,
+            is_compatible=is_compatible,
+        )
+
+    def disable_overlay(self, name: str) -> OverlayActivationResult:
+        """Disable an overlay in local activation config."""
+        resolved_name = self.overlay_manager.resolve_overlay_name(name)
+        active_names = self.overlay_manager.get_active_names()
+        filtered = [
+            active
+            for active in active_names
+            if active.lower() != resolved_name.lower()
+        ]
+        is_compatible = self.overlay_manager.is_overlay_compatible(resolved_name)
+        if len(filtered) == len(active_names):
+            return OverlayActivationResult(
+                name=resolved_name,
+                changed=False,
+                is_compatible=is_compatible,
+            )
+
+        self.overlay_manager.set_active_names(filtered)
+        return OverlayActivationResult(
+            name=resolved_name,
+            changed=True,
+            is_compatible=is_compatible,
+        )
+
+    def create_overlay_template(
+        self,
+        name: str | None = None,
+        *,
+        local: bool = False,
+    ) -> OverlayTemplateResult:
+        """Create a shared or local overlay template file."""
+        if name is None:
+            if not local:
+                raise ValueError("Overlay name is required (or use local=True for .local.toml)")
+            name = ".local"
+        elif local and not name.startswith("."):
+            name = f".{name}"
+
+        OverlayConfig.validate_name(name)
+        overlay_path = self.cec_path / "overlays" / f"{name}.toml"
+        scope = "local" if name.startswith(".") else "shared"
+        if overlay_path.exists():
+            return OverlayTemplateResult(
+                name=name,
+                path=overlay_path,
+                scope=scope,
+                created=False,
+            )
+        overlay_path.parent.mkdir(parents=True, exist_ok=True)
+        overlay_path.write_text(OVERLAY_TEMPLATE, encoding="utf-8")
+        return OverlayTemplateResult(
+            name=name,
+            path=overlay_path,
+            scope=scope,
+            created=True,
+        )
+
+    def get_runtime_python(self) -> Path:
+        """Return the Python executable uv uses for this environment."""
+        return self.uv_manager.python_executable
+
+    def _get_runtime_package_details(self, package: str) -> str:
+        """Return `uv pip show` output for an installed runtime package."""
+        return self.uv_manager.show_package(package, self.get_runtime_python())
+
+    def get_runtime_package_version(self, package: str) -> str | None:
+        """Return the installed version for a runtime package, if it can be parsed."""
+        package_details = self._get_runtime_package_details(package)
+        match = re.search(r"^Version:\s*(.+)$", package_details, re.MULTILINE)
+        if not match:
+            return None
+        return match.group(1).strip()
+
+    def get_manifest_path(self) -> Path:
+        """Return the portable manifest path for this environment."""
+        return self.pyproject.path
+
+    def load_manifest_config(self) -> Mapping[str, object]:
+        """Load the raw manifest document for display/serialization adapters."""
+        return self.pyproject.load()
+
+    def remove_dependencies_from_group(
+        self,
+        group: str,
+        packages: Sequence[str],
+    ) -> DependencyGroupRemovalResult:
+        """Remove packages from a dependency group without exposing pyproject internals."""
+        result = self.pyproject.dependencies.remove_from_group(group, list(packages))
+        return DependencyGroupRemovalResult(
+            removed=list(result["removed"]),
+            skipped=list(result["skipped"]),
+        )
+
+    def remove_dependency_group(self, group: str) -> None:
+        """Remove an entire dependency group from the manifest."""
+        if not self.pyproject.manifest.remove_dependency_group(group):
+            raise ValueError(f"Group '{group}' not found")
+
+    def get_uv_command_context(self) -> UVCommandContext:
+        """Return environment-scoped uv command context for CLI passthrough."""
+        return UVCommandContext(
+            binary=self.uv_manager.uv._binary,
+            cwd=self.cec_path,
+            env={
+                **os.environ,
+                "UV_PROJECT_ENVIRONMENT": str(self.venv_path),
+                "UV_CACHE_DIR": str(self.workspace_paths.cache / "uv_cache"),
+            },
+        )
+
     @cached_property
     def node_manager(self) -> NodeManager:
         return NodeManager(
@@ -233,6 +512,14 @@ class Environment:
             self.workspace_paths.system_nodes,
         )
 
+    def ensure_system_node_links(self) -> list[str]:
+        """Ensure workspace-level system nodes are linked into this environment.
+
+        Adapters should use this facade instead of importing the underlying
+        symlink manager.
+        """
+        return self.system_node_manager.create_symlinks()
+
     @cached_property
     def workflow_cache(self) -> WorkflowCacheRepository:
         """Get workflow cache repository."""
@@ -242,7 +529,10 @@ class Environment:
             cache_db_path,
             pyproject_manager=self.pyproject,
             model_repository=self.model_repository,
-            workspace_config_manager=self.workspace_config_manager
+            workspace_config_manager=self.workspace_config_manager,
+            cec_path=self.cec_path,
+            node_mapping_repository=self.node_mapping_repository,
+            builtin_versions_repository=self.comfyui_builtin_versions_repository,
         )
 
     @cached_property
@@ -498,51 +788,16 @@ class Environment:
 
     def _cleanup_system_nodes_dependency_group(self) -> None:
         """Remove legacy dependency-groups.system-nodes from pyproject.toml."""
-        config = self.pyproject.load()
-        dep_groups = config.get("dependency-groups", {})
-        if "system-nodes" in dep_groups:
-            del dep_groups["system-nodes"]
-            if not dep_groups:
-                del config["dependency-groups"]
-            self.pyproject.save(config)
+        if self.pyproject.manifest.remove_dependency_group("system-nodes"):
             logger.info("Removed legacy dependency-groups.system-nodes")
 
     def _is_headless_mode(self) -> bool:
         """Return True when this environment was created/imported with --no-manager."""
-        config = self.pyproject.load()
-        return bool(config.get("tool", {}).get("comfygit", {}).get("headless", False))
+        return self.pyproject.manifest.is_headless()
 
     def _set_headless_marker(self) -> None:
         """Persist headless marker in pyproject.toml."""
-        config = self.pyproject.load()
-        self._set_comfygit_scalar(config, "headless", True)
-        self.pyproject.save(config)
-
-    def _set_comfygit_scalar(self, config: dict, key: str, value: object) -> None:
-        """Set a scalar on [tool.comfygit] before child tables.
-
-        TOML requires table values to appear before child tables such as
-        [tool.comfygit.nodes.*]. TOMLKit can silently drop scalars appended
-        after those child tables, so rebuild this table in a valid order.
-        """
-        tool = config.setdefault("tool", {})
-        comfygit_cfg = tool.setdefault("comfygit", {})
-        rebuilt = tomlkit.table()
-        child_items: list[tuple[str, object]] = []
-
-        for existing_key, existing_value in comfygit_cfg.items():
-            if existing_key == key:
-                continue
-            if isinstance(existing_value, dict):
-                child_items.append((existing_key, existing_value))
-            else:
-                rebuilt[existing_key] = existing_value
-
-        rebuilt[key] = value
-        for child_key, child_value in child_items:
-            rebuilt[child_key] = child_value
-
-        tool["comfygit"] = rebuilt
+        self.pyproject.manifest.set_headless()
 
     def _prepare_headless_import(self) -> None:
         """Prepare imported/materialized environments that should not load Manager."""
@@ -554,11 +809,7 @@ class Environment:
 
     def _clear_headless_marker(self) -> None:
         """Remove headless marker after manager installation."""
-        config = self.pyproject.load()
-        comfygit_cfg = config.get("tool", {}).get("comfygit", {})
-        if comfygit_cfg.get("headless"):
-            del comfygit_cfg["headless"]
-            self.pyproject.save(config)
+        self.pyproject.manifest.clear_headless()
 
     def _register_imported_manager(self) -> None:
         """Auto-register or install comfygit-manager for imported environment.
@@ -608,22 +859,15 @@ class Environment:
             except Exception as e:
                 logger.warning(f"Could not read manager version: {e}")
 
-        # Register as tracked node
-        config = self.pyproject.load()
-        if "tool" not in config:
-            config["tool"] = {}
-        if "comfygit" not in config["tool"]:
-            config["tool"]["comfygit"] = {}
-        if "nodes" not in config["tool"]["comfygit"]:
-            config["tool"]["comfygit"]["nodes"] = {}
-
-        config["tool"]["comfygit"]["nodes"][MANAGER_NODE_ID] = {
-            "name": MANAGER_NODE_ID,
-            "version": version or "unknown",
-            "source": "registry",
-            "registry_id": MANAGER_NODE_ID,
-        }
-        self.pyproject.save(config)
+        self.pyproject.manifest.register_node(
+            MANAGER_NODE_ID,
+            NodeInfo(
+                name=MANAGER_NODE_ID,
+                version=version or "unknown",
+                source="registry",
+                registry_id=MANAGER_NODE_ID,
+            ),
+        )
         logger.info(f"Registered existing comfygit-manager (v{version or 'unknown'})")
 
     def _install_manager_from_registry(self) -> None:
@@ -647,7 +891,7 @@ class Environment:
         """Migrate pyproject schema v1 → v2 if needed.
 
         Schema v1 has PyTorch config embedded in [tool.uv] section.
-        Schema v2 uses runtime injection from .pytorch-backend file.
+        Schema v2 materializes PyTorch config from .pytorch-backend only in disposable sync projects.
 
         This migration:
         1. Strips embedded [tool.uv] PyTorch config
@@ -662,14 +906,12 @@ class Environment:
         migrated = self.pyproject.migrate_pytorch_config()
         if migrated:
             logger.info("Migrated environment to schema v2 (stripped PyTorch config)")
-            # Print so user sees it in CLI output
-            import sys
-            print("📦 Migrated environment to schema v2 (stripped embedded PyTorch config)", file=sys.stderr)
 
         # Always ensure .pytorch-backend and uv.lock are in .gitignore (handles pulls from older remotes)
         self.pytorch_manager._ensure_gitignore_entry()
         self.git_manager.ensure_gitignore_entry("uv.lock")
         self.git_manager.ensure_gitignore_entry("backups/")
+        self.git_manager.ensure_gitignore_entry(".comfygit-tmp/")
         self.git_manager.ensure_gitignore_entry("comfyui_builtins.json")
         self.git_manager.ensure_gitignore_entry("comfyui_folder_paths.json")
         self.git_manager.ensure_gitignore_entry("comfyui_model_loaders.json")
@@ -717,226 +959,22 @@ class Environment:
         Raises:
             UVCommandError: If sync fails
         """
-        result = SyncResult()
+        from ..services.environment_sync_coordinator import EnvironmentSyncCoordinator
 
-        # Migrate schema v1 → v2 if needed (strips embedded PyTorch config)
-        # This ensures old environments get migrated on first sync with new code
-        self._ensure_schema_migrated()
-
-        # Ensure package config exists (migration for existing envs)
-        self.package_config.ensure_exists()
-
-        # Sync exclude-dependencies from package_config.toml to pyproject.toml
-        # This ensures user edits to package_config.toml take effect
-        self.pyproject.uv_config.set_exclude_dependencies(
-            self.package_config.exclude_packages
+        return EnvironmentSyncCoordinator(self).sync(
+            dry_run=dry_run,
+            model_strategy=model_strategy,
+            model_callbacks=model_callbacks,
+            node_callbacks=node_callbacks,
+            remove_extra_nodes=remove_extra_nodes,
+            sync_callbacks=sync_callbacks,
+            verbose=verbose,
+            preserve_workflows=preserve_workflows,
+            backend_override=backend_override,
+            overlay_names=overlay_names,
+            extras=extras,
+            all_extras=all_extras,
         )
-        self.pyproject.ensure_system_uv_dependency()
-
-        extras, all_extras = self.pyproject.resolve_sync_extras(extras, all_extras)
-
-        logger.info("Syncing environment...")
-
-        # Sync packages with UV - progressive installation with PyTorch injection
-        try:
-            sync_result = self.uv_manager.sync_dependencies_progressive(
-                dry_run=dry_run,
-                callbacks=sync_callbacks,
-                verbose=verbose,
-                pytorch_manager=self.pytorch_manager,
-                overlay_names=overlay_names,
-                backend_override=backend_override,
-                extras=extras,
-                all_extras=all_extras,
-            )
-            result.packages_synced = sync_result["packages_synced"]
-            result.dependency_groups_installed.extend(sync_result["dependency_groups_installed"])
-            result.dependency_groups_failed.extend(sync_result["dependency_groups_failed"])
-        except Exception as e:
-            # Progressive sync handles optional groups gracefully
-            # Only base or required groups cause this exception
-            logger.error(f"Package sync failed: {e}")
-            result.errors.append(f"Package sync failed: {e}")
-            result.success = False
-
-        # Handle version mismatches by removing nodes with wrong versions
-        # They will be reinstalled by sync_nodes_to_filesystem
-        if not dry_run:
-            try:
-                # Get current status to find version mismatches
-                current_status = self.status()
-                for mismatch in current_status.comparison.version_mismatches:
-                    node_name = mismatch['name']
-                    node_path = self.custom_nodes_path / node_name
-                    if node_path.exists():
-                        logger.info(f"Removing node with wrong version: {node_name} ({mismatch['actual']} → {mismatch['expected']})")
-                        rmtree(node_path)
-            except Exception as e:
-                logger.warning(f"Could not check/fix version mismatches: {e}")
-
-        # Sync custom nodes to filesystem
-        try:
-            # Pass remove_extra flag (default True for aggressive repair behavior)
-            self.node_manager.sync_nodes_to_filesystem(
-                remove_extra=remove_extra_nodes and not dry_run,
-                callbacks=node_callbacks
-            )
-            # For now, we just note it happened
-        except Exception as e:
-            logger.error(f"Node sync failed: {e}")
-            result.errors.append(f"Node sync failed: {e}")
-            result.success = False
-
-        staged_node_groups: list[str] = []
-        if not dry_run:
-            try:
-                staged_node_groups = self.node_manager.provision_missing_node_dependencies()
-                if staged_node_groups:
-                    logger.info(
-                        "Syncing %d staged node dependency group(s)",
-                        len(staged_node_groups),
-                    )
-                    self.uv_manager.sync_project(
-                        verbose=verbose,
-                        pytorch_manager=self.pytorch_manager,
-                        overlay_names=overlay_names,
-                        backend_override=backend_override,
-                        extras=extras,
-                        all_extras=all_extras,
-                        all_groups=True,
-                    )
-                    result.dependency_groups_installed.extend(staged_node_groups)
-            except Exception as e:
-                logger.error(f"Node dependency provisioning failed: {e}")
-                result.errors.append(f"Node dependency provisioning failed: {e}")
-                result.dependency_groups_failed.extend(
-                    (group_name, str(e)) for group_name in staged_node_groups
-                )
-                result.success = False
-
-        # Restore workflows from .cec/ to ComfyUI (for git pull workflow)
-        if not dry_run and not preserve_workflows:
-            logger.debug("Restoring workflows from .cec/")
-            try:
-                self.workflow_manager.restore_all_from_cec()
-                logger.info("Restored workflows from .cec/")
-            except Exception as e:
-                logger.warning(f"Failed to restore workflows: {e}")
-                result.errors.append(f"Workflow restore failed: {e}")
-                # Non-fatal - continue
-
-        # Handle missing models
-        if not dry_run and model_strategy != "skip":
-            try:
-                # Reuse existing import machinery
-                workflows_with_intents = self.model_manager.prepare_import_with_model_strategy(
-                    strategy=model_strategy
-                )
-
-                if workflows_with_intents:
-                    logger.info(f"Downloading models for {len(workflows_with_intents)} workflow(s)")
-
-                    # prepare_import_with_model_strategy() may update pyproject model entries.
-                    # Invalidate per-workflow cache entries so resolve_workflow() sees fresh
-                    # download intents instead of stale session-cached resolutions.
-                    for workflow_name in workflows_with_intents:
-                        self.workflow_cache.invalidate(self.name, workflow_name)
-
-                    # Resolve each workflow (triggers downloads)
-                    from ..strategies.auto import AutoModelStrategy, AutoNodeStrategy
-
-                    for workflow_name in workflows_with_intents:
-                        try:
-                            logger.debug(f"Resolving workflow: {workflow_name}")
-
-                            # Resolve workflow (analyzes and prepares downloads)
-                            resolution_result = self.resolve_workflow(
-                                name=workflow_name,
-                                model_strategy=AutoModelStrategy(),
-                                node_strategy=AutoNodeStrategy(),
-                                download_callbacks=model_callbacks
-                            )
-
-                            # Track downloads from actual download results (not stale ResolvedModel objects)
-                            # Note: Download results are populated by _execute_pending_downloads() during resolve_workflow()
-                            for dr in resolution_result.download_results:
-                                if dr.success:
-                                    result.models_downloaded.append(dr.filename)
-                                else:
-                                    result.models_failed.append((dr.filename, dr.error or "Download failed"))
-
-                        except Exception as e:
-                            logger.error(f"Failed to resolve {workflow_name}: {e}", exc_info=True)
-                            result.errors.append(f"Failed to resolve {workflow_name}: {e}")
-
-            except Exception as e:
-                logger.warning(f"Model download failed: {e}", exc_info=True)
-                result.errors.append(f"Model download failed: {e}")
-                # Non-fatal - continue
-
-        # Ensure model symlink exists
-        try:
-            self.model_symlink_manager.create_symlink()
-            result.model_paths_configured = True
-        except Exception as e:
-            logger.warning(f"Failed to ensure model symlink: {e}")
-            result.errors.append(f"Model symlink configuration failed: {e}")
-            # Continue anyway - symlink might already exist from environment creation
-
-        # Auto-migrate existing environments (one-time operation)
-        # Check if input/output are real directories with content
-        needs_migration = False
-        if self.comfyui_path.exists():
-            from ..utils.symlink_utils import is_link
-
-            input_path = self.comfyui_path / "input"
-            output_path = self.comfyui_path / "output"
-
-            if input_path.exists() and not is_link(input_path):
-                needs_migration = True
-            if output_path.exists() and not is_link(output_path):
-                needs_migration = True
-
-        if needs_migration:
-            logger.info("Detected pre-symlink environment, migrating user data...")
-            try:
-                migration_stats = self.user_content_manager.migrate_existing_data()
-                total_moved = (
-                    migration_stats["input_files_moved"] +
-                    migration_stats["output_files_moved"]
-                )
-                if total_moved > 0:
-                    logger.info(
-                        f"Migration complete: {total_moved} files moved to workspace-level storage"
-                    )
-            except Exception as e:
-                logger.error(f"Migration failed: {e}")
-                result.errors.append(f"User data migration failed: {e}")
-                # Don't fail sync - user can migrate manually
-
-        # Ensure user content symlinks exist
-        try:
-            self.user_content_manager.create_directories()
-            self.user_content_manager.create_symlinks()
-            logger.debug("User content symlinks configured")
-        except Exception as e:
-            logger.warning(f"Failed to ensure user content symlinks: {e}")
-            result.errors.append(f"User content symlink configuration failed: {e}")
-            # Continue anyway - symlinks might already exist
-
-        # Mark environment as complete after successful sync (repair operation)
-        # This ensures environments that lost .complete (e.g., from manual git pull) are visible
-        if result.success and not dry_run:
-            from ..utils.environment_cleanup import mark_environment_complete
-            mark_environment_complete(self.cec_path)
-            logger.debug("Marked environment as complete")
-
-        if result.success:
-            logger.info("Successfully synced environment")
-        else:
-            logger.warning(f"Sync completed with {len(result.errors)} errors")
-
-        return result
 
     # =====================================================
     # Pull/Merge Preview
@@ -1007,6 +1045,7 @@ class Environment:
         strategy_option: str | None = None,
         force: bool = False,
         backend_override: str | None = None,
+        token: str | None = None,
     ) -> dict:
         """Pull from remote and auto-repair environment (atomic operation).
 
@@ -1022,6 +1061,7 @@ class Environment:
             strategy_option: Optional git merge strategy (e.g., "ours" or "theirs")
             force: If True, discard uncommitted changes and allow unrelated histories
             backend_override: Override PyTorch backend for sync (e.g., "cu128")
+            token: Optional HTTPS token for authenticated fetch/pull operations
 
         Returns:
             Dict with pull results and sync_result
@@ -1067,7 +1107,12 @@ class Environment:
             if force:
                 # Force mode: completely replace local with remote (no merge, no conflicts)
                 logger.info(f"Force pulling - resetting to {target_ref}...")
-                git_fetch(self.cec_path, remote)
+                if token:
+                    from ..utils.git import git_fetch_with_auth
+
+                    git_fetch_with_auth(self.cec_path, remote, token)
+                else:
+                    git_fetch(self.cec_path, remote)
                 git_reset_hard(self.cec_path, target_ref)
                 pull_result = {
                     'fetch_output': '',
@@ -1077,7 +1122,18 @@ class Environment:
             else:
                 # Normal pull (fetch + merge)
                 logger.info("Pulling from remote...")
-                pull_result = self.git_manager.pull(remote, branch, strategy_option=strategy_option)
+                if token:
+                    from ..utils.git import git_pull_with_auth
+
+                    pull_result = git_pull_with_auth(
+                        self.cec_path,
+                        remote,
+                        token,
+                        branch,
+                        strategy_option=strategy_option,
+                    )
+                else:
+                    pull_result = self.git_manager.pull(remote, branch, strategy_option=strategy_option)
 
             # Auto-repair (restores workflows, installs nodes, downloads models)
             logger.info("Syncing environment after pull...")
@@ -1111,6 +1167,41 @@ class Environment:
                 git_reset_hard(self.cec_path, pre_pull_commit)
             raise
 
+    def _ensure_push_allowed(self) -> None:
+        """Validate that this environment can push committed state."""
+        from ..models.exceptions import CDEnvironmentError
+        from ..models.readiness import ReadinessEnvironment
+
+        # Check for uncommitted git changes (not workflow sync state)
+        # Push only cares about git state in .cec/, not whether workflows are synced to ComfyUI
+        if self.git_manager.has_uncommitted_changes():
+            raise CDEnvironmentError(
+                "Cannot push with uncommitted changes.\n"
+                "  Run: cg commit -m 'message' first"
+            )
+
+        from ..services.environment_readiness import collect_contract_artifact_blockers
+
+        contract_artifact_issues = collect_contract_artifact_blockers(
+            cast(ReadinessEnvironment, self)
+        )
+        if contract_artifact_issues:
+            details = [
+                detail
+                for issue in contract_artifact_issues
+                for detail in issue.details
+            ]
+            detail_text = "\n".join(f"  • {detail}" for detail in details)
+            raise CDEnvironmentError(
+                "Cannot push with missing or invalid workflow contract API prompt files.\n"
+                f"{detail_text}\n"
+                "  Re-save the affected contract in ComfyGit Manager, then commit again."
+            )
+
+        # Note: Workflow issue validation happens during commit (execute_commit checks is_commit_safe).
+        # By the time we reach push, all committed changes have already been validated.
+        # No need to re-check workflow issues here.
+
     @_requires_env_lock
     def push_commits(self, remote: str = "origin", branch: str | None = None, force: bool = False) -> str:
         """Push commits to remote (requires clean working directory).
@@ -1128,35 +1219,7 @@ class Environment:
             ValueError: If no remote or detached HEAD
             OSError: If push fails
         """
-        from ..models.exceptions import CDEnvironmentError
-
-        # Check for uncommitted git changes (not workflow sync state)
-        # Push only cares about git state in .cec/, not whether workflows are synced to ComfyUI
-        if self.git_manager.has_uncommitted_changes():
-            raise CDEnvironmentError(
-                "Cannot push with uncommitted changes.\n"
-                "  Run: cg commit -m 'message' first"
-            )
-
-        from ..services.environment_readiness import collect_contract_artifact_blockers
-
-        contract_artifact_issues = collect_contract_artifact_blockers(self)
-        if contract_artifact_issues:
-            details = [
-                detail
-                for issue in contract_artifact_issues
-                for detail in issue.details
-            ]
-            detail_text = "\n".join(f"  • {detail}" for detail in details)
-            raise CDEnvironmentError(
-                "Cannot push with missing or invalid workflow contract API prompt files.\n"
-                f"{detail_text}\n"
-                "  Re-save the affected contract in ComfyGit Manager, then commit again."
-            )
-
-        # Note: Workflow issue validation happens during commit (execute_commit checks is_commit_safe).
-        # By the time we reach push, all committed changes have already been validated.
-        # No need to re-check workflow issues here.
+        self._ensure_push_allowed()
 
         # Push
         logger.info("Pushing commits to remote...")
@@ -1254,13 +1317,18 @@ class Environment:
         """
         self.git_orchestrator.switch_branch(branch, create)
 
-    def list_branches(self) -> list[tuple[str, bool]]:
+    def list_branches(self) -> list[GitBranch]:
         """List all branches with current branch marked.
 
         Returns:
-            List of (branch_name, is_current) tuples
+            List of typed branch summaries.
         """
-        return self.git_manager.list_branches()
+        from ..models.git import GitBranch
+
+        return [
+            GitBranch(name=name, is_current=is_current)
+            for name, is_current in self.git_manager.list_branches()
+        ]
 
     def get_current_branch(self) -> str | None:
         """Get current branch name.
@@ -1269,6 +1337,104 @@ class Environment:
             Branch name or None if detached HEAD
         """
         return self.git_manager.get_current_branch()
+
+    def list_remotes(self) -> list[GitRemote]:
+        """List configured Git remotes as typed consolidated fetch/push entries."""
+        from ..models.git import GitRemote
+
+        default_remote = self.get_tracking_remote()
+        return list(
+            GitRemote.from_remote_entries(
+                self.git_manager.list_remotes(),
+                default_remote=default_remote,
+            )
+        )
+
+    @_requires_env_lock
+    def add_remote(self, name: str, url: str) -> None:
+        """Add a Git remote to the environment repository."""
+        self.git_manager.add_remote(name, url)
+
+    @_requires_env_lock
+    def remove_remote(self, name: str) -> None:
+        """Remove a Git remote from the environment repository."""
+        self.git_manager.remove_remote(name)
+
+    @_requires_env_lock
+    def set_remote_url(self, name: str, url: str, *, is_push: bool = False) -> None:
+        """Set the fetch or push URL for an existing Git remote."""
+        self.git_manager.set_remote_url(name, url, is_push=is_push)
+
+    def get_tracking_remote(self, branch: str | None = None) -> str | None:
+        """Return the remote tracked by a branch, if configured."""
+        branch = branch or self.get_current_branch()
+        if not branch:
+            return None
+
+        from ..utils.git import git_config_get
+
+        remote = git_config_get(self.cec_path, f"branch.{branch}.remote")
+        return remote if remote else None
+
+    @_requires_env_lock
+    def fetch_remote(self, remote: str = "origin", *, token: str | None = None) -> None:
+        """Fetch a remote, optionally using an HTTPS token for authentication."""
+        if token:
+            from ..utils.git import git_fetch_with_auth
+
+            git_fetch_with_auth(self.cec_path, remote, token)
+            return
+
+        self.git_manager.fetch(remote)
+
+    def get_remote_sync_status(self, remote: str = "origin", branch: str | None = None) -> GitSyncStatus:
+        """Return ahead/behind information for a remote branch."""
+        from ..models.git import GitSyncStatus
+
+        return GitSyncStatus.from_dict(self.git_manager.get_sync_status(remote, branch))
+
+    def get_remote_url(self, remote: str = "origin") -> str | None:
+        """Return the configured URL for a git remote, if present."""
+        from ..utils.git import git_remote_get_url
+
+        return git_remote_get_url(self.cec_path, remote)
+
+    @_requires_env_lock
+    def pull_remote(
+        self,
+        remote: str = "origin",
+        branch: str | None = None,
+        model_strategy: str = "skip",
+        *,
+        token: str | None = None,
+    ) -> dict:
+        """Pull a remote branch and repair the environment after the pull."""
+        return self.pull_and_repair(remote, branch, model_strategy, token=token)
+
+    @_requires_env_lock
+    def push_remote(
+        self,
+        remote: str = "origin",
+        branch: str | None = None,
+        *,
+        force: bool = False,
+        token: str | None = None,
+    ) -> str:
+        """Push commits to a remote, optionally using an HTTPS token."""
+        if token:
+            from ..utils.git import git_push_with_auth
+
+            self._ensure_push_allowed()
+            branch = branch or self.get_current_branch()
+            return git_push_with_auth(self.cec_path, remote, token, branch, force)
+
+        return self.push_commits(remote, branch, force)
+
+    def check_remote_auth(self, remote_url: str, token: str) -> bool:
+        """Return whether a token can access a remote URL from this environment."""
+        from comfygit_core.git import check_remote_auth
+
+        return check_remote_auth(self.cec_path, remote_url, token)
 
     @_requires_env_lock
     def merge_branch(
@@ -1397,16 +1563,22 @@ class Environment:
         """
         self.git_orchestrator.revert_commit(commit)
 
-    def get_commit_history(self, limit: int = 10) -> list[dict]:
+    def get_commit_history(self, limit: int = 10, rev_range: str | None = None) -> list[GitCommitSummary]:
         """Get commit history for this environment.
 
         Args:
             limit: Maximum number of commits to return
+            rev_range: Optional Git revision range (e.g. ``origin/main..HEAD``)
 
         Returns:
-            List of commit dicts with keys: hash, message, date, date_relative
+            List of typed commit summaries.
         """
-        return self.git_manager.get_version_history(limit)
+        from ..models.git import GitCommitSummary
+
+        return [
+            GitCommitSummary.from_dict(commit)
+            for commit in self.git_manager.get_version_history(limit, rev_range)
+        ]
 
     def sync_model_paths(self) -> dict | None:
         """Ensure model symlink is configured for this environment.
@@ -1437,7 +1609,11 @@ class Environment:
             CompletedProcess
         """
         python = self.uv_manager.python_executable
-        cmd = [str(python), "main.py"] + (args or [])
+        comfyui_args = list(args or [])
+        if self.get_torch_backend_status().backend == "cpu" and "--cpu" not in comfyui_args:
+            comfyui_args = ["--cpu", *comfyui_args]
+
+        cmd = [str(python), "main.py"] + comfyui_args
 
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = self.name
@@ -1667,7 +1843,8 @@ class Environment:
         self,
         identifier: str,
         confirmation_strategy: ConfirmationStrategy | None = None,
-        no_test: bool = False
+        no_test: bool = False,
+        target_version: str | None = None,
     ) -> UpdateResult:
         """Update a node based on its source type.
 
@@ -1679,12 +1856,18 @@ class Environment:
             identifier: Node identifier or name
             confirmation_strategy: Strategy for confirming updates (None = auto-confirm)
             no_test: Skip resolution testing
+            target_version: Optional exact registry version to install
 
         Raises:
             CDNodeNotFoundError: If node not found
             CDEnvironmentError: If node cannot be updated
         """
-        return self.node_manager.update_node(identifier, confirmation_strategy, no_test)
+        return self.node_manager.update_node(
+            identifier,
+            confirmation_strategy,
+            no_test,
+            target_version=target_version,
+        )
 
     def check_development_node_drift(self) -> dict[str, tuple[set[str], set[str]]]:
         """Check if development nodes have requirements drift.
@@ -1705,6 +1888,239 @@ class Environment:
             Dict with 'new', 'modified', 'deleted', and 'synced' workflow names
         """
         return self.workflow_manager.get_workflow_sync_status()
+
+    def get_workflow_sync_status(self) -> WorkflowSyncStatus:
+        """Return workflow file sync status without exposing the workflow manager."""
+        return self.workflow_manager.get_workflow_sync_status()
+
+    @_requires_env_lock
+    def copy_workflows_to_manifest(self) -> dict[str, Path | str | None]:
+        """Copy saved ComfyUI workflow files into tracked `.cec` workflow storage."""
+        return self.workflow_manager.copy_all_workflows()
+
+    def get_workflow_status(self) -> DetailedWorkflowStatus:
+        """Return analyzed workflow status without exposing the workflow manager."""
+        return self.workflow_manager.get_workflow_status()
+
+    def get_workflow_path(self, workflow_name: str) -> Path:
+        """Return the ComfyUI workflow JSON path for a workflow name."""
+        return self.workflow_manager.comfyui_workflows / f"{workflow_name}.json"
+
+    def get_existing_workflow_path(self, workflow_name: str) -> Path:
+        """Return an existing ComfyUI workflow JSON path.
+
+        Raises:
+            FileNotFoundError: If the workflow is not present in ComfyUI's workflow directory.
+        """
+        return self.workflow_manager.get_workflow_path(workflow_name)
+
+    def invalidate_workflow_resolution_cache(self, workflow_name: str) -> None:
+        """Invalidate cached workflow analysis/resolution for one workflow."""
+        self.workflow_cache.invalidate(self.name, workflow_name)
+
+    def list_workflow_models(self, workflow_name: str) -> list[ManifestWorkflowModel]:
+        """Return models declared for a workflow."""
+        return list(self.get_workflow_manifest_models(workflow_name))
+
+    @_requires_env_lock
+    def set_workflow_manifest_models(
+        self,
+        workflow_name: str,
+        models: Sequence[ManifestWorkflowModel],
+    ) -> None:
+        """Replace manifest model declarations for one workflow."""
+        self.pyproject.workflows.set_workflow_models(workflow_name, list(models))
+
+    @_requires_env_lock
+    def add_workflow_manifest_model(
+        self,
+        workflow_name: str,
+        model: ManifestWorkflowModel,
+    ) -> None:
+        """Add or update one manifest model declaration for a workflow."""
+        self.pyproject.workflows.add_workflow_model(workflow_name, model)
+
+    @_requires_env_lock
+    def add_manifest_model(self, model: ManifestModel) -> None:
+        """Add or update one environment-scoped manifest model."""
+        self.pyproject.models.add_model(model)
+
+    @_requires_env_lock
+    def set_workflow_custom_node_mapping(
+        self,
+        workflow_name: str,
+        node_type: str,
+        package_id: str | None,
+    ) -> None:
+        """Map a workflow node type to a package, or mark it optional when package_id is None."""
+        self.pyproject.workflows.set_custom_node_mapping(workflow_name, node_type, package_id)
+
+    @_requires_env_lock
+    def remove_workflow_custom_node_mapping(
+        self,
+        workflow_name: str,
+        node_type: str,
+    ) -> bool:
+        """Remove a custom-node mapping for one workflow."""
+        return self.pyproject.workflows.remove_custom_node_mapping(workflow_name, node_type)
+
+    def update_workflow_model_criticality(
+        self,
+        workflow_name: str,
+        model_identifier: str,
+        criticality: str,
+    ) -> bool:
+        """Update model criticality for a workflow dependency."""
+        return self.workflow_manager.update_model_criticality(
+            workflow_name=workflow_name,
+            model_identifier=model_identifier,
+            new_criticality=criticality,
+        )
+
+    def add_workflow_model_dependency(
+        self,
+        workflow_name: str,
+        *,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+        criticality: str = "required",
+    ) -> ManifestWorkflowModel:
+        """Declare an indexed local model as a manual workflow dependency."""
+        return self.workflow_manager.add_existing_model_to_workflow(
+            workflow_name=workflow_name,
+            model_hash=model_hash,
+            relative_path=relative_path,
+            criticality=criticality,
+        )
+
+    def remove_workflow_model_dependency(
+        self,
+        workflow_name: str,
+        *,
+        model_hash: str | None = None,
+        relative_path: str | None = None,
+    ) -> bool:
+        """Remove a manually declared workflow model dependency."""
+        return self.workflow_manager.remove_manual_model_from_workflow(
+            workflow_name=workflow_name,
+            model_hash=model_hash,
+            relative_path=relative_path,
+        )
+
+    def get_workflow_failed_downloads(self, workflow_name: str) -> list[ManifestWorkflowModel]:
+        """Return workflow models with source intent that remain unresolved."""
+        return [
+            model
+            for model in self.list_workflow_models(workflow_name)
+            if model.status == "unresolved" and model.sources
+        ]
+
+    def get_workflow_package_aliases(self) -> Mapping[str, str]:
+        """Return global node package alias metadata used during workflow resolution."""
+        return self.workflow_manager.get_package_aliases()
+
+    def analyze_workflow_dependencies(
+        self,
+        workflow_name: str,
+    ) -> tuple[WorkflowDependencies, ResolutionResult]:
+        """Analyze and resolve one saved workflow without applying fixes or downloads."""
+        return self.workflow_manager.analyze_and_resolve_workflow(workflow_name)
+
+    def analyze_workflow_json(
+        self,
+        workflow_data: Mapping[str, object],
+        *,
+        workflow_name: str = "unsaved",
+    ) -> tuple[WorkflowDependencies, ResolutionResult]:
+        """Analyze and resolve workflow JSON that has not necessarily been saved yet."""
+        return self.workflow_manager.analyze_and_resolve_workflow_json(
+            workflow_data,
+            workflow_name=workflow_name,
+        )
+
+    def resolve_workflow_dependencies(
+        self,
+        dependencies: WorkflowDependencies,
+    ) -> ResolutionResult:
+        """Resolve pre-analyzed workflow dependencies without mutating the manifest."""
+        return self.workflow_manager.resolve_dependencies(dependencies)
+
+    @_requires_env_lock
+    def fix_workflow_resolution(
+        self,
+        result: ResolutionResult,
+        node_strategy: NodeResolutionStrategy | None = None,
+        model_strategy: ModelResolutionStrategy | None = None,
+    ) -> ResolutionResult:
+        """Apply node/model resolution strategies and persist their manifest choices."""
+        return self.workflow_manager.fix_resolution(result, node_strategy, model_strategy)
+
+    @_requires_env_lock
+    def update_workflow_model_paths(self, result: ResolutionResult) -> int:
+        """Sync workflow JSON model paths from an existing resolution result."""
+        return self.workflow_manager.update_workflow_model_paths(result)
+
+    def search_workflow_node_packages(
+        self,
+        query: str,
+        *,
+        include_registry: bool = True,
+        limit: int = 10,
+    ) -> list[ScoredPackageMatch]:
+        """Search node packages for workflow resolution without exposing the resolver."""
+        return self.workflow_manager.search_node_packages(
+            query,
+            include_registry=include_registry,
+            limit=limit,
+        )
+
+    def resolve_workflow_node_packages(
+        self,
+        node: WorkflowNode,
+        context: NodeResolutionContext,
+    ) -> list[ResolvedNodePackage] | None:
+        """Resolve one workflow node type without exposing the resolver object."""
+        return self.workflow_manager.resolve_node_packages(
+            node,
+            context,
+        )
+
+    def get_model_download_directory(self) -> Path:
+        """Return the workspace model directory used by model downloads."""
+        return self.model_downloader.models_dir
+
+    def download_model_request(
+        self,
+        request: DownloadRequest,
+        progress_callback=None,
+    ) -> DownloadResult:
+        """Download a model using the environment's configured downloader."""
+        return self.model_downloader.download(request, progress_callback)
+
+    def search_workflow_models(
+        self,
+        query: str,
+        *,
+        node_type: str | None = None,
+        limit: int = 9,
+    ) -> list[ScoredMatch]:
+        """Search indexed models for workflow resolution without exposing the workflow manager."""
+        return self.workflow_manager.search_models(query, node_type, limit)
+
+    @_requires_env_lock
+    def mark_workflow_model_download_resolved(
+        self,
+        workflow_name: str,
+        *,
+        filename: str,
+        model_hash: str,
+    ) -> bool:
+        """Mark a workflow download intent as resolved after a model download succeeds."""
+        return self.workflow_manager.mark_model_download_resolved_by_filename(
+            workflow_name,
+            filename=filename,
+            model_hash=model_hash,
+        )
 
     def resolve_workflow(
         self,
@@ -1939,14 +2355,14 @@ class Environment:
 
         # Commit can be responsible for cleanup even when the only pending
         # change is a stale tracked workflow_api artifact.
-        cleanup_config = self.pyproject.load()
-        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
-            config=cleanup_config,
-        )
-        if cleanup_result["workflow_entries"] > 0:
-            # Clean up orphaned models after workflow sections are removed.
-            self.pyproject.models.cleanup_orphans(config=cleanup_config)
-            self.pyproject.save(cleanup_config)
+        with self.pyproject.manifest.edit() as edit:
+            cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(
+                config=edit.config,
+            )
+            if cleanup_result["workflow_entries"] > 0:
+                # Clean up orphaned models after workflow sections are removed.
+                edit.cleanup_model_orphans()
+                edit.mark_changed()
 
         # Check if there are any changes to commit (workflows OR git)
         has_workflow_changes = workflow_status.sync_status.has_changes
@@ -1959,26 +2375,26 @@ class Environment:
         # Apply auto-resolutions to pyproject.toml for workflows with changes
         # BATCHED MODE: Load config once, pass through all operations, save once
         logger.info("Committing all changes...")
-        config = self.pyproject.load()
+        with self.pyproject.manifest.edit() as edit:
+            config = edit.config
 
-        for wf_analysis in workflow_status.analyzed_workflows:
-            if wf_analysis.sync_state in ("new", "modified"):
-                # Apply resolution results to pyproject (in-memory mutations)
-                self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
+            for wf_analysis in workflow_status.analyzed_workflows:
+                if wf_analysis.sync_state in ("new", "modified"):
+                    # Apply resolution results to pyproject (in-memory mutations)
+                    self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
+                    edit.mark_changed()
 
-        # Clean up orphaned workflow entries and workflow API prompt artifacts.
-        # This handles BOTH:
-        # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
-        # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
-        cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
-        if cleanup_result["workflow_entries"] > 0:
-            logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
+            # Clean up orphaned workflow entries and workflow API prompt artifacts.
+            # This handles BOTH:
+            # 1. Committed workflows deleted from ComfyUI (detected by sync_status.deleted)
+            # 2. Resolved-but-never-committed workflows deleted from ComfyUI (only in pyproject)
+            cleanup_result = self.workflow_manager.cleanup_orphaned_workflow_state(config=config)
+            if cleanup_result["workflow_entries"] > 0:
+                logger.debug(f"Removed {cleanup_result['workflow_entries']} workflow section(s)")
 
-            # Clean up orphaned models (must run AFTER workflow sections are removed).
-            self.pyproject.models.cleanup_orphans(config=config)
-
-        # Save all changes at once
-        self.pyproject.save(config)
+                # Clean up orphaned models (must run AFTER workflow sections are removed).
+                edit.cleanup_model_orphans()
+                edit.mark_changed()
 
         logger.info("Copying workflows from ComfyUI to .cec...")
         copy_results = self.workflow_manager.copy_all_workflows()
@@ -1988,13 +2404,87 @@ class Environment:
         self.commit(message)
 
     # =====================================================
-    # Workflow Contract Management
+    # Public Snapshots and Readiness
     # =====================================================
 
     @_requires_env_lock
     def get_manifest_snapshot(self) -> EnvironmentManifestSnapshot:
         """Return a typed read-only projection of the current manifest."""
         return self.pyproject.get_manifest_snapshot()
+
+    def list_manifest_nodes(self) -> Mapping[str, NodeInfo]:
+        """Return tracked manifest nodes without exposing the manifest manager."""
+        return self.get_manifest_snapshot().nodes
+
+    def get_manifest_node(self, identifier: str) -> NodeInfo | None:
+        """Return one tracked manifest node by package identifier."""
+        return self.get_manifest_snapshot().get_node(identifier)
+
+    def list_manifest_workflows(self) -> Mapping[str, ManifestWorkflowEntry]:
+        """Return tracked manifest workflows without exposing the manifest manager."""
+        return self.get_manifest_snapshot().workflows
+
+    def get_manifest_workflow(self, name: str) -> ManifestWorkflowEntry | None:
+        """Return one tracked manifest workflow entry by name."""
+        return self.get_manifest_snapshot().get_workflow(name)
+
+    def list_manifest_models(self) -> Mapping[str, ManifestModel]:
+        """Return tracked manifest models without exposing the manifest manager."""
+        return self.get_manifest_snapshot().models
+
+    def get_manifest_model(self, model_hash: str) -> ManifestModel | None:
+        """Return one tracked manifest model by hash."""
+        return self.get_manifest_snapshot().get_model(model_hash)
+
+    def get_workflow_manifest_models(self, workflow_name: str) -> tuple[ManifestWorkflowModel, ...]:
+        """Return models declared for a workflow in the manifest."""
+        return self.get_manifest_snapshot().get_workflow_models(workflow_name)
+
+    def get_workflow_custom_node_map(self, workflow_name: str) -> Mapping[str, str | bool]:
+        """Return custom-node mappings declared for a workflow in the manifest."""
+        return self.get_manifest_snapshot().get_workflow_custom_node_map(workflow_name)
+
+    def has_uncommitted_git_changes(self) -> bool:
+        """Return whether the tracked environment repository has uncommitted changes."""
+        return self.git_manager.has_uncommitted_changes()
+
+    def get_model_source_candidates(self, model_hash: str) -> tuple[ModelSourceCandidate, ...]:
+        """Return indexed model source hints in readiness candidate form."""
+        from ..models.readiness import ModelSourceCandidate
+
+        candidates: list[ModelSourceCandidate] = []
+        seen_urls: set[str] = set()
+        for source in self.workspace.get_model_sources(model_hash):
+            if not source.url or source.url in seen_urls:
+                continue
+            seen_urls.add(source.url)
+            candidates.append(ModelSourceCandidate(type=source.type, url=source.url))
+        return tuple(candidates)
+
+    @_requires_env_lock
+    def get_readiness(self, *, include_blocking: bool = True) -> EnvironmentReadiness:
+        """Return reusable readiness and provenance checks for this environment."""
+        from ..models.readiness import ReadinessEnvironment
+        from ..services.environment_readiness import build_environment_readiness
+
+        return build_environment_readiness(
+            cast(ReadinessEnvironment, self),
+            include_blocking=include_blocking,
+        )
+
+    # =====================================================
+    # Runtime Helpers
+    # =====================================================
+
+    def get_venv_python(self) -> Path | None:
+        """Return this environment's virtualenv Python executable, if present."""
+        from ..utils.filesystem import get_venv_python
+
+        return get_venv_python(self.path)
+
+    # =====================================================
+    # Workflow Contract Management
+    # =====================================================
 
     @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
@@ -2158,18 +2648,31 @@ class Environment:
                 transformed_packages.append(substituted)
             final_packages = transformed_packages
 
-        output = self.uv_manager.add_dependency(
+        # First record the portable dependency change without solving against
+        # this machine. Sync below applies local overlays and PyTorch backend
+        # configuration through the normal environment materialization path.
+        add_output = self.uv_manager.add_dependency(
             packages=final_packages,
             requirements_file=None,  # We've already parsed it
-            upgrade=upgrade,
+            upgrade=False,
             group=group,
             dev=dev,
             optional=optional,
             editable=editable,
             bounds=bounds,
-            no_build_isolation=no_build_isolation
+            no_build_isolation=no_build_isolation,
+            frozen=True,
         )
 
+        sync_output = self.uv_manager.sync_project(
+            pytorch_manager=getattr(self, "pytorch_manager", None),
+            group=group,
+            dev=dev,
+            extras=[optional] if optional else None,
+            upgrade=upgrade,
+        )
+
+        output = "\n".join(part for part in (add_output, sync_output) if part)
         return {"output": output, "substitutions": substitutions}
 
     def _read_requirements_file(self, requirements_file: Path) -> list[str]:
@@ -2230,13 +2733,12 @@ class Environment:
             Dictionary mapping group name to list of dependencies.
             Base dependencies are always under "dependencies" key and appear first.
         """
-        config = self.pyproject.load()
-        base_deps = config.get('project', {}).get('dependencies', [])
+        base_deps = self.pyproject.manifest.list_project_dependencies()
 
         result = {"dependencies": base_deps}
 
         if all:
-            dep_groups = self.pyproject.dependencies.get_groups()
+            dep_groups = self.pyproject.manifest.list_dependency_groups()
             result.update(dep_groups)
 
         return result
@@ -2267,9 +2769,8 @@ class Environment:
         from ..managers.export_import_manager import ExportImportManager
         from ..models.exceptions import CDExportError, ExportErrorContext
         from ..models.shared import ModelWithoutSourceInfo
-        from ..services.environment_readiness import build_environment_readiness
 
-        readiness = build_environment_readiness(self, include_blocking=True)
+        readiness = self.get_readiness(include_blocking=True)
 
         for issue in readiness.blocking_issues:
             if issue.type == "uncommitted_workflows":
@@ -2316,8 +2817,7 @@ class Environment:
         from ..analyzers.node_git_analyzer import get_node_git_info
 
         nodes = self.pyproject.nodes.get_existing()
-        config = self.pyproject.load()
-        modified = False
+        updates: list[tuple[str, str | None, str | None, str | None, str]] = []
 
         for identifier, node_info in nodes.items():
             if node_info.source != 'development':
@@ -2344,29 +2844,26 @@ class Environment:
                     no_git_callback(node_info.name)
                 continue
 
-            # Update node info with git data
-            node_data = config['tool']['comfygit']['nodes'].get(identifier, {})
-            update_needed = False
+            updates.append((
+                identifier,
+                git_info.remote_url,
+                git_info.branch,
+                git_info.commit,
+                node_info.name,
+            ))
 
-            if git_info.remote_url and node_data.get('repository') != git_info.remote_url:
-                node_data['repository'] = git_info.remote_url
-                update_needed = True
+        if not updates:
+            return
 
-            if git_info.branch and node_data.get('branch') != git_info.branch:
-                node_data['branch'] = git_info.branch
-                update_needed = True
-
-            if git_info.commit and node_data.get('pinned_commit') != git_info.commit:
-                node_data['pinned_commit'] = git_info.commit
-                update_needed = True
-
-            if update_needed:
-                config['tool']['comfygit']['nodes'][identifier] = node_data
-                modified = True
-                logger.info(f"Captured git info for dev node '{node_info.name}'")
-
-        if modified:
-            self.pyproject.save(config)
+        with self.pyproject.manifest.edit() as edit:
+            for identifier, remote_url, branch, commit, node_name in updates:
+                if edit.update_node_git_info(
+                    identifier,
+                    repository=remote_url,
+                    branch=branch,
+                    pinned_commit=commit,
+                ):
+                    logger.info(f"Captured git info for dev node '{node_name}'")
 
     def finalize_import(
         self,
@@ -2419,15 +2916,14 @@ class Environment:
         comfyui_cache = ComfyUICacheManager(cache_base_path=self.workspace_paths.cache)
 
         # Read ComfyUI version from pyproject.toml
-        comfyui_version = None
-        comfyui_version_type = None
         try:
-            pyproject_data = self.pyproject.load()
-            comfygit_config = pyproject_data.get("tool", {}).get("comfygit", {})
-            comfyui_version = comfygit_config.get("comfyui_version")
-            comfyui_version_type = comfygit_config.get("comfyui_version_type")
+            comfyui_manifest_version = self.pyproject.manifest.get_comfyui_version()
+            comfyui_version = comfyui_manifest_version.version
+            comfyui_version_type = comfyui_manifest_version.version_type
         except Exception as e:
             logger.warning(f"Could not read comfyui_version from pyproject.toml: {e}")
+            comfyui_version = None
+            comfyui_version_type = None
 
         if comfyui_version:
             version_desc = f"{comfyui_version_type} {comfyui_version}" if comfyui_version_type else comfyui_version
@@ -2630,13 +3126,13 @@ class Environment:
         # freshly cloned ComfyUI so uv sync installs everything.
         comfyui_reqs = self.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
-            pyproject_data = self.pyproject.load()
-            current_deps = pyproject_data.get("project", {}).get("dependencies", [])
+            current_deps = self.pyproject.manifest.list_project_dependencies()
             if not current_deps:
                 logger.info("Adding ComfyUI requirements (empty dependencies detected)...")
                 if callbacks:
                     callbacks.on_phase("add_requirements", "Adding ComfyUI base requirements...")
-                self.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+                requirements = read_comfyui_requirements_with_supplements(comfyui_reqs)
+                self.uv_manager.add_requirements_with_sources(requirements, frozen=True)
 
         # Phase 4: Sync dependencies, custom nodes, and workflows
         # This single sync() call handles all dependency installation, node syncing, and workflow restoration
@@ -2876,5 +3372,14 @@ class Environment:
             )
         except Exception as e:
             logger.warning(f"Failed to refresh model loaders: {e}", exc_info=True)
+
+        if any((
+            result["builtins_refreshed"],
+            result["folder_paths_refreshed"],
+            result["model_loaders_refreshed"],
+        )):
+            self.workflow_cache.invalidate(self.name)
+            if "workflow_manager" in self.__dict__:
+                self.workflow_manager.refresh_runtime_metadata_context()
 
         return result

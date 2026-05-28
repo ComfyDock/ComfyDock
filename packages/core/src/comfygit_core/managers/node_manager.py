@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..analyzers.node_git_analyzer import get_node_git_info
+from ..constants import SYSTEM_DEPENDENCY_GROUP, SYSTEM_UV_DEPENDENCY
 from ..logging.logging_config import get_logger
 from ..managers.pyproject_manager import PyprojectManager
 from ..managers.uv_project_manager import UVProjectManager
@@ -47,10 +48,6 @@ if TYPE_CHECKING:
     from ..repositories.node_mappings_repository import NodeMappingsRepository
 
 logger = get_logger(__name__)
-
-SYSTEM_DEPENDENCY_GROUP = "comfygit-system"
-SYSTEM_UV_DEPENDENCY = "uv>=0.11.8"
-SYSTEM_DEPENDENCIES = [SYSTEM_UV_DEPENDENCY]
 
 
 class NodeManager:
@@ -381,6 +378,7 @@ class NodeManager:
 
         # Check for existing installation and handle version replacement
         is_replacement = False
+        existing_identifier: str | None = None
         existing_entry = self._find_node_by_name(node_info.name)
         if existing_entry:
             existing_identifier, existing_node = existing_entry
@@ -557,6 +555,7 @@ class NodeManager:
         try:
             # STEP 0a: Handle replacement — back up old node (inside transaction for proper rollback)
             if is_replacement:
+                assert existing_identifier is not None
                 if target_path.exists():
                     if disabled_path.exists():
                         rmtree(disabled_path)
@@ -780,7 +779,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=new_group,
-                    no_sync=True,
+                    frozen=True,
                     raw=True,
                 )
 
@@ -794,7 +793,12 @@ class NodeManager:
                 self.pyproject.uv_config.cleanup_orphaned_sources(existing_node.dependency_sources)
 
             if requirements_changed:
-                self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+                self._sync_uv(
+                    quiet=True,
+                    all_groups=True,
+                    pytorch_manager=self.pytorch_manager,
+                    skip_optional_overlays=False,
+                )
 
         except Exception:
             logger.warning("Dev-link failed for '%s', rolling back", node_name, exc_info=True)

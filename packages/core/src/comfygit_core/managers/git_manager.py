@@ -63,6 +63,7 @@ __pycache__/
 # Temporary files
 *.tmp
 *.bak
+.comfygit-tmp/
 
 # Runtime marker (created after successful environment initialization)
 .complete

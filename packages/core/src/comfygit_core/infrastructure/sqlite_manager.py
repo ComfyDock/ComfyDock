@@ -8,6 +8,7 @@ from typing import Any
 
 from ..logging.logging_config import get_logger
 from ..models.exceptions import ComfyDockError
+from ..utils.redaction import redact_sensitive_text
 
 logger = get_logger(__name__)
 
@@ -41,7 +42,7 @@ class SQLiteManager:
             yield conn
         except sqlite3.Error as e:
             logger.error(f"Database error: {e}")
-            raise ComfyDockError(f"Database operation failed: {e}")
+            raise ComfyDockError(f"Database operation failed: {e}") from e
         finally:
             if conn:
                 conn.close()
@@ -66,8 +67,13 @@ class SQLiteManager:
                 rows = cursor.fetchall()
                 return [dict(row) for row in rows]
             except sqlite3.Error as e:
-                logger.error(f"Query execution failed: {query} with params {params}: {e}")
-                raise ComfyDockError(f"Query execution failed: {e}")
+                logger.error(
+                    "Query execution failed: %s with params %s: %s",
+                    query,
+                    redact_sensitive_text(params),
+                    e,
+                )
+                raise ComfyDockError(f"Query execution failed: {e}") from e
 
     def execute_write(self, query: str, params: tuple = ()) -> int:
         """Execute INSERT/UPDATE/DELETE query.
@@ -89,9 +95,14 @@ class SQLiteManager:
                 conn.commit()
                 return cursor.rowcount
             except sqlite3.Error as e:
-                logger.error(f"Write operation failed: {query} with params {params}: {e}")
+                logger.error(
+                    "Write operation failed: %s with params %s: %s",
+                    query,
+                    redact_sensitive_text(params),
+                    e,
+                )
                 conn.rollback()
-                raise ComfyDockError(f"Write operation failed: {e}")
+                raise ComfyDockError(f"Write operation failed: {e}") from e
 
     def create_table(self, schema: str) -> None:
         """Create table using schema SQL.
@@ -110,7 +121,7 @@ class SQLiteManager:
                 logger.debug("Table schema ensured")
             except sqlite3.Error as e:
                 logger.error(f"Table creation failed: {schema}: {e}")
-                raise ComfyDockError(f"Table creation failed: {e}")
+                raise ComfyDockError(f"Table creation failed: {e}") from e
 
     def begin_transaction(self) -> sqlite3.Connection:
         """Begin a transaction and return connection for manual management.
@@ -128,7 +139,7 @@ class SQLiteManager:
             return conn
         except sqlite3.Error as e:
             logger.error(f"Transaction start failed: {e}")
-            raise ComfyDockError(f"Transaction start failed: {e}")
+            raise ComfyDockError(f"Transaction start failed: {e}") from e
 
     def table_exists(self, table_name: str) -> bool:
         """Check if table exists in database.

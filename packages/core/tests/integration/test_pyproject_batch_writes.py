@@ -340,7 +340,7 @@ class TestWorkflowHandlerBatching:
         """Test that set_execution_contract with config doesn't save."""
         import unittest.mock as mock
 
-        from comfygit_core.models.manifest import (
+        from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
             WorkflowContractOutput,
@@ -416,7 +416,7 @@ class TestWorkflowHandlerBatching:
 
     def test_execution_contract_round_trip(self, test_env):
         """Execution contracts should round-trip through pyproject handlers."""
-        from comfygit_core.models.manifest import (
+        from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
             WorkflowContractOutput,

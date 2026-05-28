@@ -1,535 +1,124 @@
 # Environment Commands
 
-> Commands for managing and operating within ComfyUI environments.
-
-
-## `create`
-
-**Usage:**
+Environment commands operate on the active environment or the one selected with
+`-e`.
 
 ```bash
-cg create [-h] [--template TEMPLATE] [--python PYTHON]
-                 [--comfyui COMFYUI] [--torch-backend BACKEND] [--use] [-y]
-                 name
+cg -e my-env status
 ```
 
-**Arguments:**
-
-- `name` - Environment name
-
-**Options:**
-
-- `--template` - Template manifest
-- `--python` - Python version (default: `3.11`)
-- `--comfyui` - ComfyUI version
-- `--torch-backend` - PyTorch backend. Examples: auto (detect GPU), cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Default: auto (default: `auto`)
-- `--use` - Set active environment after creation (default: `False`)
-- `-y, --yes` - Skip confirmation prompts, use defaults for workspace initialization (default: `False`)
-
-
-## `use`
-
-**Usage:**
+## Run, Serve, Sync, Repair
 
 ```bash
-cg use [-h] name
+cg run [--no-sync] [--torch-backend BACKEND] [--extra EXTRA] [--all-extras] [--overlay NAME] [-- COMFYUI_ARGS...]
+cg serve [--host HOST] [--port PORT] [--comfy-url URL]
+cg serve [--role studio|proxy] [--executor local|proxy] [--proxy-url URL] [--proxy-token TOKEN]
+cg serve [--callback-url URL] [--callback-token TOKEN] [--artifact-dir PATH]
+cg serve [--max-request-mb MB] [--run-timeout-seconds SECONDS]
+cg serve [--state ephemeral|local] [--gallery private|shared] [--state-db PATH]
+cg sync [--torch-backend BACKEND] [--extra EXTRA] [--all-extras] [--overlay NAME] [--verbose]
+cg repair [--yes] [--models all|required|skip]
+cg status [--verbose]
+cg manifest [--pretty] [--section SECTION] [--ide [CMD]]
 ```
 
-**Arguments:**
+`cg run` launches ComfyUI. `cg serve` fronts an already running ComfyUI server
+with workflow contract endpoints and Studio.
 
-- `name` - Environment name
-
-
-## `delete`
-
-**Usage:**
+## Status
 
 ```bash
-cg delete [-h] [-y] name
+cg status [--verbose]
 ```
 
-**Arguments:**
+This heading is kept as a direct link target for troubleshooting pages. The
+command is part of the main run/sync/status group above.
 
-- `name` - Environment name
-
-**Options:**
-
-- `-y, --yes` - Skip confirmation (default: `False`)
-
-
-## `run`
-
-**Usage:**
+## Repair
 
 ```bash
-cg run [-h] [--no-sync] [--torch-backend BACKEND] [--extra EXTRA]
-              [--all-extras]
+cg repair [--yes] [--models all|required|skip]
 ```
 
-**Options:**
+This heading is kept as a direct link target for repair guidance. Use `repair`
+when local runtime state has drifted from the tracked environment manifest.
 
-- `--no-sync` - Skip environment sync before running (default: `False`)
-- `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
-- `--extra` - Install optional dependency extra (can be repeated)
-- `--all-extras` - Install all optional dependency extras (default: `False`)
-
-
-## `status`
-
-**Usage:**
+## Local Runtime Configuration
 
 ```bash
-cg status [-h] [-v]
+cg env-config torch-backend show
+cg env-config torch-backend set BACKEND
+cg env-config torch-backend detect
+cg env-config extras show
+cg env-config extras add EXTRA [EXTRA...]
+cg env-config extras remove EXTRA [EXTRA...]
 ```
 
-**Options:**
-
-- `-v, --verbose` - Show full details (default: `False`)
-
-
-## `manifest`
-
-**Usage:**
+## Overlays
 
 ```bash
-cg manifest [-h] [--pretty] [--section SECTION] [--ide [CMD]]
+cg overlay list [--active]
+cg overlay show NAME
+cg overlay enable NAME
+cg overlay disable NAME
+cg overlay create [NAME] [--local]
 ```
 
-**Options:**
+Use local overlays for machine-specific dependency sources, indexes, and
+temporary package changes.
 
-- `--pretty` - Output as YAML instead of TOML (default: `False`)
-- `--section` - Show specific section (e.g., tool.comfygit.nodes)
-- `--ide` - Open in editor (uses $EDITOR if no command given)
-
-
-## `sync`
-
-**Usage:**
+## Git History
 
 ```bash
-cg sync [-h] [--torch-backend BACKEND] [--extra EXTRA] [--all-extras]
-               [-v]
+cg log [-n N] [--verbose]
+cg commit [-m MESSAGE] [--auto] [--allow-issues] [--yes]
+cg checkout [REF] [-b BRANCH] [--yes] [--force]
+cg branch [NAME] [-d] [-D]
+cg switch BRANCH [-c]
+cg reset [REF] [--mixed|--soft|--hard] [--yes]
+cg merge BRANCH [--preview] [--auto-resolve mine|theirs]
+cg revert COMMIT
 ```
 
-**Options:**
+Use `revert` to create a new commit that undoes an older commit. Use `reset
+--hard` only when you intentionally want to discard local changes.
 
-- `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
-- `--extra` - Install optional dependency extra (can be repeated)
-- `--all-extras` - Install all optional dependency extras (default: `False`)
-- `-v, --verbose` - Show full UV output during sync (default: `False`)
-
-
-## `repair`
-
-**Usage:**
+## Remotes
 
 ```bash
-cg repair [-h] [-y] [--models {all,required,skip}]
+cg remote add NAME URL
+cg remote remove NAME
+cg remote list
+cg push [-r REMOTE] [--force]
+cg pull [-r REMOTE] [-b BRANCH] [--models all|required|skip] [--force] [--preview] [--auto-resolve mine|theirs] [--torch-backend BACKEND]
 ```
 
-**Options:**
+`origin` is the default remote for push and pull.
 
-- `-y, --yes` - Skip confirmation (default: `False`)
-- `--models` - Model download strategy: all (default), required only, or skip (choices: `all`, `required`, `skip`) (default: `all`)
-
-
-## `log`
-
-**Usage:**
+## Python Dependencies
 
 ```bash
-cg log [-h] [-n N] [-v]
+cg py add PACKAGE [PACKAGE...]
+cg py add -r requirements.txt
+cg py remove PACKAGE [PACKAGE...]
+cg py list [--all]
+cg py remove-group GROUP
+cg py uv <UV_ARGS...>
 ```
 
-**Options:**
-
-- `-n, --limit` - Number of commits to show (default: 20) (default: `20`)
-- `-v, --verbose` - Show full details (default: `False`)
-
-
-## `commit`
-
-**Usage:**
+## Constraints
 
 ```bash
-cg commit [-h] [-m MESSAGE] [--auto] [--allow-issues] [-y]
+cg constraint add PACKAGE [PACKAGE...]
+cg constraint list
+cg constraint remove PACKAGE [PACKAGE...]
 ```
 
-**Options:**
-
-- `-m, --message` - Commit message (auto-generated if not provided)
-- `--auto` - Auto-resolve issues without interaction (default: `False`)
-- `--allow-issues` - Allow committing workflows with unresolved issues (default: `False`)
-- `-y, --yes` - Skip detached HEAD warning (allow commit anyway) (default: `False`)
-
-
-## `pull`
-
-**Usage:**
+## Manager And Metadata
 
 ```bash
-cg pull [-h] [-r REMOTE] [-b BRANCH] [--models {all,required,skip}]
-               [--force] [--preview] [--auto-resolve {mine,theirs}]
-               [--torch-backend BACKEND]
+cg manager status
+cg manager update [--version VERSION] [--yes]
+cg metadata refresh
+cg doctor [--check-only]
 ```
-
-**Options:**
-
-- `-r, --remote` - Git remote name (default: origin) (default: `origin`)
-- `-b, --branch` - Remote branch to pull (default: current local branch). Use when remote has different default branch (e.g., master vs main)
-- `--models` - Model download strategy (default: all) (choices: `all`, `required`, `skip`) (default: `all`)
-- `--force` - Discard uncommitted changes and force pull (default: `False`)
-- `--preview` - Preview changes without applying (read-only fetch and diff) (default: `False`)
-- `--auto-resolve` - Auto-resolve conflicts: 'mine' keeps local, 'theirs' takes incoming (choices: `mine`, `theirs`)
-- `--torch-backend` - PyTorch backend override (one-time, not saved). Examples: cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Reads from .pytorch-backend file if not specified.
-
-
-## `push`
-
-**Usage:**
-
-```bash
-cg push [-h] [-r REMOTE] [--force]
-```
-
-**Options:**
-
-- `-r, --remote` - Git remote name (default: origin) (default: `origin`)
-- `--force` - Force push using --force-with-lease (overwrite remote) (default: `False`)
-
-
-## `remote`
-
-**Usage:**
-
-```bash
-cg remote [-h] {add,remove,list} ...
-```
-
-### Subcommands
-
-
-### `add`
-
-**Usage:**
-
-```bash
-cg remote add [-h] name url
-```
-
-**Arguments:**
-
-- `name` - Remote name (e.g., origin)
-- `url` - Remote URL
-
-
-### `remove`
-
-**Usage:**
-
-```bash
-cg remote remove [-h] name
-```
-
-**Arguments:**
-
-- `name` - Remote name to remove
-
-
-### `list`
-
-**Usage:**
-
-```bash
-cg remote list [-h]
-```
-
-
-## `env-config`
-
-**Usage:**
-
-```bash
-cg env-config [-h] {torch-backend,local-sources,extras} ...
-```
-
-### Subcommands
-
-
-### `torch-backend`
-
-**Usage:**
-
-```bash
-cg env-config torch-backend [-h] {show,set,detect} ...
-```
-
-#### Subcommands
-
-
-#### `show`
-
-**Usage:**
-
-```bash
-cg env-config torch-backend show [-h]
-```
-
-
-#### `set`
-
-**Usage:**
-
-```bash
-cg env-config torch-backend set [-h] backend
-```
-
-**Arguments:**
-
-- `backend` - Backend to set (e.g., cu128, cpu, rocm6.3, xpu)
-
-
-#### `detect`
-
-**Usage:**
-
-```bash
-cg env-config torch-backend detect [-h]
-```
-
-
-### `local-sources`
-
-**Usage:**
-
-```bash
-cg env-config local-sources [-h] {show,add,remove} ...
-```
-
-#### Subcommands
-
-
-#### `show`
-
-**Usage:**
-
-```bash
-cg env-config local-sources show [-h]
-```
-
-
-#### `add`
-
-**Usage:**
-
-```bash
-cg env-config local-sources add [-h] --path PATH [--editable] package
-```
-
-**Arguments:**
-
-- `package` - Package name to override
-
-**Options:**
-
-- `--path` - Local path to package (absolute or relative) **[required]**
-- `--editable` - Install as editable (default: `False`)
-
-
-#### `remove`
-
-**Usage:**
-
-```bash
-cg env-config local-sources remove [-h] package
-```
-
-**Arguments:**
-
-- `package` - Package name to remove
-
-
-### `extras`
-
-**Usage:**
-
-```bash
-cg env-config extras [-h] {show,add,remove} ...
-```
-
-#### Subcommands
-
-
-#### `show`
-
-**Usage:**
-
-```bash
-cg env-config extras show [-h]
-```
-
-
-#### `add`
-
-**Usage:**
-
-```bash
-cg env-config extras add [-h] extras [extras ...]
-```
-
-**Arguments:**
-
-- `extras` - Extra name(s) to add (multiple values allowed)
-
-
-#### `remove`
-
-**Usage:**
-
-```bash
-cg env-config extras remove [-h] extras [extras ...]
-```
-
-**Arguments:**
-
-- `extras` - Extra name(s) to remove (multiple values allowed)
-
-
-## `py`
-
-**Usage:**
-
-```bash
-cg py [-h] {add,remove,remove-group,list,uv} ...
-```
-
-### Subcommands
-
-
-### `add`
-
-**Usage:**
-
-```bash
-cg py add [-h] [-r REQUIREMENTS] [--upgrade] [--group GROUP] [--dev]
-                 [--optional EXTRA] [--editable]
-                 [--bounds {lower,major,minor,exact}] [--no-build-isolation]
-                 [packages ...]
-```
-
-**Arguments:**
-
-- `packages` - Package specifications (e.g., requests>=2.0.0) (multiple values allowed)
-
-**Options:**
-
-- `-r, --requirements` - Add packages from requirements.txt file
-- `--upgrade` - Upgrade existing packages (default: `False`)
-- `--group` - Add to dependency group (e.g., optional-cuda)
-- `--dev` - Add to dev dependencies (default: `False`)
-- `--optional` - Add to optional dependency group (project.optional-dependencies)
-- `--editable` - Install as editable (for local development) (default: `False`)
-- `--bounds` - Version specifier style (choices: `lower`, `major`, `minor`, `exact`)
-- `--no-build-isolation` - Build without isolation (for CUDA packages needing PyTorch at build time) (default: `False`)
-
-
-### `remove`
-
-**Usage:**
-
-```bash
-cg py remove [-h] [--group GROUP] packages [packages ...]
-```
-
-**Arguments:**
-
-- `packages` - Package names to remove (multiple values allowed)
-
-**Options:**
-
-- `--group` - Remove packages from dependency group instead of main dependencies
-
-
-### `remove-group`
-
-**Usage:**
-
-```bash
-cg py remove-group [-h] group
-```
-
-**Arguments:**
-
-- `group` - Dependency group name to remove
-
-
-### `list`
-
-**Usage:**
-
-```bash
-cg py list [-h] [--all]
-```
-
-**Options:**
-
-- `--all` - Show all dependencies including dependency groups (default: `False`)
-
-
-### `uv`
-
-**Usage:**
-
-```bash
-cg py uv ...
-```
-
-**Arguments:**
-
-- `uv_args` - UV command and arguments (e.g., 'add --group optional-cuda sageattention')
-
-
-## `constraint`
-
-**Usage:**
-
-```bash
-cg constraint [-h] {add,list,remove} ...
-```
-
-### Subcommands
-
-
-### `add`
-
-**Usage:**
-
-```bash
-cg constraint add [-h] packages [packages ...]
-```
-
-**Arguments:**
-
-- `packages` - Package specifications (e.g., torch==2.4.1) (multiple values allowed)
-
-
-### `list`
-
-**Usage:**
-
-```bash
-cg constraint list [-h]
-```
-
-
-### `remove`
-
-**Usage:**
-
-```bash
-cg constraint remove [-h] packages [packages ...]
-```
-
-**Arguments:**
-
-- `packages` - Package names to remove (multiple values allowed)

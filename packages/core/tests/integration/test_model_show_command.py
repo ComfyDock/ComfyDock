@@ -33,13 +33,14 @@ def test_get_model_details():
         assert len(models) == 1
         model_hash = models[0].hash
 
-        # Add a source
-        workspace.model_repository.add_source(
+        # Add a source through the public workspace facade.
+        source_type = workspace.add_indexed_model_source(
             model_hash=model_hash,
-            source_type="civitai",
             source_url="https://civitai.com/api/download/models/12345",
-            metadata={"model_id": 123, "version_id": 456}
         )
+        assert source_type == "civitai"
+        assert workspace.has_model(model_hash)
+        assert workspace.model_has_sources(model_hash)
 
         # Test get_model_details using the new interface
         details = workspace.get_model_details(model_hash)
@@ -53,14 +54,26 @@ def test_get_model_details():
 
         # Verify sources
         assert len(details.sources) == 1
-        assert details.sources[0]['type'] == 'civitai'
-        assert details.sources[0]['url'] == "https://civitai.com/api/download/models/12345"
-        assert details.sources[0]['metadata']['model_id'] == 123
+        assert details.sources[0].type == 'civitai'
+        assert details.sources[0].url == "https://civitai.com/api/download/models/12345"
+        source_match = workspace.find_model_by_source_url("https://civitai.com/api/download/models/12345")
+        assert source_match is not None
+        assert source_match.hash == model_hash
 
         # Verify locations
         assert len(details.all_locations) == 1
-        assert details.all_locations[0]['relative_path'] == "checkpoints/test.safetensors"
-        assert details.all_locations[0]['filename'] == "test.safetensors"
+        assert details.all_locations[0].relative_path == "checkpoints/test.safetensors"
+        assert details.all_locations[0].filename == "test.safetensors"
+
+        refreshed = workspace.ensure_model_hashes(model_hash)
+        assert refreshed.model.blake3_hash
+        assert refreshed.model.sha256_hash
+
+        assert workspace.remove_indexed_model_source(
+            model_hash,
+            "https://civitai.com/api/download/models/12345",
+        )
+        assert not workspace.model_has_sources(model_hash)
 
 
 def test_get_model_details_not_found():

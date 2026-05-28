@@ -2,7 +2,7 @@
 import argparse
 from unittest.mock import MagicMock, patch
 
-from comfygit_core.models.shared import ManagerStatus, ManagerUpdateResult
+from comfygit_core.models import ManagerStatus, ManagerUpdateResult
 
 
 class TestManagerCommands:
@@ -200,16 +200,17 @@ class TestInitNoSystemNodes:
 
         global_cmds = GlobalCommands()
 
-        # Mock workspace factory and creation
+        # Mock workspace creation through the public Workspace API.
         mock_workspace = MagicMock()
         mock_workspace.paths.root = tmp_path
         mock_workspace.path = tmp_path
         mock_workspace.update_registry_data.return_value = True
         mock_workspace.get_models_directory.return_value = tmp_path / "models"
 
-        with patch("comfygit_cli.global_commands.WorkspaceFactory") as mock_factory:
-            mock_factory.get_paths.return_value = mock_workspace.paths
-            mock_factory.create.return_value = mock_workspace
+        with (
+            patch("comfygit_cli.global_commands.Workspace.default_root", return_value=tmp_path) as mock_default_root,
+            patch("comfygit_cli.global_commands.Workspace.create", return_value=mock_workspace) as mock_create,
+        ):
 
             with patch.object(global_cmds, "_setup_models_directory"):
                 args = argparse.Namespace(
@@ -221,7 +222,8 @@ class TestInitNoSystemNodes:
                 global_cmds.init(args)
 
                 # Verify workspace was created (no system nodes installation)
-                mock_factory.create.assert_called_once()
+                mock_default_root.assert_called_once_with(None)
+                mock_create.assert_called_once_with(tmp_path)
 
     def test_bare_flag_no_longer_exists(self):
         """--bare flag should not exist in init parser."""
@@ -257,13 +259,13 @@ class TestStatusLegacyManagerNotice:
         skipping the legacy manager notice check.
         """
         from comfygit_cli.env_commands import EnvironmentCommands
-        from comfygit_core.models.environment import (
+        from comfygit_core.models import (
+            DetailedWorkflowStatus,
             EnvironmentComparison,
             EnvironmentStatus,
             GitStatus,
+            WorkflowSyncStatus,
         )
-        from comfygit_core.models.shared import ManagerStatus
-        from comfygit_core.models.workflow import DetailedWorkflowStatus, WorkflowSyncStatus
 
         env_cmds = EnvironmentCommands()
 
@@ -331,7 +333,7 @@ class TestLegacyWorkspaceNotice:
         mock_workspace = MagicMock()
         mock_workspace.has_legacy_system_nodes.return_value = True
 
-        with patch.object(cli_utils.WorkspaceFactory, "find", return_value=mock_workspace):
+        with patch.object(cli_utils.Workspace, "open", return_value=mock_workspace):
             with patch.object(cli_utils.WorkspaceLogger, "set_workspace_path"):
                 result = cli_utils.get_workspace_or_exit()
 

@@ -1,48 +1,79 @@
 site_name: ComfyGit Documentation
-site_description: Version control for ComfyUI environments
+site_description: Reproducible ComfyUI environments, workflows, and local Studio APIs
 site_url: https://docs.comfygit.org/
 repo_url: https://github.com/comfygit-ai/comfygit
 repo_name: comfygit-ai/comfygit
 edit_uri: edit/main/docs/comfygit-docs/docs/
 
 nav:
-  - Introduction: index.md
-  - Getting Started:
+  - Get Started:
+    - Overview: getting-started/overview.md
     - Installation: getting-started/installation.md
-    - Features: getting-started/features.md
-    - Core Concepts: getting-started/concepts.md
-  - User Guide:
-    - Workspaces: user-guide/workspaces.md
-    - Environments:
-      - Creating Environments: user-guide/environments/creating-environments.md
-      - Running ComfyUI: user-guide/environments/running-comfyui.md
-      - Version Control: user-guide/environments/version-control.md
-    - Custom Nodes:
-      - Adding Nodes: user-guide/custom-nodes/adding-nodes.md
-      - Managing Nodes: user-guide/custom-nodes/managing-nodes.md
-      - Node Conflicts: user-guide/custom-nodes/node-conflicts.md
-    - Models:
-      - Model Index: user-guide/models/model-index.md
-      - Downloading Models: user-guide/models/downloading-models.md
-      - Managing Models: user-guide/models/managing-models.md
-      - Adding Sources: user-guide/models/adding-sources.md
-    - Workflows:
-      - Workflow Tracking: user-guide/workflows/workflow-tracking.md
-      - Workflow Resolution: user-guide/workflows/workflow-resolution.md
-      - Model Importance: user-guide/workflows/workflow-model-importance.md
-    - Python Dependencies:
-      - Py Commands: user-guide/python-dependencies/py-commands.md
-      - Constraints: user-guide/python-dependencies/constraints.md
-    - Collaboration:
-      - Export & Import: user-guide/collaboration/export-import.md
-      - Git Remotes: user-guide/collaboration/git-remotes.md
-      - Team Workflows: user-guide/collaboration/team-workflows.md
-  - CLI Reference:
-    - Global Commands: cli-reference/global-commands.md
-    - Environment Commands: cli-reference/environment-commands.md
-    - Node Commands: cli-reference/node-commands.md
-    - Workflow Commands: cli-reference/workflow-commands.md
-    - Shell Completion: cli-reference/shell-completion.md
+    - Quickstart: getting-started/quickstart.md
+    - Core Concepts:
+      - What ComfyGit Manages: concepts/what-comfygit-manages.md
+      - Workspaces: concepts/workspaces.md
+      - Environments: concepts/environments.md
+      - Manifests: concepts/manifests.md
+      - Models: concepts/models.md
+      - Custom Nodes: concepts/custom-nodes.md
+      - Workflows: concepts/workflows.md
+      - Studio And Serve: concepts/studio-and-serve.md
+    - Common Tasks:
+      - Common Workflows: user-guide/common-workflows.md
+      - Create An Environment: user-guide/environments/creating-environments.md
+      - Add Custom Nodes: user-guide/custom-nodes/adding-nodes.md
+      - Add And Track Models: user-guide/workflows/model-dependencies.md
+      - Track A Workflow: user-guide/workflows/workflow-tracking.md
+      - Serve A Workflow: user-guide/serve-studio/serving-workflows.md
+      - Share An Environment: user-guide/collaboration/team-workflows.md
+    - How-To Guides:
+      - Workspaces: user-guide/workspaces.md
+      - Environment Lifecycle:
+        - user-guide/environments/index.md
+        - Running ComfyUI: user-guide/environments/running-comfyui.md
+        - Sync And Repair: user-guide/environments/sync-and-repair.md
+        - Local Runtime Config: user-guide/environments/local-runtime-config.md
+        - Environment History: user-guide/environments/version-control.md
+      - Custom Node Management:
+        - user-guide/custom-nodes/index.md
+        - Development Nodes: user-guide/custom-nodes/development-nodes.md
+        - Managing Nodes: user-guide/custom-nodes/managing-nodes.md
+        - Node Conflicts: user-guide/custom-nodes/node-conflicts.md
+      - Model Management:
+        - user-guide/models/index.md
+        - Model Index: user-guide/models/model-index.md
+        - Downloading Models: user-guide/models/downloading-models.md
+        - Managing Models: user-guide/models/managing-models.md
+        - Adding Sources: user-guide/models/adding-sources.md
+      - Workflow Management:
+        - user-guide/workflows/index.md
+        - Workflow Resolution: user-guide/workflows/workflow-resolution.md
+        - Workflow Contracts: user-guide/workflows/workflow-contracts.md
+      - Serve And Studio:
+        - user-guide/serve-studio/index.md
+        - Uploads And File Refs: user-guide/serve-studio/uploads.md
+      - Python Dependencies:
+        - user-guide/python-dependencies/index.md
+        - Py Commands: user-guide/python-dependencies/py-commands.md
+        - Constraints: user-guide/python-dependencies/constraints.md
+      - Sharing And Collaboration:
+        - user-guide/collaboration/index.md
+        - Export And Import: user-guide/collaboration/export-import.md
+        - Git Remotes: user-guide/collaboration/git-remotes.md
+        - Materialize Runtime Environments: user-guide/collaboration/materialize.md
+  - Reference:
+    - Overview: reference/index.md
+    - CLI Reference:
+      - Global Commands: cli-reference/global-commands.md
+      - Environment Commands: cli-reference/environment-commands.md
+      - Node Commands: cli-reference/node-commands.md
+      - Workflow Commands: cli-reference/workflow-commands.md
+      - Shell Completion: cli-reference/shell-completion.md
+    - Manager Reference: reference/manager.md
+    - Manifest Reference: reference/manifest.md
+    - Workflow Contract Reference: reference/workflow-contracts.md
+    - Serve API Reference: reference/serve-api.md
   - Troubleshooting:
     - Common Issues: troubleshooting/common-issues.md
     - Dependency Conflicts: troubleshooting/dependency-conflicts.md
@@ -78,12 +109,9 @@ theme:
     - content.code.annotate
     - content.tabs.link
     - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - navigation.footer
-    - navigation.path
     - navigation.instant
     - navigation.instant.prefetch
     - navigation.instant.progress
@@ -91,7 +119,6 @@ theme:
     - navigation.tracking
     - search.suggest
     - search.highlight
-    - toc.follow
 
 markdown_extensions:
   # Python Markdown
@@ -141,7 +168,10 @@ plugins:
       separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
   - tags
   - redirects:
-      redirect_maps: {}
+      redirect_maps:
+        index.md: getting-started/overview.md
+        getting-started/concepts.md: concepts/what-comfygit-manages.md
+        concepts/index.md: concepts/what-comfygit-manages.md
   - git-revision-date-localized:
       timezone: UTC
       enable_creation_date: true
@@ -161,6 +191,7 @@ extra_css:
   - stylesheets/extra.css
 
 extra_javascript:
+  - javascripts/breadcrumbs.js
   - javascripts/copy-markdown.js
   - javascripts/code-copy-filter.js
 

@@ -5,7 +5,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from comfygit_cli.env_commands import EnvironmentCommands
-from comfygit_core.models.exceptions import UVCommandError
+from comfygit_core.models import UVCommandContext, UVCommandError
+
+
+def _uv_command_context() -> UVCommandContext:
+    return UVCommandContext(
+        binary="/usr/bin/uv",
+        cwd=Path("/workspace/test-env/.cec"),
+        env={
+            "UV_PROJECT_ENVIRONMENT": str(Path("/workspace/test-env/ComfyUI/.venv")),
+            "UV_CACHE_DIR": str(Path("/workspace/cache/uv_cache")),
+        },
+    )
 
 
 class TestPyAdd:
@@ -660,10 +671,7 @@ class TestPyUvPassthrough:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.cec_path = Path("/workspace/test-env/.cec")
-        mock_env.venv_path = Path("/workspace/test-env/ComfyUI/.venv")
-        mock_env.workspace_paths.cache = Path("/workspace/cache")
-        mock_env.uv_manager.uv._binary = "/usr/bin/uv"
+        mock_env.get_uv_command_context.return_value = _uv_command_context()
 
         # Mock subprocess to return success
         mock_result = MagicMock()
@@ -694,10 +702,7 @@ class TestPyUvPassthrough:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.cec_path = Path("/workspace/test-env/.cec")
-        mock_env.venv_path = Path("/workspace/test-env/ComfyUI/.venv")
-        mock_env.workspace_paths.cache = Path("/workspace/cache")
-        mock_env.uv_manager.uv._binary = "/usr/bin/uv"
+        mock_env.get_uv_command_context.return_value = _uv_command_context()
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -725,10 +730,7 @@ class TestPyUvPassthrough:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.cec_path = Path("/workspace/test-env/.cec")
-        mock_env.venv_path = Path("/workspace/test-env/ComfyUI/.venv")
-        mock_env.workspace_paths.cache = Path("/workspace/cache")
-        mock_env.uv_manager.uv._binary = "/usr/bin/uv"
+        mock_env.get_uv_command_context.return_value = _uv_command_context()
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -779,10 +781,7 @@ class TestPyUvPassthrough:
         mock_env = MagicMock()
         mock_workspace.return_value.get_active_environment.return_value = mock_env
         mock_env.name = "test-env"
-        mock_env.cec_path = Path("/workspace/test-env/.cec")
-        mock_env.venv_path = Path("/workspace/test-env/ComfyUI/.venv")
-        mock_env.workspace_paths.cache = Path("/workspace/cache")
-        mock_env.uv_manager.uv._binary = "/usr/bin/uv"
+        mock_env.get_uv_command_context.return_value = _uv_command_context()
 
         # Mock subprocess to return failure
         mock_result = MagicMock()

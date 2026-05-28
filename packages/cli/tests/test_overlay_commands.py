@@ -1,13 +1,15 @@
 """Tests for overlay CLI commands."""
 
 import argparse
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from comfygit_cli.cli import create_parser
-from comfygit_core.managers.overlay_manager import OverlayInfo
+from comfygit_core.models import (
+    OverlayActivationResult,
+    OverlayInfo,
+    OverlayTemplateResult,
+)
 
 
 def test_overlay_parser_subcommands_exist():
@@ -39,7 +41,7 @@ def test_overlay_list_shows_scope_and_activation(capsys):
 
     env_cmds = EnvironmentCommands()
     mock_env = MagicMock()
-    mock_env.overlay_manager.list_overlays.return_value = [
+    mock_env.list_overlays.return_value = [
         OverlayInfo(
             name=".local",
             description="local overrides",
@@ -69,7 +71,7 @@ def test_overlay_list_marks_stock_overlays(capsys):
 
     env_cmds = EnvironmentCommands()
     mock_env = MagicMock()
-    mock_env.overlay_manager.list_overlays.return_value = [
+    mock_env.list_overlays.return_value = [
         OverlayInfo(
             name="triton",
             description="Bundled triton",
@@ -92,14 +94,16 @@ def test_overlay_enable_updates_active_names(capsys):
 
     env_cmds = EnvironmentCommands()
     mock_env = MagicMock()
-    mock_env.overlay_manager.resolve_overlay_name.return_value = "sageattention"
-    mock_env.overlay_manager.get_active_names.return_value = []
-    mock_env.overlay_manager.is_overlay_compatible.return_value = True
+    mock_env.enable_overlay.return_value = OverlayActivationResult(
+        name="sageattention",
+        changed=True,
+        is_compatible=True,
+    )
 
     with patch.object(env_cmds, "_get_env", return_value=mock_env):
         env_cmds.overlay_enable(argparse.Namespace(target_env="test", name="sageattention"))
 
-    mock_env.overlay_manager.set_active_names.assert_called_once_with(["sageattention"])
+    mock_env.enable_overlay.assert_called_once_with("sageattention")
     output = capsys.readouterr().out
     assert "Enabled overlay: sageattention" in output
 
@@ -109,17 +113,18 @@ def test_overlay_create_writes_template(tmp_path, capsys):
 
     env_cmds = EnvironmentCommands()
     mock_env = MagicMock()
-    mock_env.cec_path = tmp_path / ".cec"
+    created = tmp_path / ".cec" / "overlays" / "alpha.toml"
+    mock_env.create_overlay_template.return_value = OverlayTemplateResult(
+        name="alpha",
+        path=created,
+        scope="shared",
+        created=True,
+    )
 
     with patch.object(env_cmds, "_get_env", return_value=mock_env):
         env_cmds.overlay_create(argparse.Namespace(target_env="test", name="alpha"))
 
-    created = mock_env.cec_path / "overlays" / "alpha.toml"
-    assert created.exists()
-    content = created.read_text(encoding="utf-8")
-    assert "[overlay]" in content
-    assert "[dependencies]" in content
-    assert "[[index]]" in content
+    mock_env.create_overlay_template.assert_called_once_with("alpha", local=False)
     assert "Created shared overlay: alpha" in capsys.readouterr().out
 
 
@@ -128,7 +133,9 @@ def test_overlay_create_rejects_invalid_name(capsys):
 
     env_cmds = EnvironmentCommands()
     mock_env = MagicMock()
-    mock_env.cec_path = Path("/tmp/not-used")
+    mock_env.create_overlay_template.side_effect = ValueError(
+        "Overlay name must be flat (no subdirectories): bad/name"
+    )
 
     with patch.object(env_cmds, "_get_env", return_value=mock_env):
         with pytest.raises(SystemExit):

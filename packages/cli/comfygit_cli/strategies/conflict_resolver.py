@@ -8,7 +8,7 @@ Based on the Atomic Semantic Merge architecture:
 
 from typing import Literal
 
-from comfygit_core.models.ref_diff import (
+from comfygit_core.models import (
     RefDiff,
     WorkflowConflict,
 )

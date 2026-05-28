@@ -112,3 +112,56 @@ class TestSchemaVersionPreservation:
         assert reloaded["tool"]["comfygit"]["schema_version"] == 2
         assert reloaded["tool"]["comfygit"]["comfyui_version"] == "v0.3.60"
         assert reloaded["tool"]["comfygit"]["manifest_state"] == "local"
+
+    def test_ensure_section_spacing_preserves_sync_subtable(self, temp_pyproject):
+        """sync extras should survive formatting when workflows/models exist."""
+        initial_config = {
+            "project": {"name": "test", "version": "0.1.0"},
+            "tool": {
+                "comfygit": {
+                    "schema_version": 2,
+                    "comfyui_version": "v0.3.60",
+                    "python_version": "3.11",
+                    "sync": {"extras": ["xformers"]},
+                    "workflows": {
+                        "test_workflow": {"path": "workflows/test.json"}
+                    },
+                    "models": {
+                        "hash123": {"filename": "model.safetensors", "size": 500}
+                    },
+                }
+            },
+        }
+        with open(temp_pyproject, "w") as f:
+            tomlkit.dump(initial_config, f)
+
+        manager = PyprojectManager(temp_pyproject)
+        manager.save(manager.load())
+
+        reloaded = manager.load(force_reload=True)
+        assert reloaded["tool"]["comfygit"]["sync"]["extras"] == ["xformers"]
+
+    def test_set_sync_extras_persists_with_workflows_and_models(self, temp_pyproject):
+        """set_sync_extras should persist after formatting rewrites comfygit."""
+        initial_config = {
+            "project": {"name": "test", "version": "0.1.0"},
+            "tool": {
+                "comfygit": {
+                    "schema_version": 2,
+                    "workflows": {
+                        "test_workflow": {"path": "workflows/test.json"}
+                    },
+                    "models": {
+                        "hash123": {"filename": "model.safetensors", "size": 500}
+                    },
+                }
+            },
+        }
+        with open(temp_pyproject, "w") as f:
+            tomlkit.dump(initial_config, f)
+
+        manager = PyprojectManager(temp_pyproject)
+        manager.set_sync_extras(["xformers"])
+
+        assert manager.get_sync_extras() == ["xformers"]
+        assert "xformers" in temp_pyproject.read_text()

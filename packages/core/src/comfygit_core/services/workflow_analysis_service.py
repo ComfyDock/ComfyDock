@@ -136,7 +136,7 @@ class WorkflowAnalysisService:
         cls,
         cache_dir: Path | None = None,
         version_agnostic: bool = False,
-    ) -> "WorkflowAnalysisService":
+    ) -> WorkflowAnalysisService:
         """Factory for standalone use (no workspace).
 
         Args:
@@ -172,7 +172,7 @@ class WorkflowAnalysisService:
         )
 
     @classmethod
-    def create_from_workspace(cls, workspace: Workspace) -> "WorkflowAnalysisService":
+    def create_from_workspace(cls, workspace: Workspace) -> WorkflowAnalysisService:
         """Factory for workspace-aware use."""
         return cls(
             node_mappings_repository=workspace.node_mapping_repository,

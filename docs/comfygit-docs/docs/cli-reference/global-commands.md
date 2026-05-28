@@ -1,260 +1,89 @@
 # Global Commands
 
-> Workspace-level commands that operate on the entire ComfyGit workspace.
+These commands operate at the workspace level or create new environments. Use
+`cg <command> -h` for the exact parser help in your installed version.
 
+!!! warning "Reference freshness"
+    This page is a source-checked summary for the current docs rewrite. The full
+    generated CLI reference is being rebuilt so it can stay synchronized with
+    the parser automatically.
 
-## `init`
-
-**Usage:**
-
-```bash
-cg init [-h] [--models-dir MODELS_DIR] [--yes] [path]
-```
-
-**Arguments:**
-
-- `path` - Workspace directory (default: ~/comfygit) (optional)
-
-**Options:**
-
-- `--models-dir` - Path to existing models directory to index
-- `--yes, -y` - Use all defaults, no interactive prompts (default: `False`)
-
-
-## `list`
-
-**Usage:**
+## Workspace Setup
 
 ```bash
-cg list [-h]
+cg init [path] [--models-dir PATH] [--yes]
+cg list
+cg config --show
+cg config --civitai-key KEY
+cg config --github-token TOKEN
+cg config --uv-cache PATH
 ```
 
-
-## `import`
-
-**Usage:**
+## Create, Import, Export, Materialize
 
 ```bash
-cg import [-h] [--name NAME] [--branch BRANCH]
-                 [--torch-backend BACKEND] [--use]
-                 [--models {all,required,skip}] [-y]
-                 [path]
+cg create NAME [--template PATH] [--python VERSION] [--comfyui REF] [--torch-backend BACKEND] [--no-manager] [--use] [--yes]
+cg import SOURCE [--name NAME] [--branch REF] [--torch-backend BACKEND] [--models all|required|skip] [--no-manager] [--use] [--yes]
+cg export [PATH] [--allow-issues]
+cg materialize SOURCE --name NAME [--workspace PATH] [--models-dir PATH] [--branch REF] [--torch-backend BACKEND] [--models all|required|skip] [--with-manager] [--use] [--replace]
 ```
 
-**Arguments:**
+Use `import` for a human authoring environment. Use `materialize` for
+non-interactive runtime or build hydration.
 
-- `path` - Path to .tar.gz file or git repository URL (use #subdirectory for subdirectory imports) (optional)
+## Analyze
 
-**Options:**
-
-- `--name` - Name for imported environment (skip prompt)
-- `--branch, -b` - Git branch, tag, or commit to import (git imports only)
-- `--torch-backend` - PyTorch backend. Examples: auto (detect GPU), cpu, cu128 (CUDA 12.8), cu126, cu124, rocm6.3 (AMD), xpu (Intel). Default: auto (default: `auto`)
-- `--use` - Set imported environment as active (default: `False`)
-- `--models` - Model download strategy: all (default with --yes), required only, or skip (choices: `all`, `required`, `skip`)
-- `-y, --yes` - Skip confirmation prompts, use defaults for workspace initialization (default: `False`)
-
-
-## `export`
-
-**Usage:**
+Analyze a workflow file without selecting an environment:
 
 ```bash
-cg export [-h] [--allow-issues] [path]
+cg analyze workflow.json
+cg analyze workflow.json --json
+cg analyze workflow.json --draft-spec
+cg analyze workflow.json --online
+cg analyze workflow.json --verbose
+cg analyze workflow.json --quiet
 ```
 
-**Arguments:**
-
-- `path` - Path to output file (optional)
-
-**Options:**
-
-- `--allow-issues` - Export even with unresolved workflows or models without source URLs (default: `False`)
-
-
-## `model`
-
-**Usage:**
+## Models
 
 ```bash
-cg model [-h] {index,download,add-source} ...
+cg model index status
+cg model index dir PATH
+cg model index sync
+cg model index list [--duplicates]
+cg model index find QUERY
+cg model index show IDENTIFIER
+cg model download URL [--path RELATIVE_PATH] [--category CATEGORY] [--yes]
+cg model add-source [MODEL] [URL]
+cg model delete IDENTIFIER [--yes]
 ```
 
-### Subcommands
-
-
-### `index`
-
-**Usage:**
+## Registry, Updates, Debugging
 
 ```bash
-cg model index [-h] {find,list,show,status,sync,dir} ...
+cg registry status
+cg registry update
+cg update [--check]
+cg debug [-n LINES] [--level DEBUG|INFO|WARNING|ERROR] [--full] [--workspace]
 ```
 
-#### Subcommands
-
-
-#### `find`
-
-**Usage:**
+## Orchestrator And Workspace Maintenance
 
 ```bash
-cg model index find [-h] query
+cg orch status [--json]
+cg orch restart [--wait]
+cg orch kill [--force]
+cg orch clean [--dry-run] [--force] [--kill]
+cg orch logs [--follow] [-n LINES]
+cg workspace cleanup [--force]
 ```
 
-**Arguments:**
+`cg orchestrator` is an alias for `cg orch`.
 
-- `query` - Search query (hash prefix or filename)
-
-
-#### `list`
-
-**Usage:**
+## Shell Completion
 
 ```bash
-cg model index list [-h] [--duplicates]
+cg completion install
+cg completion status
+cg completion uninstall
 ```
-
-**Options:**
-
-- `--duplicates` - Show only models with multiple locations (default: `False`)
-
-
-#### `show`
-
-**Usage:**
-
-```bash
-cg model index show [-h] identifier
-```
-
-**Arguments:**
-
-- `identifier` - Model hash, hash prefix, filename, or path
-
-
-#### `status`
-
-**Usage:**
-
-```bash
-cg model index status [-h]
-```
-
-
-#### `sync`
-
-**Usage:**
-
-```bash
-cg model index sync [-h]
-```
-
-
-#### `dir`
-
-**Usage:**
-
-```bash
-cg model index dir [-h] path
-```
-
-**Arguments:**
-
-- `path` - Path to models directory
-
-
-### `download`
-
-**Usage:**
-
-```bash
-cg model download [-h] [--path PATH] [-c CATEGORY] [-y] url
-```
-
-**Arguments:**
-
-- `url` - Model download URL (Civitai, HuggingFace, or direct)
-
-**Options:**
-
-- `--path` - Target path relative to models directory (e.g., checkpoints/model.safetensors)
-- `-c, --category` - Model category for auto-path (e.g., checkpoints, loras, vae)
-- `-y, --yes` - Skip path confirmation prompt (default: `False`)
-
-
-### `add-source`
-
-**Usage:**
-
-```bash
-cg model add-source [-h] [model] [url]
-```
-
-**Arguments:**
-
-- `model` - Model filename or hash (omit for interactive mode) (optional)
-- `url` - Download URL (optional)
-
-
-## `registry`
-
-**Usage:**
-
-```bash
-cg registry [-h] {status,update} ...
-```
-
-### Subcommands
-
-
-### `status`
-
-**Usage:**
-
-```bash
-cg registry status [-h]
-```
-
-
-### `update`
-
-**Usage:**
-
-```bash
-cg registry update [-h]
-```
-
-
-## `config`
-
-**Usage:**
-
-```bash
-cg config [-h] [--civitai-key CIVITAI_KEY] [--uv-cache UV_CACHE]
-                 [--show]
-                 {} ...
-```
-
-**Options:**
-
-- `--civitai-key` - Set Civitai API key (use empty string to clear)
-- `--uv-cache` - Set external UV cache path (use empty string to clear)
-- `--show` - Show current configuration (default: `False`)
-
-
-## `debug`
-
-**Usage:**
-
-```bash
-cg debug [-h] [-n LINES] [--level {DEBUG,INFO,WARNING,ERROR}] [--full]
-                [--workspace]
-```
-
-**Options:**
-
-- `-n, --lines` - Number of lines to show (default: 200) (default: `200`)
-- `--level` - Filter by log level (choices: `DEBUG`, `INFO`, `WARNING`, `ERROR`)
-- `--full` - Show all logs (no line limit) (default: `False`)
-- `--workspace` - Show workspace logs instead of environment logs (default: `False`)

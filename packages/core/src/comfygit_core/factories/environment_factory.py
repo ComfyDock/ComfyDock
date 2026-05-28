@@ -15,6 +15,7 @@ from ..models.exceptions import (
 from ..utils.comfyui_ops import clone_comfyui
 from ..utils.environment_cleanup import mark_environment_complete
 from ..utils.filesystem import rmtree
+from ..utils.requirements import read_comfyui_requirements_with_supplements
 
 if TYPE_CHECKING:
     from comfygit_core.core.workspace import Workspace
@@ -87,6 +88,13 @@ class EnvironmentFactory:
         def _complete(phase: str, success: bool = True, error: str | None = None) -> None:
             if progress:
                 progress.on_phase_complete(phase, success, error)
+
+        def _log(message: str) -> None:
+            if not progress:
+                return
+            on_log = getattr(progress, "on_log", None)
+            if callable(on_log):
+                on_log(message)
 
         # Phase: Initialize structure (0-5%)
         _progress("init_structure", "Creating environment structure", 0)
@@ -283,7 +291,8 @@ class EnvironmentFactory:
         comfyui_reqs = env.comfyui_path / "requirements.txt"
         if comfyui_reqs.exists():
             logger.info("Adding ComfyUI requirements...")
-            env.uv_manager.add_requirements_with_sources(comfyui_reqs, frozen=True)
+            requirements = read_comfyui_requirements_with_supplements(comfyui_reqs)
+            env.uv_manager.add_requirements_with_sources(requirements, frozen=True)
 
         # Phase: Install dependencies with PyTorch (40-90%)
         # Single sync handles both PyTorch installation AND ComfyUI dependencies
@@ -298,6 +307,7 @@ class EnvironmentFactory:
             skip_optional_overlays=True,
             extras=extras,
             all_extras=all_extras,
+            output_callback=_log,
         )
 
         _complete("install_dependencies")
@@ -326,9 +336,7 @@ class EnvironmentFactory:
         _complete("install_manager")
 
         if no_manager:
-            config = env.pyproject.load()
-            config.setdefault("tool", {}).setdefault("comfygit", {})["headless"] = True
-            env.pyproject.save(config)
+            env.pyproject.manifest.set_headless()
 
         # Phase: Finalize environment (90-100%)
         _progress("finalize", "Finalizing environment", 90)
