@@ -490,6 +490,11 @@ def _state(request: web.Request) -> ServeState:
     return request.app[SERVE_STATE_KEY]
 
 
+def _maybe_state(request: web.Request) -> ServeState | None:
+    state = request.app.get(SERVE_STATE_KEY)
+    return state if isinstance(state, ServeState) else None
+
+
 def _executor_unavailable_payload(
     state: ServeState,
     exc: BaseException,
@@ -655,7 +660,10 @@ async def studio_index_handler(request: web.Request) -> web.StreamResponse:
     index_path = static_dir / "index.html"
     if index_path.exists():
         html = index_path.read_text(encoding="utf-8")
-        env_name = getattr(_state(request).env, "name", "Environment")
+        state = _maybe_state(request)
+        if state is None:
+            return _studio_not_running_response()
+        env_name = getattr(state.env, "name", "Environment")
         config = {
             "apiBasePath": request.app.get(STUDIO_API_BASE_PATH_KEY, ""),
             "authMode": "none",
@@ -675,6 +683,40 @@ async def studio_index_handler(request: web.Request) -> web.StreamResponse:
             "<body><h1>ComfyGit Studio assets are not built.</h1>"
             "<p>Run the contract studio build before packaging or serving the UI.</p>"
             "</body></html>"
+        ),
+        content_type="text/html",
+    )
+
+
+def _studio_not_running_response() -> web.Response:
+    return web.Response(
+        status=503,
+        text=(
+            "<!doctype html>"
+            "<html>"
+            "<head>"
+            "<title>ComfyGit Studio Not Running</title>"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"
+            "<style>"
+            "body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "background:#151719;color:#f2f2f2;font-family:system-ui,-apple-system,BlinkMacSystemFont,"
+            "'Segoe UI',sans-serif;}"
+            "main{max-width:560px;padding:32px;border:1px solid #44484f;background:#202226;}"
+            "h1{margin:0 0 12px;color:#2bbbf3;font-size:22px;letter-spacing:.02em;}"
+            "p{margin:0 0 10px;color:#c7c7c7;line-height:1.5;}"
+            "code{color:#f7f7f7;background:#111316;padding:2px 5px;}"
+            "</style>"
+            "</head>"
+            "<body>"
+            "<main>"
+            "<h1>ComfyGit Studio is not running</h1>"
+            "<p>The Studio route is available, but this ComfyUI process has not "
+            "started an embedded Studio session yet.</p>"
+            "<p>Open Studio from the ComfyGit Manager workflow panel, or call "
+            "<code>/api/v2/comfygit/studio/open</code> before loading this page.</p>"
+            "</main>"
+            "</body>"
+            "</html>"
         ),
         content_type="text/html",
     )

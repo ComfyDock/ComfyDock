@@ -231,6 +231,11 @@ must use the same contract-shaped metadata, upload, run, gallery, and output
 semantics as `cg serve`, while preserving Manager's user flow for users who
 installed only the custom node.
 
+If a browser opens the embedded Studio UI route before Manager has started the
+embedded runtime state in the current ComfyUI process, the route should return a
+human-readable unavailable page instead of surfacing a raw server traceback or
+implementation key error.
+
 The CLI release artifact should contain the synced static output from the same
 Studio source version as the release. Installed users should not need Node.js or
 the Studio source tree available for `cg serve` to host the packaged UI.

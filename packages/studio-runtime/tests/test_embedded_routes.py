@@ -111,6 +111,35 @@ async def test_embedded_routes_are_namespaced_and_serve_assets(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_embedded_studio_ui_without_runtime_returns_friendly_page(tmp_path: Path) -> None:
+    app = web.Application()
+    configure_embedded_studio_app(
+        app,
+        public_api_base_path="/api/v2/comfygit/studio/runtime",
+        static_dir=_static_dir(tmp_path),
+    )
+    app.add_routes(
+        create_embedded_studio_routes(
+            route_api_prefix="/v2/comfygit/studio/runtime",
+            route_ui_prefix="/v2/comfygit/studio/ui",
+        )
+    )
+
+    async with aiohttp.ClientSession() as session:
+        base_url, runner = await _with_app_server(app)
+        try:
+            async with session.get(f"{base_url}/v2/comfygit/studio/ui/") as response:
+                assert response.status == 503
+                assert response.content_type == "text/html"
+                text = await response.text()
+        finally:
+            await runner.cleanup()
+
+    assert "ComfyGit Studio is not running" in text
+    assert "/api/v2/comfygit/studio/open" in text
+
+
+@pytest.mark.asyncio
 async def test_embedded_gallery_rewrites_runtime_relative_artifact_urls(tmp_path: Path) -> None:
     async with aiohttp.ClientSession() as session:
         state = ServeState(
