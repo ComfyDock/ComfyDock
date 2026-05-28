@@ -122,6 +122,11 @@ export function mergeGalleryItems(nextItems: GalleryItem[], currentItems: Galler
   return [...nextItems, ...currentItems.filter((item) => !nextIds.has(item.id))];
 }
 
+export function appendGalleryItems(currentItems: GalleryItem[], nextItems: GalleryItem[]) {
+  const currentIds = new Set(currentItems.map((item) => item.id));
+  return [...currentItems, ...nextItems.filter((item) => !currentIds.has(item.id))];
+}
+
 export function normalizeGalleryItems(items: GalleryItem[]) {
   return items.filter((item) => item.status !== "cancelled").map(normalizeGalleryItem);
 }

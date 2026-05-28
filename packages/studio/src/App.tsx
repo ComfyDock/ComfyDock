@@ -11,6 +11,7 @@ import { ApiError, apiJson } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { getStudioRuntimeConfig } from "@/lib/runtime-config";
 import {
+  appendGalleryItems,
   columnCountForWidth,
   galleryItemsFromOutputs,
   galleryItemsFromSlots,
@@ -40,6 +41,7 @@ const GALLERY_INITIAL_BATCH = 72;
 const GALLERY_BATCH_SIZE = 48;
 const GALLERY_SPACING_PX = 7;
 const GALLERY_LOAD_MORE_THRESHOLD_PX = 900;
+const GALLERY_API_PAGE_SIZE = GALLERY_INITIAL_BATCH;
 
 export function App() {
   const [contractsData, setContractsData] = useState<ContractsResponse | null>(null);
@@ -54,6 +56,9 @@ export function App() {
   const [rawResult, setRawResult] = useState<RunResponse | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [galleryRenderCount, setGalleryRenderCount] = useState(GALLERY_INITIAL_BATCH);
+  const [galleryCursor, setGalleryCursor] = useState<string | null>(null);
+  const [galleryHasMore, setGalleryHasMore] = useState(false);
+  const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [studioSession, setStudioSession] = useState<StudioSessionResponse | null>(null);
   const [studioPasscode, setStudioPasscode] = useState("");
   const [studioAuthError, setStudioAuthError] = useState("");
@@ -62,9 +67,27 @@ export function App() {
   const endpointAuthEnabled = getStudioRuntimeConfig().authMode === "endpoint";
 
   const loadGallery = useCallback(async () => {
-    const nextGallery = await apiJson<GalleryResponse>("/gallery");
+    const nextGallery = await apiJson<GalleryResponse>(`/gallery?limit=${GALLERY_API_PAGE_SIZE}`);
     setGallery((current) => reconcileGalleryItems(nextGallery.items || [], current));
+    setGalleryCursor(nextGallery.next_cursor || null);
+    setGalleryHasMore(Boolean(nextGallery.has_more && nextGallery.next_cursor));
   }, []);
+
+  const loadNextGalleryPage = useCallback(async () => {
+    if (!galleryCursor || galleryLoadingMore) return;
+    setGalleryLoadingMore(true);
+    try {
+      const nextGallery = await apiJson<GalleryResponse>(
+        `/gallery?limit=${GALLERY_BATCH_SIZE}&cursor=${encodeURIComponent(galleryCursor)}`,
+      );
+      setGallery((current) => appendGalleryItems(current, normalizeGalleryItems(nextGallery.items || [])));
+      setGalleryCursor(nextGallery.next_cursor || null);
+      setGalleryHasMore(Boolean(nextGallery.has_more && nextGallery.next_cursor));
+      setGalleryRenderCount((current) => current + GALLERY_BATCH_SIZE);
+    } finally {
+      setGalleryLoadingMore(false);
+    }
+  }, [galleryCursor, galleryLoadingMore]);
 
   const loadStudioSession = useCallback(async () => {
     if (!endpointAuthEnabled) return null;
@@ -253,7 +276,7 @@ export function App() {
   const visibleGallery = useMemo(() => visibleGalleryItems(gallery), [gallery]);
   const renderedGallery = useMemo(() => visibleGallery.slice(0, galleryRenderCount), [galleryRenderCount, visibleGallery]);
   const renderedPhotos = useMemo(() => renderedGallery.map(galleryPhoto), [renderedGallery]);
-  const hasMoreGallery = renderedGallery.length < visibleGallery.length;
+  const hasMoreGallery = renderedGallery.length < visibleGallery.length || galleryHasMore;
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
   const proxyExecutorConfigured = health?.executor === "proxy" && health.proxy?.configured !== false;
@@ -276,8 +299,12 @@ export function App() {
   }, [visibleGallery.length]);
 
   const loadMoreGalleryItems = useCallback(() => {
-    setGalleryRenderCount((current) => Math.min(current + GALLERY_BATCH_SIZE, visibleGallery.length));
-  }, [visibleGallery.length]);
+    if (renderedGallery.length < visibleGallery.length) {
+      setGalleryRenderCount((current) => Math.min(current + GALLERY_BATCH_SIZE, visibleGallery.length));
+      return;
+    }
+    void loadNextGalleryPage();
+  }, [loadNextGalleryPage, renderedGallery.length, visibleGallery.length]);
 
   const onGalleryScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -356,8 +383,13 @@ export function App() {
                 }}
               />
               {hasMoreGallery ? (
-                <button className="gallery-load-more" type="button" onClick={loadMoreGalleryItems}>
-                  Load more
+                <button
+                  className="gallery-load-more"
+                  type="button"
+                  onClick={loadMoreGalleryItems}
+                  disabled={galleryLoadingMore}
+                >
+                  {galleryLoadingMore ? "Loading..." : "Load more"}
                 </button>
               ) : null}
             </section>

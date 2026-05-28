@@ -240,6 +240,25 @@ The CLI release artifact should contain the synced static output from the same
 Studio source version as the release. Installed users should not need Node.js or
 the Studio source tree available for `cg serve` to host the packaged UI.
 
+### CGSERVE-RUN-01D [LIVE]: Studio publishes a versioned public OpenAPI contract
+Validation: TEST
+
+The shared `comfygit-studio` runtime should own a versioned OpenAPI document for
+the public contract API used by local `cg serve`, Manager-embedded Studio, and
+future hosted endpoint front doors. The public document should cover
+contract-shaped client routes such as health, contract discovery, uploads, run
+submission/status/cancellation, gallery listing/deletion, and output delivery.
+
+The OpenAPI document should describe unprefixed runtime paths and rely on
+OpenAPI server/base-path configuration so hosts can mount the same API under
+different browser-facing prefixes. Internal worker/proxy plumbing may be
+documented separately; it should not be mixed into the first public contract API
+surface.
+
+The checked-in OpenAPI artifact should be generated from a small runtime-owned
+schema module, and validation should fail when the artifact drifts from the
+generator.
+
 ### CGSERVE-RUN-02 [PLANNED]: Serve can run without the Manager custom node after authoring
 Validation: MIXED
 
@@ -424,6 +443,23 @@ run-level cancel control under the Generate button once the run has a `run_id`.
 This is partial because cancellation is still polling-observed rather than
 event-streamed, the local executor relies on ComfyUI's prompt-id interrupt
 semantics, and shared multi-user cancellation policy is not yet configurable.
+
+### CGSERVE-RUN-05F [LIVE]: Gallery listing supports cursor pagination
+Validation: TEST
+
+`GET /gallery` should remain backward-compatible for early clients by returning
+all gallery items when no pagination query is supplied. Clients that pass
+`limit` should receive a bounded page ordered by newest item first, plus an
+opaque `next_cursor`, `has_more`, and echoed `limit` value. Passing both
+`limit` and `cursor` should return the next page using the same stable ordering.
+
+Gallery cursors should be opaque API tokens derived from serve-owned ordering
+metadata, not client-constructed offsets. The stable order is `createdAt`
+descending with gallery item id as the tie-breaker so completed runs can be
+added while clients page without duplicate or skipped rows.
+
+The Studio frontend should prefer the paginated gallery API while tolerating
+older gallery responses that lack pagination fields.
 
 ### CGSERVE-RUN-06 [PARTIAL]: Proxy execution is an optional executor mode
 Validation: HUMAN_REVIEW

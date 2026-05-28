@@ -1,6 +1,7 @@
 # Makefile - Development automation
 .PHONY: help install dev test lint format clean show-versions bump-major bump-package check-versions
 .PHONY: build-core build-studio-runtime build-cli build-studio build-all
+.PHONY: generate-openapi check-openapi
 .PHONY: docs-serve docs-build docs-deploy docs-clean
 .PHONY: merge-and-sync
 .PHONY: test-cross-platform test-linux test-windows test-platforms
@@ -34,6 +35,8 @@ help:
 	@echo "  make build-cli    - Build comfygit package"
 	@echo "  make build-studio - Build bundled Studio frontend"
 	@echo "  make build-all    - Build all packages"
+	@echo "  make generate-openapi - Regenerate Studio contract API OpenAPI JSON"
+	@echo "  make check-openapi - Verify Studio contract API OpenAPI JSON is current"
 	@echo ""
 	@echo "Cross-Platform Testing:"
 	@echo "  make test-cross-platform  - Run tests on all enabled platforms"
@@ -202,6 +205,12 @@ build-all:
 	uv build --package comfygit --no-sources
 	@echo "✓ Built comfygit"
 	@echo "✓ All release artifacts built"
+
+generate-openapi:
+	uv run python dev/scripts/generate-studio-openapi.py
+
+check-openapi:
+	uv run python dev/scripts/generate-studio-openapi.py --check
 
 # Documentation commands
 docs-serve:

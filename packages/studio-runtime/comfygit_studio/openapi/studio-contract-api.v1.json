@@ -1,0 +1,1379 @@
+{
+  "components": {
+    "parameters": {
+      "activeRuns": {
+        "in": "query",
+        "name": "active",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "checkProxy": {
+        "in": "query",
+        "name": "check_proxy",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "contract": {
+        "in": "path",
+        "name": "contract",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "filename": {
+        "in": "query",
+        "name": "filename",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "galleryCursor": {
+        "in": "query",
+        "name": "cursor",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "galleryLimit": {
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "maximum": 200,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "itemId": {
+        "in": "path",
+        "name": "item_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "outputType": {
+        "in": "query",
+        "name": "type",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "runId": {
+        "in": "path",
+        "name": "run_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "serveArtifact": {
+        "in": "query",
+        "name": "serve_artifact",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "subfolder": {
+        "in": "query",
+        "name": "subfolder",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "uploadId": {
+        "in": "path",
+        "name": "upload_id",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "uploadToken": {
+        "in": "query",
+        "name": "token",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "workflow": {
+        "in": "path",
+        "name": "workflow",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "CancelRunResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "gallery_items": {
+            "items": {
+              "$ref": "#/components/schemas/GalleryItem"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "output_slots": {
+            "items": {
+              "$ref": "#/components/schemas/RunOutputSlot"
+            },
+            "type": "array"
+          },
+          "run": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "const": "cancelled",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "run_id"
+        ],
+        "type": "object"
+      },
+      "ContractInput": {
+        "additionalProperties": true,
+        "properties": {
+          "default": {},
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "enum_values": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max": {
+            "type": "number"
+          },
+          "min": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "step": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string"
+          },
+          "ui_control": {
+            "enum": [
+              "input",
+              "textarea"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ContractOutput": {
+        "additionalProperties": true,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
+      "ContractSummary": {
+        "additionalProperties": true,
+        "properties": {
+          "contract": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ContractInput"
+            },
+            "type": "array"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/ContractOutput"
+            },
+            "type": "array"
+          },
+          "workflow": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workflow",
+          "contract",
+          "inputs",
+          "outputs"
+        ],
+        "type": "object"
+      },
+      "ContractsResponse": {
+        "properties": {
+          "contracts": {
+            "items": {
+              "$ref": "#/components/schemas/ContractSummary"
+            },
+            "type": "array"
+          },
+          "environment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "contracts"
+        ],
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "FileRef": {
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "file_ref",
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "ref",
+          "filename",
+          "mime_type"
+        ],
+        "type": "object"
+      },
+      "GalleryDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "GalleryItem": {
+        "additionalProperties": true,
+        "properties": {
+          "artifact": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "contract": {
+            "type": "string"
+          },
+          "contractName": {
+            "type": "string"
+          },
+          "contractWorkflow": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "outputName": {
+            "type": "string"
+          },
+          "promptId": {
+            "type": "string"
+          },
+          "rawResult": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "slotId": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "done",
+              "error",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "json"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "contract",
+          "status",
+          "type",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "GalleryResponse": {
+        "properties": {
+          "gallery": {
+            "type": "string"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GalleryItem"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "gallery",
+          "session_id",
+          "items",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "comfy_url": {
+            "type": "string"
+          },
+          "comfyui": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "environment_ref": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "executor": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "proxy": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "proxy_environment_ref_match": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "environment",
+          "comfy_url"
+        ],
+        "type": "object"
+      },
+      "OutputArtifact": {
+        "additionalProperties": true,
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "raw": {},
+          "subfolder": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "RunDetailsResponse": {
+        "properties": {
+          "gallery_items": {
+            "items": {
+              "$ref": "#/components/schemas/GalleryItem"
+            },
+            "type": "array"
+          },
+          "output_slots": {
+            "items": {
+              "$ref": "#/components/schemas/RunOutputSlot"
+            },
+            "type": "array"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunResponse"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "session_id",
+          "run",
+          "output_slots",
+          "gallery_items"
+        ],
+        "type": "object"
+      },
+      "RunIssue": {
+        "additionalProperties": true,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "input_name": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "RunOutput": {
+        "additionalProperties": true,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/OutputArtifact"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "node_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "RunOutputSlot": {
+        "additionalProperties": true,
+        "properties": {
+          "contract": {
+            "type": "string"
+          },
+          "contractName": {
+            "type": "string"
+          },
+          "contractWorkflow": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "height": {
+            "type": "integer"
+          },
+          "outputName": {
+            "type": "string"
+          },
+          "promptId": {
+            "type": "string"
+          },
+          "rawResult": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "slot_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "json"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot_id",
+          "run_id",
+          "outputName",
+          "type",
+          "status",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "RunRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "inputs": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "poll_interval_seconds": {
+            "type": "number"
+          },
+          "timeout_seconds": {
+            "type": "number"
+          },
+          "wait": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "RunResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "gallery_items": {
+            "items": {
+              "$ref": "#/components/schemas/GalleryItem"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/RunIssue"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "output_slots": {
+            "items": {
+              "$ref": "#/components/schemas/RunOutputSlot"
+            },
+            "type": "array"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/RunOutput"
+            },
+            "type": "array"
+          },
+          "prompt_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "RunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/RunResponse"
+            },
+            "type": "array"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "session_id",
+          "runs"
+        ],
+        "type": "object"
+      },
+      "UploadPrepareRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "type": "object"
+      },
+      "UploadSlotResponse": {
+        "properties": {
+          "destination": {
+            "type": "string"
+          },
+          "file_ref": {
+            "$ref": "#/components/schemas/FileRef"
+          },
+          "headers": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "kind": {
+            "const": "upload_slot",
+            "type": "string"
+          },
+          "max_size": {
+            "type": "integer"
+          },
+          "method": {
+            "const": "PUT",
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "upload_id": {
+            "type": "string"
+          },
+          "upload_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "upload_id",
+          "ref",
+          "upload_url",
+          "method",
+          "destination",
+          "file_ref"
+        ],
+        "type": "object"
+      },
+      "UploadStatusResponse": {
+        "properties": {
+          "file_ref": {
+            "$ref": "#/components/schemas/FileRef"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "file_ref"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Public contract-shaped API used by cg serve, Manager embedded Studio, and future hosted ComfyGit endpoints.",
+    "title": "ComfyGit Studio Contract API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/contracts": {
+      "get": {
+        "operationId": "listContracts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractsResponse"
+                }
+              }
+            },
+            "description": "Contracts response"
+          }
+        },
+        "summary": "List available workflow contracts"
+      }
+    },
+    "/contracts/{workflow}/{contract}": {
+      "get": {
+        "operationId": "getContract",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/workflow"
+          },
+          {
+            "$ref": "#/components/parameters/contract"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractSummary"
+                }
+              }
+            },
+            "description": "Contract response"
+          }
+        },
+        "summary": "Return one workflow contract"
+      }
+    },
+    "/contracts/{workflow}/{contract}/run": {
+      "post": {
+        "operationId": "runContract",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/workflow"
+          },
+          {
+            "$ref": "#/components/parameters/contract"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Run response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request too large"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Executor unavailable"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunResponse"
+                }
+              }
+            },
+            "description": "Run timed out"
+          }
+        },
+        "summary": "Start a workflow contract run"
+      }
+    },
+    "/gallery": {
+      "get": {
+        "operationId": "listGallery",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/galleryLimit"
+          },
+          {
+            "$ref": "#/components/parameters/galleryCursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalleryResponse"
+                }
+              }
+            },
+            "description": "Gallery response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid pagination request"
+          }
+        },
+        "summary": "List gallery items for the current Studio session"
+      }
+    },
+    "/gallery/{item_id}": {
+      "delete": {
+        "operationId": "deleteGalleryItem",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/itemId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalleryDeleteResponse"
+                }
+              }
+            },
+            "description": "Delete response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalleryDeleteResponse"
+                }
+              }
+            },
+            "description": "Gallery item was not found"
+          }
+        },
+        "summary": "Delete one gallery item from the current session"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/checkProxy"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Health response"
+          }
+        },
+        "summary": "Return Studio runtime and executor health"
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OpenAPI document"
+          }
+        },
+        "summary": "Return the Studio contract API OpenAPI document"
+      }
+    },
+    "/outputs/view": {
+      "get": {
+        "operationId": "viewOutput",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/serveArtifact"
+          },
+          {
+            "$ref": "#/components/parameters/filename"
+          },
+          {
+            "$ref": "#/components/parameters/subfolder"
+          },
+          {
+            "$ref": "#/components/parameters/outputType"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Output bytes"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Output not found"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "ComfyUI unavailable"
+          }
+        },
+        "summary": "Fetch a generated output artifact"
+      }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "listRuns",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/activeRuns"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsResponse"
+                }
+              }
+            },
+            "description": "Runs response"
+          }
+        },
+        "summary": "List run records"
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "operationId": "getRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailsResponse"
+                }
+              }
+            },
+            "description": "Run details"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown run"
+          }
+        },
+        "summary": "Return one run record, output slots, and gallery items"
+      }
+    },
+    "/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancelRun",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelRunResponse"
+                }
+              }
+            },
+            "description": "Cancelled run response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Run cannot be cancelled"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown run"
+          }
+        },
+        "summary": "Cancel a running contract run"
+      }
+    },
+    "/uploads/prepare": {
+      "post": {
+        "operationId": "prepareUpload",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadPrepareRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSlotResponse"
+                }
+              }
+            },
+            "description": "Upload slot"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad request"
+          }
+        },
+        "summary": "Prepare a media upload slot"
+      }
+    },
+    "/uploads/{upload_id}": {
+      "put": {
+        "operationId": "putUpload",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/uploadId"
+          },
+          {
+            "$ref": "#/components/parameters/uploadToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadStatusResponse"
+                }
+              }
+            },
+            "description": "Upload ready"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown upload"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Upload too large"
+          }
+        },
+        "summary": "Upload bytes to a prepared slot"
+      }
+    },
+    "/uploads/{upload_id}/status": {
+      "get": {
+        "operationId": "getUploadStatus",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/uploadId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadStatusResponse"
+                }
+              }
+            },
+            "description": "Upload status"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unknown upload"
+          }
+        },
+        "summary": "Return upload status and file reference"
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "Mounted Studio runtime API base path",
+      "url": "/"
+    }
+  ]
+}

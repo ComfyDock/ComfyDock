@@ -21,6 +21,7 @@ cg serve --port 8190 --comfy-url http://127.0.0.1:8188
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | Studio UI |
+| `GET` | `/openapi.json` | OpenAPI document for the public contract API |
 | `GET` | `/health` | Serve and backend health |
 
 ## Contracts
@@ -59,6 +60,17 @@ Use the returned `file_ref` in contract run requests.
 | --- | --- | --- |
 | `GET` | `/gallery` | List gallery items for the current serve state |
 | `DELETE` | `/gallery/{item_id}` | Delete a gallery item |
+
+`GET /gallery` returns all items when no pagination query is supplied. New
+clients should prefer cursor pagination:
+
+```text
+GET /gallery?limit=50
+GET /gallery?limit=50&cursor=<next_cursor>
+```
+
+Paginated responses include `items`, `next_cursor`, `has_more`, `session_id`,
+and `gallery`.
 
 ## Proxy Runtime Endpoints
 

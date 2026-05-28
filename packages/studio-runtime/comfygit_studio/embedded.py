@@ -24,6 +24,7 @@ from .runtime import (
     gallery_delete_handler,
     gallery_handler,
     health_handler,
+    openapi_handler,
     output_view_handler,
     run_contract_handler,
     runs_handler,
@@ -121,6 +122,7 @@ def create_embedded_studio_routes(
     routes.get(_route_path(ui_prefix, "/{tail:.*}"))(configured(studio_index_handler))
 
     api_routes = (
+        ("GET", "/openapi.json", openapi_handler),
         ("GET", "/health", health_handler),
         ("GET", "/contracts", contracts_handler),
         ("GET", "/contracts/{workflow}/{contract}", single_contract_handler),

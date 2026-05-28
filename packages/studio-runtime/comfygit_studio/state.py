@@ -7,6 +7,8 @@ portable environment truth.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 SERVE_STATE_SCHEMA_VERSION = 2
+GALLERY_CURSOR_VERSION = 1
 
 
 def utc_now() -> str:
@@ -163,6 +166,14 @@ class ServeGalleryItem:
         return payload
 
 
+@dataclass(frozen=True)
+class GalleryPage:
+    items: list[dict[str, Any]]
+    next_cursor: str | None
+    has_more: bool
+    limit: int | None = None
+
+
 class ServeStateStore:
     """Interface for serve-owned session/run/gallery runtime state."""
 
@@ -202,6 +213,9 @@ class ServeStateStore:
         raise NotImplementedError
 
     def list_gallery_items(self, scope_key: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def list_gallery_page(self, scope_key: str, *, limit: int | None, cursor: str | None) -> GalleryPage:
         raise NotImplementedError
 
     def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
@@ -317,6 +331,22 @@ class EphemeralServeStateStore(ServeStateStore):
         items = [item for item in self.gallery_items.values() if item.scope_key == scope_key]
         items.sort(key=lambda item: item.created_at, reverse=True)
         return [item.to_public_dict() for item in items]
+
+    def list_gallery_page(self, scope_key: str, *, limit: int | None, cursor: str | None) -> GalleryPage:
+        decoded_cursor = _decode_gallery_cursor(cursor)
+        items = [item for item in self.gallery_items.values() if item.scope_key == scope_key]
+        items.sort(key=lambda item: (item.created_at, item.item_id), reverse=True)
+        if decoded_cursor is not None:
+            items = [
+                item
+                for item in items
+                if _gallery_item_after_cursor(
+                    item,
+                    created_at=decoded_cursor[0],
+                    item_id=decoded_cursor[1],
+                )
+            ]
+        return _gallery_page_from_items(items, limit=limit)
 
     def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
         items = [
@@ -615,6 +645,35 @@ class SQLiteServeStateStore(ServeStateStore):
         ).fetchall()
         return [_gallery_item_from_row(row).to_public_dict() for row in rows]
 
+    def list_gallery_page(self, scope_key: str, *, limit: int | None, cursor: str | None) -> GalleryPage:
+        decoded_cursor = _decode_gallery_cursor(cursor)
+        params: list[Any] = [scope_key]
+        cursor_clause = ""
+        if decoded_cursor is not None:
+            cursor_clause = """
+                AND (
+                    created_at < ?
+                    OR (created_at = ? AND item_id < ?)
+                )
+            """
+            params.extend([decoded_cursor[0], decoded_cursor[0], decoded_cursor[1]])
+        limit_clause = ""
+        if limit is not None:
+            limit_clause = "LIMIT ?"
+            params.append(limit + 1)
+        rows = self.connection.execute(
+            f"""
+            SELECT *
+            FROM gallery_items
+            WHERE scope_key = ?
+            {cursor_clause}
+            ORDER BY created_at DESC, item_id DESC
+            {limit_clause}
+            """,
+            params,
+        ).fetchall()
+        return _gallery_page_from_items([_gallery_item_from_row(row) for row in rows], limit=limit)
+
     def list_gallery_items_for_run(self, scope_key: str, run_id: str) -> list[dict[str, Any]]:
         rows = self.connection.execute(
             """
@@ -733,7 +792,10 @@ class SQLiteServeStateStore(ServeStateStore):
             )
             self._ensure_column("gallery_items", "slot_id", "TEXT")
             self.connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_created ON gallery_items(scope_key, created_at DESC)"
+                """
+                CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_created_item
+                ON gallery_items(scope_key, created_at DESC, item_id DESC)
+                """
             )
             self.connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_gallery_items_scope_run ON gallery_items(scope_key, run_id)"
@@ -867,6 +929,58 @@ def _gallery_item_from_row(row: sqlite3.Row) -> ServeGalleryItem:
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]),
     )
+
+
+def _gallery_page_from_items(items: list[ServeGalleryItem], *, limit: int | None) -> GalleryPage:
+    if limit is None:
+        return GalleryPage(
+            items=[item.to_public_dict() for item in items],
+            next_cursor=None,
+            has_more=False,
+            limit=None,
+        )
+
+    has_more = len(items) > limit
+    page_items = items[:limit]
+    next_cursor = _encode_gallery_cursor(page_items[-1]) if has_more and page_items else None
+    return GalleryPage(
+        items=[item.to_public_dict() for item in page_items],
+        next_cursor=next_cursor,
+        has_more=has_more,
+        limit=limit,
+    )
+
+
+def _gallery_item_after_cursor(item: ServeGalleryItem, *, created_at: str, item_id: str) -> bool:
+    return item.created_at < created_at or (item.created_at == created_at and item.item_id < item_id)
+
+
+def _encode_gallery_cursor(item: ServeGalleryItem) -> str:
+    payload = {
+        "v": GALLERY_CURSOR_VERSION,
+        "created_at": item.created_at,
+        "item_id": item.item_id,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_gallery_cursor(cursor: str | None) -> tuple[str, str] | None:
+    if cursor is None or cursor == "":
+        return None
+    try:
+        padding = "=" * (-len(cursor) % 4)
+        raw = base64.urlsafe_b64decode(f"{cursor}{padding}".encode("ascii"))
+        payload = json.loads(raw.decode("utf-8"))
+    except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("Gallery cursor is invalid.") from exc
+    if not isinstance(payload, dict) or payload.get("v") != GALLERY_CURSOR_VERSION:
+        raise ValueError("Gallery cursor is invalid.")
+    created_at = payload.get("created_at")
+    item_id = payload.get("item_id")
+    if not isinstance(created_at, str) or not isinstance(item_id, str):
+        raise ValueError("Gallery cursor is invalid.")
+    return created_at, item_id
 
 
 def _run_from_row(row: sqlite3.Row) -> ServeRunRecord:

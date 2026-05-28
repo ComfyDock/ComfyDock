@@ -161,6 +161,9 @@ export type GalleryResponse = {
   gallery: "private" | "shared" | string;
   session_id: string;
   items: GalleryItem[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+  limit?: number | null;
 };
 
 export type GalleryDeleteResponse = {

@@ -21,6 +21,7 @@ from comfygit_core import Environment
 from comfygit_core.models import NamedWorkflowContract
 from comfygit_core.workflow import build_manifest_contract_prompt
 
+from .api_schema import studio_contract_api_openapi
 from .executor import (
     PROXY_AUTH_HEADER,
     ComfyGitServeTimeoutError,
@@ -57,6 +58,7 @@ DEFAULT_UPLOAD_EXTENSION = ".bin"
 SESSION_COOKIE_NAME = "comfygit_studio_session"
 SESSION_HEADER_NAME = "X-ComfyGit-Studio-Session"
 SHARED_GALLERY_SCOPE = "shared"
+MAX_GALLERY_PAGE_LIMIT = 200
 FILE_UPLOAD_CONTRACT_INPUT_TYPES = {"image", "audio", "video", "file"}
 ACTIVE_RUN_STATUSES = {"submitted", "running"}
 TERMINAL_RUN_STATUSES = {"completed", "error", "failed", "cancelled"}
@@ -300,6 +302,7 @@ def register_studio_routes(
         app.router.add_static(_route_path(ui_prefix, "/assets/"), static_dir / "assets", append_version=True)
     app.router.add_get(_route_path(ui_prefix, "/favicon.ico"), favicon_handler)
 
+    app.router.add_get(_route_path(api_prefix, "/openapi.json"), openapi_handler)
     app.router.add_get(_route_path(api_prefix, "/health"), health_handler)
     app.router.add_get(_route_path(api_prefix, "/contracts"), contracts_handler)
     app.router.add_get(
@@ -491,8 +494,7 @@ def _state(request: web.Request) -> ServeState:
 
 
 def _maybe_state(request: web.Request) -> ServeState | None:
-    state = request.app.get(SERVE_STATE_KEY)
-    return state if isinstance(state, ServeState) else None
+    return request.app.get(SERVE_STATE_KEY)
 
 
 def _executor_unavailable_payload(
@@ -724,6 +726,10 @@ def _studio_not_running_response() -> web.Response:
 
 async def favicon_handler(_request: web.Request) -> web.Response:
     return web.Response(status=204)
+
+
+async def openapi_handler(_request: web.Request) -> web.Response:
+    return web.json_response(studio_contract_api_openapi())
 
 
 async def health_handler(request: web.Request) -> web.Response:
@@ -1028,13 +1034,45 @@ async def upload_status_handler(request: web.Request) -> web.Response:
 
 
 async def gallery_handler(request: web.Request) -> web.Response:
-    await _ensure_active_run_recovery(_state(request))
+    state = _state(request)
+    try:
+        limit = _optional_positive_int_query(
+            request,
+            "limit",
+            max_value=MAX_GALLERY_PAGE_LIMIT,
+        )
+    except ValueError as exc:
+        session = _serve_session(request)
+        return _json_response_for_session(
+            {"error": "bad_request", "message": str(exc)},
+            session,
+            status=400,
+            request=request,
+        )
+
+    await _ensure_active_run_recovery(state)
     session = _serve_session(request)
+    try:
+        page = state.state_store.list_gallery_page(
+            session.scope_key,
+            limit=limit,
+            cursor=request.query.get("cursor"),
+        )
+    except ValueError as exc:
+        return _json_response_for_session(
+            {"error": "bad_request", "message": str(exc)},
+            session,
+            status=400,
+            request=request,
+        )
     payload = {
-        "state": _state(request).config.state,
-        "gallery": _state(request).config.gallery,
+        "state": state.config.state,
+        "gallery": state.config.gallery,
         "session_id": session.session_id,
-        "items": _state(request).state_store.list_gallery_items(session.scope_key),
+        "items": page.items,
+        "next_cursor": page.next_cursor,
+        "has_more": page.has_more,
+        "limit": page.limit,
     }
     return _json_response_for_session(payload, session, request=request)
 
@@ -3079,6 +3117,26 @@ def _optional_positive_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed >= 0 else None
+
+
+def _optional_positive_int_query(
+    request: web.Request,
+    name: str,
+    *,
+    max_value: int | None = None,
+) -> int | None:
+    value = request.query.get(name)
+    if value in {None, ""}:
+        return None
+    try:
+        parsed = int(str(value))
+    except ValueError as exc:
+        raise ValueError(f"'{name}' must be a positive integer.") from exc
+    if parsed < 1:
+        raise ValueError(f"'{name}' must be a positive integer.")
+    if max_value is not None and parsed > max_value:
+        raise ValueError(f"'{name}' must be less than or equal to {max_value}.")
+    return parsed
 
 
 def _comfyui_input_dir(env: Environment) -> Path:
