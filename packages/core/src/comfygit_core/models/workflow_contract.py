@@ -97,6 +97,13 @@ def _as_number(value: Any) -> ContractNumericBound | None:
     return int(parsed) if parsed.is_integer() else parsed
 
 
+def _as_positive_number(value: Any) -> ContractNumericBound | None:
+    parsed = _as_number(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
 def _normalize_contract_default(value: Any, input_type: str) -> ContractValue:
     if input_type == "integer":
         parsed = _as_int(value)
@@ -177,6 +184,7 @@ class WorkflowContractInput:
     default: ContractValue = None
     min: ContractNumericBound | None = None
     max: ContractNumericBound | None = None
+    step: ContractNumericBound | None = None
     enum_values: list[str] = field(default_factory=list)
     description: str | None = None
     ui_control: WorkflowContractInputControl | None = None
@@ -213,6 +221,7 @@ class WorkflowContractInput:
             "default": _toml_safe_value(self.default),
             "min": _toml_safe_value(self.min),
             "max": _toml_safe_value(self.max),
+            "step": _toml_safe_value(self.step),
             "enum_values": self.enum_values if self.enum_values else None,
             "description": self.description,
             "ui_control": self.ui_control,
@@ -233,6 +242,7 @@ class WorkflowContractInput:
             "default": self.default,
             "min": self.min,
             "max": self.max,
+            "step": self.step,
             "enum_values": self.enum_values if self.enum_values else None,
             "description": self.description,
             "ui_control": self.ui_control,
@@ -261,6 +271,7 @@ class WorkflowContractInput:
             default=_normalize_contract_default(data.get("default"), str(data["type"])),
             min=_as_number(data.get("min")),
             max=_as_number(data.get("max")),
+            step=_as_positive_number(data.get("step")),
             enum_values=_as_str_list(data.get("enum_values")),
             description=_as_str(data.get("description")),
             ui_control=_as_input_control(data.get("ui_control")),

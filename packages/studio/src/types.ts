@@ -7,6 +7,7 @@ export type ContractInput = {
   default?: string | number | boolean | null;
   min?: number;
   max?: number;
+  step?: number;
   enum_values?: string[];
   description?: string;
 };

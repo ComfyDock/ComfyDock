@@ -115,6 +115,17 @@ When `ui_control` is absent on a string input, Studio-like consumers should
 prefer the less restrictive multiline control. They should not infer multiline
 behavior from input names such as `prompt`, `text`, or `description`.
 
+### CGSPEC-MAN-07B [LIVE]: Numeric contract input step is optional presentation metadata
+Validation: TEST
+
+Workflow contract inputs with `type = "integer"` or `type = "number"` may store
+`step` as a positive numeric increment. This field is a control hint for
+Studio-like consumers and authoring UIs; it must not replace `min`/`max`
+validation or change runtime numeric coercion.
+
+When `step` is absent, clients should choose conservative defaults such as `1`
+for integer controls and a small decimal increment for floating-point controls.
+
 ### CGSPEC-MAN-08 [LIVE]: Core exposes a typed read-only manifest snapshot
 Validation: TEST
 

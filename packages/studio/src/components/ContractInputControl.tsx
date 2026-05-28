@@ -117,6 +117,8 @@ export function ContractInputControl({
       (Number.isInteger(numeric) &&
         (input.min === undefined || Number.isInteger(input.min)) &&
         (input.max === undefined || Number.isInteger(input.max)));
+    const explicitStep = Number(input.step);
+    const step = Number.isFinite(explicitStep) && explicitStep > 0 ? explicitStep : integerLike ? 1 : 0.01;
     return (
       <NumberPicker
         label={label}
@@ -124,8 +126,8 @@ export function ContractInputControl({
         value={Number.isFinite(numeric) ? numeric : min}
         min={min}
         max={max}
-        step={integerLike ? 1 : 0.01}
-        precision={integerLike ? 0 : undefined}
+        step={step}
+        precision={integerLike && Number.isInteger(step) ? 0 : undefined}
         fill
         onChange={onChange}
       />
