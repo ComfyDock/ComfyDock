@@ -52,7 +52,7 @@ class APICacheManager:
             raise ComfyDockError(
                 f"Failed to create cache directory {self.cache_dir}. "
                 f"Workspace cache should exist before cache initialization: {e}"
-            )
+            ) from e
 
     def _get_cache_file_path(self, cache_type: str) -> Path:
         """Get path for a specific cache file."""
@@ -207,4 +207,3 @@ class APICacheManager:
 
             except Exception as e:
                 logger.warning(f"Error cleaning up {ct} cache: {e}")
-

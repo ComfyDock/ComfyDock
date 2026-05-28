@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 import tomllib
 
 from ..configs.comfyui_builtin_nodes import COMFYUI_BUILTIN_NODES

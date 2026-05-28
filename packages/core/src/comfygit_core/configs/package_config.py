@@ -1,7 +1,6 @@
 """Package configuration for substitutions and exclusions."""
 
 from collections.abc import Mapping
-
 from pathlib import Path
 
 import tomlkit
@@ -138,7 +137,7 @@ class PackageConfigManager:
             values = list(DEFAULT_PROBE_PROTECTED)
         else:
             protected = probe_config.get("protected")
-            if not isinstance(protected, (list, tuple)):
+            if not isinstance(protected, list | tuple):
                 values = list(DEFAULT_PROBE_PROTECTED)
             else:
                 values = [item for item in protected if isinstance(item, str)]

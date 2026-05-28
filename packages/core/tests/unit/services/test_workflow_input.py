@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from comfygit_core.services.workflow_input import (
     detect_workflow_input_format,
     normalize_workflow_input,

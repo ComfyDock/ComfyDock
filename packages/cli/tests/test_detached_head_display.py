@@ -16,12 +16,12 @@ from unittest.mock import Mock
 
 # Import CLI command handler
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from comfygit_cli.env_commands import EnvironmentCommands
+from comfygit_cli.env_commands import EnvironmentCommands  # noqa: E402
 
 # Import core models
 core_src_path = Path(__file__).parent.parent.parent / "core" / "src"
 sys.path.insert(0, str(core_src_path))
-from comfygit_core.models import (
+from comfygit_core.models import (  # noqa: E402
     DetailedWorkflowStatus,
     EnvironmentComparison,
     EnvironmentStatus,

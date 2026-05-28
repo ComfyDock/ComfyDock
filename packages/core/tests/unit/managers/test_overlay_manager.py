@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import tomlkit
-
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.models.overlay import OverlayConfig
 

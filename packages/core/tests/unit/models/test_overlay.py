@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import pytest
-
 from comfygit_core.models.overlay import OverlayConfig
 
 

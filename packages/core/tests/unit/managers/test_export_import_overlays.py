@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import tomlkit
-
 from comfygit_core.managers.export_import_manager import ExportImportManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.services.import_analyzer import ImportAnalyzer

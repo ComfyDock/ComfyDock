@@ -1,11 +1,10 @@
 """Tests for UV no-build-isolation support."""
-from types import SimpleNamespace
-from tempfile import TemporaryDirectory
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import tomlkit
-
 from comfygit_core.managers.overlay_manager import OverlayManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.managers.uv_project_manager import UVProjectManager

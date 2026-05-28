@@ -429,7 +429,7 @@ class Workflow:
             result['definitions'] = definitions
 
             # Add top-level UUID reference nodes
-            for sg_id, metadata in self._subgraph_metadata.items():
+            for _sg_id, metadata in self._subgraph_metadata.items():
                 if 'top_level_ref' in metadata:
                     top_level_nodes.append(metadata['top_level_ref'])
 

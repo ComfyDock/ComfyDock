@@ -58,7 +58,7 @@ class CacheBase:
             raise ComfyDockError(
                 f"Failed to create cache directory under {self.cache_base}. "
                 f"Workspace cache should exist before cache initialization: {e}"
-            )
+            ) from e
 
 
 class ContentCacheBase(CacheBase):

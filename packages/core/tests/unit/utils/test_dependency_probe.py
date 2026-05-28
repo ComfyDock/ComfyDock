@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,

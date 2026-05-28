@@ -24,7 +24,6 @@ class TestFindUvBinary:
 
     def test_falls_back_to_system_uv(self, monkeypatch):
         """Should fall back to system uv when bundled not available."""
-        from comfygit_core.utils import pytorch_prober
         from comfygit_core.utils.pytorch_prober import _find_uv_binary
 
         # Make the bundled uv import fail inside the function

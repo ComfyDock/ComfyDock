@@ -3,8 +3,8 @@
 import xxhash
 from comfygit_core.repositories.model_repository import (
     MODEL_SHORT_HASH_ALGORITHM,
-    calculate_model_short_hash,
     ModelRepository,
+    calculate_model_short_hash,
 )
 
 

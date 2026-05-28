@@ -18,7 +18,7 @@ def test_cg_update_check_prints_notice(monkeypatch, capsys):
     )
     marked = {"v": None}
     monkeypatch.setattr(update_commands.update_checker, "mark_notified", lambda v, **k: marked.__setitem__("v", v))
-    monkeypatch.setattr(update_commands.update_checker, "format_update_notice", lambda c, l: f"{c}->{l}")
+    monkeypatch.setattr(update_commands.update_checker, "format_update_notice", lambda current, latest: f"{current}->{latest}")
 
     cmd = update_commands.UpdateCommands()
     cmd.update(argparse.Namespace(check=True))
@@ -48,4 +48,3 @@ def test_cg_update_prefers_uv_tool_when_detected(monkeypatch, capsys):
 
     assert ran["cmd"] == ["uv", "tool", "upgrade", "comfygit"]
     assert "Updated." in capsys.readouterr().out
-

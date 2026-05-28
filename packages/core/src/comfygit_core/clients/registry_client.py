@@ -181,7 +181,7 @@ class ComfyRegistryClient:
                     error_data = e.read().decode("utf-8")
                     if error_data:
                         error_msg += f": {error_data}"
-                except:
+                except Exception:
                     pass
 
                 raise CDRegistryAuthError(error_msg) from e

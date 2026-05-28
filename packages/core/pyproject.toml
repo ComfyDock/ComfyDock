@@ -1,6 +1,6 @@
 [project]
 name = "comfygit-core"
-version = "0.4.2"
+version = "0.5.0"
 description = "ComfyGit Core - Git-based ComfyUI environment manager"
 readme = "README.md"
 requires-python = ">=3.10"
