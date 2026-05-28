@@ -994,7 +994,7 @@ async def gallery_handler(request: web.Request) -> web.Response:
         "session_id": session.session_id,
         "items": _state(request).state_store.list_gallery_items(session.scope_key),
     }
-    return _json_response_for_session(payload, session)
+    return _json_response_for_session(payload, session, request=request)
 
 
 async def gallery_delete_handler(request: web.Request) -> web.Response:
@@ -1018,7 +1018,7 @@ async def runs_handler(request: web.Request) -> web.Response:
         "session_id": session.session_id,
         "runs": _state(request).state_store.list_runs(session.scope_key, statuses=statuses),
     }
-    return _json_response_for_session(payload, session)
+    return _json_response_for_session(payload, session, request=request)
 
 
 async def single_run_handler(request: web.Request) -> web.Response:
@@ -1040,7 +1040,7 @@ async def single_run_handler(request: web.Request) -> web.Response:
         "output_slots": state.state_store.list_output_slots(session.scope_key, run_id),
         "gallery_items": state.state_store.list_gallery_items_for_run(session.scope_key, run_id),
     }
-    return _json_response_for_session(payload, session)
+    return _json_response_for_session(payload, session, request=request)
 
 
 async def cancel_run_handler(request: web.Request) -> web.Response:
@@ -1057,7 +1057,7 @@ async def cancel_run_handler(request: web.Request) -> web.Response:
 
     run_status = str(run.get("status") or "")
     if run_status == "cancelled":
-        return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session)
+        return _json_response_for_session(_cancelled_run_payload(state, session, run_id), session, request=request)
     if run_status in TERMINAL_RUN_STATUSES:
         return _json_response_for_session(
             {
@@ -1412,7 +1412,7 @@ async def run_contract_handler(request: web.Request) -> web.Response:
             body,
         )
         status = 400 if payload.get("status") == "invalid_request" else 200
-        return _json_response_for_session(payload, session, status=status)
+        return _json_response_for_session(payload, session, status=status, request=request)
     except web.HTTPRequestEntityTooLarge:
         state = _state(request)
         max_mib = _max_request_bytes(state) // (1024 * 1024)
@@ -1931,7 +1931,10 @@ def _json_response_for_session(
     session: ServeSession,
     *,
     status: int = 200,
+    request: web.Request | None = None,
 ) -> web.Response:
+    if request is not None:
+        payload = _public_runtime_payload(request, payload)
     response = web.json_response(payload, status=status)
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -1941,6 +1944,37 @@ def _json_response_for_session(
         max_age=60 * 60 * 24 * 365,
     )
     return response
+
+
+def _public_runtime_payload(request: web.Request, payload: Mapping[str, Any]) -> dict[str, Any]:
+    api_base_path = request.app.get(STUDIO_API_BASE_PATH_KEY, "")
+    return cast(dict[str, Any], _with_public_runtime_urls(payload, api_base_path))
+
+
+def _with_public_runtime_urls(value: Any, api_base_path: str, key: str | None = None) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _with_public_runtime_urls(item_value, api_base_path, str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_with_public_runtime_urls(item, api_base_path) for item in value]
+    if isinstance(value, tuple):
+        return [_with_public_runtime_urls(item, api_base_path) for item in value]
+    if key in {"url", "upload_url"} and isinstance(value, str):
+        return _public_runtime_url(value, api_base_path)
+    return value
+
+
+def _public_runtime_url(url: str, api_base_path: str) -> str:
+    if not api_base_path or not url.startswith("/"):
+        return url
+    normalized_base = _normalize_public_prefix(api_base_path)
+    if not normalized_base or url == normalized_base or url.startswith(f"{normalized_base}/"):
+        return url
+    if url.startswith(("/outputs/view", "/uploads/")):
+        return f"{normalized_base}{url}"
+    return url
 
 
 def _safe_token(value: str) -> str:

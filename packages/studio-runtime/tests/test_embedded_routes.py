@@ -14,6 +14,7 @@ from comfygit_studio.embedded import (
     open_embedded_studio,
 )
 from comfygit_studio.runtime import SERVE_STATE_KEY, ServeConfig, ServeState, create_app
+from comfygit_studio.state import ServeGalleryItem, utc_now
 
 
 async def _with_app_server(app: web.Application) -> tuple[str, web.AppRunner]:
@@ -107,6 +108,80 @@ async def test_embedded_routes_are_namespaced_and_serve_assets(tmp_path: Path) -
 
     assert '"apiBasePath": "/api/v2/comfygit/studio/runtime"' in text
     assert "console.log('studio')" in asset_text
+
+
+@pytest.mark.asyncio
+async def test_embedded_gallery_rewrites_runtime_relative_artifact_urls(tmp_path: Path) -> None:
+    async with aiohttp.ClientSession() as session:
+        state = ServeState(
+            _fake_env(tmp_path),
+            ServeConfig(host="embedded", port=0, comfy_url="http://127.0.0.1:8188"),
+            session,
+        )
+        state.state_store.record_gallery_items(
+            [
+                ServeGalleryItem(
+                    item_id="item1",
+                    run_id="run1",
+                    session_id="session1",
+                    scope_key="session1",
+                    workflow="workflow",
+                    contract="contract",
+                    status="done",
+                    output_type="image",
+                    inputs={},
+                    filename="image.png",
+                    url="/outputs/view?filename=image.png&subfolder=&type=output",
+                    artifact={
+                        "filename": "image.png",
+                        "url": "/outputs/view?filename=image.png&subfolder=&type=output",
+                    },
+                    raw_result={
+                        "outputs": [
+                            {
+                                "artifacts": [
+                                    {
+                                        "filename": "image.png",
+                                        "url": "/outputs/view?filename=image.png&subfolder=&type=output",
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    created_at=utc_now(),
+                )
+            ]
+        )
+        app = web.Application()
+        app[SERVE_STATE_KEY] = state
+        configure_embedded_studio_app(
+            app,
+            public_api_base_path="/api/v2/comfygit/studio/runtime",
+            static_dir=_static_dir(tmp_path),
+        )
+        app.add_routes(
+            create_embedded_studio_routes(
+                route_api_prefix="/v2/comfygit/studio/runtime",
+                route_ui_prefix="/v2/comfygit/studio/ui",
+            )
+        )
+        base_url, runner = await _with_app_server(app)
+        try:
+            async with session.get(
+                f"{base_url}/v2/comfygit/studio/runtime/gallery",
+                headers={"X-ComfyGit-Studio-Session": "session1"},
+            ) as response:
+                assert response.status == 200
+                payload = await response.json()
+        finally:
+            await runner.cleanup()
+            state.state_store.close()
+
+    item = payload["items"][0]
+    expected = "/api/v2/comfygit/studio/runtime/outputs/view?filename=image.png&subfolder=&type=output"
+    assert item["url"] == expected
+    assert item["artifact"]["url"] == expected
+    assert item["rawResult"]["outputs"][0]["artifacts"][0]["url"] == expected
 
 
 @pytest.mark.asyncio
