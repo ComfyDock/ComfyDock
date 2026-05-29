@@ -172,6 +172,16 @@ class WorkerCallbackUpload:
     body: bytes
 
 
+@dataclass(frozen=True)
+class WorkerArtifactUploadTarget:
+    upload_id: str
+    output_name: str
+    artifact_index: int
+    transport: dict[str, Any]
+    storage_ref: dict[str, Any]
+    expected_content_type: str | None = None
+
+
 class ServeState:
     """Shared state for request handlers."""
 
@@ -833,6 +843,7 @@ async def proxy_run_create_handler(request: web.Request) -> web.Response:
         poll_interval_seconds = float(payload.get("poll_interval_seconds", 1))
         cache_token = str(payload.get("cache_token") or uuid.uuid4().hex[:10])
         callback = _proxy_callback_target(payload.get("callback"))
+        artifact_upload_targets = _proxy_artifact_upload_targets(payload)
 
         async def record_submitted(prompt_id: str) -> None:
             state.proxy_runs[prompt_id] = ProxyRuntimeRun(
@@ -862,6 +873,7 @@ async def proxy_run_create_handler(request: web.Request) -> web.Response:
                 timeout_seconds=timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
                 callback=callback,
+                artifact_upload_targets=artifact_upload_targets,
             )
         )
         _track_proxy_task(state, task)
@@ -1752,6 +1764,39 @@ def _proxy_callback_target(value: Any) -> ProxyCallbackTarget | None:
     )
 
 
+def _proxy_artifact_upload_targets(payload: Mapping[str, Any]) -> tuple[WorkerArtifactUploadTarget, ...]:
+    raw_targets: Any = payload.get("artifact_upload_targets")
+    delivery = payload.get("artifact_delivery")
+    if not isinstance(raw_targets, list) and isinstance(delivery, Mapping):
+        if str(delivery.get("mode") or "") == "direct_upload":
+            raw_targets = delivery.get("targets")
+    if not isinstance(raw_targets, list):
+        return ()
+
+    targets: list[WorkerArtifactUploadTarget] = []
+    for raw_target in raw_targets:
+        if not isinstance(raw_target, Mapping):
+            continue
+        upload_id = str(raw_target.get("upload_id") or "").strip()
+        output_name = str(raw_target.get("output_name") or "").strip()
+        transport = raw_target.get("transport")
+        if not upload_id or not output_name or not isinstance(transport, Mapping):
+            continue
+        storage_ref = raw_target.get("storage_ref")
+        expected_content_type = raw_target.get("expected_content_type")
+        targets.append(
+            WorkerArtifactUploadTarget(
+                upload_id=upload_id,
+                output_name=output_name,
+                artifact_index=max(0, _optional_int(raw_target.get("artifact_index")) or 0),
+                transport={str(key): value for key, value in transport.items()},
+                storage_ref={str(key): value for key, value in storage_ref.items()} if isinstance(storage_ref, Mapping) else {},
+                expected_content_type=str(expected_content_type) if expected_content_type else None,
+            )
+        )
+    return tuple(targets)
+
+
 async def _complete_proxy_runtime_run(
     state: ServeState,
     prompt_id: str,
@@ -1760,6 +1805,7 @@ async def _complete_proxy_runtime_run(
     timeout_seconds: float,
     poll_interval_seconds: float,
     callback: ProxyCallbackTarget | None = None,
+    artifact_upload_targets: tuple[WorkerArtifactUploadTarget, ...] = (),
 ) -> None:
     record = state.proxy_runs.get(prompt_id)
     if record is None:
@@ -1821,7 +1867,11 @@ async def _complete_proxy_runtime_run(
     }
     if callback is not None:
         try:
-            callback_outputs, uploads = await _worker_callback_outputs_and_uploads(state, execution.outputs)
+            callback_outputs, uploads = await _worker_callback_outputs_and_uploads(
+                state,
+                execution.outputs,
+                artifact_upload_targets=artifact_upload_targets,
+            )
             await _post_worker_completion_callback(
                 callback,
                 {
@@ -1907,6 +1957,8 @@ def _worker_callback_headers(callback: ProxyCallbackTarget) -> dict[str, str]:
 async def _worker_callback_outputs_and_uploads(
     state: ServeState,
     outputs: list[dict[str, Any]],
+    *,
+    artifact_upload_targets: tuple[WorkerArtifactUploadTarget, ...] = (),
 ) -> tuple[list[dict[str, Any]], list[WorkerCallbackUpload]]:
     output_payloads = [dict(output) for output in outputs]
     uploads: list[WorkerCallbackUpload] = []
@@ -1935,6 +1987,27 @@ async def _worker_callback_outputs_and_uploads(
                 filename,
                 fallback=f"{field_name}{_extension_for_content_type(response.content_type)}",
             )
+            upload_target = _worker_artifact_upload_target(
+                artifact_upload_targets,
+                output_name=str(output.get("name") or f"output_{output_index + 1}"),
+                artifact_index=artifact_index,
+            )
+            if upload_target is not None:
+                await _upload_worker_artifact_to_target(
+                    upload_target,
+                    filename=safe_filename,
+                    content_type=response.content_type,
+                    body=response.body,
+                )
+                artifact["upload_id"] = upload_target.upload_id
+                artifact["storage_ref"] = dict(upload_target.storage_ref)
+                artifact["filename"] = safe_filename
+                artifact["content_type"] = response.content_type
+                artifact["kind"] = output_kind(output_type, safe_filename)
+                artifact["size_bytes"] = len(response.body)
+                artifact["sha256"] = hashlib.sha256(response.body).hexdigest()
+                artifact.pop("upload_field", None)
+                continue
             artifact["upload_field"] = field_name
             artifact["content_type"] = response.content_type
             artifact["kind"] = output_kind(output_type, safe_filename)
@@ -1947,6 +2020,96 @@ async def _worker_callback_outputs_and_uploads(
                 )
             )
     return output_payloads, uploads
+
+
+def _worker_artifact_upload_target(
+    targets: tuple[WorkerArtifactUploadTarget, ...],
+    *,
+    output_name: str,
+    artifact_index: int,
+) -> WorkerArtifactUploadTarget | None:
+    for target in targets:
+        if target.output_name == output_name and target.artifact_index == artifact_index:
+            return target
+    return None
+
+
+async def _upload_worker_artifact_to_target(
+    target: WorkerArtifactUploadTarget,
+    *,
+    filename: str,
+    content_type: str,
+    body: bytes,
+) -> None:
+    kind = str(target.transport.get("kind") or target.transport.get("transport_kind") or "").lower()
+    if kind == "local_file_put":
+        path_value = target.transport.get("path") or target.storage_ref.get("path")
+        if not path_value:
+            raise ValueError(f"Artifact upload target {target.upload_id} is missing local path.")
+        path = Path(str(path_value))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        temp_path.write_bytes(body)
+        temp_path.replace(path)
+        return
+
+    if kind == "supabase_signed_upload":
+        upload_url = str(target.transport.get("url") or "").strip()
+        if not upload_url:
+            raise ValueError(f"Artifact upload target {target.upload_id} is missing upload url.")
+        headers = _worker_artifact_upload_headers(target.transport)
+        # Supabase signed upload URLs accept multipart form PUT with a single
+        # file part; sending raw bytes yields a successful HTTP request that
+        # stores the wrong object shape.
+        form = aiohttp.FormData()
+        form.add_field("file", body, filename=filename, content_type=content_type)
+        async with aiohttp.ClientSession() as session:
+            async with session.put(
+                upload_url,
+                data=form,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as response:
+                response.raise_for_status()
+        return
+
+    if kind in {"http_signed_upload", "http_put", "signed_put"}:
+        upload_url = str(target.transport.get("url") or "").strip()
+        if not upload_url:
+            raise ValueError(f"Artifact upload target {target.upload_id} is missing upload url.")
+        method = str(target.transport.get("method") or "PUT").upper()
+        headers = _worker_artifact_upload_headers(target.transport)
+        headers.setdefault("content-type", content_type)
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method,
+                upload_url,
+                data=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as response:
+                response.raise_for_status()
+        return
+
+    raise ValueError(f"Unsupported artifact upload target transport: {kind or 'unknown'}.")
+
+
+def _worker_artifact_upload_headers(transport: Mapping[str, Any]) -> dict[str, str]:
+    raw_headers = transport.get("headers")
+    if not isinstance(raw_headers, Mapping):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in raw_headers.items()
+        if value is not None and str(key).lower() != "content-type"
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _record_proxy_run_error(record: ProxyRuntimeRun, payload: dict[str, Any]) -> None:
