@@ -20,7 +20,7 @@ def test_rmtree_uses_onerror_on_windows_when_onexc_is_unavailable(monkeypatch, t
 
     assert calls == [
         (
-            target,
+            filesystem._windows_long_path(target),
             {
                 "ignore_errors": False,
                 "onerror": filesystem._handle_remove_readonly,
@@ -46,7 +46,7 @@ def test_rmtree_uses_onexc_on_windows_when_available(monkeypatch, tmp_path):
 
     assert calls == [
         (
-            target,
+            filesystem._windows_long_path(target),
             {
                 "ignore_errors": True,
                 "onexc": filesystem._handle_remove_readonly,

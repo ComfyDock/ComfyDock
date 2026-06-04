@@ -14,6 +14,16 @@ logger = get_logger(__name__)
 _SUPPORTS_RMTREE_ONEXC = "onexc" in inspect.signature(shutil.rmtree).parameters
 
 
+def _windows_long_path(path: Path) -> str:
+    """Return a Windows long-path string for filesystem APIs."""
+    path_text = str(path.resolve())
+    if path_text.startswith("\\\\?\\"):
+        return path_text
+    if path_text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + path_text.lstrip("\\")
+    return "\\\\?\\" + path_text
+
+
 def _handle_remove_readonly(func, path, exc_info):
     """Handle Windows readonly/locked files during deletion.
 
@@ -44,10 +54,11 @@ def rmtree(path: Path, ignore_errors: bool = False) -> None:
         return
 
     if platform.system() == "Windows":
+        rmtree_path = _windows_long_path(path)
         if _SUPPORTS_RMTREE_ONEXC:
-            shutil.rmtree(path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
+            shutil.rmtree(rmtree_path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
         else:
-            shutil.rmtree(path, ignore_errors=ignore_errors, onerror=_handle_remove_readonly)
+            shutil.rmtree(rmtree_path, ignore_errors=ignore_errors, onerror=_handle_remove_readonly)
     else:
         shutil.rmtree(path, ignore_errors=ignore_errors)
 
