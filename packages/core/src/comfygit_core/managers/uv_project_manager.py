@@ -285,6 +285,8 @@ class UVProjectManager:
             all_extras=all_extras,
             **flags,
         )
+        if flags.get("dry_run"):
+            return "\n".join(part for part in (result.stdout, result.stderr) if part)
         return result.stdout
 
     def lock_project(self, **flags) -> str:

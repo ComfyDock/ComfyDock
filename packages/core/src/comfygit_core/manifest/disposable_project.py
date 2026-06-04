@@ -135,7 +135,10 @@ class DisposableUvProject:
                 all_extras=all_extras,
                 **flags,
             )
-            self.copy_runtime_lock_from_disposable_project(temp_path)
+            if not flags.get("dry_run"):
+                self.copy_runtime_lock_from_disposable_project(temp_path)
+            if flags.get("dry_run"):
+                return "\n".join(part for part in (result.stdout, result.stderr) if part)
             return result.stdout
         finally:
             shutil.rmtree(temp_path, ignore_errors=True)

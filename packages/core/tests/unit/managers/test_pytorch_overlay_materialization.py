@@ -562,6 +562,80 @@ editable = true
         assert (temp_env["cec_path"] / "uv.lock").read_text(encoding="utf-8") == "# temp lock\n"
         assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
 
+    def test_overlay_dry_run_reports_stderr_without_copying_lock(self, temp_env):
+        """Dry-run overlay sync should expose uv's plan without mutating lock state."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        overlays_dir = temp_env["cec_path"] / "overlays"
+        overlays_dir.mkdir(exist_ok=True)
+        (overlays_dir / ".local.toml").write_text(
+            """
+[overlay]
+description = "Local package override"
+
+[sources.localpkg]
+path = "/tmp/localpkg"
+editable = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        runtime_lock = temp_env["cec_path"] / "uv.lock"
+        runtime_lock.write_text("# runtime lock\n", encoding="utf-8")
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                assert kwargs["dry_run"] is True
+                (self.cwd / "uv.lock").write_text("# temp dry-run lock\n", encoding="utf-8")
+                return SimpleNamespace(
+                    stdout="Would use project environment at: .venv\n",
+                    stderr="Would install 1 package\n",
+                )
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=PyprojectManager(temp_env["pyproject_path"]),
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        output = uv_manager.sync_project(dry_run=True)
+
+        assert "Would use project environment" in output
+        assert "Would install 1 package" in output
+        assert runtime_lock.read_text(encoding="utf-8") == "# runtime lock\n"
+        assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
+
+    def test_plain_dry_run_reports_stderr(self, temp_env):
+        """Dry-run sync should include uv stderr even without overlay materialization."""
+        from unittest.mock import MagicMock
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        mock_result = MagicMock()
+        mock_result.stdout = "Resolved 10 packages\n"
+        mock_result.stderr = "Would update lockfile at: uv.lock\n"
+
+        mock_uv_command = MagicMock()
+        mock_uv_command.sync.return_value = mock_result
+
+        uv_manager = UVProjectManager(
+            uv_command=mock_uv_command,
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        output = uv_manager.sync_project(dry_run=True)
+
+        assert "Resolved 10 packages" in output
+        assert "Would update lockfile" in output
+
     def test_sync_project_removes_stale_disposable_projects(self, temp_env):
         """A previous interrupted sync should not poison the next resolution."""
         from types import SimpleNamespace
