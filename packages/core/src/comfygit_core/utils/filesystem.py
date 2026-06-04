@@ -1,5 +1,6 @@
 """Filesystem manipulation utilities."""
 
+import inspect
 import os
 import platform
 import shutil
@@ -10,6 +11,7 @@ from pathlib import Path
 from ..logging.logging_config import get_logger
 
 logger = get_logger(__name__)
+_SUPPORTS_RMTREE_ONEXC = "onexc" in inspect.signature(shutil.rmtree).parameters
 
 
 def _handle_remove_readonly(func, path, exc_info):
@@ -42,7 +44,10 @@ def rmtree(path: Path, ignore_errors: bool = False) -> None:
         return
 
     if platform.system() == "Windows":
-        shutil.rmtree(path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
+        if _SUPPORTS_RMTREE_ONEXC:
+            shutil.rmtree(path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
+        else:
+            shutil.rmtree(path, ignore_errors=ignore_errors, onerror=_handle_remove_readonly)
     else:
         shutil.rmtree(path, ignore_errors=ignore_errors)
 
