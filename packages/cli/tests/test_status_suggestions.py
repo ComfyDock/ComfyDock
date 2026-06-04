@@ -277,6 +277,31 @@ def test_status_command_suggests_sync_for_package_drift(
     assert "Run: cg repair" not in output
 
 
+def test_status_command_shows_disabled_nodes_in_clean_path(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(disabled_nodes=["rgthree-comfy"]),
+        git=GitStatus(has_changes=False, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    lifecycle = _lifecycle("repair_environment")
+    mock_env.status.return_value = status
+    mock_env.get_lifecycle_status.return_value = lifecycle
+    mock_env.get_manager_status.side_effect = RuntimeError("ignore manager notice")
+
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.status(MagicMock(verbose=False))
+
+    output = capsys.readouterr().out
+    assert "Disabled nodes" in output
+    assert "rgthree-comfy" in output
+    assert "Run: cg repair" in output
+
+
 def test_status_command_shows_lifecycle_suggestion_when_legacy_status_is_clean(
     env_commands,
     mock_env,

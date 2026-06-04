@@ -1133,6 +1133,7 @@ class EnvironmentCommands:
 
             print("\n✓ No workflows")
             print("✓ No uncommitted changes")
+            self._show_disabled_nodes(status)
             self._show_lifecycle_attention(lifecycle_status)
             if status.git.current_branch is not None:
                 self._show_smart_suggestions(status, lifecycle_status)
@@ -1246,10 +1247,7 @@ class EnvironmentCommands:
                 print("  • Python packages out of sync")
 
         # Disabled nodes (informational, not a warning)
-        if status.comparison.disabled_nodes:
-            print("\n📴 Disabled nodes:")
-            for node_name in status.comparison.disabled_nodes:
-                print(f"  • {node_name}")
+        self._show_disabled_nodes(status)
 
         # Git changes
         if status.git.has_changes:
@@ -1303,6 +1301,14 @@ class EnvironmentCommands:
         self._show_legacy_manager_notice(env)
 
     # Removed: _has_uninstalled_packages - this logic is now in core's WorkflowAnalysisStatus
+
+    def _show_disabled_nodes(self, status: EnvironmentStatus) -> None:
+        """Display disabled nodes consistently across clean and dirty status paths."""
+        if not status.comparison.disabled_nodes:
+            return
+        print("\n📴 Disabled nodes:")
+        for node_name in status.comparison.disabled_nodes:
+            print(f"  • {node_name}")
 
     def _print_workflow_issues(self, wf_analysis: WorkflowAnalysisStatus, verbose: bool = False) -> None:
         """Print compact workflow issues summary using model properties only."""
