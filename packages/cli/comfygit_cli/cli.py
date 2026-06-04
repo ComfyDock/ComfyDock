@@ -2,6 +2,7 @@
 # PYTHON_ARGCOMPLETE_OK
 
 import argparse
+import os
 import sys
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError, version
@@ -75,8 +76,25 @@ def _check_for_old_docker_installation() -> None:
     warning_flag.touch()
 
 
+def _configure_stdio_encoding() -> None:
+    """Avoid Windows terminal encoding crashes for Unicode status output."""
+    if os.name != "nt":
+        return
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
 def main() -> None:
     """Main entry point for ComfyGit CLI."""
+    _configure_stdio_encoding()
+
     # Enable readline for input() line editing (arrow keys, history)
     # Unix/Linux/macOS: provides full editing capability
     # Windows: gracefully falls back to native console editing
