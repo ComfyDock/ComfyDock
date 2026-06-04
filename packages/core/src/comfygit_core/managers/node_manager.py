@@ -1101,6 +1101,18 @@ class NodeManager:
         expected_names = {info.name for info in expected_nodes.values()}
         untracked = set(existing_nodes.keys()) - expected_names
 
+        # A declared node with only a ".disabled" folder is not missing in the
+        # sense of needing a download. Re-enable it by restoring the declared
+        # directory name.
+        for node_info in expected_nodes.values():
+            node_path = self.custom_nodes_path / node_info.name
+            disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
+            if node_path.exists() or not disabled_path.exists():
+                continue
+            disabled_path.rename(node_path)
+            existing_nodes[node_info.name] = node_path
+            logger.info(f"Re-enabled disabled node: {node_info.name}")
+
         if remove_extra:
             # ComfyUI's built-in files that should not be removed
             COMFYUI_BUILTINS = {'example_node.py.example', 'websocket_image_save.py', '__pycache__'}

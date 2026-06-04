@@ -299,6 +299,7 @@ class EnvironmentStatus:
         """
         return {
             'nodes_to_install': self.comparison.missing_nodes,
+            'nodes_to_enable': self.comparison.disabled_nodes,
             'nodes_to_remove': self.comparison.extra_nodes,
             'nodes_to_update': self.comparison.version_mismatches,
             'packages_to_sync': not self.comparison.packages_in_sync,

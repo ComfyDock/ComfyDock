@@ -302,6 +302,36 @@ def test_status_command_shows_disabled_nodes_in_clean_path(
     assert "Run: cg repair" in output
 
 
+def test_repair_applies_disabled_node_even_when_legacy_status_is_synced(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(disabled_nodes=["rgthree-comfy"]),
+        git=GitStatus(has_changes=False, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    mock_env.status.return_value = status
+    mock_env.sync.return_value = MagicMock(
+        success=True,
+        errors=[],
+        models_downloaded=[],
+        models_failed=[],
+    )
+
+    args = MagicMock(yes=True)
+    args.models = "all"
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.repair(args)
+
+    output = capsys.readouterr().out
+    assert "No changes to apply" not in output
+    assert "Applying changes to: test-env" in output
+    mock_env.sync.assert_called_once()
+
+
 def test_status_command_shows_lifecycle_suggestion_when_legacy_status_is_clean(
     env_commands,
     mock_env,

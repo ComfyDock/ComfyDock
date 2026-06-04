@@ -45,6 +45,30 @@ def test_lifecycle_status_reports_leftover_untracked_node_folder(test_env):
     assert remove.destructive is True
 
 
+def test_sync_reenables_declared_disabled_node(test_env):
+    test_env.pyproject.nodes.add(
+        NodeInfo(
+            name="rgthree-comfy",
+            registry_id="rgthree-comfy",
+            source="registry",
+            version="1.0.0",
+        ),
+        "rgthree-comfy",
+    )
+    disabled_path = test_env.custom_nodes_path / "rgthree-comfy.disabled"
+    disabled_path.mkdir(parents=True)
+    (disabled_path / "nodes.py").write_text("# disabled node\n", encoding="utf-8")
+
+    before = test_env.status()
+    assert before.comparison.disabled_nodes == ["rgthree-comfy"]
+
+    test_env.node_manager.sync_nodes_to_filesystem()
+
+    assert not disabled_path.exists()
+    assert (test_env.custom_nodes_path / "rgthree-comfy").exists()
+    assert test_env.status().comparison.disabled_nodes == []
+
+
 def test_lifecycle_status_reports_untracked_development_checkout(test_env):
     node_path = test_env.custom_nodes_path / "dev-node"
     node_path.mkdir(parents=True)

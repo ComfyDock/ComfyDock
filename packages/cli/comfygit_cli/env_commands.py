@@ -2451,7 +2451,7 @@ class EnvironmentCommands:
         # Get status first
         status = env.status()
 
-        if status.is_synced:
+        if status.is_synced and not status.comparison.disabled_nodes:
             print("✓ No changes to apply")
             return
 
@@ -2464,6 +2464,7 @@ class EnvironmentCommands:
             # Check if there are actually any changes to show
             has_changes = (
                 preview['nodes_to_install'] or
+                preview.get('nodes_to_enable') or
                 preview['nodes_to_remove'] or
                 preview['nodes_to_update'] or
                 preview['packages_to_sync'] or
@@ -2483,6 +2484,11 @@ class EnvironmentCommands:
             if preview['nodes_to_install']:
                 print(f"  • Install {len(preview['nodes_to_install'])} missing nodes:")
                 for node in preview['nodes_to_install']:
+                    print(f"    - {node}")
+
+            if preview.get('nodes_to_enable'):
+                print(f"  • Re-enable {len(preview['nodes_to_enable'])} disabled nodes:")
+                for node in preview['nodes_to_enable']:
                     print(f"    - {node}")
 
             if preview['nodes_to_remove']:
