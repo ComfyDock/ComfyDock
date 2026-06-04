@@ -486,6 +486,34 @@ class TestSyncProjectWithPyTorchManager:
         assert "nvidia-cusparselt-cu12" in override_reinstall
         assert "nvidia-nvshmem-cu12" in override_reinstall
 
+    def test_sync_project_dry_run_does_not_force_pytorch_reinstall(self, temp_env):
+        """Dry-run status checks should not report synthetic PyTorch reinstall drift."""
+        from unittest.mock import MagicMock
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        pytorch_manager = PyTorchBackendManager(temp_env["cec_path"])
+
+        mock_result = MagicMock()
+        mock_result.stdout = "Audited packages\n"
+        mock_result.stderr = ""
+        mock_uv_command = MagicMock()
+        mock_uv_command.for_cwd.return_value = mock_uv_command
+        mock_uv_command.sync.return_value = mock_result
+
+        uv_manager = UVProjectManager(
+            uv_command=mock_uv_command,
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project(pytorch_manager=pytorch_manager, dry_run=True)
+
+        kwargs = mock_uv_command.sync.call_args.kwargs
+        assert kwargs["dry_run"] is True
+        assert "reinstall_package" not in kwargs
+
     def test_sync_project_leaves_tracked_pyproject_clean_on_sync_error(self, temp_env):
         """sync_project should leave tracked config clean when uv sync fails."""
         from unittest.mock import MagicMock

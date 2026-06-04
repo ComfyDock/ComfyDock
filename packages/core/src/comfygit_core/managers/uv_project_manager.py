@@ -236,21 +236,24 @@ class UVProjectManager:
         Returns:
             UV command stdout
         """
+        is_dry_run = bool(flags.get("dry_run"))
         pytorch_config = None
         if pytorch_manager:
             from ..constants import PYTORCH_CORE_PACKAGES, PYTORCH_PACKAGE_NAMES
 
-            # Force reinstall of PyTorch packages to ensure the correct backend is used.
-            # Backend overrides can change PyTorch's transitive NVIDIA wheel set, and
-            # reinstalling only torch/vision/audio can leave stale or partially-linked
-            # CUDA payloads in the venv.
-            reinstall_packages = PYTORCH_PACKAGE_NAMES if backend_override else PYTORCH_CORE_PACKAGES
-            flags['reinstall_package'] = sorted(reinstall_packages)
+            if not is_dry_run:
+                # Force reinstall of PyTorch packages to ensure the correct backend is used.
+                # Backend overrides can change PyTorch's transitive NVIDIA wheel set, and
+                # reinstalling only torch/vision/audio can leave stale or partially-linked
+                # CUDA payloads in the venv. Dry-run status checks must not request a
+                # reinstall, or uv will report synthetic package drift forever.
+                reinstall_packages = PYTORCH_PACKAGE_NAMES if backend_override else PYTORCH_CORE_PACKAGES
+                flags['reinstall_package'] = sorted(reinstall_packages)
 
             # When overriding backend, delete uv.lock to force complete re-resolution.
             # The lock file contains platform-specific PyTorch wheel pins that won't
             # work when switching backends (e.g., cu128 -> cpu has different wheels).
-            if backend_override:
+            if backend_override and not is_dry_run:
                 lock_file = self.pyproject.path.parent / "uv.lock"
                 if lock_file.exists():
                     lock_file.unlink()
@@ -285,7 +288,7 @@ class UVProjectManager:
             all_extras=all_extras,
             **flags,
         )
-        if flags.get("dry_run"):
+        if is_dry_run:
             return "\n".join(part for part in (result.stdout, result.stderr) if part)
         return result.stdout
 
