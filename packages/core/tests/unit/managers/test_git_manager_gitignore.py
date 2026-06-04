@@ -22,6 +22,7 @@ class TestGitManagerGitignore:
             assert "comfyui_folder_paths.json" in content
             assert "comfyui_model_loaders.json" in content
             assert "backups/" in content
+            assert ".venv-probe-*/" in content
 
     def test_schema_migration_untracks_generated_comfyui_metadata(self, test_env):
         # Simulate an older environment created before generated metadata was ignored.
@@ -59,3 +60,4 @@ class TestGitManagerGitignore:
         assert "comfyui_folder_paths.json" in gitignore
         assert "comfyui_model_loaders.json" in gitignore
         assert "backups/" in gitignore
+        assert ".venv-probe-*/" in gitignore
