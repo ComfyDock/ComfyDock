@@ -41,6 +41,25 @@ def _versions_match(actual: str | None, expected: str | None) -> bool:
         return False
 
 
+_UV_DRY_RUN_CHANGE_PREFIXES = (
+    "Would update lockfile",
+    "Would download ",
+    "Would install ",
+    "Would uninstall ",
+    "Would upgrade ",
+    "Would downgrade ",
+    "Would remove ",
+)
+
+
+def _uv_dry_run_reports_changes(output: str) -> bool:
+    """Return True when uv dry-run output says sync would mutate the env."""
+    return any(
+        line.strip().startswith(_UV_DRY_RUN_CHANGE_PREFIXES)
+        for line in output.splitlines()
+    )
+
+
 class StatusScanner:
     """Scans environment to get current state."""
 
@@ -410,13 +429,19 @@ class StatusScanner:
             # Use UV's dry-run to check if sync would change anything
             # Disposable PyTorch overlay materialization ensures the check uses the correct backend.
             extras, all_extras = self._pyproject.resolve_sync_extras(None, False)
-            self._uv.sync_project(
+            dry_run_output = self._uv.sync_project(
                 dry_run=True,
                 all_groups=True,
                 pytorch_manager=self._pytorch_manager,
                 extras=extras,
                 all_extras=all_extras,
             )
+            if _uv_dry_run_reports_changes(dry_run_output):
+                return PackageSyncStatus(
+                    in_sync=False,
+                    message="Packages out of sync (run 'cg sync' to update)",
+                    details=dry_run_output,
+                )
             return PackageSyncStatus(
                 in_sync=True, message="Packages match pyproject.toml"
             )
