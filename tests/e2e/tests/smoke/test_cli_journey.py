@@ -113,10 +113,7 @@ class CliJourney:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _stop_process(proc, force=True)
             stdout, stderr = proc.communicate(timeout=10)
 
         result = subprocess.CompletedProcess(
@@ -264,18 +261,26 @@ def _wait_for_comfyui(port: int, timeout: int = 160) -> bool:
 
 def _stop_process_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
     if proc.poll() is None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        _stop_process(proc, force=False)
     try:
         return proc.communicate(timeout=12)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        _stop_process(proc, force=True)
         return proc.communicate(timeout=8)
+
+
+def _stop_process(proc: subprocess.Popen[str], *, force: bool) -> None:
+    if os.name == "nt":
+        if force:
+            proc.kill()
+        else:
+            proc.terminate()
+        return
+
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL if force else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 def test_cli_local_authoring_journey(journey: CliJourney):
