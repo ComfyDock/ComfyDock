@@ -10,6 +10,83 @@ workflow resolve, readiness checks, commit flows, node UI, and runtime restart
 flows. This file is the reference matrix for consolidating those signals into a
 single composed lifecycle status in the future.
 
+## Implementation Dossier
+
+### CGLIFE-PLAN-01 [PLANNED]: Lifecycle status work proceeds as staged, test-gated refactor
+Validation: MIXED
+
+The lifecycle status implementation should be split into small, reversible
+slices that preserve existing status behavior while introducing the new typed
+surface:
+
+1. Define public lifecycle model types and stable action/issue identifiers.
+2. Add a pure decision service with matrix-style unit tests over synthetic
+   inputs.
+3. Add an `Environment.get_lifecycle_status()` facade that composes existing
+   core signals without changing `Environment.status()` semantics.
+4. Add core integration tests that prove real environment drift produces the
+   expected lifecycle issues and actions.
+5. Migrate CLI status guidance to render lifecycle actions while keeping
+   command behavior unchanged.
+6. Expose lifecycle status through Manager backend/API surfaces so Manager UI
+   can stop recreating the same priority rules.
+7. Migrate Manager UI terminology and call-to-action rendering to the lifecycle
+   action IDs in this spec.
+
+Each slice should run the focused tests for the touched layer before moving to
+the next slice. Broader CLI smoke validation should run once the CLI consumes
+the lifecycle status facade.
+
+### CGLIFE-PLAN-02 [PLANNED]: Tests should lock behavior at the cheapest reliable layer
+Validation: TEST
+
+Lifecycle status coverage should prefer a layered test pyramid:
+
+- Decision matrix unit tests for action priority, issue severity, blocking
+  state, destructive flags, restart requirements, and disabled reasons.
+- Core integration signal tests for real manifest/filesystem/workflow/git states
+  such as missing declared nodes, untracked node folders, disabled nodes,
+  unresolved workflow packages, missing models, detached HEAD, and uncommitted
+  manifest changes.
+- Adapter serialization/rendering tests that prove CLI and Manager preserve
+  action IDs and layer labels without parsing display strings.
+- CLI smoke tests for the main user flow after adapter wiring changes.
+
+Do not make every matrix row a full end-to-end environment test. Registry,
+runtime, provider, download, and browser-dependent states may use fakes or
+adapter-provided runtime inputs when the core decision behavior is already
+covered by unit tests.
+
+### CGLIFE-PLAN-03 [PLANNED]: Adapter wiring is additive before replacement
+Validation: MIXED
+
+CLI and Manager should first consume lifecycle status as an additive typed
+surface. Existing status, readiness, node, workflow, and runtime endpoints may
+remain during migration, but duplicated adapter-side priority rules should be
+removed once equivalent lifecycle actions are available.
+
+The migration should keep these boundaries:
+
+- Core owns manifest/filesystem/snapshot/workspace-index decision policy.
+- Manager supplies runtime and active-operation state that core cannot know
+  from disk alone.
+- CLI and Manager own labels, layout, confirmation UI, logs, and command
+  execution.
+- Adapters use lifecycle action IDs and issue IDs, not parsed prose, to select
+  UI affordances.
+
+### CGLIFE-PLAN-04 [PLANNED]: Lifecycle refactoring must not widen the public API accidentally
+Validation: STATIC
+
+The lifecycle status surface should be exported through deliberate public
+modules such as `comfygit_core.models` and `Environment.get_lifecycle_status()`.
+New helper scanners, context builders, and decision internals should remain
+private unless they are intentionally documented as adapter-facing APIs.
+
+This keeps the public contract centered on typed results and the
+`Workspace`/`Environment` facades while still allowing internal implementation
+modules to change.
+
 ## Layer Model
 
 ### CGLIFE-STATUS-01 [PLANNED]: Lifecycle status separates environment layers
