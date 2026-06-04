@@ -238,6 +238,7 @@ Validation coverage:
 - `packages/core/tests/integration/test_lifecycle_status.py::test_lifecycle_status_recommends_sync_before_commit_for_dependency_changes`
 - `packages/core/tests/unit/analyzers/test_status_scanner.py`
 - `packages/core/tests/unit/managers/test_pytorch_overlay_materialization.py::test_overlay_dry_run_reports_stderr_without_copying_lock`
+- `packages/cli/tests/test_status_suggestions.py::test_status_command_suggests_sync_for_package_drift`
 
 ## Action Matrix
 

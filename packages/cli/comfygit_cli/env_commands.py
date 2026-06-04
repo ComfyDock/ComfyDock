@@ -1217,7 +1217,15 @@ class EnvironmentCommands:
 
         # Environment drift (manual edits)
         if not status.comparison.is_synced:
-            print("\n⚠️  Environment needs repair:")
+            has_filesystem_drift = bool(
+                status.comparison.missing_nodes
+                or status.comparison.extra_nodes
+                or status.comparison.version_mismatches
+            )
+            if has_filesystem_drift:
+                print("\n⚠️  Environment needs repair:")
+            else:
+                print("\n⚠️  Environment needs sync:")
 
             if status.comparison.missing_nodes:
                 print(f"  • {len(status.comparison.missing_nodes)} nodes in pyproject.toml not installed")
@@ -1434,7 +1442,9 @@ class EnvironmentCommands:
 
         if action_id in {"sync_missing_nodes", "sync_environment", "repair_environment"}:
             if action_id == "sync_missing_nodes":
-                suggestions.append("Install missing nodes: cg repair")
+                suggestions.append("Install missing nodes: cg sync")
+            elif action_id == "sync_environment":
+                suggestions.append("Sync environment: cg sync")
             else:
                 suggestions.append("Run: cg repair")
             suggestions.extend(self._workflow_resolution_followups(status, prefix="Then resolve"))

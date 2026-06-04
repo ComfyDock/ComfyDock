@@ -145,7 +145,7 @@ def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
     """Test suggestion when missing models + orphan nodes not in workflow.
 
     Scenario: Git pull adds nodes (some not in workflow) + model changes.
-    Expected: Suggest 'repair' first, THEN 'workflow resolve'.
+    Expected: Suggest 'sync' first, THEN 'workflow resolve'.
     """
     # Setup: 2 missing nodes, only 1 referenced by workflow
     mock_env.get_uninstalled_nodes.return_value = ['rgthree-comfy']
@@ -166,8 +166,8 @@ def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
 
     output = capsys.readouterr().out
 
-    # Should suggest repair first, then workflow resolve
-    assert 'cg repair' in output
+    # Should suggest sync first, then workflow resolve
+    assert 'cg sync' in output
     assert 'Then resolve workflow: cg workflow resolve "default"' in output
 
 
@@ -205,7 +205,7 @@ def test_environment_drift_only(env_commands, mock_env, capsys):
     """Test suggestion when only environment drift (no workflow issues).
 
     Scenario: Missing/extra nodes but no workflow issues.
-    Expected: Suggest 'repair' only.
+    Expected: Suggest 'sync' only.
     """
     mock_env.get_uninstalled_nodes.return_value = []
 
@@ -223,8 +223,8 @@ def test_environment_drift_only(env_commands, mock_env, capsys):
 
     output = capsys.readouterr().out
 
-    # Should only suggest repair
-    assert 'cg repair' in output
+    # Should only suggest sync
+    assert 'cg sync' in output
     assert 'workflow resolve' not in output
 
 
@@ -245,7 +245,36 @@ def test_status_command_uses_environment_lifecycle_facade(env_commands, mock_env
 
     mock_env.get_lifecycle_status.assert_called_once_with(status=status)
     output = capsys.readouterr().out
-    assert "Install missing nodes: cg repair" in output
+    assert "Install missing nodes: cg sync" in output
+
+
+def test_status_command_suggests_sync_for_package_drift(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(
+            packages_in_sync=False,
+            package_sync_message="Packages out of sync",
+        ),
+        git=GitStatus(has_changes=True, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    lifecycle = _lifecycle("sync_environment")
+    mock_env.status.return_value = status
+    mock_env.get_lifecycle_status.return_value = lifecycle
+    mock_env.get_manager_status.side_effect = RuntimeError("ignore manager notice")
+
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.status(MagicMock(verbose=False))
+
+    output = capsys.readouterr().out
+    assert "Environment needs sync" in output
+    assert "Python packages out of sync" in output
+    assert "Sync environment: cg sync" in output
+    assert "Run: cg repair" not in output
 
 
 def test_status_command_shows_lifecycle_suggestion_when_legacy_status_is_clean(
