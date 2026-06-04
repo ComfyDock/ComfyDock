@@ -77,7 +77,11 @@ class StatusScanner:
         self._comfyui_path = comfyui_path
         self._pytorch_manager = pytorch_manager
 
-    def get_full_comparison(self) -> EnvironmentComparison:
+    def get_full_comparison(
+        self,
+        *,
+        check_package_sync: bool = False,
+    ) -> EnvironmentComparison:
         """Get complete environment comparison with all details.
 
         Args:
@@ -96,17 +100,17 @@ class StatusScanner:
         # Get basic comparison
         comparison = self.compare_states(current, expected)
 
-        # Skip package sync check for performance (100-500ms saved)
-        # Rationale:
-        #   - Users rarely manually modify .venv/
-        #   - Operations like 'run', 'repair', 'node add' auto-sync before executing
-        #   - Status is high-frequency with workflow caching - needs to be fast
-        #   - Package drift self-corrects on next sync operation
-        # If thorough check needed, use 'cg repair --dry-run' (future)
-        # TODO: Add package sync status
-        # package_status = self.check_packages_sync()
-        comparison.packages_in_sync = True #package_status.in_sync
-        comparison.package_sync_message = "" #package_status.message
+        if check_package_sync:
+            package_status = self.check_packages_sync()
+            comparison.packages_in_sync = package_status.in_sync
+            comparison.package_sync_message = package_status.message
+        else:
+            # Keep high-frequency status fast unless the manifest diff says uv
+            # materialization may be needed. Package drift self-corrects on the
+            # next explicit sync/run path, but dependency edits should guide the
+            # user to sync before committing.
+            comparison.packages_in_sync = True
+            comparison.package_sync_message = ""
 
         return comparison
 

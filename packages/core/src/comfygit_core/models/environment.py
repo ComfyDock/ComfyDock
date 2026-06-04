@@ -39,6 +39,17 @@ class GitStatus:
     constraints_added: list[str] = field(default_factory=list)
     constraints_removed: list[str] = field(default_factory=list)
 
+    @property
+    def has_dependency_changes(self) -> bool:
+        """Return True when manifest changes may require uv materialization."""
+        return bool(
+            self.dependencies_added
+            or self.dependencies_removed
+            or self.dependencies_updated
+            or self.constraints_added
+            or self.constraints_removed
+        )
+
 @dataclass
 class GitInfo:
     commit: str | None = None

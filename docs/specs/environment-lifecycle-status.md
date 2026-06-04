@@ -126,7 +126,7 @@ Current core producers include:
 | Producer | Current signals | Layer coverage | Gap |
 | --- | --- | --- | --- |
 | `Environment.status()` in `packages/core/src/comfygit_core/core/environment.py` | `EnvironmentStatus` with comparison, git, workflow, missing models | manifest, filesystem, snapshot, workspace_index | No runtime state or prioritized action model |
-| `StatusScanner` in `packages/core/src/comfygit_core/analyzers/status_scanner.py` | missing nodes, extra nodes, disabled nodes, version mismatches, missing/untracked dev nodes, potential dev rename | manifest vs filesystem custom nodes | Package sync is currently skipped and forced in sync |
+| `StatusScanner` in `packages/core/src/comfygit_core/analyzers/status_scanner.py` | missing nodes, extra nodes, disabled nodes, version mismatches, missing/untracked dev nodes, potential dev rename, targeted package sync checks | manifest vs filesystem custom nodes and uv materialization | Runtime restart state is still outside this scanner |
 | `GitManager.get_status()` and git change parsing | branch, detached state, uncommitted changes, node/dependency/workflow/config changes | snapshot | Manifest dirty is inferred from Git status, not represented separately |
 | `WorkflowManager.get_workflow_status()` and workflow analysis | workflow file sync, unresolved nodes/models, uninstalled packages, path sync, category mismatch, download intents, commit safety | manifest, filesystem, workspace_index | Workflow health is not ordered with node/filesystem/runtime health |
 | `EnvironmentModelManager.get_missing_models()` | missing model entries with workflow references, criticality, download availability | manifest vs workspace_index/filesystem | Model index and manifest source proof are separate surfaces |
@@ -217,6 +217,27 @@ initial priority order should be:
 Adapters may expose secondary actions at the same time, but the primary CTA
 should not promote commit/export/deploy while required materialization or
 runtime blockers remain unresolved.
+
+### CGLIFE-STATUS-05A [LIVE]: Dependency diffs trigger materialization checks before commit
+Validation: TEST
+
+Normal status should avoid a full uv dry-run so high-frequency status rendering
+stays responsive. When Git diff parsing detects dependency-group or uv
+constraint changes in the manifest, lifecycle status must run a targeted uv
+dry-run package sync check before choosing the primary action.
+
+If uv reports that it would install, uninstall, update, downgrade, download, or
+rewrite the lockfile, lifecycle status should surface
+`dependencies_not_synced` and prefer `sync_environment` before
+`commit_snapshot`. This prevents a node install that mutates dependency groups
+from looking ready to commit while the virtual environment still lacks those
+packages.
+
+Validation coverage:
+
+- `packages/core/tests/integration/test_lifecycle_status.py::test_lifecycle_status_recommends_sync_before_commit_for_dependency_changes`
+- `packages/core/tests/unit/analyzers/test_status_scanner.py`
+- `packages/core/tests/unit/managers/test_pytorch_overlay_materialization.py::test_overlay_dry_run_reports_stderr_without_copying_lock`
 
 ## Action Matrix
 

@@ -590,6 +590,8 @@ class Environment:
 
     def status(self) -> EnvironmentStatus:
         """Get environment sync and git status."""
+        git_status = self.git_manager.get_status(self.pyproject)
+
         # Each subsystem provides its complete status
         scanner = StatusScanner(
             comfyui_path=self.comfyui_path,
@@ -598,9 +600,9 @@ class Environment:
             pyproject=self.pyproject,
             pytorch_manager=self.pytorch_manager,
         )
-        comparison = scanner.get_full_comparison()
-
-        git_status = self.git_manager.get_status(self.pyproject)
+        comparison = scanner.get_full_comparison(
+            check_package_sync=git_status.has_dependency_changes
+        )
 
         workflow_status = self.workflow_manager.get_workflow_status()
 

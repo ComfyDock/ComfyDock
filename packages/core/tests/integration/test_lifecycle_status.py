@@ -69,3 +69,24 @@ def test_lifecycle_status_reports_uncommitted_manifest_changes_after_health_is_c
     assert lifecycle.primary_action_id == "commit_snapshot"
     assert "uncommitted_changes" in _issue_ids(lifecycle)
     assert lifecycle.layer("snapshot").status == "attention"
+
+
+def test_lifecycle_status_recommends_sync_before_commit_for_dependency_changes(
+    test_env, monkeypatch
+):
+    config = test_env.pyproject.load()
+    config["project"]["dependencies"].append("requests>=2")
+    test_env.pyproject.save(config)
+
+    monkeypatch.setattr(
+        test_env.uv_manager,
+        "sync_project",
+        lambda **_kwargs: "Would install 1 package\n",
+    )
+
+    lifecycle = test_env.get_lifecycle_status()
+
+    assert lifecycle.primary_action_id == "sync_environment"
+    assert "dependencies_not_synced" in _issue_ids(lifecycle)
+    assert "commit_snapshot" in _action_ids(lifecycle)
+    assert lifecycle.layer("filesystem").status == "blocked"
