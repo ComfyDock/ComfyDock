@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from comfygit_core.models import (
         EnvironmentLifecycleStatus,
         EnvironmentStatus,
-        LifecycleAction,
         WorkflowAnalysisStatus,
     )
 
@@ -1106,6 +1105,8 @@ class EnvironmentCommands:
         env = self._get_env(args)
 
         status = env.status()
+        lifecycle_status = env.get_lifecycle_status(status=status)
+        has_lifecycle_attention = bool(lifecycle_status.issues or lifecycle_status.primary_action)
 
         # Always show git state - never leave it blank
         if status.git.current_branch:
@@ -1116,7 +1117,7 @@ class EnvironmentCommands:
         # Clean state - everything is good (but check for detached HEAD)
         if status.is_synced and not status.git.has_changes and status.workflow.sync_status.total_count == 0:
             # Determine status indicator
-            if status.git.current_branch is None:
+            if status.git.current_branch is None or has_lifecycle_attention:
                 status_indicator = "⚠️"  # Warning for detached HEAD even when clean
             else:
                 status_indicator = "✓"   # All good
@@ -1132,6 +1133,9 @@ class EnvironmentCommands:
 
             print("\n✓ No workflows")
             print("✓ No uncommitted changes")
+            self._show_lifecycle_attention(lifecycle_status)
+            if status.git.current_branch is not None:
+                self._show_smart_suggestions(status, lifecycle_status)
 
             # Show legacy manager notice even in clean state
             self._show_legacy_manager_notice(env)
@@ -1282,8 +1286,9 @@ class EnvironmentCommands:
                 else:
                     print("  • Configuration updated")
 
+        self._show_lifecycle_attention(lifecycle_status)
+
         # Suggested actions - smart and contextual
-        lifecycle_status = env.get_lifecycle_status(status=status)
         self._show_smart_suggestions(status, lifecycle_status)
 
         # Show legacy manager notice if applicable
@@ -1371,6 +1376,46 @@ class EnvironmentCommands:
             for s in suggestions:
                 print(f"  {s}")
 
+    def _show_lifecycle_attention(
+        self,
+        lifecycle_status: EnvironmentLifecycleStatus,
+    ) -> None:
+        """Show lifecycle issues not already rendered by legacy status sections."""
+        rendered_issue_ids = {
+            "detached_head",
+            "uncommitted_changes",
+            "dependencies_not_synced",
+            "missing_declared_nodes",
+            "untracked_node_folder",
+            "node_version_mismatch",
+            "disabled_node",
+            "workflow_changes",
+            "workflow_download_intents",
+            "workflow_unresolved_nodes",
+            "workflow_uninstalled_nodes",
+            "workflow_version_gated_nodes",
+            "workflow_uninstallable_nodes",
+            "missing_required_models",
+            "missing_model_source",
+            "model_path_mismatch",
+            "model_category_mismatch",
+        }
+        issues = [
+            issue
+            for issue in lifecycle_status.issues
+            if issue.id not in rendered_issue_ids
+        ]
+        if not issues:
+            return
+
+        print("\n⚠️  Environment needs attention:")
+        for issue in issues:
+            resources = ", ".join(issue.affected_resources)
+            if resources:
+                print(f"  • {issue.message.rstrip('.')}: {resources}")
+            else:
+                print(f"  • {issue.message}")
+
     def _format_lifecycle_suggestions(
         self,
         status: EnvironmentStatus,
@@ -1423,6 +1468,31 @@ class EnvironmentCommands:
                     suggestions.append(f"  ... and {len(dev_nodes) - 3} more")
             return suggestions
 
+        if action_id == "restore_or_relink_dev_node":
+            missing_dev_nodes = list(status.comparison.dev_nodes_missing)
+            if len(missing_dev_nodes) == 1:
+                node_name = missing_dev_nodes[0]
+                return [
+                    f"Restore checkout: ComfyUI/custom_nodes/{node_name}",
+                    f"Or untrack it: cg node remove {node_name} --dev --untrack",
+                ]
+            if missing_dev_nodes:
+                suggestions.append("Restore missing development checkouts:")
+                for node_name in missing_dev_nodes[:3]:
+                    suggestions.append(f"  ComfyUI/custom_nodes/{node_name}")
+                if len(missing_dev_nodes) > 3:
+                    suggestions.append(f"  ... and {len(missing_dev_nodes) - 3} more")
+                suggestions.append("Or untrack stale dev nodes: cg node remove <name> --dev --untrack")
+                return suggestions
+            return ["Restore missing development checkout or untrack it"]
+
+        if action_id == "review_workflow_changes":
+            if status.workflow.sync_status.has_changes:
+                if status.workflow.is_commit_safe:
+                    return ["Review workflow changes, then commit: cg commit -m \"<message>\""]
+                return self._workflow_issue_suggestions(status, allow_commit_anyway=True)
+            return ["Review workflow changes before committing"]
+
         if action_id == "resolve_workflow_nodes":
             return self._workflow_issue_suggestions(status, allow_commit_anyway=True)
 
@@ -1449,6 +1519,21 @@ class EnvironmentCommands:
             return ["Download missing models: cg repair"]
 
         if action_id == "add_model_source":
+            model_source_workflows = self._workflows_with_unresolved_models(status)
+            if len(model_source_workflows) == 1:
+                return [
+                    "Add or select model source: "
+                    f"cg workflow resolve \"{model_source_workflows[0]}\""
+                ]
+            if model_source_workflows:
+                suggestions.append("Add or select model sources (pick one):")
+                suggestions.extend(
+                    f"  cg workflow resolve \"{name}\""
+                    for name in model_source_workflows[:3]
+                )
+                if len(model_source_workflows) > 3:
+                    suggestions.append(f"  ... and {len(model_source_workflows) - 3} more")
+                return suggestions
             followups = self._workflow_resolution_followups(status, prefix="Resolve")
             if followups:
                 return followups
@@ -1535,6 +1620,18 @@ class EnvironmentCommands:
                 if model.match_type == "download_intent"
             ]
             if download_intents:
+                workflows.append(workflow.name)
+        return workflows
+
+    def _workflows_with_unresolved_models(self, status: EnvironmentStatus) -> list[str]:
+        workflows = []
+        for workflow in status.workflow.analyzed_workflows:
+            resolution = workflow.resolution
+            unresolved = getattr(resolution, "models_unresolved", ())
+            ambiguous = getattr(resolution, "models_ambiguous", ())
+            has_unresolved = isinstance(unresolved, list | tuple) and bool(unresolved)
+            has_ambiguous = isinstance(ambiguous, list | tuple) and bool(ambiguous)
+            if has_unresolved or has_ambiguous:
                 workflows.append(workflow.name)
         return workflows
 

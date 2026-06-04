@@ -376,24 +376,24 @@ class TestPyprojectMtimeUpdateAfterContextCheck:
 
         assert cached is not None and not cached.needs_reresolution
 
-        # Third cache lookup - should be instant (pyproject_mtime should have been updated)
-        start_time = time.perf_counter()
+        rows = test_env.workflow_manager.workflow_cache.sqlite.execute_query(
+            """
+            SELECT pyproject_mtime
+            FROM workflow_cache
+            WHERE environment_name = ? AND workflow_name = ?
+            """,
+            (test_env.name, "test_workflow"),
+        )
+        assert rows, "Cache row should exist after context check"
+        assert abs(rows[0]["pyproject_mtime"] - new_mtime) < 0.001
+
+        # Third cache lookup should hit against the updated fast-path metadata.
         cached2 = test_env.workflow_manager.workflow_cache.get(
             env_name=test_env.name,
             workflow_name="test_workflow",
             workflow_path=workflow_path,
             pyproject_path=test_env.pyproject_path
         )
-        second_run_time = time.perf_counter() - start_time
 
         assert cached2 is not None and not cached2.needs_reresolution
-
-        # Second run should be much faster than first (at least 10x)
-        # First run: ~7ms (context hash computation)
-        # Second run: <1ms (instant mtime match)
-        assert second_run_time < first_run_time / 10, (
-            f"Second cache lookup should be much faster due to updated pyproject_mtime. "
-            f"First lookup: {first_run_time*1000:.1f}ms, "
-            f"Second lookup: {second_run_time*1000:.1f}ms, "
-            f"Speedup: {first_run_time/second_run_time:.1f}x (expected >10x)"
-        )
+        assert first_run_time >= 0

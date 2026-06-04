@@ -5,15 +5,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from comfygit_cli.env_commands import EnvironmentCommands
 from comfygit_core.models import (
+    DetailedWorkflowStatus,
     EnvironmentComparison,
     EnvironmentLifecycleStatus,
     EnvironmentStatus,
     GitStatus,
     LifecycleAction,
     LifecycleActionID,
+    LifecycleIssue,
     WorkflowSyncStatus,
 )
-from comfygit_core.models.workflow import DetailedWorkflowStatus
 
 
 @pytest.fixture
@@ -42,6 +43,24 @@ def _lifecycle(action_id: str) -> EnvironmentLifecycleStatus:
             ),
         ),
         primary_action_id=typed_action_id,
+    )
+
+
+def _lifecycle_with_issue(action_id: str, issue_id: str) -> EnvironmentLifecycleStatus:
+    lifecycle = _lifecycle(action_id)
+    return EnvironmentLifecycleStatus(
+        issues=(
+            LifecycleIssue(
+                id=issue_id,
+                layer="filesystem",
+                severity="warning",
+                message="Development nodes declared by the manifest are missing locally.",
+                affected_resources=("dev-node",),
+                action_ids=(lifecycle.primary_action_id,),
+            ),
+        ),
+        actions=lifecycle.actions,
+        primary_action_id=lifecycle.primary_action_id,
     )
 
 
@@ -78,6 +97,48 @@ def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys)
     # Should suggest workflow resolve (not repair first)
     assert 'workflow resolve "default"' in output
     assert 'cg repair' not in output
+
+
+def test_unresolved_workflow_model_suggestion_names_model_source_action(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = MagicMock()
+    status.missing_models = []
+    status.comparison.missing_nodes = []
+    status.comparison.extra_nodes = []
+    status.comparison.is_synced = True
+    status.git.has_changes = False
+
+    workflow = MagicMock(name="demo")
+    workflow.name = "demo"
+    workflow.resolution.models_unresolved = [MagicMock()]
+    workflow.resolution.models_ambiguous = []
+    status.workflow.analyzed_workflows = [workflow]
+    status.workflow.workflows_with_issues = [workflow]
+
+    with patch.object(env_commands, '_get_env', return_value=mock_env):
+        env_commands._show_smart_suggestions(status, _lifecycle("add_model_source"))
+
+    output = capsys.readouterr().out
+    assert 'Add or select model source: cg workflow resolve "demo"' in output
+
+
+def test_review_workflow_changes_suggests_commit_when_safe(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = MagicMock()
+    status.workflow.sync_status.has_changes = True
+    status.workflow.is_commit_safe = True
+
+    with patch.object(env_commands, '_get_env', return_value=mock_env):
+        env_commands._show_smart_suggestions(status, _lifecycle("review_workflow_changes"))
+
+    output = capsys.readouterr().out
+    assert 'Review workflow changes, then commit: cg commit -m "<message>"' in output
 
 
 def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
@@ -185,3 +246,57 @@ def test_status_command_uses_environment_lifecycle_facade(env_commands, mock_env
     mock_env.get_lifecycle_status.assert_called_once_with(status=status)
     output = capsys.readouterr().out
     assert "Install missing nodes: cg repair" in output
+
+
+def test_status_command_shows_lifecycle_suggestion_when_legacy_status_is_clean(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(dev_nodes_untracked=["dev-node"]),
+        git=GitStatus(has_changes=False, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    lifecycle = _lifecycle("track_dev_node")
+    mock_env.status.return_value = status
+    mock_env.get_lifecycle_status.return_value = lifecycle
+    mock_env.get_manager_status.side_effect = RuntimeError("ignore manager notice")
+
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.status(MagicMock(verbose=False))
+
+    output = capsys.readouterr().out
+    assert "Environment: test-env (on main) ⚠️" in output
+    assert "✓ No workflows" in output
+    assert "Track development node: cg node add dev-node --dev" in output
+
+
+def test_status_command_shows_unrendered_lifecycle_issue_details(
+    env_commands,
+    mock_env,
+    capsys,
+):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(dev_nodes_missing=["dev-node"]),
+        git=GitStatus(has_changes=False, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    lifecycle = _lifecycle_with_issue(
+        "restore_or_relink_dev_node",
+        "missing_development_nodes",
+    )
+    mock_env.status.return_value = status
+    mock_env.get_lifecycle_status.return_value = lifecycle
+    mock_env.get_manager_status.side_effect = RuntimeError("ignore manager notice")
+
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.status(MagicMock(verbose=False))
+
+    output = capsys.readouterr().out
+    assert "Environment needs attention" in output
+    assert "Development nodes declared by the manifest are missing locally: dev-node" in output
+    assert "Restore checkout: ComfyUI/custom_nodes/dev-node" in output
+    assert "Or untrack it: cg node remove dev-node --dev --untrack" in output

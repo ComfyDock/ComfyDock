@@ -18,6 +18,7 @@ from comfygit_core.models import (
     LifecycleOperationState,
     LifecycleRuntimeState,
     LifecycleSeverity,
+    MissingModelInfo,
 )
 
 
@@ -236,9 +237,9 @@ def _collect_materialization_issues(
             message="Development nodes declared by the manifest are missing locally.",
             affected_resources=comparison.dev_nodes_missing,
             source="EnvironmentComparison.dev_nodes_missing",
-            action_ids=("repair_environment",),
+            action_ids=("restore_or_relink_dev_node",),
         )
-        builder.add_action("repair_environment", issue_ids=("missing_development_nodes",))
+        builder.add_action("restore_or_relink_dev_node", issue_ids=("missing_development_nodes",))
 
     if comparison.version_mismatches:
         resources = [
@@ -302,18 +303,7 @@ def _collect_workflow_issues(
 ) -> None:
     workflow_status = status.workflow
     sync_status = workflow_status.sync_status
-    if sync_status.has_changes:
-        changed = tuple(sync_status.new + sync_status.modified + sync_status.deleted)
-        builder.add_issue(
-            id="workflow_changes",
-            layer="manifest",
-            severity="warning",
-            message="Workflow files differ between ComfyUI and the tracked environment.",
-            affected_resources=changed,
-            source="WorkflowSyncStatus.has_changes",
-            action_ids=("sync_environment",),
-        )
-        builder.add_action("sync_environment", issue_ids=("workflow_changes",))
+    required_missing_by_workflow = _required_missing_models_by_workflow(status)
 
     unresolved_node_workflows: list[str] = []
     uninstalled_node_workflows: list[str] = []
@@ -338,7 +328,9 @@ def _collect_workflow_issues(
         if resolution.nodes_uninstallable:
             uninstallable_workflows.append(workflow.name)
         if resolution.models_unresolved or resolution.models_ambiguous:
-            unresolved_model_workflows.append(workflow.name)
+            required_missing = required_missing_by_workflow.get(workflow.name, ())
+            if not required_missing or not all(model.can_download for model in required_missing):
+                unresolved_model_workflows.append(workflow.name)
         if workflow.has_path_sync_issues:
             path_sync_workflows.append(workflow.name)
         if workflow.has_category_mismatch_issues:
@@ -447,6 +439,34 @@ def _collect_workflow_issues(
             action_ids=("download_required_models",),
         )
         builder.add_action("download_required_models", issue_ids=("workflow_download_intents",))
+
+    if sync_status.has_changes:
+        changed = tuple(sync_status.new + sync_status.modified + sync_status.deleted)
+        builder.add_issue(
+            id="workflow_changes",
+            layer="manifest",
+            severity="warning",
+            message="Workflow files differ between ComfyUI and the tracked environment.",
+            affected_resources=changed,
+            source="WorkflowSyncStatus.has_changes",
+            action_ids=("review_workflow_changes",),
+        )
+        builder.add_action("review_workflow_changes", issue_ids=("workflow_changes",))
+
+
+def _required_missing_models_by_workflow(
+    status: EnvironmentStatus,
+) -> dict[str, tuple[MissingModelInfo, ...]]:
+    by_workflow: dict[str, list[MissingModelInfo]] = {}
+    for model in status.missing_models:
+        if not model.is_required:
+            continue
+        for workflow_name in model.workflow_names:
+            by_workflow.setdefault(workflow_name, []).append(model)
+    return {
+        workflow_name: tuple(models)
+        for workflow_name, models in by_workflow.items()
+    }
 
 
 def _collect_missing_model_issues(
@@ -683,6 +703,20 @@ _ACTION_DEFINITIONS: dict[
         "filesystem",
         ("filesystem",),
         {"confirmation_required": True, "destructive": True, "restart_required": True},
+    ),
+    "restore_or_relink_dev_node": (
+        "Restore development node",
+        "Restore or untrack a missing local development node checkout.",
+        "filesystem",
+        ("filesystem", "manifest"),
+        {"confirmation_required": True, "restart_required": True},
+    ),
+    "review_workflow_changes": (
+        "Review workflow changes",
+        "Review ComfyUI workflow file changes before snapshotting them.",
+        "manifest",
+        ("manifest", "snapshot"),
+        {},
     ),
     "resolve_workflow_nodes": (
         "Resolve workflow nodes",

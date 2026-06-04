@@ -11,8 +11,8 @@ from comfygit_core.models import (
 )
 from comfygit_core.models.workflow import (
     DetailedWorkflowStatus,
-    ResolvedModel,
     ResolutionResult,
+    ResolvedModel,
     WorkflowAnalysisStatus,
     WorkflowDependencies,
     WorkflowNode,
@@ -84,6 +84,17 @@ def test_untracked_node_folder_recommends_review_not_blind_repair():
     assert lifecycle.actions[0].confirmation_required is True
 
 
+def test_missing_development_node_recommends_restore_or_untrack_not_repair():
+    status = _status(
+        comparison=EnvironmentComparison(dev_nodes_missing=["dev-node"]),
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(status)
+
+    assert lifecycle.primary_action_id == "restore_or_relink_dev_node"
+    assert lifecycle.issues[0].id == "missing_development_nodes"
+
+
 def test_workflow_unresolved_nodes_recommend_resolution():
     workflow_status = DetailedWorkflowStatus(
         sync_status=WorkflowSyncStatus(),
@@ -111,6 +122,56 @@ def test_workflow_unresolved_nodes_recommend_resolution():
     assert lifecycle.issues[0].affected_resources == ("demo",)
 
 
+def test_new_workflow_with_unresolved_nodes_recommends_resolution_before_sync():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(new=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="new",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(
+                    workflow_name="demo",
+                    nodes_unresolved=[
+                        WorkflowNode(id="1", type="MissingNode")
+                    ],
+                ),
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "resolve_workflow_nodes"
+    assert [action.id for action in lifecycle.actions][:2] == [
+        "resolve_workflow_nodes",
+        "review_workflow_changes",
+    ]
+
+
+def test_workflow_changes_without_dependency_issues_recommend_review():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(new=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="new",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "review_workflow_changes"
+    assert lifecycle.issues[0].id == "workflow_changes"
+
+
 def test_missing_downloadable_model_recommends_download():
     missing = MissingModelInfo(
         model=ManifestModel(
@@ -133,6 +194,50 @@ def test_missing_downloadable_model_recommends_download():
     assert lifecycle.primary_action_id == "download_required_models"
     assert lifecycle.issues[0].id == "missing_required_models"
     assert lifecycle.issues[0].blocking is True
+
+
+def test_downloadable_required_model_outranks_generic_workflow_model_source_issue():
+    missing = MissingModelInfo(
+        model=ManifestModel(
+            hash="abc123",
+            filename="model.safetensors",
+            size=1,
+            relative_path="checkpoints/model.safetensors",
+            category="checkpoints",
+            sources=["https://example.com/model.safetensors"],
+        ),
+        workflow_names=["demo"],
+        criticality="required",
+        can_download=True,
+    )
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(synced=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="synced",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(
+                    workflow_name="demo",
+                    models_unresolved=[
+                        WorkflowNodeWidgetRef(
+                            node_id="1",
+                            node_type="CheckpointLoaderSimple",
+                            widget_index=0,
+                            widget_value="model.safetensors",
+                        )
+                    ],
+                ),
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status, missing_models=[missing])
+    )
+
+    assert lifecycle.primary_action_id == "download_required_models"
+    assert [issue.id for issue in lifecycle.issues] == ["missing_required_models"]
 
 
 def test_missing_model_without_source_recommends_source_selection():

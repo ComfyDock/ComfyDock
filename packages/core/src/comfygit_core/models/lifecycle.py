@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 LifecycleLayer = Literal[
@@ -57,6 +57,8 @@ LifecycleActionID = Literal[
     "review_untracked_node",
     "track_dev_node",
     "remove_untracked_node",
+    "restore_or_relink_dev_node",
+    "review_workflow_changes",
     "resolve_workflow_nodes",
     "sync_model_paths",
     "download_required_models",
@@ -92,6 +94,8 @@ LIFECYCLE_ACTION_IDS: tuple[str, ...] = (
     "review_untracked_node",
     "track_dev_node",
     "remove_untracked_node",
+    "restore_or_relink_dev_node",
+    "review_workflow_changes",
     "resolve_workflow_nodes",
     "sync_model_paths",
     "download_required_models",
