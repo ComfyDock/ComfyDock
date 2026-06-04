@@ -300,6 +300,7 @@ different labels without changing behavior. Initial action IDs should include:
 - `push_snapshot`
 - `export_environment`
 - `deploy_environment`
+- `fix_build_readiness`
 - `view_operation_logs`
 
 Adapters should prefer these IDs over parsing display strings.

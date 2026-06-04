@@ -92,6 +92,8 @@ _EXPORTS: dict[str, str] = {
     "LifecycleLayer": "lifecycle",
     "LifecycleLayerStatus": "lifecycle",
     "LifecycleLayerSummary": "lifecycle",
+    "LifecycleOperationState": "lifecycle",
+    "LifecycleRuntimeState": "lifecycle",
     "LifecycleSeverity": "lifecycle",
     "MaterializeOptions": "materialization",
     "MaterializeResult": "materialization",

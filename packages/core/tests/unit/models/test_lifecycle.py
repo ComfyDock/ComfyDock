@@ -5,6 +5,8 @@ from comfygit_core.models import (
     LifecycleAction,
     LifecycleIssue,
     LifecycleLayerSummary,
+    LifecycleOperationState,
+    LifecycleRuntimeState,
 )
 
 
@@ -128,3 +130,32 @@ def test_lifecycle_layer_summary_distinguishes_ok_attention_and_blocked():
         blocking=True,
     )
     assert LifecycleLayerSummary.from_issues("manifest", (blocker,)).status == "blocked"
+
+
+def test_runtime_and_operation_inputs_serialize_for_adapter_edges():
+    runtime = LifecycleRuntimeState(
+        comfyui_reachable=False,
+        restart_required=True,
+        import_errors=("ImportError: missing dependency",),
+        message="ComfyUI is not ready.",
+    )
+    operation = LifecycleOperationState(
+        active=True,
+        name="sync",
+        message="Installing custom nodes",
+        log_reference="sync-123",
+    )
+
+    assert runtime.to_dict() == {
+        "comfyui_reachable": False,
+        "restart_required": True,
+        "import_errors": ["ImportError: missing dependency"],
+        "message": "ComfyUI is not ready.",
+    }
+    assert operation.to_dict() == {
+        "active": True,
+        "failed": False,
+        "name": "sync",
+        "message": "Installing custom nodes",
+        "log_reference": "sync-123",
+    }

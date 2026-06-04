@@ -22,6 +22,7 @@ LifecycleIssueID = Literal[
     "operation_in_progress",
     "detached_head",
     "uncommitted_changes",
+    "dependencies_not_synced",
     "missing_declared_nodes",
     "missing_development_nodes",
     "untracked_node_folder",
@@ -29,6 +30,7 @@ LifecycleIssueID = Literal[
     "node_version_mismatch",
     "disabled_node",
     "workflow_changes",
+    "workflow_download_intents",
     "workflow_unresolved_nodes",
     "workflow_uninstalled_nodes",
     "workflow_version_gated_nodes",
@@ -67,6 +69,7 @@ LifecycleActionID = Literal[
     "push_snapshot",
     "export_environment",
     "deploy_environment",
+    "fix_build_readiness",
     "view_operation_logs",
 ]
 
@@ -101,6 +104,7 @@ LIFECYCLE_ACTION_IDS: tuple[str, ...] = (
     "push_snapshot",
     "export_environment",
     "deploy_environment",
+    "fix_build_readiness",
     "view_operation_logs",
 )
 
@@ -109,6 +113,7 @@ LIFECYCLE_ISSUE_IDS: tuple[str, ...] = (
     "operation_in_progress",
     "detached_head",
     "uncommitted_changes",
+    "dependencies_not_synced",
     "missing_declared_nodes",
     "missing_development_nodes",
     "untracked_node_folder",
@@ -116,6 +121,7 @@ LIFECYCLE_ISSUE_IDS: tuple[str, ...] = (
     "node_version_mismatch",
     "disabled_node",
     "workflow_changes",
+    "workflow_download_intents",
     "workflow_unresolved_nodes",
     "workflow_uninstalled_nodes",
     "workflow_version_gated_nodes",
@@ -234,6 +240,44 @@ class LifecycleLayerSummary:
             "message": self.message,
             "issue_count": self.issue_count,
             "blocking_count": self.blocking_count,
+        }
+
+
+@dataclass(frozen=True)
+class LifecycleRuntimeState:
+    """Runtime state supplied by adapters that supervise or observe ComfyUI."""
+
+    comfyui_reachable: bool | None = None
+    restart_required: bool = False
+    import_errors: tuple[str, ...] = ()
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "comfyui_reachable": self.comfyui_reachable,
+            "restart_required": self.restart_required,
+            "import_errors": list(self.import_errors),
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class LifecycleOperationState:
+    """Current or recent mutation state supplied by CLI or Manager."""
+
+    active: bool = False
+    failed: bool = False
+    name: str | None = None
+    message: str | None = None
+    log_reference: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "active": self.active,
+            "failed": self.failed,
+            "name": self.name,
+            "message": self.message,
+            "log_reference": self.log_reference,
         }
 
 

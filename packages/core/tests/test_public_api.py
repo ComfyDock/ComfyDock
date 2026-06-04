@@ -144,6 +144,8 @@ def test_common_adapter_types_are_public():
         LifecycleAction,
         LifecycleIssue,
         LifecycleLayerSummary,
+        LifecycleOperationState,
+        LifecycleRuntimeState,
         ModelIndexSource,
         ModelIndexStats,
         ModelLocation,
@@ -210,6 +212,8 @@ def test_common_adapter_types_are_public():
     assert LifecycleAction.__name__ == "LifecycleAction"
     assert LifecycleIssue.__name__ == "LifecycleIssue"
     assert LifecycleLayerSummary.__name__ == "LifecycleLayerSummary"
+    assert LifecycleOperationState.__name__ == "LifecycleOperationState"
+    assert LifecycleRuntimeState.__name__ == "LifecycleRuntimeState"
     assert ModelIndexSource.__name__ == "ModelIndexSource"
     assert ModelIndexStats.__name__ == "ModelIndexStats"
     assert ModelLocation.__name__ == "ModelLocation"
