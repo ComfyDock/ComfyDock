@@ -260,7 +260,8 @@ Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
 | --- | --- | --- | --- | --- |
-| Workflow is new/modified/deleted in ComfyUI working files | workflow sync status | `review_workflow_changes` / "Review workflow changes" | commit once healthy, discard/restore | Workflow file changes are not the same as environment materialization drift. |
+| New workflow exists only in ComfyUI working files | workflow sync status `new` only | `commit_snapshot` / "Commit snapshot" | view details, resolve workflow dependencies first if needed | A new workflow is desired work waiting to be captured, not generic manifest damage. |
+| Tracked workflow is modified/deleted, or workflow changes are mixed | workflow sync status `modified`/`deleted`/mixed | `review_workflow_changes` / "Review workflow changes" | commit once healthy, discard/restore | Existing tracked workflow edits deserve review before snapshotting because they can overwrite or remove tracked state. |
 | Workflow has unresolved custom-node packages | workflow analysis | `resolve_workflow_nodes` / "Resolve workflow packages" | install package, mark optional, map manually | This may mutate manifest and then require sync/restart. |
 | Workflow has uninstalled packages that are already tracked | workflow analysis `uninstalled_nodes` | `sync_missing_nodes` / "Install tracked packages" | inspect package list | This is materialization drift, not unknown workflow resolution. |
 | Workflow has version-gated built-in nodes | workflow analysis `nodes_version_gated` | `upgrade_comfyui_or_change_workflow` / "Update ComfyUI or workflow" | show minimum version guidance | This should not be presented as a normal custom-node install. |

@@ -147,17 +147,40 @@ def test_new_workflow_with_unresolved_nodes_recommends_resolution_before_sync():
     assert lifecycle.primary_action_id == "resolve_workflow_nodes"
     assert [action.id for action in lifecycle.actions][:2] == [
         "resolve_workflow_nodes",
-        "review_workflow_changes",
+        "commit_snapshot",
     ]
 
 
-def test_workflow_changes_without_dependency_issues_recommend_review():
+def test_new_workflow_without_dependency_issues_recommends_commit_snapshot():
     workflow_status = DetailedWorkflowStatus(
         sync_status=WorkflowSyncStatus(new=["demo"]),
         analyzed_workflows=[
             WorkflowAnalysisStatus(
                 name="demo",
                 sync_state="new",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "commit_snapshot"
+    assert lifecycle.issues[0].id == "new_workflow_added"
+    assert lifecycle.issues[0].layer == "snapshot"
+    assert lifecycle.issues[0].affected_resources == ("demo",)
+
+
+def test_modified_workflow_without_dependency_issues_recommends_review():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(modified=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="modified",
                 dependencies=WorkflowDependencies(workflow_name="demo"),
                 resolution=ResolutionResult(workflow_name="demo"),
             )

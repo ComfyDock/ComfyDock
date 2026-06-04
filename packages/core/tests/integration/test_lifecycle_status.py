@@ -95,6 +95,19 @@ def test_lifecycle_status_reports_uncommitted_manifest_changes_after_health_is_c
     assert lifecycle.layer("snapshot").status == "attention"
 
 
+def test_lifecycle_status_recommends_commit_snapshot_for_new_workflow(test_env):
+    workflows_dir = test_env.comfyui_path / "user" / "default" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    (workflows_dir / "txt2img_basic.json").write_text("{}", encoding="utf-8")
+
+    lifecycle = test_env.get_lifecycle_status()
+
+    assert lifecycle.primary_action_id == "commit_snapshot"
+    assert "new_workflow_added" in _issue_ids(lifecycle)
+    assert "commit_snapshot" in _action_ids(lifecycle)
+    assert lifecycle.layer("snapshot").status == "attention"
+
+
 def test_lifecycle_status_recommends_sync_before_commit_for_dependency_changes(
     test_env, monkeypatch
 ):

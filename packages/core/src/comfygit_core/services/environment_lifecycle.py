@@ -441,6 +441,36 @@ def _collect_workflow_issues(
         builder.add_action("download_required_models", issue_ids=("workflow_download_intents",))
 
     if sync_status.has_changes:
+        if sync_status.new and not sync_status.modified and not sync_status.deleted:
+            message = (
+                "New workflow saved in ComfyUI and not yet captured in the "
+                "environment snapshot."
+                if len(sync_status.new) == 1
+                else "New workflows saved in ComfyUI and not yet captured in the "
+                "environment snapshot."
+            )
+            enabled = not builder.has_blocking_issues
+            builder.add_issue(
+                id="new_workflow_added",
+                layer="snapshot",
+                severity="warning",
+                message=message,
+                affected_resources=sync_status.new,
+                source="WorkflowSyncStatus.new",
+                action_ids=("commit_snapshot",),
+            )
+            builder.add_action(
+                "commit_snapshot",
+                issue_ids=("new_workflow_added",),
+                enabled=enabled,
+                disabled_reason=(
+                    None
+                    if enabled
+                    else "Resolve blocking lifecycle issues before committing."
+                ),
+            )
+            return
+
         changed = tuple(sync_status.new + sync_status.modified + sync_status.deleted)
         builder.add_issue(
             id="workflow_changes",
@@ -771,7 +801,7 @@ _ACTION_DEFINITIONS: dict[
         "Commit snapshot",
         "Commit the current desired environment state.",
         "snapshot",
-        ("snapshot",),
+        ("manifest", "snapshot"),
         {},
     ),
     "create_branch": (
