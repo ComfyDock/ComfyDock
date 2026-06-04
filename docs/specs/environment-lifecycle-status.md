@@ -255,7 +255,7 @@ Validation: MIXED
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
 | --- | --- | --- | --- | --- |
 | Node install/update/remove completed while ComfyUI is running | operation result or Manager queue | `restart_comfyui` / "Restart ComfyUI to load changes" | continue editing, view logs | Do not label this "Apply Changes" unless apply means restart in context. |
-| Runtime custom-node import failure after restart | Manager runtime import report today | `view_import_error` / "View import error" | run sync/repair, reinstall node, open logs | Core status does not currently own runtime import failures. |
+| Runtime custom-node import failure after restart | Manager runtime import report today | `view_import_error` / "View import error" | run sync/repair, reinstall node, open logs | This is runtime health and should not block commit/export/source-state actions by itself. |
 | ComfyUI process is not reachable | runtime readiness probe | `start_or_restart_comfyui` / "Start ComfyUI" | view supervisor logs | Endpoint readiness is runtime state, not manifest state. |
 | Environment switch/restart is in progress | switch observer/operation state | `wait_or_view_logs` / "View progress" | cancel if supported | Avoid showing commit/sync/deploy as the primary CTA during active switching. |
 | Runtime is stale relative to materialized state | operation result or runtime generation marker future | `restart_comfyui` / "Restart ComfyUI" | show changed resources | Current implementation has restart-required flags in some operation flows only. |

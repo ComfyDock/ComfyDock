@@ -172,6 +172,25 @@ def test_runtime_restart_outranks_commit_when_supplied_by_adapter():
     ]
 
 
+def test_runtime_import_failures_warn_without_blocking_commit():
+    status = _status(git=GitStatus(has_changes=True, current_branch="main"))
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        status,
+        runtime_state=LifecycleRuntimeState(import_errors=("ComfyUI-Impact-Pack",)),
+    )
+
+    assert [issue.id for issue in lifecycle.issues] == [
+        "runtime_import_failure",
+        "uncommitted_changes",
+    ]
+    assert lifecycle.issues[0].severity == "warning"
+    assert lifecycle.issues[0].blocking is False
+
+    commit = next(action for action in lifecycle.actions if action.id == "commit_snapshot")
+    assert commit.enabled is True
+
+
 def test_active_operation_outranks_everything_else():
     status = _status(
         comparison=EnvironmentComparison(missing_nodes=["ComfyUI-Impact-Pack"]),

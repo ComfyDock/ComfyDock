@@ -488,9 +488,8 @@ def _collect_runtime_issues(
         builder.add_issue(
             id="runtime_import_failure",
             layer="runtime",
-            severity="error",
+            severity="warning",
             message="ComfyUI reported custom-node import failures.",
-            blocking=True,
             affected_resources=runtime_state.import_errors,
             source="LifecycleRuntimeState.import_errors",
             action_ids=("view_runtime_import_error",),
