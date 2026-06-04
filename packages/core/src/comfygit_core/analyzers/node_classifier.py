@@ -6,11 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import tomllib
-
 from ..configs.comfyui_builtin_nodes import COMFYUI_BUILTIN_NODES
 from ..logging.logging_config import get_logger
 from ..models.comfyui_builtin_versions import BuiltinVersionGateInfo
+from ..utils.toml_compat import tomllib
 
 if TYPE_CHECKING:
     from ..configs.model_config import ModelConfig

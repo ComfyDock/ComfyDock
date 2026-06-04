@@ -5,12 +5,12 @@ import subprocess
 from pathlib import Path
 
 import tomlkit
-import tomllib
 from packaging.utils import canonicalize_name
 from tomlkit.exceptions import TOMLKitError
 
 from ..logging.logging_config import get_logger
 from ..models.overlay import OverlayConfig, OverlayInfo
+from ..utils.toml_compat import tomllib
 from .pytorch_backend_manager import PyTorchBackendManager
 
 logger = get_logger(__name__)

@@ -1716,7 +1716,7 @@ class NodeManager:
 
         # Update version from node's pyproject.toml
         try:
-            import tomllib
+            from ..utils.toml_compat import tomllib
             node_pyproject = node_path / "pyproject.toml"
             if node_pyproject.exists():
                 with open(node_pyproject, "rb") as f:

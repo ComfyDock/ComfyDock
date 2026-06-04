@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlparse
 
-import tomllib
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
@@ -30,6 +29,7 @@ from ..models.manifest import (
     ManifestWorkflowModel,
 )
 from ..models.shared import NodeInfo
+from ..utils.toml_compat import tomllib
 
 BLOCKED_BUILD_STATUSES = {
     "blocked_missing_source",

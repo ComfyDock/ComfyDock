@@ -261,12 +261,12 @@ class TestWorkflowExecutionContractLoading:
         }
 
     def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
-        import tomllib
         from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
             WorkflowExecutionContract,
         )
+        from comfygit_core.utils.toml_compat import tomllib
 
         manager = PyprojectManager(temp_pyproject)
         large_uint64_bound = 18446744073709552000
@@ -309,7 +309,7 @@ class TestWorkflowExecutionContractLoading:
         assert loaded.to_public_schema()["inputs"][0]["max"] == large_uint64_bound
 
     def test_save_sanitizes_existing_raw_contract_numbers_for_uv(self, temp_pyproject):
-        import tomllib
+        from comfygit_core.utils.toml_compat import tomllib
 
         manager = PyprojectManager(temp_pyproject)
         large_uint64_bound = 18446744073709552000

@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from packaging.utils import canonicalize_name
+
+from ..utils.toml_compat import tomllib
 
 ALLOWED_OVERLAY_KINDS = {"pytorch", "shared", "local"}
 ALLOWED_OVERLAY_REQUIRES = {"cuda", "rocm"}

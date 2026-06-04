@@ -689,7 +689,7 @@ class Environment:
                 is_legacy = True
                 # Try to read version from symlink target
                 try:
-                    import tomllib
+                    from ..utils.toml_compat import tomllib
                     target_pyproject = legacy_path / "pyproject.toml"
                     if target_pyproject.exists():
                         with open(target_pyproject, "rb") as f:
@@ -881,9 +881,8 @@ class Environment:
 
     def _register_existing_manager(self, manager_path: Path) -> None:
         """Register existing manager directory in pyproject.toml."""
-        import tomllib
-
         from ..constants import MANAGER_NODE_ID
+        from ..utils.toml_compat import tomllib
 
         # Detect version from manager's pyproject.toml
         version = None
@@ -1506,10 +1505,9 @@ class Environment:
         Returns:
             MergeValidation with is_compatible flag and any conflicts
         """
-        import tomllib
-
         from ..merging.merge_validator import MergeValidator
         from ..utils.git import git_show
+        from ..utils.toml_compat import tomllib
 
         # Load configs from both branches
         pyproject_path = Path("pyproject.toml")
@@ -1546,12 +1544,11 @@ class Environment:
         Returns:
             MergeResult with success status and details
         """
-        import tomllib
-
         from ..merging.atomic_executor import AtomicMergeExecutor
         from ..merging.merge_validator import MergeValidator
         from ..models.merge_plan import MergePlan
         from ..utils.git import git_show
+        from ..utils.toml_compat import tomllib
 
         # Load configs to compute final workflow set
         pyproject_path = Path("pyproject.toml")
