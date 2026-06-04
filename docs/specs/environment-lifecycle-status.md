@@ -12,7 +12,7 @@ single composed lifecycle status in the future.
 
 ## Implementation Dossier
 
-### CGLIFE-PLAN-01 [PLANNED]: Lifecycle status work proceeds as staged, test-gated refactor
+### CGLIFE-PLAN-01 [PARTIAL]: Lifecycle status work proceeds as staged, test-gated refactor
 Validation: MIXED
 
 The lifecycle status implementation should be split into small, reversible
@@ -37,7 +37,7 @@ Each slice should run the focused tests for the touched layer before moving to
 the next slice. Broader CLI smoke validation should run once the CLI consumes
 the lifecycle status facade.
 
-### CGLIFE-PLAN-02 [PLANNED]: Tests should lock behavior at the cheapest reliable layer
+### CGLIFE-PLAN-02 [PARTIAL]: Tests should lock behavior at the cheapest reliable layer
 Validation: TEST
 
 Lifecycle status coverage should prefer a layered test pyramid:
@@ -57,7 +57,7 @@ runtime, provider, download, and browser-dependent states may use fakes or
 adapter-provided runtime inputs when the core decision behavior is already
 covered by unit tests.
 
-### CGLIFE-PLAN-03 [PLANNED]: Adapter wiring is additive before replacement
+### CGLIFE-PLAN-03 [PARTIAL]: Adapter wiring is additive before replacement
 Validation: MIXED
 
 CLI and Manager should first consume lifecycle status as an additive typed
@@ -75,7 +75,7 @@ The migration should keep these boundaries:
 - Adapters use lifecycle action IDs and issue IDs, not parsed prose, to select
   UI affordances.
 
-### CGLIFE-PLAN-04 [PLANNED]: Lifecycle refactoring must not widen the public API accidentally
+### CGLIFE-PLAN-04 [LIVE]: Lifecycle refactoring must not widen the public API accidentally
 Validation: STATIC
 
 The lifecycle status surface should be exported through deliberate public
@@ -89,7 +89,7 @@ modules to change.
 
 ## Layer Model
 
-### CGLIFE-STATUS-01 [PLANNED]: Lifecycle status separates environment layers
+### CGLIFE-STATUS-01 [PARTIAL]: Lifecycle status separates environment layers
 Validation: MIXED
 
 ComfyGit should distinguish these layers when reporting environment health and
@@ -141,7 +141,7 @@ or a shared decision service so adapters can render consistent guidance.
 
 ## Target Object Shape
 
-### CGLIFE-STATUS-03 [PLANNED]: Core exposes a typed composed lifecycle status
+### CGLIFE-STATUS-03 [PARTIAL]: Core exposes a typed composed lifecycle status
 Validation: STATIC
 
 Core should expose a typed, serializable composed status, tentatively named
@@ -189,7 +189,7 @@ on ambiguous phrases such as "applied", "installed", or "repaired".
 
 ## Decision Priority
 
-### CGLIFE-STATUS-05 [PLANNED]: Recommended actions use a stable priority order
+### CGLIFE-STATUS-05 [PARTIAL]: Recommended actions use a stable priority order
 Validation: HUMAN_REVIEW
 
 When multiple states are present, the primary action should prefer the next step
@@ -220,7 +220,7 @@ runtime blockers remain unresolved.
 
 ## Action Matrix
 
-### CGLIFE-STATUS-06 [PLANNED]: Manifest and filesystem node drift has explicit actions
+### CGLIFE-STATUS-06 [PARTIAL]: Manifest and filesystem node drift has explicit actions
 Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
@@ -233,7 +233,7 @@ Validation: MIXED
 | Node exists but is disabled on disk | `comparison.disabled_nodes` | `enable_or_remove_disabled_node` / "Review disabled node" | enable, remove, untrack | Disabled nodes are informational today but can explain runtime missing-node behavior. |
 | Missing and extra dev/git nodes suggest rename | `comparison.potential_dev_rename` | `review_dev_node_rename` / "Review possible rename" | relink, track new checkout, remove stale manifest entry | Avoid treating this as independent missing plus extra drift without context. |
 
-### CGLIFE-STATUS-07 [PLANNED]: Workflow and model states have explicit actions
+### CGLIFE-STATUS-07 [PARTIAL]: Workflow and model states have explicit actions
 Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
@@ -249,7 +249,7 @@ Validation: MIXED
 | Model exists but category/folder is incompatible with loader | workflow analysis category mismatch | `move_or_redownload_model` / "Move model to expected folder" | adjust workflow, add compatible model | This is usually manual filesystem work, not a manifest-only repair. |
 | Download intents are queued or failed | workflow analysis/download state | `complete_model_downloads` / "Complete downloads" | retry failed, edit source | Failed downloads should not be hidden behind "resolution complete". |
 
-### CGLIFE-STATUS-08 [PLANNED]: Runtime states are separate from manifest and filesystem states
+### CGLIFE-STATUS-08 [PARTIAL]: Runtime states are separate from manifest and filesystem states
 Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
@@ -260,7 +260,7 @@ Validation: MIXED
 | Environment switch/restart is in progress | switch observer/operation state | `wait_or_view_logs` / "View progress" | cancel if supported | Avoid showing commit/sync/deploy as the primary CTA during active switching. |
 | Runtime is stale relative to materialized state | operation result or runtime generation marker future | `restart_comfyui` / "Restart ComfyUI" | show changed resources | Current implementation has restart-required flags in some operation flows only. |
 
-### CGLIFE-STATUS-09 [PLANNED]: Snapshot and reproducibility states are separate from local health
+### CGLIFE-STATUS-09 [PARTIAL]: Snapshot and reproducibility states are separate from local health
 Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
@@ -273,7 +273,7 @@ Validation: MIXED
 | Model lacks manifest source proof | readiness warnings | `add_model_source` / "Add model source" | use workspace index source hint, mark optional | SQLite source hints may be repair candidates but should not silently become proof. |
 | Build readiness is blocked | build readiness | `fix_build_readiness` / "Fix build blockers" | view proof details | Build readiness is target/handoff state, not necessarily local runtime failure. |
 
-### CGLIFE-STATUS-10 [PLANNED]: Operation CTAs use action IDs instead of free text
+### CGLIFE-STATUS-10 [LIVE]: Operation CTAs use action IDs instead of free text
 Validation: STATIC
 
 The composed status should use stable action IDs so CLI and Manager can render
