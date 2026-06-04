@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -112,6 +112,7 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+UTC = timezone.utc
 
 
 def _workflow_api_prompt_relpath(workflow_name: str) -> Path:

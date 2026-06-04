@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ SUPERVISOR_INFO_FILE = ".supervisor_control.json"
 SWITCH_STATUS_ROUTE = "/v2/comfygit/switch_status"
 SWITCH_LOGS_ROUTE = "/v2/comfygit/switch_logs"
 SUPERVISOR_HEALTH_ROUTE = "/v2/comfygit/supervisor/health"
+UTC = timezone.utc
 
 
 def metadata_dir_for(workspace_path: Path) -> Path:

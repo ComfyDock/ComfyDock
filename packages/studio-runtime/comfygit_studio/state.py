@@ -12,12 +12,13 @@ import binascii
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 SERVE_STATE_SCHEMA_VERSION = 2
 GALLERY_CURSOR_VERSION = 1
+UTC = timezone.utc
 
 
 def utc_now() -> str:

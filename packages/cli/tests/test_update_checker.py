@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from comfygit_cli.utils import update_checker
+
+UTC = timezone.utc
 
 
 class _Resp:
@@ -68,4 +70,3 @@ def test_update_checker_mark_notified_persists(monkeypatch, tmp_path):
     update_checker.mark_notified("1.2.3", config_dir=tmp_path, now=now)
     state = update_checker.load_state(update_checker.get_cache_path(tmp_path))
     assert state.last_notified_latest_version == "1.2.3"
-

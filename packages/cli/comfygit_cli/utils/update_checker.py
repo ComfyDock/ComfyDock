@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -22,6 +22,7 @@ _PYPY_PROJECT = "comfygit"
 _PYPI_URL = f"https://pypi.org/pypi/{_PYPY_PROJECT}/json"
 _DEFAULT_TIMEOUT_S = 2.0
 _RECHECK_WINDOW = timedelta(hours=24)
+UTC = timezone.utc
 
 
 def _is_truthy_env(value: str | None) -> bool:
