@@ -617,6 +617,7 @@ class Environment:
     def get_lifecycle_status(
         self,
         *,
+        status: EnvironmentStatus | None = None,
         include_readiness: bool = False,
         runtime_state: LifecycleRuntimeState | None = None,
         operation_state: LifecycleOperationState | None = None,
@@ -635,7 +636,7 @@ class Environment:
 
         readiness = self.get_readiness() if include_readiness else None
         return build_lifecycle_status_from_environment_status(
-            self.status(),
+            status or self.status(),
             environment_name=self.name,
             workspace_path=str(self.workspace_paths.root),
             current_commit=git_rev_parse(self.cec_path, "HEAD"),

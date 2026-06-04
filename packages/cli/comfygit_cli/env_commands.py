@@ -33,7 +33,12 @@ from .strategies.interactive import InteractiveModelStrategy, InteractiveNodeStr
 
 if TYPE_CHECKING:
     from comfygit_core import Environment, Workspace
-    from comfygit_core.models import EnvironmentStatus, WorkflowAnalysisStatus
+    from comfygit_core.models import (
+        EnvironmentLifecycleStatus,
+        EnvironmentStatus,
+        LifecycleAction,
+        WorkflowAnalysisStatus,
+    )
 
 from .cli_utils import get_workspace_or_exit
 from .logging.environment_logger import with_env_logging
@@ -1278,7 +1283,8 @@ class EnvironmentCommands:
                     print("  • Configuration updated")
 
         # Suggested actions - smart and contextual
-        self._show_smart_suggestions(status)
+        lifecycle_status = env.get_lifecycle_status(status=status)
+        self._show_smart_suggestions(status, lifecycle_status)
 
         # Show legacy manager notice if applicable
         self._show_legacy_manager_notice(env)
@@ -1353,164 +1359,184 @@ class EnvironmentCommands:
                     else:
                         print(f"        ↳ {model.name}: in {model.actual_category}/, needs {expected}/")
 
-    def _show_smart_suggestions(self, status: EnvironmentStatus) -> None:
-        """Show contextual suggestions based on current state."""
-        suggestions = []
-
-        # Differentiate workflow-related nodes from orphan nodes
-        uninstalled_workflow_nodes = set()
-        for wf in status.workflow.analyzed_workflows:
-            uninstalled_workflow_nodes.update(wf.uninstalled_nodes)
-
-        orphan_missing_nodes = set(status.comparison.missing_nodes) - uninstalled_workflow_nodes
-        has_orphan_nodes = bool(orphan_missing_nodes or status.comparison.extra_nodes)
-
-        # Missing models + environment drift: check if repair needed first
-        if status.missing_models and has_orphan_nodes:
-            suggestions.append("Install missing nodes: cg repair")
-
-            # Group workflows with missing models
-            workflows_with_missing = {}
-            for missing_info in status.missing_models:
-                for wf_name in missing_info.workflow_names:
-                    if wf_name not in workflows_with_missing:
-                        workflows_with_missing[wf_name] = []
-                    workflows_with_missing[wf_name].append(missing_info)
-
-            if len(workflows_with_missing) == 1:
-                wf_name = list(workflows_with_missing.keys())[0]
-                suggestions.append(f"Then resolve workflow: cg workflow resolve \"{wf_name}\"")
-            else:
-                suggestions.append("Then resolve workflow (pick one):")
-                for wf_name in list(workflows_with_missing.keys())[:2]:
-                    suggestions.append(f"  cg workflow resolve \"{wf_name}\"")
-
-            print("\n💡 Next:")
-            for s in suggestions:
-                print(f"  {s}")
-            return
-
-        # Missing models only (no orphan nodes) - workflow resolve handles everything
-        if status.missing_models:
-            workflows_with_missing = {}
-            for missing_info in status.missing_models:
-                for wf_name in missing_info.workflow_names:
-                    if wf_name not in workflows_with_missing:
-                        workflows_with_missing[wf_name] = []
-                    workflows_with_missing[wf_name].append(missing_info)
-
-            if len(workflows_with_missing) == 1:
-                wf_name = list(workflows_with_missing.keys())[0]
-                suggestions.append(f"Resolve workflow: cg workflow resolve \"{wf_name}\"")
-            else:
-                suggestions.append("Resolve workflows with missing models (pick one):")
-                for wf_name in list(workflows_with_missing.keys())[:3]:
-                    suggestions.append(f"  cg workflow resolve \"{wf_name}\"")
-                if len(workflows_with_missing) > 3:
-                    suggestions.append(f"  ... and {len(workflows_with_missing) - 3} more")
-
-            print("\n💡 Next:")
-            for s in suggestions:
-                print(f"  {s}")
-            return
-
-        # Environment drift only (no workflow issues)
-        if not status.comparison.is_synced:
-            # If only extra nodes, suggest tracking them as dev nodes
-            if status.comparison.extra_nodes and not status.comparison.missing_nodes and not status.comparison.version_mismatches and status.comparison.packages_in_sync:
-                if len(status.comparison.extra_nodes) == 1:
-                    node_name = status.comparison.extra_nodes[0]
-                    suggestions.append(f"Track as dev node: cg node add {node_name} --dev")
-                else:
-                    suggestions.append("Track as dev nodes:")
-                    for node_name in status.comparison.extra_nodes[:3]:
-                        suggestions.append(f"  cg node add {node_name} --dev")
-                    if len(status.comparison.extra_nodes) > 3:
-                        suggestions.append(f"  ... and {len(status.comparison.extra_nodes) - 3} more")
-                suggestions.append("Or remove untracked: cg repair")
-            else:
-                suggestions.append("Run: cg repair")
-            print("\n💡 Next:")
-            for s in suggestions:
-                print(f"  {s}")
-            return
-
-        # Category mismatch (blocking - model in wrong directory for loader)
-        workflows_with_category_mismatch = [
-            w for w in status.workflow.analyzed_workflows
-            if w.has_category_mismatch_issues
-        ]
-
-        if workflows_with_category_mismatch:
-            suggestions.append("Models in wrong directory (move files manually):")
-            for wf in workflows_with_category_mismatch[:2]:
-                for m in wf.resolution.models_resolved:
-                    if m.has_category_mismatch:
-                        expected = m.expected_categories[0] if m.expected_categories else "unknown"
-                        suggestions.append(f"  {m.actual_category}/{m.name} → {expected}/")
-
-            print("\n💡 Next:")
-            for s in suggestions:
-                print(f"  {s}")
-            return
-
-        # Path sync warnings (prioritize - quick fix!)
-        workflows_needing_sync = [
-            w for w in status.workflow.analyzed_workflows
-            if w.has_path_sync_issues
-        ]
-
-        if workflows_needing_sync:
-            workflow_names = [w.name for w in workflows_needing_sync]
-            if len(workflow_names) == 1:
-                suggestions.append(f"Sync model paths: cg workflow resolve \"{workflow_names[0]}\"")
-            else:
-                suggestions.append(f"Sync model paths in {len(workflow_names)} workflows: cg workflow resolve \"<name>\"")
-
-        # Check for workflows with download intents
-        workflows_with_downloads = []
-        for wf in status.workflow.analyzed_workflows:
-            download_intents = [m for m in wf.resolution.models_resolved if m.match_type == "download_intent"]
-            if download_intents:
-                workflows_with_downloads.append(wf.name)
-
-        # Workflows with issues (unresolved/ambiguous)
-        workflows_with_issues = [w.name for w in status.workflow.workflows_with_issues]
-        if workflows_with_issues:
-            if len(workflows_with_issues) == 1:
-                suggestions.append(f"Fix issues: cg workflow resolve \"{workflows_with_issues[0]}\"")
-            else:
-                suggestions.append("Fix workflows (pick one):")
-                for wf_name in workflows_with_issues[:3]:
-                    suggestions.append(f"  cg workflow resolve \"{wf_name}\"")
-                if len(workflows_with_issues) > 3:
-                    suggestions.append(f"  ... and {len(workflows_with_issues) - 3} more")
-
-            # Only suggest committing if there are uncommitted changes
-            if status.git.has_changes:
-                suggestions.append("Or commit anyway: cg commit -m \"...\" --allow-issues")
-
-        # Workflows with queued downloads (no other issues)
-        elif workflows_with_downloads:
-            if len(workflows_with_downloads) == 1:
-                suggestions.append(f"Complete downloads: cg workflow resolve \"{workflows_with_downloads[0]}\"")
-            else:
-                suggestions.append("Complete downloads (pick one):")
-                for wf_name in workflows_with_downloads[:3]:
-                    suggestions.append(f"  cg workflow resolve \"{wf_name}\"")
-
-        # Ready to commit (workflow changes OR git changes)
-        elif status.workflow.sync_status.has_changes and status.workflow.is_commit_safe:
-            suggestions.append("Commit workflows: cg commit -m \"<message>\"")
-        elif status.git.has_changes:
-            # Uncommitted pyproject changes without workflow issues
-            suggestions.append("Commit changes: cg commit -m \"<message>\"")
-
-        # Show suggestions if any
+    def _show_smart_suggestions(
+        self,
+        status: EnvironmentStatus,
+        lifecycle_status: EnvironmentLifecycleStatus,
+    ) -> None:
+        """Show contextual suggestions from lifecycle action IDs."""
+        suggestions = self._format_lifecycle_suggestions(status, lifecycle_status)
         if suggestions:
             print("\n💡 Next:")
             for s in suggestions:
                 print(f"  {s}")
+
+    def _format_lifecycle_suggestions(
+        self,
+        status: EnvironmentStatus,
+        lifecycle_status: EnvironmentLifecycleStatus,
+    ) -> list[str]:
+        """Translate lifecycle actions into CLI commands and short guidance."""
+        action = lifecycle_status.primary_action
+        if action is None:
+            return []
+
+        suggestions: list[str] = []
+        action_id = action.id
+
+        if action_id == "create_branch":
+            return ["Create a branch: cg checkout -b <branch-name>"]
+
+        if action_id in {"sync_missing_nodes", "sync_environment", "repair_environment"}:
+            if action_id == "sync_missing_nodes":
+                suggestions.append("Install missing nodes: cg repair")
+            else:
+                suggestions.append("Run: cg repair")
+            suggestions.extend(self._workflow_resolution_followups(status, prefix="Then resolve"))
+            return suggestions
+
+        if action_id == "review_untracked_node":
+            extra_nodes = list(status.comparison.extra_nodes)
+            if len(extra_nodes) == 1:
+                node_name = extra_nodes[0]
+                suggestions.append(f"Review untracked node: {node_name}")
+                suggestions.append(f"Track as dev node: cg node add {node_name} --dev")
+            elif extra_nodes:
+                suggestions.append("Review untracked nodes:")
+                for node_name in extra_nodes[:3]:
+                    suggestions.append(f"  cg node add {node_name} --dev")
+                if len(extra_nodes) > 3:
+                    suggestions.append(f"  ... and {len(extra_nodes) - 3} more")
+            suggestions.append("Or remove untracked: cg repair")
+            suggestions.extend(self._workflow_resolution_followups(status, prefix="Then resolve"))
+            return suggestions
+
+        if action_id == "track_dev_node":
+            dev_nodes = list(status.comparison.dev_nodes_untracked)
+            if len(dev_nodes) == 1:
+                suggestions.append(f"Track development node: cg node add {dev_nodes[0]} --dev")
+            elif dev_nodes:
+                suggestions.append("Track development nodes:")
+                for node_name in dev_nodes[:3]:
+                    suggestions.append(f"  cg node add {node_name} --dev")
+                if len(dev_nodes) > 3:
+                    suggestions.append(f"  ... and {len(dev_nodes) - 3} more")
+            return suggestions
+
+        if action_id == "resolve_workflow_nodes":
+            return self._workflow_issue_suggestions(status, allow_commit_anyway=True)
+
+        if action_id == "sync_model_paths":
+            workflows = [
+                workflow.name
+                for workflow in status.workflow.analyzed_workflows
+                if workflow.has_path_sync_issues
+            ]
+            if len(workflows) == 1:
+                return [f"Sync model paths: cg workflow resolve \"{workflows[0]}\""]
+            if workflows:
+                return [f"Sync model paths in {len(workflows)} workflows: cg workflow resolve \"<name>\""]
+            return [f"{action.label}: cg workflow resolve \"<workflow>\""]
+
+        if action_id == "download_required_models":
+            workflows = self._workflows_with_downloads(status)
+            if len(workflows) == 1:
+                return [f"Complete downloads: cg workflow resolve \"{workflows[0]}\""]
+            if workflows:
+                suggestions.append("Complete downloads (pick one):")
+                suggestions.extend(f"  cg workflow resolve \"{name}\"" for name in workflows[:3])
+                return suggestions
+            return ["Download missing models: cg repair"]
+
+        if action_id == "add_model_source":
+            followups = self._workflow_resolution_followups(status, prefix="Resolve")
+            if followups:
+                return followups
+            return ["Add model source: cg model add-source <model> <url>"]
+
+        if action_id == "restart_comfyui":
+            return ["Restart ComfyUI to load environment changes"]
+
+        if action_id == "view_runtime_import_error":
+            return ["View runtime import errors, then run: cg repair"]
+
+        if action_id == "view_operation_logs":
+            return ["View operation progress logs"]
+
+        if action_id == "commit_snapshot":
+            if status.workflow.sync_status.has_changes and status.workflow.is_commit_safe:
+                return ["Commit workflows: cg commit -m \"<message>\""]
+            return ["Commit changes: cg commit -m \"<message>\""]
+
+        if action_id == "add_node_source_info":
+            return ["Add node source info before export or deploy"]
+
+        if action_id == "fix_build_readiness":
+            return ["Fix build readiness issues before export or deploy"]
+
+        return [action.description]
+
+    def _workflow_resolution_followups(
+        self,
+        status: EnvironmentStatus,
+        *,
+        prefix: str,
+    ) -> list[str]:
+        workflows_with_missing: dict[str, list[object]] = {}
+        for missing_info in status.missing_models:
+            for workflow_name in missing_info.workflow_names:
+                workflows_with_missing.setdefault(workflow_name, []).append(missing_info)
+
+        if workflows_with_missing:
+            names = list(workflows_with_missing)
+            if len(names) == 1:
+                return [f"{prefix} workflow: cg workflow resolve \"{names[0]}\""]
+            suggestions = [f"{prefix} workflow (pick one):"]
+            suggestions.extend(f"  cg workflow resolve \"{name}\"" for name in names[:3])
+            if len(names) > 3:
+                suggestions.append(f"  ... and {len(names) - 3} more")
+            return suggestions
+
+        issue_suggestions = self._workflow_issue_suggestions(status, allow_commit_anyway=False)
+        if issue_suggestions:
+            return issue_suggestions
+        return []
+
+    def _workflow_issue_suggestions(
+        self,
+        status: EnvironmentStatus,
+        *,
+        allow_commit_anyway: bool,
+    ) -> list[str]:
+        workflows_with_issues = [workflow.name for workflow in status.workflow.workflows_with_issues]
+        if not workflows_with_issues:
+            return []
+        suggestions: list[str] = []
+        if len(workflows_with_issues) == 1:
+            suggestions.append(f"Fix issues: cg workflow resolve \"{workflows_with_issues[0]}\"")
+        else:
+            suggestions.append("Fix workflows (pick one):")
+            suggestions.extend(
+                f"  cg workflow resolve \"{name}\""
+                for name in workflows_with_issues[:3]
+            )
+            if len(workflows_with_issues) > 3:
+                suggestions.append(f"  ... and {len(workflows_with_issues) - 3} more")
+        if allow_commit_anyway and status.git.has_changes:
+            suggestions.append("Or commit anyway: cg commit -m \"...\" --allow-issues")
+        return suggestions
+
+    def _workflows_with_downloads(self, status: EnvironmentStatus) -> list[str]:
+        workflows = []
+        for workflow in status.workflow.analyzed_workflows:
+            download_intents = [
+                model
+                for model in workflow.resolution.models_resolved
+                if model.match_type == "download_intent"
+            ]
+            if download_intents:
+                workflows.append(workflow.name)
+        return workflows
 
     def _show_git_changes(self, status: EnvironmentStatus) -> None:
         """Helper method to show git changes in a structured way."""

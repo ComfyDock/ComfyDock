@@ -1,8 +1,19 @@
 """Test status suggestion logic for different scenarios."""
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from comfygit_cli.env_commands import EnvironmentCommands
+from comfygit_core.models import (
+    EnvironmentComparison,
+    EnvironmentLifecycleStatus,
+    EnvironmentStatus,
+    GitStatus,
+    LifecycleAction,
+    LifecycleActionID,
+    WorkflowSyncStatus,
+)
+from comfygit_core.models.workflow import DetailedWorkflowStatus
 
 
 @pytest.fixture
@@ -17,6 +28,21 @@ def mock_env():
     env = MagicMock()
     env.name = "test-env"
     return env
+
+
+def _lifecycle(action_id: str) -> EnvironmentLifecycleStatus:
+    typed_action_id = cast(LifecycleActionID, action_id)
+    return EnvironmentLifecycleStatus(
+        actions=(
+            LifecycleAction(
+                id=typed_action_id,
+                label=action_id.replace("_", " ").title(),
+                description=f"{action_id} action",
+                target_layer="filesystem",
+            ),
+        ),
+        primary_action_id=typed_action_id,
+    )
 
 
 def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys):
@@ -41,10 +67,11 @@ def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys)
     mock_wf = MagicMock(name='default')
     mock_wf.uninstalled_nodes = ['rgthree-comfy', 'comfyui-akatz-nodes']
     status.workflow.analyzed_workflows = [mock_wf]
+    status.workflow.workflows_with_issues = []
 
     # Mock _get_env to return our mock
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status)
+        env_commands._show_smart_suggestions(status, _lifecycle("add_model_source"))
 
     output = capsys.readouterr().out
 
@@ -71,9 +98,10 @@ def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
     status.comparison.extra_nodes = []
     status.comparison.is_synced = False
     status.workflow.analyzed_workflows = [MagicMock(name='default')]
+    status.workflow.workflows_with_issues = []
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status)
+        env_commands._show_smart_suggestions(status, _lifecycle("sync_missing_nodes"))
 
     output = capsys.readouterr().out
 
@@ -100,9 +128,10 @@ def test_missing_models_with_extra_nodes(env_commands, mock_env, capsys):
     status.comparison.extra_nodes = ['old-node-1', 'old-node-2']
     status.comparison.is_synced = False
     status.workflow.analyzed_workflows = [MagicMock(name='default')]
+    status.workflow.workflows_with_issues = []
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status)
+        env_commands._show_smart_suggestions(status, _lifecycle("review_untracked_node"))
 
     output = capsys.readouterr().out
 
@@ -126,12 +155,33 @@ def test_environment_drift_only(env_commands, mock_env, capsys):
     status.comparison.extra_nodes = []
     status.comparison.is_synced = False
     status.workflow.analyzed_workflows = []
+    status.workflow.workflows_with_issues = []
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status)
+        env_commands._show_smart_suggestions(status, _lifecycle("sync_missing_nodes"))
 
     output = capsys.readouterr().out
 
     # Should only suggest repair
     assert 'cg repair' in output
     assert 'workflow resolve' not in output
+
+
+def test_status_command_uses_environment_lifecycle_facade(env_commands, mock_env, capsys):
+    status = EnvironmentStatus(
+        comparison=EnvironmentComparison(missing_nodes=["some-node"]),
+        git=GitStatus(has_changes=False, current_branch="main"),
+        workflow=DetailedWorkflowStatus(sync_status=WorkflowSyncStatus()),
+        missing_models=[],
+    )
+    lifecycle = _lifecycle("sync_missing_nodes")
+    mock_env.status.return_value = status
+    mock_env.get_lifecycle_status.return_value = lifecycle
+    mock_env.get_manager_status.side_effect = RuntimeError("ignore manager notice")
+
+    with patch.object(env_commands, "_get_env", return_value=mock_env):
+        env_commands.status(MagicMock(verbose=False))
+
+    mock_env.get_lifecycle_status.assert_called_once_with(status=status)
+    output = capsys.readouterr().out
+    assert "Install missing nodes: cg repair" in output

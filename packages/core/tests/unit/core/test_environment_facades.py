@@ -136,6 +136,7 @@ def test_lifecycle_status_facade_composes_existing_status(test_env, monkeypatch)
     )
 
     result = test_env.get_lifecycle_status(
+        status=expected_status,
         runtime_state=runtime_state,
         operation_state=operation_state,
     )
