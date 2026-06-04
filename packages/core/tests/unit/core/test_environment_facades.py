@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
-from comfygit_core.models import ManifestModel, ManifestWorkflowModel, ModelWithLocation
+from comfygit_core.models import (
+    EnvironmentLifecycleStatus,
+    EnvironmentReadiness,
+    ManifestModel,
+    ManifestWorkflowModel,
+    ModelWithLocation,
+)
 
 
 def test_runtime_config_facades_expose_manifest_and_torch_state(test_env):
@@ -109,6 +115,66 @@ def test_workflow_manifest_facades_hide_pyproject_handlers(test_env):
     removed = test_env.remove_workflow_custom_node_mapping("flow", "CustomLoader")
     assert removed is True
     assert dict(test_env.get_workflow_custom_node_map("flow")) == {}
+
+
+def test_lifecycle_status_facade_composes_existing_status(test_env, monkeypatch):
+    expected_status = Mock()
+    runtime_state = Mock()
+    operation_state = Mock()
+    lifecycle_status = EnvironmentLifecycleStatus(environment_name="test-env")
+    build = Mock(return_value=lifecycle_status)
+
+    monkeypatch.setattr(test_env, "status", Mock(return_value=expected_status))
+    monkeypatch.setattr(
+        "comfygit_core.services.environment_lifecycle."
+        "build_lifecycle_status_from_environment_status",
+        build,
+    )
+    monkeypatch.setattr(
+        "comfygit_core.utils.git.git_rev_parse",
+        Mock(return_value="abc123"),
+    )
+
+    result = test_env.get_lifecycle_status(
+        runtime_state=runtime_state,
+        operation_state=operation_state,
+    )
+
+    assert result is lifecycle_status
+    build.assert_called_once_with(
+        expected_status,
+        environment_name=test_env.name,
+        workspace_path=str(test_env.workspace_paths.root),
+        current_commit="abc123",
+        readiness=None,
+        runtime_state=runtime_state,
+        operation_state=operation_state,
+    )
+
+
+def test_lifecycle_status_facade_can_include_readiness(test_env, monkeypatch):
+    expected_status = Mock()
+    readiness = EnvironmentReadiness()
+    lifecycle_status = EnvironmentLifecycleStatus(environment_name="test-env")
+    build = Mock(return_value=lifecycle_status)
+
+    monkeypatch.setattr(test_env, "status", Mock(return_value=expected_status))
+    monkeypatch.setattr(test_env, "get_readiness", Mock(return_value=readiness))
+    monkeypatch.setattr(
+        "comfygit_core.services.environment_lifecycle."
+        "build_lifecycle_status_from_environment_status",
+        build,
+    )
+    monkeypatch.setattr(
+        "comfygit_core.utils.git.git_rev_parse",
+        Mock(return_value="abc123"),
+    )
+
+    result = test_env.get_lifecycle_status(include_readiness=True)
+
+    assert result is lifecycle_status
+    build.assert_called_once()
+    assert build.call_args.kwargs["readiness"] is readiness
 
 
 def test_workflow_resolution_facades_delegate_to_workflow_manager(test_env, monkeypatch):

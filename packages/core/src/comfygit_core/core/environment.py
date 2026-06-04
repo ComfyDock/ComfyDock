@@ -82,6 +82,11 @@ if TYPE_CHECKING:
         DependencyResolutionApplyResult,
         DependencyResolutionPreview,
     )
+    from ..models.lifecycle import (
+        EnvironmentLifecycleStatus,
+        LifecycleOperationState,
+        LifecycleRuntimeState,
+    )
     from ..models.manifest import (
         EnvironmentManifestSnapshot,
         ManifestWorkflowEntry,
@@ -607,6 +612,36 @@ class Environment:
             git_status=git_status,
             workflow_status=workflow_status,
             missing_models=missing_models
+        )
+
+    def get_lifecycle_status(
+        self,
+        *,
+        include_readiness: bool = False,
+        runtime_state: LifecycleRuntimeState | None = None,
+        operation_state: LifecycleOperationState | None = None,
+    ) -> EnvironmentLifecycleStatus:
+        """Return composed lifecycle health and recommended actions.
+
+        This facade keeps adapters on the public Environment API. Core computes
+        manifest/filesystem/snapshot/workspace-index signals from existing
+        status/readiness paths; Manager or CLI may pass runtime/operation state
+        that only the adapter can observe.
+        """
+        from ..services.environment_lifecycle import (
+            build_lifecycle_status_from_environment_status,
+        )
+        from ..utils.git import git_rev_parse
+
+        readiness = self.get_readiness() if include_readiness else None
+        return build_lifecycle_status_from_environment_status(
+            self.status(),
+            environment_name=self.name,
+            workspace_path=str(self.workspace_paths.root),
+            current_commit=git_rev_parse(self.cec_path, "HEAD"),
+            readiness=readiness,
+            runtime_state=runtime_state,
+            operation_state=operation_state,
         )
 
     def get_manager_status(self) -> ManagerStatus:

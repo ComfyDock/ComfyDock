@@ -50,6 +50,7 @@ def test_environment_public_git_facade_methods_are_available():
     assert callable(Environment.get_workflow_manifest_models)
     assert callable(Environment.get_workflow_custom_node_map)
     assert callable(Environment.get_readiness)
+    assert callable(Environment.get_lifecycle_status)
     assert callable(Environment.list_remotes)
     assert callable(Environment.add_remote)
     assert callable(Environment.remove_remote)
