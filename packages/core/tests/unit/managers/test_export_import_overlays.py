@@ -1,10 +1,13 @@
 """Tests for overlay handling in export/import workflows."""
 
+import io
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
 import tomlkit
+from comfygit_core.managers import export_import_manager as export_import_module
 from comfygit_core.managers.export_import_manager import ExportImportManager
 from comfygit_core.managers.pyproject_manager import PyprojectManager
 from comfygit_core.services.import_analyzer import ImportAnalyzer
@@ -69,3 +72,39 @@ def test_import_analyzer_reports_shared_overlays(tmp_path):
 
     assert analysis.total_overlays == 1
     assert analysis.overlays == ["alpha"]
+
+
+def test_extract_import_supports_python_without_tar_filter(tmp_path, monkeypatch):
+    """Python 3.10 lacks tar extraction filters, so imports need a safe fallback."""
+    tarball = tmp_path / "env.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tar:
+        payload = b"[project]\nname = \"test-env\"\n"
+        info = tarfile.TarInfo("pyproject.toml")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+
+    monkeypatch.setattr(export_import_module, "_tar_extractall_supports_filter", lambda tar: False)
+
+    manager = ExportImportManager(tmp_path / ".cec", tmp_path / "ComfyUI")
+    target = tmp_path / "target-cec"
+    manager.extract_import(tarball, target)
+
+    assert (target / "pyproject.toml").read_text(encoding="utf-8") == "[project]\nname = \"test-env\"\n"
+
+
+def test_extract_import_fallback_rejects_path_traversal(tmp_path, monkeypatch):
+    """The Python 3.10 fallback must not allow tar members to escape the target."""
+    tarball = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(tarball, "w:gz") as tar:
+        payload = b"owned"
+        info = tarfile.TarInfo("../outside.txt")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+
+    monkeypatch.setattr(export_import_module, "_tar_extractall_supports_filter", lambda tar: False)
+
+    manager = ExportImportManager(tmp_path / ".cec", tmp_path / "ComfyUI")
+    with pytest.raises(ValueError, match="unsafe relative path"):
+        manager.extract_import(tarball, tmp_path / "target-cec")
+
+    assert not (tmp_path / "outside.txt").exists()
