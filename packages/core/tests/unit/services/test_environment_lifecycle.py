@@ -174,7 +174,7 @@ def test_new_workflow_without_dependency_issues_recommends_commit_snapshot():
     assert lifecycle.issues[0].affected_resources == ("demo",)
 
 
-def test_modified_workflow_without_dependency_issues_recommends_review():
+def test_modified_workflow_without_dependency_issues_recommends_commit_snapshot():
     workflow_status = DetailedWorkflowStatus(
         sync_status=WorkflowSyncStatus(modified=["demo"]),
         analyzed_workflows=[
@@ -191,8 +191,81 @@ def test_modified_workflow_without_dependency_issues_recommends_review():
         _status(workflow=workflow_status)
     )
 
-    assert lifecycle.primary_action_id == "review_workflow_changes"
+    assert lifecycle.primary_action_id == "commit_snapshot"
+    assert lifecycle.issues[0].id == "workflow_modified"
+    assert lifecycle.issues[0].layer == "snapshot"
+    assert lifecycle.issues[0].message.startswith("Workflow modified")
+    assert [action.id for action in lifecycle.actions[:2]] == [
+        "commit_snapshot",
+        "review_workflow_changes",
+    ]
+
+
+def test_deleted_workflow_without_dependency_issues_recommends_commit_snapshot():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(deleted=["old_demo"]),
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "commit_snapshot"
+    assert lifecycle.issues[0].id == "workflow_deleted"
+    assert lifecycle.issues[0].message.startswith("Workflow removed")
+
+
+def test_mixed_workflow_changes_recommend_commit_snapshot():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(
+            new=["new_demo"],
+            modified=["changed_demo"],
+        ),
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "commit_snapshot"
     assert lifecycle.issues[0].id == "workflow_changes"
+    assert lifecycle.issues[0].affected_resources == ("new_demo", "changed_demo")
+
+
+def test_missing_model_outranks_modified_workflow_commit_prompt():
+    missing = MissingModelInfo(
+        model=ManifestModel(
+            hash="abc123",
+            filename="model.safetensors",
+            size=1,
+            relative_path="checkpoints/model.safetensors",
+            category="checkpoints",
+        ),
+        workflow_names=["demo"],
+        criticality="required",
+        can_download=False,
+    )
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(modified=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="modified",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status, missing_models=[missing])
+    )
+
+    assert lifecycle.primary_action_id == "resolve_missing_model"
+    assert [issue.id for issue in lifecycle.issues[:2]] == [
+        "missing_required_models",
+        "workflow_modified",
+    ]
 
 
 def test_missing_downloadable_model_recommends_download():
@@ -263,7 +336,7 @@ def test_downloadable_required_model_outranks_generic_workflow_model_source_issu
     assert [issue.id for issue in lifecycle.issues] == ["missing_required_models"]
 
 
-def test_missing_model_without_source_recommends_source_selection():
+def test_missing_model_without_source_recommends_model_resolution():
     missing = MissingModelInfo(
         model=ManifestModel(
             hash="abc123",
@@ -281,7 +354,7 @@ def test_missing_model_without_source_recommends_source_selection():
         _status(missing_models=[missing])
     )
 
-    assert lifecycle.primary_action_id == "add_model_source"
+    assert lifecycle.primary_action_id == "resolve_missing_model"
     assert lifecycle.issues[0].id == "missing_required_models"
 
 
@@ -400,5 +473,5 @@ def test_workflow_unresolved_model_refs_recommend_adding_source_or_local_model()
         _status(workflow=workflow_status)
     )
 
-    assert lifecycle.primary_action_id == "add_model_source"
+    assert lifecycle.primary_action_id == "resolve_missing_model"
     assert lifecycle.issues[0].id == "missing_model_source"

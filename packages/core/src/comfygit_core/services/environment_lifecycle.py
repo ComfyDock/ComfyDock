@@ -20,6 +20,7 @@ from comfygit_core.models import (
     LifecycleSeverity,
     MissingModelInfo,
 )
+from comfygit_core.models.workflow import WorkflowSyncStatus
 
 
 def build_lifecycle_status_from_environment_status(
@@ -43,8 +44,8 @@ def build_lifecycle_status_from_environment_status(
     _collect_operation_issues(builder, operation_state)
     _collect_snapshot_safety_issues(builder, status)
     _collect_materialization_issues(builder, status)
-    _collect_workflow_issues(builder, status)
     _collect_missing_model_issues(builder, status)
+    _collect_workflow_issues(builder, status)
     _collect_runtime_issues(builder, runtime_state)
     _collect_readiness_issues(builder, readiness)
     _collect_snapshot_action(builder, status)
@@ -399,9 +400,9 @@ def _collect_workflow_issues(
             blocking=True,
             affected_resources=unresolved_model_workflows,
             source="ResolutionResult.models_unresolved",
-            action_ids=("add_model_source",),
+            action_ids=("resolve_missing_model",),
         )
-        builder.add_action("add_model_source", issue_ids=("missing_model_source",))
+        builder.add_action("resolve_missing_model", issue_ids=("missing_model_source",))
 
     if category_mismatch_workflows:
         builder.add_issue(
@@ -441,47 +442,80 @@ def _collect_workflow_issues(
         builder.add_action("download_required_models", issue_ids=("workflow_download_intents",))
 
     if sync_status.has_changes:
-        if sync_status.new and not sync_status.modified and not sync_status.deleted:
-            message = (
-                "New workflow saved in ComfyUI and not yet captured in the "
-                "environment snapshot."
-                if len(sync_status.new) == 1
-                else "New workflows saved in ComfyUI and not yet captured in the "
-                "environment snapshot."
-            )
-            enabled = not builder.has_blocking_issues
-            builder.add_issue(
-                id="new_workflow_added",
-                layer="snapshot",
-                severity="warning",
-                message=message,
-                affected_resources=sync_status.new,
-                source="WorkflowSyncStatus.new",
-                action_ids=("commit_snapshot",),
-            )
-            builder.add_action(
-                "commit_snapshot",
-                issue_ids=("new_workflow_added",),
-                enabled=enabled,
-                disabled_reason=(
-                    None
-                    if enabled
-                    else "Resolve blocking lifecycle issues before committing."
-                ),
-            )
-            return
+        _collect_workflow_file_snapshot_issue(builder, sync_status)
 
-        changed = tuple(sync_status.new + sync_status.modified + sync_status.deleted)
-        builder.add_issue(
-            id="workflow_changes",
-            layer="manifest",
-            severity="warning",
-            message="Workflow files differ between ComfyUI and the tracked environment.",
-            affected_resources=changed,
-            source="WorkflowSyncStatus.has_changes",
-            action_ids=("review_workflow_changes",),
+
+def _collect_workflow_file_snapshot_issue(
+    builder: _LifecycleStatusBuilder,
+    sync_status: WorkflowSyncStatus,
+) -> None:
+    changed_groups = sum(
+        1
+        for resources in (sync_status.new, sync_status.modified, sync_status.deleted)
+        if resources
+    )
+    affected = tuple(sync_status.new + sync_status.modified + sync_status.deleted)
+
+    issue_id: LifecycleIssueID
+    source: str
+    if changed_groups == 1 and sync_status.new:
+        issue_id = "new_workflow_added"
+        message = (
+            "New workflow saved in ComfyUI and not yet captured in the "
+            "environment snapshot."
+            if len(sync_status.new) == 1
+            else "New workflows saved in ComfyUI and not yet captured in the "
+            "environment snapshot."
         )
-        builder.add_action("review_workflow_changes", issue_ids=("workflow_changes",))
+        source = "WorkflowSyncStatus.new"
+    elif changed_groups == 1 and sync_status.modified:
+        issue_id = "workflow_modified"
+        message = (
+            "Workflow modified in ComfyUI and not yet captured in the "
+            "environment snapshot."
+            if len(sync_status.modified) == 1
+            else "Workflows modified in ComfyUI and not yet captured in the "
+            "environment snapshot."
+        )
+        source = "WorkflowSyncStatus.modified"
+    elif changed_groups == 1 and sync_status.deleted:
+        issue_id = "workflow_deleted"
+        message = (
+            "Workflow removed from ComfyUI and not yet captured in the "
+            "environment snapshot."
+            if len(sync_status.deleted) == 1
+            else "Workflows removed from ComfyUI and not yet captured in the "
+            "environment snapshot."
+        )
+        source = "WorkflowSyncStatus.deleted"
+    else:
+        issue_id = "workflow_changes"
+        message = (
+            "Workflow file changes in ComfyUI are not yet captured in the "
+            "environment snapshot."
+        )
+        source = "WorkflowSyncStatus.has_changes"
+
+    enabled = not builder.has_blocking_issues
+    disabled_reason = (
+        None if enabled else "Resolve blocking lifecycle issues before committing."
+    )
+    builder.add_issue(
+        id=issue_id,
+        layer="snapshot",
+        severity="warning",
+        message=message,
+        affected_resources=affected,
+        source=source,
+        action_ids=("commit_snapshot", "review_workflow_changes"),
+    )
+    builder.add_action(
+        "commit_snapshot",
+        issue_ids=(issue_id,),
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+    )
+    builder.add_action("review_workflow_changes", issue_ids=(issue_id,))
 
 
 def _required_missing_models_by_workflow(
@@ -513,7 +547,7 @@ def _collect_missing_model_issues(
     affected = [model.model.filename for model in required_missing]
     can_download_all = all(model.can_download for model in required_missing)
     action_id: LifecycleActionID = (
-        "download_required_models" if can_download_all else "add_model_source"
+        "download_required_models" if can_download_all else "resolve_missing_model"
     )
     builder.add_issue(
         id="missing_required_models",
@@ -769,9 +803,16 @@ _ACTION_DEFINITIONS: dict[
         ("filesystem", "workspace_index"),
         {},
     ),
+    "resolve_missing_model": (
+        "Resolve models",
+        "Choose how missing workflow model references should be resolved.",
+        "workspace_index",
+        ("manifest", "filesystem", "workspace_index"),
+        {},
+    ),
     "add_model_source": (
         "Add model source",
-        "Add a source URL or select a local model for missing model references.",
+        "Add source/provenance metadata for models that already exist locally.",
         "workspace_index",
         ("manifest", "workspace_index"),
         {"confirmation_required": True},

@@ -1403,6 +1403,9 @@ class EnvironmentCommands:
             "untracked_node_folder",
             "node_version_mismatch",
             "disabled_node",
+            "new_workflow_added",
+            "workflow_modified",
+            "workflow_deleted",
             "workflow_changes",
             "workflow_download_intents",
             "workflow_unresolved_nodes",
@@ -1534,15 +1537,15 @@ class EnvironmentCommands:
                 return suggestions
             return ["Download missing models: cg repair"]
 
-        if action_id == "add_model_source":
+        if action_id == "resolve_missing_model":
             model_source_workflows = self._workflows_with_unresolved_models(status)
             if len(model_source_workflows) == 1:
                 return [
-                    "Add or select model source: "
+                    "Resolve missing models: "
                     f"cg workflow resolve \"{model_source_workflows[0]}\""
                 ]
             if model_source_workflows:
-                suggestions.append("Add or select model sources (pick one):")
+                suggestions.append("Resolve missing models (pick one):")
                 suggestions.extend(
                     f"  cg workflow resolve \"{name}\""
                     for name in model_source_workflows[:3]
@@ -1553,6 +1556,9 @@ class EnvironmentCommands:
             followups = self._workflow_resolution_followups(status, prefix="Resolve")
             if followups:
                 return followups
+            return ["Resolve missing models: cg workflow resolve \"<workflow>\""]
+
+        if action_id == "add_model_source":
             return ["Add model source: cg model add-source <model> <url>"]
 
         if action_id == "restart_comfyui":

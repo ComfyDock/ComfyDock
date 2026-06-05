@@ -261,13 +261,15 @@ Validation: MIXED
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
 | --- | --- | --- | --- | --- |
 | New workflow exists only in ComfyUI working files | workflow sync status `new` only | `commit_snapshot` / "Commit snapshot" | view details, resolve workflow dependencies first if needed | A new workflow is desired work waiting to be captured, not generic manifest damage. |
-| Tracked workflow is modified/deleted, or workflow changes are mixed | workflow sync status `modified`/`deleted`/mixed | `review_workflow_changes` / "Review workflow changes" | commit once healthy, discard/restore | Existing tracked workflow edits deserve review before snapshotting because they can overwrite or remove tracked state. |
+| Tracked workflow is modified | workflow sync status `modified` only | `commit_snapshot` / "Commit snapshot" | review workflow changes, discard/restore | A modified tracked workflow is normal desired work waiting to be captured. Review is useful, but commit should remain the primary action once dependency/materialization blockers are clear. |
+| Tracked workflow is deleted | workflow sync status `deleted` only | `commit_snapshot` / "Commit snapshot" | review workflow changes, restore from snapshot | A deleted workflow is also desired work until the user chooses otherwise. The UI should name deletion clearly before snapshotting. |
+| Workflow changes are mixed | workflow sync status contains more than one of `new`/`modified`/`deleted` | `commit_snapshot` / "Commit snapshot" | review workflow changes, discard/restore | Mixed workflow-file changes should be presented as pending snapshot work, not generic manifest damage. |
 | Workflow has unresolved custom-node packages | workflow analysis | `resolve_workflow_nodes` / "Resolve workflow packages" | install package, mark optional, map manually | This may mutate manifest and then require sync/restart. |
 | Workflow has uninstalled packages that are already tracked | workflow analysis `uninstalled_nodes` | `sync_missing_nodes` / "Install tracked packages" | inspect package list | This is materialization drift, not unknown workflow resolution. |
 | Workflow has version-gated built-in nodes | workflow analysis `nodes_version_gated` | `upgrade_comfyui_or_change_workflow` / "Update ComfyUI or workflow" | show minimum version guidance | This should not be presented as a normal custom-node install. |
 | Workflow has uninstallable/community-only mappings | workflow analysis `nodes_uninstallable` | `manual_node_resolution` / "Choose a community package" | mark optional, custom map | Current Manager wording maps this to "community packages". |
 | Workflow has missing required model with known source | missing models and workflow analysis | `download_required_models` / "Download required models" | mark optional/flexible, add local model | Download mutates filesystem and workspace index, then manifest model entries. |
-| Workflow has missing model without source | missing models/readiness | `add_model_source_or_select_local` / "Add model source or select local model" | mark optional/flexible, remove workflow dependency | Source proof and local availability are separate. |
+| Workflow has missing model without source or local match | missing models/readiness | `resolve_missing_model` / "Resolve models" | add source URL, select local model, search/download externally, mark optional/flexible, remove workflow dependency | This is a model availability problem. Source proof and local availability are separate. Do not route this to reproducibility/source-proof review. |
 | Workflow model path differs from indexed path | workflow analysis path sync | `sync_model_paths` / "Sync model paths" | inspect model location | Current CLI already prioritizes path sync before other workflow issues. |
 | Model exists but category/folder is incompatible with loader | workflow analysis category mismatch | `move_or_redownload_model` / "Move model to expected folder" | adjust workflow, add compatible model | This is usually manual filesystem work, not a manifest-only repair. |
 | Download intents are queued or failed | workflow analysis/download state | `complete_model_downloads` / "Complete downloads" | retry failed, edit source | Failed downloads should not be hidden behind "resolution complete". |
@@ -314,6 +316,7 @@ different labels without changing behavior. Initial action IDs should include:
 - `resolve_workflow_nodes`
 - `sync_model_paths`
 - `download_required_models`
+- `resolve_missing_model`
 - `add_model_source`
 - `add_node_source_info`
 - `restart_comfyui`

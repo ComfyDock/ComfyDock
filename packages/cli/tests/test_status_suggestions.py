@@ -90,7 +90,7 @@ def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys)
 
     # Mock _get_env to return our mock
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status, _lifecycle("add_model_source"))
+        env_commands._show_smart_suggestions(status, _lifecycle("resolve_missing_model"))
 
     output = capsys.readouterr().out
 
@@ -99,7 +99,7 @@ def test_missing_models_with_workflow_nodes_only(env_commands, mock_env, capsys)
     assert 'cg repair' not in output
 
 
-def test_unresolved_workflow_model_suggestion_names_model_source_action(
+def test_unresolved_workflow_model_suggestion_names_model_resolution_action(
     env_commands,
     mock_env,
     capsys,
@@ -119,13 +119,13 @@ def test_unresolved_workflow_model_suggestion_names_model_source_action(
     status.workflow.workflows_with_issues = [workflow]
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status, _lifecycle("add_model_source"))
+        env_commands._show_smart_suggestions(status, _lifecycle("resolve_missing_model"))
 
     output = capsys.readouterr().out
-    assert 'Add or select model source: cg workflow resolve "demo"' in output
+    assert 'Resolve missing models: cg workflow resolve "demo"' in output
 
 
-def test_review_workflow_changes_suggests_commit_when_safe(
+def test_workflow_file_changes_primary_commit_suggests_commit_when_safe(
     env_commands,
     mock_env,
     capsys,
@@ -135,10 +135,10 @@ def test_review_workflow_changes_suggests_commit_when_safe(
     status.workflow.is_commit_safe = True
 
     with patch.object(env_commands, '_get_env', return_value=mock_env):
-        env_commands._show_smart_suggestions(status, _lifecycle("review_workflow_changes"))
+        env_commands._show_smart_suggestions(status, _lifecycle("commit_snapshot"))
 
     output = capsys.readouterr().out
-    assert 'Review workflow changes, then commit: cg commit -m "<message>"' in output
+    assert 'Commit workflows: cg commit -m "<message>"' in output
 
 
 def test_missing_models_with_orphan_nodes(env_commands, mock_env, capsys):
