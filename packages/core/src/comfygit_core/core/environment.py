@@ -1934,6 +1934,16 @@ class Environment:
         """Copy saved ComfyUI workflow files into tracked `.cec` workflow storage."""
         return self.workflow_manager.copy_all_workflows()
 
+    @_requires_env_lock
+    def capture_workflow(self, workflow_name: str) -> Path:
+        """Capture one saved workflow into the tracked working environment.
+
+        The workflow is copied from ComfyUI's saved workflow directory into
+        `.cec/workflows`, and a manifest workflow entry/path is ensured. This
+        does not commit the snapshot or resolve/install dependencies.
+        """
+        return self.workflow_manager.capture_workflow(workflow_name)
+
     def get_workflow_status(self) -> DetailedWorkflowStatus:
         """Return analyzed workflow status without exposing the workflow manager."""
         return self.workflow_manager.get_workflow_status()

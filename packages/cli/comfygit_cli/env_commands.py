@@ -2462,7 +2462,7 @@ class EnvironmentCommands:
             return
 
         # Get preview for display and later use
-        preview: dict[str, Any] = status.get_sync_preview()
+        preview: dict[str, Any] = status.get_sync_preview(preserve_workflows=False)
 
         # Confirm unless --yes
         if not args.yes:

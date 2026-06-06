@@ -9,6 +9,7 @@ from comfygit_core.models import (
     EnvironmentLifecycleStatus,
     EnvironmentReadiness,
     EnvironmentStatus,
+    GitStatus,
     LifecycleAction,
     LifecycleActionID,
     LifecycleIssue,
@@ -305,8 +306,11 @@ def _collect_workflow_issues(
     workflow_status = status.workflow
     sync_status = workflow_status.sync_status
     required_missing_by_workflow = _required_missing_models_by_workflow(status)
+    pending_workflow_names = set(sync_status.new + sync_status.modified)
+    declared_missing_nodes = set(status.comparison.missing_nodes)
 
     unresolved_node_workflows: list[str] = []
+    pending_node_dependency_workflows: list[str] = []
     uninstalled_node_workflows: list[str] = []
     version_gated_workflows: list[str] = []
     uninstallable_workflows: list[str] = []
@@ -323,7 +327,14 @@ def _collect_workflow_issues(
         ):
             unresolved_node_workflows.append(workflow.name)
         if workflow.uninstalled_nodes:
-            uninstalled_node_workflows.append(workflow.name)
+            if (
+                workflow.sync_state in ("new", "modified")
+                or workflow.name in pending_workflow_names
+                or not any(node in declared_missing_nodes for node in workflow.uninstalled_nodes)
+            ):
+                pending_node_dependency_workflows.append(workflow.name)
+            else:
+                uninstalled_node_workflows.append(workflow.name)
         if resolution.nodes_version_gated:
             version_gated_workflows.append(workflow.name)
         if resolution.nodes_uninstallable:
@@ -352,12 +363,31 @@ def _collect_workflow_issues(
         )
         builder.add_action("resolve_workflow_nodes", issue_ids=("workflow_unresolved_nodes",))
 
+    if pending_node_dependency_workflows:
+        builder.add_issue(
+            id="workflow_node_dependencies_pending",
+            layer="manifest",
+            severity="error",
+            message=(
+                "Workflows need custom-node dependencies resolved before they "
+                "can be installed."
+            ),
+            blocking=True,
+            affected_resources=pending_node_dependency_workflows,
+            source="WorkflowAnalysisStatus.uninstalled_nodes",
+            action_ids=("resolve_workflow_nodes",),
+        )
+        builder.add_action(
+            "resolve_workflow_nodes",
+            issue_ids=("workflow_node_dependencies_pending",),
+        )
+
     if uninstalled_node_workflows:
         builder.add_issue(
             id="workflow_uninstalled_nodes",
             layer="filesystem",
             severity="error",
-            message="Tracked workflow packages are not installed locally.",
+            message="Tracked workflow nodes are not installed locally.",
             blocking=True,
             affected_resources=uninstalled_node_workflows,
             source="WorkflowAnalysisStatus.uninstalled_nodes",
@@ -657,8 +687,14 @@ def _collect_snapshot_action(
     builder: _LifecycleStatusBuilder,
     status: EnvironmentStatus,
 ) -> None:
+    if status.git.workflow_changes and not status.workflow.sync_status.has_changes:
+        _collect_captured_workflow_snapshot_issue(builder, status.git.workflow_changes)
+
     if not status.git.has_changes:
         return
+    if not _has_non_workflow_git_changes(status.git):
+        return
+
     enabled = not builder.has_blocking_issues
     builder.add_issue(
         id="uncommitted_changes",
@@ -675,6 +711,92 @@ def _collect_snapshot_action(
         disabled_reason=(
             None if enabled else "Resolve blocking lifecycle issues before committing."
         ),
+    )
+
+
+def _collect_captured_workflow_snapshot_issue(
+    builder: _LifecycleStatusBuilder,
+    workflow_changes: dict[str, str],
+) -> None:
+    new = [
+        name for name, change_type in workflow_changes.items()
+        if change_type == "added"
+    ]
+    modified = [
+        name for name, change_type in workflow_changes.items()
+        if change_type == "modified"
+    ]
+    deleted = [
+        name for name, change_type in workflow_changes.items()
+        if change_type == "deleted"
+    ]
+    other = [
+        name for name in workflow_changes
+        if name not in set(new + modified + deleted)
+    ]
+    changed_groups = sum(bool(items) for items in (new, modified, deleted, other))
+    affected = tuple(new + modified + deleted + other)
+
+    issue_id: LifecycleIssueID
+    if changed_groups == 1 and new:
+        issue_id = "new_workflow_added"
+        message = (
+            "New workflow captured in ComfyGit and ready to commit."
+            if len(new) == 1
+            else "New workflows captured in ComfyGit and ready to commit."
+        )
+    elif changed_groups == 1 and modified:
+        issue_id = "workflow_modified"
+        message = (
+            "Workflow changes captured in ComfyGit and ready to commit."
+            if len(modified) == 1
+            else "Workflow changes captured in ComfyGit and ready to commit."
+        )
+    elif changed_groups == 1 and deleted:
+        issue_id = "workflow_deleted"
+        message = (
+            "Workflow removal captured in ComfyGit and ready to commit."
+            if len(deleted) == 1
+            else "Workflow removals captured in ComfyGit and ready to commit."
+        )
+    else:
+        issue_id = "workflow_changes"
+        message = "Workflow changes captured in ComfyGit and ready to commit."
+
+    enabled = not builder.has_blocking_issues
+    disabled_reason = (
+        None if enabled else "Resolve blocking lifecycle issues before committing."
+    )
+    builder.add_issue(
+        id=issue_id,
+        layer="snapshot",
+        severity="warning",
+        message=message,
+        affected_resources=affected,
+        source="GitStatus.workflow_changes",
+        action_ids=("commit_snapshot", "review_workflow_changes"),
+    )
+    builder.add_action(
+        "commit_snapshot",
+        issue_ids=(issue_id,),
+        enabled=enabled,
+        disabled_reason=disabled_reason,
+    )
+    builder.add_action("review_workflow_changes", issue_ids=(issue_id,))
+
+
+def _has_non_workflow_git_changes(git: GitStatus) -> bool:
+    if not git.workflow_changes:
+        return True
+    return bool(
+        git.has_other_changes
+        or git.nodes_added
+        or git.nodes_removed
+        or git.dependencies_added
+        or git.dependencies_removed
+        or git.dependencies_updated
+        or git.constraints_added
+        or git.constraints_removed
     )
 
 

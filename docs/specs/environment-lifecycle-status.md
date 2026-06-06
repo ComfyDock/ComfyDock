@@ -46,7 +46,7 @@ Lifecycle status coverage should prefer a layered test pyramid:
   state, destructive flags, restart requirements, and disabled reasons.
 - Core integration signal tests for real manifest/filesystem/workflow/git states
   such as missing declared nodes, untracked node folders, disabled nodes,
-  unresolved workflow packages, missing models, detached HEAD, and uncommitted
+  unresolved workflow nodes, missing models, detached HEAD, and uncommitted
   manifest changes.
 - Adapter serialization/rendering tests that prove CLI and Manager preserve
   action IDs and layer labels without parsing display strings.
@@ -260,12 +260,13 @@ Validation: MIXED
 
 | Scenario | Current signal source | Primary action | Secondary actions | Notes |
 | --- | --- | --- | --- | --- |
-| New workflow exists only in ComfyUI working files | workflow sync status `new` only | `commit_snapshot` / "Commit snapshot" | view details, resolve workflow dependencies first if needed | A new workflow is desired work waiting to be captured, not generic manifest damage. |
-| Tracked workflow is modified | workflow sync status `modified` only | `commit_snapshot` / "Commit snapshot" | review workflow changes, discard/restore | A modified tracked workflow is normal desired work waiting to be captured. Review is useful, but commit should remain the primary action once dependency/materialization blockers are clear. |
+| New workflow exists only in ComfyUI working files | workflow sync status `new` only, then git workflow change `added` after capture | `commit_snapshot` / "Commit snapshot" after capture; `resolve_workflow_nodes` / "Resolve workflow nodes" if dependencies block it | view details, resolve workflow dependencies first if needed | A new workflow is desired work waiting to be captured, not generic manifest damage. Manager save-event handling should capture created workflows into the uncommitted working snapshot before any sync/restore can delete them. Once captured, file sync can be clean while the workflow domain still has pending snapshot work. |
+| Tracked workflow is modified | workflow sync status `modified` only, then git workflow change `modified` after capture | `commit_snapshot` / "Commit snapshot" after capture; `resolve_workflow_nodes` / "Resolve workflow nodes" if dependencies block it | review workflow changes, discard/restore | A modified tracked workflow is normal desired work waiting to be captured. Manager save-event handling should capture modified workflows into the uncommitted working snapshot. Review is useful, but commit should remain the primary action once dependency/materialization blockers are clear. Once captured, file sync can be clean while the workflow domain still has pending snapshot work. |
 | Tracked workflow is deleted | workflow sync status `deleted` only | `commit_snapshot` / "Commit snapshot" | review workflow changes, restore from snapshot | A deleted workflow is also desired work until the user chooses otherwise. The UI should name deletion clearly before snapshotting. |
 | Workflow changes are mixed | workflow sync status contains more than one of `new`/`modified`/`deleted` | `commit_snapshot` / "Commit snapshot" | review workflow changes, discard/restore | Mixed workflow-file changes should be presented as pending snapshot work, not generic manifest damage. |
-| Workflow has unresolved custom-node packages | workflow analysis | `resolve_workflow_nodes` / "Resolve workflow packages" | install package, mark optional, map manually | This may mutate manifest and then require sync/restart. |
-| Workflow has uninstalled packages that are already tracked | workflow analysis `uninstalled_nodes` | `sync_missing_nodes` / "Install tracked packages" | inspect package list | This is materialization drift, not unknown workflow resolution. |
+| Workflow has unresolved custom nodes | workflow analysis | `resolve_workflow_nodes` / "Resolve workflow nodes" | install node pack, mark optional, map manually | This may mutate manifest and then require sync/restart. |
+| Workflow has resolved custom-node packages that are not installed locally but are not manifest-declared missing nodes | workflow analysis `uninstalled_nodes` without matching `comparison.missing_nodes` | `resolve_workflow_nodes` / "Resolve workflow nodes" | inspect node list, then sync/restart after applying choices | Pending workflow dependency choices must be captured in manifest intent before sync. Do not route this state to broad environment sync. |
+| Captured/tracked workflow has manifest-declared nodes that are not installed locally | workflow analysis `uninstalled_nodes` with matching `comparison.missing_nodes` | `sync_missing_nodes` / "Sync missing nodes" | inspect node list | This is materialization drift, not unknown workflow resolution. |
 | Workflow has version-gated built-in nodes | workflow analysis `nodes_version_gated` | `upgrade_comfyui_or_change_workflow` / "Update ComfyUI or workflow" | show minimum version guidance | This should not be presented as a normal custom-node install. |
 | Workflow has uninstallable/community-only mappings | workflow analysis `nodes_uninstallable` | `manual_node_resolution` / "Choose a community package" | mark optional, custom map | Current Manager wording maps this to "community packages". |
 | Workflow has missing required model with known source | missing models and workflow analysis | `download_required_models` / "Download required models" | mark optional/flexible, add local model | Download mutates filesystem and workspace index, then manifest model entries. |
@@ -372,6 +373,13 @@ The lifecycle matrix recommends actions; it does not silently track, delete,
 download, restart, commit, export, or deploy. Destructive actions and actions
 that materially change manifest, filesystem, runtime, or snapshot state should
 require caller/user intent.
+
+ComfyUI save events are separate from lifecycle-status calculation. A Manager
+adapter may treat a user save as intent to capture the workflow into the
+uncommitted working snapshot by copying it into `.cec/workflows` and ensuring a
+manifest workflow path. That capture must not commit the snapshot and must not
+delete other workflows. Workflow capture must preserve the saved workflow stem
+exactly, including dots that are part of the name rather than file extensions.
 
 ### CGLIFE-NONGOAL-02 [LIVE]: Runtime health is not portable manifest truth
 Validation: HUMAN_REVIEW

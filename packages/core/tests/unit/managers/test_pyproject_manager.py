@@ -161,6 +161,15 @@ class TestPyprojectManifestDomainApi:
         assert node.pinned_commit == "abcde12345"
         assert snapshot.models["abc123"].sources == ["https://example.com/model.safetensors"]
 
+    def test_manifest_ensures_workflow_entry(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        assert manager.manifest.ensure_workflow("txt2img_basic") is True
+        assert manager.manifest.ensure_workflow("txt2img_basic") is False
+
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        assert snapshot.workflows["txt2img_basic"].path == "workflows/txt2img_basic.json"
+
 
 class TestWorkflowExecutionContractLoading:
     """Test workflow execution contracts load through the canonical model."""

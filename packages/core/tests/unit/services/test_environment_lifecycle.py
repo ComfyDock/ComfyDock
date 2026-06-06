@@ -122,6 +122,87 @@ def test_workflow_unresolved_nodes_recommend_resolution():
     assert lifecycle.issues[0].affected_resources == ("demo",)
 
 
+def test_workflow_uninstalled_nodes_use_node_materialization_wording():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(synced=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="synced",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+                uninstalled_nodes=["ComfyUI-Impact-Pack"],
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(
+            comparison=EnvironmentComparison(missing_nodes=["ComfyUI-Impact-Pack"]),
+            workflow=workflow_status,
+        )
+    )
+
+    assert lifecycle.primary_action_id == "sync_missing_nodes"
+    issue = next(
+        issue for issue in lifecycle.issues if issue.id == "workflow_uninstalled_nodes"
+    )
+    assert issue.message == "Tracked workflow nodes are not installed locally."
+    assert issue.affected_resources == ("demo",)
+
+
+def test_synced_workflow_with_untracked_uninstalled_nodes_recommends_resolution():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(synced=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="synced",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+                uninstalled_nodes=["ComfyUI-Impact-Pack"],
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "resolve_workflow_nodes"
+    assert lifecycle.issues[0].id == "workflow_node_dependencies_pending"
+    assert lifecycle.issues[0].message == (
+        "Workflows need custom-node dependencies resolved before they can be installed."
+    )
+    assert lifecycle.issues[0].affected_resources == ("demo",)
+
+
+def test_new_workflow_with_uninstalled_nodes_recommends_resolution_before_sync():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(new=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="new",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+                uninstalled_nodes=["ComfyUI-Impact-Pack"],
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "resolve_workflow_nodes"
+    assert lifecycle.issues[0].id == "workflow_node_dependencies_pending"
+    assert lifecycle.issues[0].message == (
+        "Workflows need custom-node dependencies resolved before they can be installed."
+    )
+    assert lifecycle.issues[0].affected_resources == ("demo",)
+
+
 def test_new_workflow_with_unresolved_nodes_recommends_resolution_before_sync():
     workflow_status = DetailedWorkflowStatus(
         sync_status=WorkflowSyncStatus(new=["demo"]),
@@ -172,6 +253,24 @@ def test_new_workflow_without_dependency_issues_recommends_commit_snapshot():
     assert lifecycle.issues[0].id == "new_workflow_added"
     assert lifecycle.issues[0].layer == "snapshot"
     assert lifecycle.issues[0].affected_resources == ("demo",)
+
+
+def test_sync_preview_preserves_uncommitted_workflows_by_default():
+    status = _status(
+        workflow=DetailedWorkflowStatus(
+            sync_status=WorkflowSyncStatus(new=["draft"], modified=["edited"]),
+        )
+    )
+
+    safe_preview = status.get_sync_preview()
+    assert safe_preview["workflows_to_preserve"] == ["draft", "edited"]
+    assert safe_preview["workflows_to_remove"] == []
+    assert safe_preview["workflows_to_update"] == []
+
+    restore_preview = status.get_sync_preview(preserve_workflows=False)
+    assert restore_preview["workflows_to_preserve"] == []
+    assert restore_preview["workflows_to_remove"] == ["draft"]
+    assert restore_preview["workflows_to_update"] == ["edited"]
 
 
 def test_modified_workflow_without_dependency_issues_recommends_commit_snapshot():
@@ -230,6 +329,50 @@ def test_mixed_workflow_changes_recommend_commit_snapshot():
     assert lifecycle.primary_action_id == "commit_snapshot"
     assert lifecycle.issues[0].id == "workflow_changes"
     assert lifecycle.issues[0].affected_resources == ("new_demo", "changed_demo")
+
+
+def test_captured_git_workflow_add_recommends_commit_snapshot():
+    status = _status(
+        workflow=DetailedWorkflowStatus(
+            sync_status=WorkflowSyncStatus(synced=["txt2img_basic"]),
+        ),
+        git=GitStatus(
+            has_changes=True,
+            current_branch="main",
+            workflow_changes={"txt2img_basic": "added"},
+        ),
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(status)
+
+    assert lifecycle.primary_action_id == "commit_snapshot"
+    assert lifecycle.issues[0].id == "new_workflow_added"
+    assert lifecycle.issues[0].layer == "snapshot"
+    assert lifecycle.issues[0].source == "GitStatus.workflow_changes"
+    assert lifecycle.issues[0].affected_resources == ("txt2img_basic",)
+    assert "captured" in lifecycle.issues[0].message
+    assert "uncommitted_changes" not in [issue.id for issue in lifecycle.issues]
+
+
+def test_captured_git_workflow_changes_do_not_hide_other_git_changes():
+    status = _status(
+        workflow=DetailedWorkflowStatus(
+            sync_status=WorkflowSyncStatus(synced=["txt2img_basic"]),
+        ),
+        git=GitStatus(
+            has_changes=True,
+            current_branch="main",
+            has_other_changes=True,
+            workflow_changes={"txt2img_basic": "added"},
+        ),
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(status)
+
+    assert [issue.id for issue in lifecycle.issues] == [
+        "new_workflow_added",
+        "uncommitted_changes",
+    ]
 
 
 def test_missing_model_outranks_modified_workflow_commit_prompt():

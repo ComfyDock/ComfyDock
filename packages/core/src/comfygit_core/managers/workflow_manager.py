@@ -26,7 +26,7 @@ from ..models.workflow import (
 from ..resolvers.model_resolver import ModelResolver
 from ..services.model_downloader import ModelDownloader
 from ..services.workflow_analysis_cache import WorkflowAnalysisCache
-from ..services.workflow_file_store import WorkflowFileStore
+from ..services.workflow_file_store import WorkflowFileStore, normalize_workflow_filename
 from ..services.workflow_manifest_reconciler import WorkflowManifestReconciler
 from ..services.workflow_manual_model_policy import WorkflowManualModelPolicy
 from ..services.workflow_model_dependency_service import WorkflowModelDependencyService
@@ -502,6 +502,18 @@ class WorkflowManager:
             Dictionary of workflow names to Path
         """
         return self.workflow_file_store.copy_all_workflows()
+
+    def capture_workflow(self, name: str) -> Path:
+        """Capture one saved ComfyUI workflow into tracked working state.
+
+        This copies the saved workflow JSON into `.cec/workflows` and ensures
+        the pyproject-backed manifest has a workflow entry/path. It does not
+        commit or perform dependency resolution.
+        """
+        workflow_name = normalize_workflow_filename(name)
+        tracked_path = self.workflow_file_store.copy_workflow(workflow_name)
+        self.pyproject.manifest.ensure_workflow(workflow_name)
+        return tracked_path
 
     def restore_from_cec(self, name: str) -> bool:
         """Restore a workflow from .cec to ComfyUI directory.
