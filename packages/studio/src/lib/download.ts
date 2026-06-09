@@ -36,10 +36,11 @@ export async function downloadGalleryItem(item: GalleryItem) {
   if (!item.url) return;
 
   const href = new URL(item.url, window.location.href).href;
+  const downloadHref = downloadUrl(href);
   const filename = galleryItemDownloadFilename(item);
 
   try {
-    const response = await fetch(href, { credentials: "include" });
+    const response = await fetch(downloadHref, { credentials: "include" });
     if (!response.ok) throw new Error(`Download failed with status ${response.status}`);
     const blob = await response.blob();
     const mediaType = item.artifact?.media_type || item.artifact?.content_type || mediaTypeForOutputType(item.type);
@@ -49,7 +50,7 @@ export async function downloadGalleryItem(item: GalleryItem) {
     triggerDownload(objectUrl, filename);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
   } catch {
-    triggerDownload(href, filename);
+    triggerDownload(downloadHref, filename);
   }
 }
 
@@ -97,4 +98,10 @@ function triggerDownload(href: string, filename: string) {
   document.body.appendChild(link);
   link.click();
   link.remove();
+}
+
+function downloadUrl(href: string) {
+  const url = new URL(href, window.location.href);
+  url.searchParams.set("download", "1");
+  return url.href;
 }
