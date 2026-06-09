@@ -279,15 +279,19 @@ export function App() {
   const hasMoreGallery = renderedGallery.length < visibleGallery.length || galleryHasMore;
   const activeItem = visibleGallery.find((item) => item.id === activeId) || null;
   const activeIndex = activeItem ? visibleGallery.findIndex((item) => item.id === activeItem.id) : -1;
+  const cloudExecutor = health?.executor === "cloud";
+  const cloudEndpointAvailable =
+    cloudExecutor && health.ok !== false && health.proxy?.configured !== false && health.proxy?.available !== false;
   const proxyExecutorConfigured = health?.executor === "proxy" && health.proxy?.configured !== false;
-  const healthReady = proxyExecutorConfigured || Boolean(health?.comfyui?.available);
-  const healthLabel = !health
-    ? "Loading"
-    : proxyExecutorConfigured
-      ? "Endpoint configured"
-      : health.comfyui?.available
-        ? "ComfyUI online"
-        : "ComfyUI unavailable";
+  const healthReady = cloudEndpointAvailable || proxyExecutorConfigured || Boolean(health?.comfyui?.available);
+  const healthLabel = (() => {
+    if (!health) return "Loading";
+    if (cloudEndpointAvailable) return "Connected";
+    if (cloudExecutor) return "Offline";
+    if (proxyExecutorConfigured) return "Endpoint configured";
+    if (health.comfyui?.available) return "ComfyUI online";
+    return "ComfyUI unavailable";
+  })();
   const studioGate = studioSession?.studio_session;
   const studioLocked = endpointAuthEnabled && studioGate && !studioGate.authenticated;
   const studioDisabled = endpointAuthEnabled && studioGate && !studioGate.studio_enabled;

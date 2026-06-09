@@ -167,9 +167,7 @@ function normalizeGalleryItem(item: GalleryItem) {
     created_at?: string;
     updated_at?: string;
   };
-  const artifact = item.artifact as
-    | (GalleryItem["artifact"] & { download_url?: string; media_type?: string })
-    | undefined;
+  const artifact = item.artifact;
   return {
     ...item,
     run_id: item.run_id || snakeItem.run_id,
@@ -178,6 +176,7 @@ function normalizeGalleryItem(item: GalleryItem) {
     contractName: item.contractName || snakeItem.contract_slug,
     promptId: item.promptId || snakeItem.prompt_id,
     outputName: item.outputName || snakeItem.output_name,
+    filename: item.filename || artifact?.filename || artifact?.storage_ref?.filename,
     url: item.url || artifact?.download_url || artifact?.url,
     type: item.type || mediaTypeToOutputType(artifact?.media_type),
     status: normalizeGalleryStatus(item.status),
