@@ -230,7 +230,7 @@ function FilePreview({ value, type }: { value: FileInputValue; type: string }) {
     return <audio src={value.preview_url} controls preload="metadata" />;
   }
   if (type === "video") {
-    return <video src={value.preview_url} controls preload="metadata" />;
+    return <video src={value.preview_url} muted playsInline preload="metadata" aria-label={value.filename} />;
   }
   return (
     <span className="file-input-preview-icon">

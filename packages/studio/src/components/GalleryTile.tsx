@@ -1,6 +1,7 @@
 import { memo, useEffect, useState, type CSSProperties } from "react";
 import { Copy, Download, Play, Trash2 } from "lucide-react";
 import { Media, Tip } from "@/app/components";
+import { downloadGalleryItem } from "@/lib/download";
 import { formatElapsed, titleFromOutput } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { GalleryItem } from "@/types";
@@ -85,9 +86,17 @@ export const GalleryTile = memo(function GalleryTile({
         <span className="tile-hover-actions">
           {item.url ? (
             <Tip content="Download" side="left" className="tile-action-tooltip">
-              <a className="tile-icon" aria-label="Download" href={item.url} download onClick={(event) => event.stopPropagation()}>
+              <span
+                className="tile-icon"
+                role="button"
+                aria-label="Download"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void downloadGalleryItem(item);
+                }}
+              >
                 <Download size={13} />
-              </a>
+              </span>
             </Tip>
           ) : null}
           <Tip content="Copy" side="left" className="tile-action-tooltip">

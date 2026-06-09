@@ -79,6 +79,14 @@ export type OutputArtifact = {
   filename?: string;
   subfolder?: string;
   type?: string;
+  kind?: string;
+  media_type?: string;
+  content_type?: string;
+  download_url?: string;
+  storage_ref?: {
+    filename?: string;
+    [key: string]: unknown;
+  };
   url?: string;
   width?: number;
   height?: number;

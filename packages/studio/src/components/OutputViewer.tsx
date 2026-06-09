@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Copy, Download, RotateCcw, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Media, Tip } from "@/app/components";
 import { ReadoutBlock } from "@/components/ReadoutBlock";
+import { downloadGalleryItem } from "@/lib/download";
 import { formatGeneratedAt, jsonBlock, titleFromOutput } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { GalleryItem } from "@/types";
@@ -251,9 +252,14 @@ export function OutputViewer({
             </Tip>
             {item.url ? (
               <Tip content="Download file">
-                <a className="icon-button" aria-label="Download file" href={item.url} download>
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Download file"
+                  onClick={() => void downloadGalleryItem(item)}
+                >
                   <Download size={15} />
-                </a>
+                </button>
               </Tip>
             ) : null}
             <Tip content="Delete">
