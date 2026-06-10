@@ -777,6 +777,18 @@ class WorkflowManager:
         # Phase 3: Update workflow JSON with resolved paths
         self.update_workflow_model_paths(resolution)
 
+    def resolution_changes_manifest(
+        self,
+        resolution: ResolutionResult,
+        *,
+        config: dict,
+    ) -> bool:
+        """Return whether resolution metadata needs manifest writeback."""
+        return self.manifest_reconciler.resolution_changes_manifest(
+            resolution,
+            config=config,
+        )
+
     def update_workflow_model_paths(
         self,
         resolution: ResolutionResult

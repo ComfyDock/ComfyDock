@@ -22,6 +22,10 @@ from comfygit_core.models.workflow_execution import (
     PromptBuildIssue,
 )
 
+_MEDIA_LOADER_API_INPUT_ALIASES: dict[str, dict[str, str]] = {
+    "loadvideo": {"video": "file"},
+}
+
 
 def build_contract_prompt(
     workflow_name: str,
@@ -72,7 +76,7 @@ def build_contract_prompt(
             )
             continue
 
-        input_key = _contract_input_key(contract_input)
+        input_key = _contract_input_key(contract_input, prompt_node)
         if input_key is None:
             issues.append(
                 PromptBuildIssue(
@@ -258,12 +262,31 @@ def _history_output_keys(output_type: str) -> tuple[str, ...]:
     return ("images", "videos", "gifs", "audio", "audios", "files")
 
 
-def _contract_input_key(contract_input: WorkflowContractInput) -> str | None:
-    return contract_input.api_field_key or contract_input.field_key
+def _contract_input_key(
+    contract_input: WorkflowContractInput,
+    prompt_node: Mapping[str, Any],
+) -> str | None:
+    input_key = contract_input.api_field_key or contract_input.field_key
+    prompt_inputs = prompt_node.get("inputs")
+    if input_key is None or not isinstance(prompt_inputs, Mapping):
+        return input_key
+    if input_key in prompt_inputs:
+        return input_key
+
+    class_type = _normalized_class_type(prompt_node)
+    alias = _MEDIA_LOADER_API_INPUT_ALIASES.get(class_type, {}).get(input_key)
+    if alias and alias in prompt_inputs:
+        return alias
+
+    return input_key
 
 
 def _contract_input_api_node_id(contract_input: WorkflowContractInput) -> str:
     return str(contract_input.api_node_id or contract_input.node_id)
+
+
+def _normalized_class_type(prompt_node: Mapping[str, Any]) -> str:
+    return str(prompt_node.get("class_type") or "").lower().replace("_", "").replace("-", "")
 
 
 def _normalize_api_prompt_data(data: dict[str, Any]) -> ComfyUIPrompt:

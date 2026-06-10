@@ -77,6 +77,12 @@ LEGACY_SYSTEM_NODES = {
 MANAGER_NODE_ID = 'comfygit-manager'
 MANAGER_GITHUB_URL = 'https://github.com/comfygit-ai/comfygit-manager'
 
+# Runtime-only PyTorch backend override used by `cg run --torch-backend`.
+# This is intentionally non-persistent: it tells child Manager/UI processes
+# which backend policy launched the current ComfyUI process without writing to
+# `.pytorch-backend`.
+ACTIVE_TORCH_BACKEND_OVERRIDE_ENV = "COMFYGIT_TORCH_BACKEND_OVERRIDE"
+
 # Schema version for environment pyproject.toml format.
 # Increment when making breaking changes to the pyproject.toml structure.
 # v1: Original format with inline PyTorch config (indexes, sources, constraints)

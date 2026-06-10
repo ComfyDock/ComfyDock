@@ -1,5 +1,6 @@
 """Tests for PyTorch overlay materialization."""
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -686,6 +687,9 @@ editable = true
         stale_path = temp_env["cec_path"] / ".comfygit-tmp" / "uv-project-stale"
         stale_path.mkdir(parents=True)
         (stale_path / "marker").write_text("stale", encoding="utf-8")
+        old_mtime = stale_path.stat().st_mtime - 7200
+        stale_path.touch()
+        os.utime(stale_path, (old_mtime, old_mtime))
 
         class FakeUVCommand:
             def for_cwd(self, cwd):
@@ -704,3 +708,33 @@ editable = true
 
         uv_manager.sync_project()
         assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
+
+    def test_sync_project_preserves_fresh_disposable_projects(self, temp_env):
+        """Concurrent sync/status calls should not delete another active temp project."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        fresh_path = temp_env["cec_path"] / ".comfygit-tmp" / "uv-project-active"
+        fresh_path.mkdir(parents=True)
+        (fresh_path / "pyproject.toml").write_text("[project]\nname = 'active'\n", encoding="utf-8")
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                assert fresh_path.exists()
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                assert fresh_path.exists()
+                return SimpleNamespace(stdout="")
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=PyprojectManager(temp_env["pyproject_path"]),
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project()
+
+        assert fresh_path.exists()

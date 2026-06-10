@@ -81,6 +81,7 @@ class StatusScanner:
         self,
         *,
         check_package_sync: bool = False,
+        backend_override: str | None = None,
     ) -> EnvironmentComparison:
         """Get complete environment comparison with all details.
 
@@ -101,7 +102,9 @@ class StatusScanner:
         comparison = self.compare_states(current, expected)
 
         if check_package_sync:
-            package_status = self.check_packages_sync()
+            package_status = self.check_packages_sync(
+                backend_override=backend_override
+            )
             comparison.packages_in_sync = package_status.in_sync
             comparison.package_sync_message = package_status.message
         else:
@@ -423,7 +426,11 @@ class StatusScanner:
 
         return comparison
 
-    def check_packages_sync(self) -> PackageSyncStatus:
+    def check_packages_sync(
+        self,
+        *,
+        backend_override: str | None = None,
+    ) -> PackageSyncStatus:
         """Check if packages are in sync with pyproject.toml.
 
         Returns:
@@ -437,6 +444,7 @@ class StatusScanner:
                 dry_run=True,
                 all_groups=True,
                 pytorch_manager=self._pytorch_manager,
+                backend_override=backend_override,
                 extras=extras,
                 all_extras=all_extras,
             )

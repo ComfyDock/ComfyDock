@@ -12,6 +12,7 @@ import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
+from comfygit_core.constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from comfygit_core.models import (
     CDDependencyConflictError,
     CDNodeConflictError,
@@ -650,10 +651,14 @@ class EnvironmentCommands:
                     comfyui_args,
                     source_env=switch_source_env,
                     supervisor_control=supervisor_control,
+                    backend_override=torch_backend_override,
                 )
                 switch_source_env = None
             else:
-                result = env.run(comfyui_args)
+                result = env.run(
+                    comfyui_args,
+                    backend_override=torch_backend_override,
+                )
 
             if result.returncode == RESTART_EXIT_CODE:
                 print("\n🔄 Restart requested, syncing dependencies...\n")
@@ -716,6 +721,7 @@ class EnvironmentCommands:
         *,
         source_env: str,
         supervisor_control: SwitchObserverServer | None,
+        backend_override: str | None,
     ) -> subprocess.CompletedProcess:
         """Start target ComfyUI under `cg run` switch supervision.
 
@@ -742,6 +748,8 @@ class EnvironmentCommands:
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = env.name
         child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+        if backend_override:
+            child_env[ACTIVE_TORCH_BACKEND_OVERRIDE_ENV] = backend_override
 
         proc = subprocess.Popen(
             cmd,

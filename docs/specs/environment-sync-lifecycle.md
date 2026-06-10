@@ -259,6 +259,11 @@ should read or auto-probe the environment-local backend when no override is
 given. A `--torch-backend` override on those commands is a one-time sync input
 and should not rewrite the saved backend file.
 
+When `cg run --torch-backend <backend>` launches ComfyUI, child Manager/status
+operations should compare and sync dependencies against that active runtime
+override for the life of the launched process. This keeps restart/status/manual
+sync consistent without persisting the override to `.pytorch-backend`.
+
 ### CGSYNC-LOCAL-03A [LIVE]: Auto PyTorch backend probing falls back to CPU
 Validation: TEST
 
@@ -278,7 +283,9 @@ overlay-aware uv resolution paths should build a disposable project copy before
 running uv with materialized local state. The disposable project should live under a
 gitignored environment-local scratch directory such as `.cec/.comfygit-tmp/`,
 and each new operation should remove stale transaction directories before
-creating a fresh one.
+creating a fresh one. Cleanup must only remove transaction directories old
+enough to be treated as abandoned; it must not delete another fresh disposable
+project that may belong to a concurrent status, planning, or sync path.
 
 The project copy should include the files uv needs to resolve consistently:
 `pyproject.toml`, `.python-version`, `package_config.toml`, `.pytorch-backend`,

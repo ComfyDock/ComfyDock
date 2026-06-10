@@ -23,6 +23,7 @@ logger = get_logger(__name__)
 
 
 GIT_ACQUISITION_VERSION_ALIASES = {"nightly", "dev"}
+GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS = 300
 
 
 def _is_valid_git_ref(version: str | None) -> bool:
@@ -283,7 +284,7 @@ class NodeLookupService:
                         temp_path,
                         depth=1,
                         ref=ref,
-                        timeout=30,
+                        timeout=GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS,
                         token=self.get_git_token(),
                     )
                 else:

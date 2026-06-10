@@ -269,11 +269,28 @@ Validation: MIXED
 | Captured/tracked workflow has manifest-declared nodes that are not installed locally | workflow analysis `uninstalled_nodes` with matching `comparison.missing_nodes` | `sync_missing_nodes` / "Sync missing nodes" | inspect node list | This is materialization drift, not unknown workflow resolution. |
 | Workflow has version-gated built-in nodes | workflow analysis `nodes_version_gated` | `upgrade_comfyui_or_change_workflow` / "Update ComfyUI or workflow" | show minimum version guidance | This should not be presented as a normal custom-node install. |
 | Workflow has uninstallable/community-only mappings | workflow analysis `nodes_uninstallable` | `manual_node_resolution` / "Choose a community package" | mark optional, custom map | Current Manager wording maps this to "community packages". |
+| Captured workflow references local models that are not manifest-declared | workflow analysis resolved models differ from workflow/global manifest model entries | current guardrail: `commit_snapshot` / "Commit snapshot" reconciles dependency metadata first; target: save-time capture persists this metadata before commit | inspect model list, resolve workflow models | Save-time capture can make workflow files look synced before commit when dependency writeback is missing. Commit must still persist current model dependency metadata, including models inside subgraphs, so a clean snapshot is portable to deploy/build consumers. CGLIFE-CAPTURE-01 moves the primary write earlier. |
 | Workflow has missing required model with known source | missing models and workflow analysis | `download_required_models` / "Download required models" | mark optional/flexible, add local model | Download mutates filesystem and workspace index, then manifest model entries. |
 | Workflow has missing model without source or local match | missing models/readiness | `resolve_missing_model` / "Resolve models" | add source URL, select local model, search/download externally, mark optional/flexible, remove workflow dependency | This is a model availability problem. Source proof and local availability are separate. Do not route this to reproducibility/source-proof review. |
 | Workflow model path differs from indexed path | workflow analysis path sync | `sync_model_paths` / "Sync model paths" | inspect model location | Current CLI already prioritizes path sync before other workflow issues. |
 | Model exists but category/folder is incompatible with loader | workflow analysis category mismatch | `move_or_redownload_model` / "Move model to expected folder" | adjust workflow, add compatible model | This is usually manual filesystem work, not a manifest-only repair. |
 | Download intents are queued or failed | workflow analysis/download state | `complete_model_downloads` / "Complete downloads" | retry failed, edit source | Failed downloads should not be hidden behind "resolution complete". |
+
+### CGLIFE-CAPTURE-01 [PLANNED]: Save-time capture should persist dependency projection
+Validation: TEST
+
+When a Manager or adapter treats a ComfyUI save event as user intent to capture
+a workflow, capture should promote that workflow into the uncommitted ComfyGit
+working snapshot. Capture should copy or update `.cec/workflows/<name>.json`,
+ensure the manifest workflow entry, run best-effort dependency
+analysis/resolution, and persist known workflow model/node dependency metadata
+through the core manifest reconciler.
+
+Preview analysis for an unsaved browser workflow remains read-only. Save-time
+capture is the first point where the workflow becomes working manifest state.
+Commit-time reconciliation should remain as an idempotent guardrail for stale
+states, missed save events, and older environments, but commit should not be the
+first normal domain operation that writes workflow dependency metadata.
 
 ### CGLIFE-STATUS-08 [PARTIAL]: Runtime states are separate from manifest and filesystem states
 Validation: MIXED
@@ -380,6 +397,9 @@ uncommitted working snapshot by copying it into `.cec/workflows` and ensuring a
 manifest workflow path. That capture must not commit the snapshot and must not
 delete other workflows. Workflow capture must preserve the saved workflow stem
 exactly, including dots that are part of the name rather than file extensions.
+Commit-time reconciliation must not rely only on workflow file sync state; an
+already-captured workflow whose dependency manifest is missing or stale must
+still have dependency metadata reconciled before the Git snapshot is created.
 
 ### CGLIFE-NONGOAL-02 [LIVE]: Runtime health is not portable manifest truth
 Validation: HUMAN_REVIEW

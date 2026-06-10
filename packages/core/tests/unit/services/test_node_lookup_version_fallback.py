@@ -12,7 +12,10 @@ from unittest.mock import patch
 
 import pytest
 from comfygit_core.models.shared import NodeInfo
-from comfygit_core.services.node_lookup_service import NodeLookupService
+from comfygit_core.services.node_lookup_service import (
+    GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS,
+    NodeLookupService,
+)
 
 
 class TestDownloadToCacheGitBehavior:
@@ -95,3 +98,22 @@ class TestDownloadToCacheGitBehavior:
             call_kwargs = mock_git_clone.call_args
             # Should use commit hash as ref
             assert call_kwargs.kwargs.get('ref') == "abc123def456789012345678901234567890abcd"
+            assert call_kwargs.kwargs.get("timeout") == GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS
+
+    def test_git_clone_uses_extended_timeout_for_node_downloads(self, cache_dir):
+        """Custom node repositories can be slow enough to exceed generic command timeouts."""
+        node_info = NodeInfo(
+            name="Slow-Node",
+            repository="https://github.com/example/slow-node",
+            version=None,
+            download_url=None,
+            source="git",
+        )
+
+        service = NodeLookupService(cache_path=cache_dir)
+
+        with patch("comfygit_core.utils.git.git_clone") as mock_git_clone:
+            service.download_to_cache(node_info)
+
+            mock_git_clone.assert_called_once()
+            assert mock_git_clone.call_args.kwargs.get("timeout") == GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS

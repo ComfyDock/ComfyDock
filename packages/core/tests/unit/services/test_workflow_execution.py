@@ -173,6 +173,41 @@ def test_build_contract_prompt_uses_concrete_api_binding_for_subgraph_input() ->
     ]
 
 
+def test_build_contract_prompt_repairs_legacy_load_video_api_key() -> None:
+    api_prompt = {
+        "21": {
+            "class_type": "LoadVideo",
+            "inputs": {"file": "old.mp4"},
+        }
+    }
+    contract = NamedWorkflowContract(
+        inputs=[
+            WorkflowContractInput(
+                name="video",
+                type="video",
+                node_id="21",
+                field_key="video",
+                api_node_id="21",
+                api_field_key="video",
+                required=True,
+            )
+        ]
+    )
+
+    result = build_contract_prompt(
+        "video-upscale",
+        api_prompt,
+        contract,
+        {"video": "uploaded.mp4"},
+    )
+
+    assert result.is_ready
+    assert result.prompt["21"]["inputs"]["file"] == "uploaded.mp4"
+    assert [(item.name, item.node_id, item.input_key) for item in result.applied_inputs] == [
+        ("video", "21", "file"),
+    ]
+
+
 def test_build_contract_prompt_reports_missing_required_input_without_default() -> None:
     result = build_contract_prompt("simple", _txt2img_api_prompt(), _contract(), {})
 

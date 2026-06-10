@@ -363,7 +363,45 @@ class TestRunBehavior:
         with pytest.raises(SystemExit):
             cmd.run(args)
 
-        mock_env.run.assert_called_once_with(["--cpu"])
+        mock_env.run.assert_called_once_with(["--cpu"], backend_override=None)
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_passes_runtime_backend_override_to_child(self, mock_get_workspace):
+        """Run should expose one-time backend overrides to the launched process only."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+        mock_env.get_current_branch.return_value = "main"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cu126")
+        mock_env.sync.return_value = MagicMock(success=True)
+        mock_env.run.return_value = MagicMock(returncode=0)
+
+        mock_workspace = MagicMock()
+        mock_workspace.get_active_environment.return_value = mock_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend="cu126",
+            no_sync=False,
+            args=[],
+            extra=[],
+            all_extras=False,
+            overlay=[],
+        )
+
+        with pytest.raises(SystemExit):
+            cmd.run(args)
+
+        mock_env.ensure_torch_backend.assert_not_called()
+        mock_env.sync.assert_called_once()
+        assert mock_env.sync.call_args.kwargs["backend_override"] == "cu126"
+        mock_env.run.assert_called_once_with([], backend_override="cu126")
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_does_not_duplicate_cpu_flag(self, mock_get_workspace):
@@ -395,7 +433,10 @@ class TestRunBehavior:
         with pytest.raises(SystemExit):
             cmd.run(args)
 
-        mock_env.run.assert_called_once_with(["--cpu", "--port", "8199"])
+        mock_env.run.assert_called_once_with(
+            ["--cpu", "--port", "8199"],
+            backend_override=None,
+        )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_overlay_rejects_no_sync(self, mock_get_workspace):

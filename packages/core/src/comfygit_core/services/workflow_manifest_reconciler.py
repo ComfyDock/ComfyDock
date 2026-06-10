@@ -179,12 +179,39 @@ class WorkflowManifestReconciler:
 
         self.pyproject.workflows.set_workflow_models(workflow_name, manifest_models, config=config)
 
+    def resolution_changes_manifest(self, resolution: ResolutionResult, *, config: dict) -> bool:
+        """Return whether the current manifest differs from resolution output.
+
+        Save-time workflow capture can make a workflow file look synced before
+        commit-time reconciliation runs. This check lets commit still persist
+        dependency metadata for already-captured workflows without rewriting
+        every synced workflow on every commit.
+        """
+        existing_workflow_models = self.pyproject.workflows.get_workflow_models(
+            resolution.workflow_name,
+            config=config,
+        )
+        expected_workflow_models = self._build_manifest_models(
+            resolution,
+            existing_workflow_models=existing_workflow_models,
+            config=config,
+            record_global_models=False,
+        )
+
+        if self._workflow_model_signature(existing_workflow_models) != self._workflow_model_signature(
+            expected_workflow_models
+        ):
+            return True
+
+        return self._resolved_global_models_changed(resolution, config=config)
+
     def _build_manifest_models(
         self,
         resolution: ResolutionResult,
         *,
         existing_workflow_models: list[Any],
         config: dict,
+        record_global_models: bool = True,
     ) -> list[ManifestWorkflowModel]:
         manifest_models: list[ManifestWorkflowModel] = []
 
@@ -226,17 +253,18 @@ class WorkflowManifestReconciler:
                 )
             )
 
-            self.pyproject.models.add_model(
-                ManifestModel(
-                    hash=model.hash,
-                    filename=model.filename,
-                    size=model.file_size,
-                    relative_path=model.relative_path,
-                    category=model.category,
-                    sources=sources,
-                ),
-                config=config,
-            )
+            if record_global_models:
+                self.pyproject.models.add_model(
+                    ManifestModel(
+                        hash=model.hash,
+                        filename=model.filename,
+                        size=model.file_size,
+                        relative_path=model.relative_path,
+                        category=model.category,
+                        sources=sources,
+                    ),
+                    config=config,
+                )
 
         existing_by_filename = {m.filename: m for m in existing_workflow_models}
 
@@ -267,6 +295,78 @@ class WorkflowManifestReconciler:
             )
 
         return manifest_models
+
+    def _resolved_global_models_changed(
+        self,
+        resolution: ResolutionResult,
+        *,
+        config: dict,
+    ) -> bool:
+        models_section = (
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("models", {})
+        )
+
+        seen_hashes: set[str] = set()
+        for resolved in resolution.models_resolved:
+            model = resolved.resolved_model
+            if not model or not model.hash or model.hash in seen_hashes:
+                continue
+            seen_hashes.add(model.hash)
+
+            existing = models_section.get(model.hash)
+            sources_from_repo = self.model_repository.get_sources(model.hash)
+            expected_sources = sorted(
+                source["url"]
+                for source in sources_from_repo
+                if isinstance(source, dict) and source.get("url")
+            )
+
+            if existing is None:
+                return True
+            if existing.get("filename") != model.filename:
+                return True
+            if existing.get("size") != model.file_size:
+                return True
+            if existing.get("relative_path") != model.relative_path:
+                return True
+            if existing.get("category") != model.category:
+                return True
+            if sorted(existing.get("sources", [])) != expected_sources:
+                return True
+
+        return False
+
+    @staticmethod
+    def _workflow_model_signature(models: list[ManifestWorkflowModel]) -> tuple[tuple, ...]:
+        signature = []
+        for model in models:
+            nodes = tuple(
+                sorted(
+                    (
+                        node.node_id,
+                        node.node_type,
+                        node.widget_index,
+                        node.widget_value,
+                    )
+                    for node in model.nodes
+                )
+            )
+            signature.append(
+                (
+                    model.filename,
+                    model.category,
+                    model.criticality,
+                    model.status,
+                    model.hash,
+                    tuple(sorted(model.sources)),
+                    model.relative_path,
+                    model.declared_by,
+                    nodes,
+                )
+            )
+        return tuple(sorted(signature))
 
     def _download_intent_model(self, resolved: ResolvedModel) -> ManifestWorkflowModel:
         category = self.model_path_policy.category_for_node_ref(resolved.reference)

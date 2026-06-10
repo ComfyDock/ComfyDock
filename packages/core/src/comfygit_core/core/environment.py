@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
+from ..constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from ..factories.uv_factory import create_uv_for_environment
 from ..logging.logging_config import get_logger
 from ..managers.environment_git_orchestrator import EnvironmentGitOrchestrator
@@ -588,9 +589,26 @@ class Environment:
     # Environment Management
     # =====================================================
 
+    def _get_active_torch_backend_override(self) -> str | None:
+        """Return the non-persistent backend override active for this process."""
+        backend = os.environ.get(ACTIVE_TORCH_BACKEND_OVERRIDE_ENV)
+        if not backend:
+            return None
+
+        if self.is_valid_torch_backend(backend):
+            return backend
+
+        logger.warning(
+            "Ignoring invalid %s=%r",
+            ACTIVE_TORCH_BACKEND_OVERRIDE_ENV,
+            backend,
+        )
+        return None
+
     def status(self) -> EnvironmentStatus:
         """Get environment sync and git status."""
         git_status = self.git_manager.get_status(self.pyproject)
+        active_backend_override = self._get_active_torch_backend_override()
 
         # Each subsystem provides its complete status
         scanner = StatusScanner(
@@ -601,7 +619,8 @@ class Environment:
             pytorch_manager=self.pytorch_manager,
         )
         comparison = scanner.get_full_comparison(
-            check_package_sync=git_status.has_dependency_changes
+            check_package_sync=git_status.has_dependency_changes,
+            backend_override=active_backend_override,
         )
 
         workflow_status = self.workflow_manager.get_workflow_status()
@@ -999,6 +1018,10 @@ class Environment:
         """
         from ..services.environment_sync_coordinator import EnvironmentSyncCoordinator
 
+        effective_backend_override = (
+            backend_override or self._get_active_torch_backend_override()
+        )
+
         return EnvironmentSyncCoordinator(self).sync(
             dry_run=dry_run,
             model_strategy=model_strategy,
@@ -1008,7 +1031,7 @@ class Environment:
             sync_callbacks=sync_callbacks,
             verbose=verbose,
             preserve_workflows=preserve_workflows,
-            backend_override=backend_override,
+            backend_override=effective_backend_override,
             overlay_names=overlay_names,
             extras=extras,
             all_extras=all_extras,
@@ -1635,11 +1658,18 @@ class Environment:
             raise
 
     # TODO wrap subprocess completed process instance
-    def run(self, args: list[str] | None = None) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        args: list[str] | None = None,
+        *,
+        backend_override: str | None = None,
+    ) -> subprocess.CompletedProcess:
         """Run ComfyUI in this environment.
 
         Args:
             args: Arguments to pass to ComfyUI
+            backend_override: Non-persistent PyTorch backend override used for
+                this launched process.
 
         Returns:
             CompletedProcess
@@ -1654,6 +1684,8 @@ class Environment:
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = self.name
         child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+        if backend_override:
+            child_env[ACTIVE_TORCH_BACKEND_OVERRIDE_ENV] = backend_override
 
         logger.info(f"Starting ComfyUI with: {' '.join(cmd)}")
         return run_command(
@@ -2425,7 +2457,13 @@ class Environment:
             config = edit.config
 
             for wf_analysis in workflow_status.analyzed_workflows:
-                if wf_analysis.sync_state in ("new", "modified"):
+                if (
+                    wf_analysis.sync_state in ("new", "modified")
+                    or self.workflow_manager.resolution_changes_manifest(
+                        wf_analysis.resolution,
+                        config=config,
+                    )
+                ):
                     # Apply resolution results to pyproject (in-memory mutations)
                     self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
                     edit.mark_changed()
@@ -2532,7 +2570,6 @@ class Environment:
     # Workflow Contract Management
     # =====================================================
 
-    @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
         """Get the saved execution contract for a workflow."""
         return self.pyproject.workflows.get_execution_contract(workflow_name)
