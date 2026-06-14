@@ -44,6 +44,27 @@ class TestRuntimeRestartPreservesWorkflows:
             "workflows/captured_workflow.json"
         )
 
+    def test_capture_workflow_tracks_file_when_dependency_reconciliation_fails(self, test_env):
+        """A parse/resolution failure should not leave the captured file untracked."""
+        workflow_path = (
+            test_env.comfyui_path
+            / "user"
+            / "default"
+            / "workflows"
+            / "broken_workflow.json"
+        )
+        workflow_path.parent.mkdir(parents=True, exist_ok=True)
+        workflow_path.write_text("{not valid json")
+
+        tracked_path = test_env.capture_workflow("broken_workflow")
+
+        assert tracked_path == test_env.cec_path / "workflows" / "broken_workflow.json"
+        assert tracked_path.exists()
+        snapshot = test_env.get_manifest_snapshot()
+        assert snapshot.workflows["broken_workflow"].path == (
+            "workflows/broken_workflow.json"
+        )
+
     def test_sync_with_preserve_workflows_keeps_uncommitted_edits(self, test_env):
         """sync(preserve_workflows=True) should preserve uncommitted workflow edits.
 

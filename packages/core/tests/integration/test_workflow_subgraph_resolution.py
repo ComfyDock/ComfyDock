@@ -184,6 +184,21 @@ class TestWorkflowSubgraphResolution:
         assert captured.resolution.models_resolved
         expected_hash = captured.resolution.models_resolved[0].resolved_model.hash
 
+        assertions = PyprojectAssertions(test_env)
+        (
+            assertions
+            .has_workflow("captured_subgraph")
+            .has_model_count(1)
+            .has_model_with_hash(expected_hash)
+            .has_model_with_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+            .has_status("resolved")
+        )
+        (
+            assertions
+            .has_global_model(expected_hash)
+            .has_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+        )
+
         test_env.execute_commit(
             workflow_status=workflow_status,
             message="Add captured subgraph workflow",
@@ -207,6 +222,73 @@ class TestWorkflowSubgraphResolution:
             captured.resolution,
             config=test_env.pyproject.load(),
         )
+
+    def test_capture_subgraph_workflow_writes_download_intent_before_commit(
+        self,
+        test_env,
+    ):
+        """Capture should persist missing subgraph model source hints before commit."""
+        subgraph_id = "f9f61b10-b689-4d67-b4fa-0acc1d9b5390"
+        workflow_json = {
+            "id": "captured-subgraph-download-test",
+            "revision": 0,
+            "nodes": [
+                {
+                    "id": 129,
+                    "type": subgraph_id,
+                    "flags": {},
+                    "inputs": [],
+                    "outputs": [],
+                    "widgets_values": [],
+                }
+            ],
+            "links": [],
+            "definitions": {
+                "subgraphs": [
+                    {
+                        "id": subgraph_id,
+                        "name": "Downloadable Model Subgraph",
+                        "nodes": [
+                            {
+                                "id": 127,
+                                "type": "CheckpointLoaderSimple",
+                                "flags": {},
+                                "inputs": [],
+                                "outputs": [],
+                                "properties": {
+                                    "models": [
+                                        {
+                                            "name": "missing-ltx.safetensors",
+                                            "url": (
+                                                "https://huggingface.co/example/"
+                                                "resolve/main/missing-ltx.safetensors"
+                                            ),
+                                            "directory": "checkpoints",
+                                        }
+                                    ]
+                                },
+                                "widgets_values": ["missing-ltx.safetensors"],
+                            }
+                        ],
+                        "links": [],
+                    }
+                ]
+            },
+            "config": {},
+            "version": 0.4,
+        }
+
+        simulate_comfyui_save_workflow(test_env, "captured_download", workflow_json)
+        test_env.capture_workflow("captured_download")
+
+        models = test_env.pyproject.workflows.get_workflow_models("captured_download")
+        assert len(models) == 1
+        assert models[0].filename == "missing-ltx.safetensors"
+        assert models[0].status == "unresolved"
+        assert models[0].relative_path == "checkpoints/missing-ltx.safetensors"
+        assert models[0].sources == [
+            "https://huggingface.co/example/resolve/main/missing-ltx.safetensors"
+        ]
 
     def test_resolve_workflow_with_nested_subgraphs(self, test_env, test_workspace):
         """Workflow with nested subgraphs should extract all nodes."""

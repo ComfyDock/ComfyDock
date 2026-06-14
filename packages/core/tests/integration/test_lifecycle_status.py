@@ -1,6 +1,7 @@
 """Integration coverage for lifecycle status over real environment signals."""
 
 from comfygit_core.models import NodeInfo
+from conftest import load_workflow_fixture, simulate_comfyui_save_workflow
 
 
 def _action_ids(lifecycle):
@@ -127,3 +128,31 @@ def test_lifecycle_status_recommends_sync_before_commit_for_dependency_changes(
     assert "dependencies_not_synced" in _issue_ids(lifecycle)
     assert "commit_snapshot" in _action_ids(lifecycle)
     assert lifecycle.layer("filesystem").status == "blocked"
+
+
+def test_lifecycle_status_reports_stale_captured_workflow_dependency_metadata(
+    test_env,
+    test_models,
+    workflow_fixtures,
+):
+    workflow_data = load_workflow_fixture(workflow_fixtures, "simple_txt2img")
+    simulate_comfyui_save_workflow(test_env, "stale_workflow", workflow_data)
+
+    # Simulate a legacy/missed capture: workflow file is already tracked, but
+    # pyproject only has the path and lacks dependency metadata.
+    test_env.workflow_manager.workflow_file_store.copy_workflow("stale_workflow")
+    test_env.pyproject.manifest.ensure_workflow("stale_workflow")
+
+    lifecycle = test_env.get_lifecycle_status()
+
+    assert lifecycle.primary_action_id == "refresh_workflow_capture"
+    assert "workflow_dependency_metadata_stale" in _issue_ids(lifecycle)
+    assert lifecycle.layer("manifest").status == "attention"
+
+    test_env.capture_workflow("stale_workflow")
+
+    refreshed = test_env.get_lifecycle_status()
+    assert "workflow_dependency_metadata_stale" not in _issue_ids(refreshed)
+    assert refreshed.primary_action_id == "commit_snapshot"
+    assert "commit_snapshot" in _action_ids(refreshed)
+    assert test_env.pyproject.workflows.get_workflow_models("stale_workflow")

@@ -1,6 +1,7 @@
 """Manifest writeback for workflow resolution results."""
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ..logging.logging_config import get_logger
@@ -122,26 +123,7 @@ class WorkflowManifestReconciler:
         """Reconcile one full workflow resolution result into the manifest."""
         workflow_name = resolution.workflow_name
 
-        target_node_pack_ids = set()
-        target_node_types = set()
-
-        for pkg in resolution.nodes_resolved:
-            if pkg.is_optional:
-                target_node_types.add(pkg.node_type)
-            elif pkg.package_id is not None:
-                normalized_id = self.node_package_policy.normalize_package_id(pkg.package_id)
-                target_node_pack_ids.add(normalized_id)
-                target_node_types.add(pkg.node_type)
-
-        for node in resolution.nodes_unresolved:
-            target_node_types.add(node.type)
-        for node in resolution.nodes_version_gated:
-            target_node_types.add(node.type)
-        for pkg in resolution.nodes_uninstallable:
-            target_node_types.add(pkg.node_type)
-        for packages in resolution.nodes_ambiguous:
-            if packages:
-                target_node_types.add(packages[0].node_type)
+        target_node_pack_ids, target_node_types = self._target_node_metadata(resolution)
 
         if target_node_pack_ids:
             self.pyproject.workflows.set_node_packs(workflow_name, target_node_pack_ids, config=config)
@@ -203,7 +185,65 @@ class WorkflowManifestReconciler:
         ):
             return True
 
+        if self._workflow_node_metadata_changed(resolution, config=config):
+            return True
+
         return self._resolved_global_models_changed(resolution, config=config)
+
+    def _target_node_metadata(self, resolution: ResolutionResult) -> tuple[set[str], set[str]]:
+        """Return the node-pack and node-type metadata implied by a resolution."""
+        target_node_pack_ids = set()
+        target_node_types = set()
+
+        for pkg in resolution.nodes_resolved:
+            if pkg.is_optional:
+                target_node_types.add(pkg.node_type)
+            elif pkg.package_id is not None:
+                normalized_id = self.node_package_policy.normalize_package_id(pkg.package_id)
+                target_node_pack_ids.add(normalized_id)
+                target_node_types.add(pkg.node_type)
+
+        for node in resolution.nodes_unresolved:
+            target_node_types.add(node.type)
+        for node in resolution.nodes_version_gated:
+            target_node_types.add(node.type)
+        for pkg in resolution.nodes_uninstallable:
+            target_node_types.add(pkg.node_type)
+        for packages in resolution.nodes_ambiguous:
+            if packages:
+                target_node_types.add(packages[0].node_type)
+
+        return target_node_pack_ids, target_node_types
+
+    def _workflow_node_metadata_changed(
+        self,
+        resolution: ResolutionResult,
+        *,
+        config: dict,
+    ) -> bool:
+        """Return whether workflow node metadata differs from resolution output."""
+        target_node_pack_ids, target_node_types = self._target_node_metadata(resolution)
+        workflow_data = (
+            config.get("tool", {})
+            .get("comfygit", {})
+            .get("workflows", {})
+            .get(resolution.workflow_name, {})
+        )
+        if not isinstance(workflow_data, Mapping):
+            return True
+
+        existing_nodes = workflow_data.get("nodes", []) or []
+        if isinstance(existing_nodes, str) or not isinstance(existing_nodes, Sequence):
+            return True
+        existing_node_pack_ids = set(existing_nodes)
+        if existing_node_pack_ids != target_node_pack_ids:
+            return True
+
+        existing_custom_map = workflow_data.get("custom_node_map", {}) or {}
+        if not isinstance(existing_custom_map, dict):
+            return True
+
+        return any(node_type not in target_node_types for node_type in existing_custom_map)
 
     def _build_manifest_models(
         self,

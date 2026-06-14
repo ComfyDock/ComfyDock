@@ -507,12 +507,31 @@ class WorkflowManager:
         """Capture one saved ComfyUI workflow into tracked working state.
 
         This copies the saved workflow JSON into `.cec/workflows` and ensures
-        the pyproject-backed manifest has a workflow entry/path. It does not
-        commit or perform dependency resolution.
+        the pyproject-backed manifest has a workflow entry/path. Capture also
+        persists best-effort dependency metadata so the uncommitted working
+        snapshot describes the saved workflow before commit.
         """
         workflow_name = normalize_workflow_filename(name)
         tracked_path = self.workflow_file_store.copy_workflow(workflow_name)
-        self.pyproject.manifest.ensure_workflow(workflow_name)
+
+        try:
+            _dependencies, resolution = self.analyze_and_resolve_workflow(workflow_name)
+            with self.pyproject.manifest.edit() as edit:
+                edit.ensure_workflow(workflow_name)
+                if self.manifest_reconciler.resolution_changes_manifest(
+                    resolution,
+                    config=edit.config,
+                ):
+                    self.manifest_reconciler.apply_resolution(resolution, config=edit.config)
+                    edit.cleanup_model_orphans()
+                    edit.mark_changed()
+        except Exception:
+            self.pyproject.manifest.ensure_workflow(workflow_name)
+            logger.exception(
+                "Captured workflow '%s', but dependency metadata reconciliation failed",
+                workflow_name,
+            )
+
         return tracked_path
 
     def restore_from_cec(self, name: str) -> bool:
@@ -570,13 +589,19 @@ class WorkflowManager:
 
         resolved_packages = {r.package_id for r in resolution.nodes_resolved if r.package_id}
         uninstalled_nodes = list(resolved_packages - installed_nodes)
+        manifest_config = self.pyproject.load()
+        dependency_metadata_stale = (
+            sync_state == "synced"
+            and self.resolution_changes_manifest(resolution, config=manifest_config)
+        )
 
         return WorkflowAnalysisStatus(
             name=name,
             sync_state=sync_state,
             dependencies=dependencies,
             resolution=resolution,
-            uninstalled_nodes=uninstalled_nodes
+            uninstalled_nodes=uninstalled_nodes,
+            dependency_metadata_stale=dependency_metadata_stale,
         )
 
     def get_workflow_status(self) -> DetailedWorkflowStatus:

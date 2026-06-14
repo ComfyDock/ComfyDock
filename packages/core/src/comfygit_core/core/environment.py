@@ -1971,8 +1971,8 @@ class Environment:
         """Capture one saved workflow into the tracked working environment.
 
         The workflow is copied from ComfyUI's saved workflow directory into
-        `.cec/workflows`, and a manifest workflow entry/path is ensured. This
-        does not commit the snapshot or resolve/install dependencies.
+        `.cec/workflows`, and best-effort dependency metadata is reconciled into
+        the manifest. This does not commit the snapshot or install dependencies.
         """
         return self.workflow_manager.capture_workflow(workflow_name)
 

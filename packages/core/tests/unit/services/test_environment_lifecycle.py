@@ -589,6 +589,30 @@ def test_model_path_sync_is_actionable_but_not_commit_blocking():
     assert lifecycle.issues[0].id == "model_path_mismatch"
 
 
+def test_stale_workflow_dependency_metadata_recommends_refresh_capture():
+    workflow_status = DetailedWorkflowStatus(
+        sync_status=WorkflowSyncStatus(synced=["demo"]),
+        analyzed_workflows=[
+            WorkflowAnalysisStatus(
+                name="demo",
+                sync_state="synced",
+                dependencies=WorkflowDependencies(workflow_name="demo"),
+                resolution=ResolutionResult(workflow_name="demo"),
+                dependency_metadata_stale=True,
+            )
+        ],
+    )
+
+    lifecycle = build_lifecycle_status_from_environment_status(
+        _status(workflow=workflow_status)
+    )
+
+    assert lifecycle.primary_action_id == "refresh_workflow_capture"
+    assert lifecycle.issues[0].id == "workflow_dependency_metadata_stale"
+    assert lifecycle.issues[0].layer == "manifest"
+    assert lifecycle.issues[0].affected_resources == ("demo",)
+
+
 def test_workflow_unresolved_model_refs_recommend_adding_source_or_local_model():
     workflow_status = DetailedWorkflowStatus(
         sync_status=WorkflowSyncStatus(),

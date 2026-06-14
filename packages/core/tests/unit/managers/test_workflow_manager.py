@@ -254,6 +254,65 @@ def test_normalize_package_id_does_not_use_ambiguous_installed_alias(workflow_ma
     assert normalized == "SharedName"
 
 
+def test_resolution_changes_manifest_detects_stale_node_pack_metadata(workflow_manager):
+    """Manifest freshness should include workflow node package references."""
+    from comfygit_core.models.workflow import ResolutionResult, ResolvedNodePackage
+
+    workflow_manager.node_mapping_repository.canonicalize_package_id.return_value = None
+    workflow_manager.pyproject.workflows.get_workflow_models.return_value = []
+    config = {
+        "tool": {
+            "comfygit": {
+                "workflows": {
+                    "demo": {
+                        "path": "workflows/demo.json",
+                    }
+                },
+                "models": {},
+            }
+        }
+    }
+    resolution = ResolutionResult(
+        workflow_name="demo",
+        nodes_resolved=[
+            ResolvedNodePackage(
+                node_type="KnownCustomNode",
+                package_id="known-custom-pack",
+                match_type="exact",
+            )
+        ],
+    )
+
+    assert workflow_manager.resolution_changes_manifest(resolution, config=config)
+
+    config["tool"]["comfygit"]["workflows"]["demo"]["nodes"] = ["known-custom-pack"]
+    assert not workflow_manager.resolution_changes_manifest(resolution, config=config)
+
+
+def test_resolution_changes_manifest_flags_malformed_node_metadata(workflow_manager):
+    """Malformed workflow node metadata should be treated as stale."""
+    from comfygit_core.models.workflow import ResolutionResult
+
+    workflow_manager.pyproject.workflows.get_workflow_models.return_value = []
+    resolution = ResolutionResult(workflow_name="demo")
+
+    config = {
+        "tool": {
+            "comfygit": {
+                "workflows": {
+                    "demo": {
+                        "path": "workflows/demo.json",
+                        "nodes": "not-a-list",
+                    }
+                },
+                "models": {},
+            }
+        }
+    }
+
+    assert workflow_manager.resolution_changes_manifest(resolution, config=config)
+
+
 def test_consensus_custom_node_map_reuses_installed_mappings(workflow_manager):
     """New workflows should reuse unambiguous mappings from existing workflows."""
     from comfygit_core.models.shared import NodeInfo

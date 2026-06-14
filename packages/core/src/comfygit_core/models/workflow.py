@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..models.node_mapping import (
     GlobalNodePackage,
@@ -557,7 +557,7 @@ class WorkflowNode:
         }
 
     @classmethod
-    def from_dict(cls, data: dict, subgraph_id: str | None = None) -> WorkflowNode:
+    def from_dict(cls, data: dict[str, Any], subgraph_id: str | None = None) -> WorkflowNode:
         """Parse from workflow node dict.
 
         Args:
@@ -570,14 +570,15 @@ class WorkflowNode:
         if isinstance(raw_inputs, list):
             for idx, input_data in enumerate(raw_inputs):
                 if isinstance(input_data, dict):
+                    input_dict = cast(dict[str, Any], input_data)
                     inputs.append(NodeInput(
-                        name=input_data.get('name', ''),
-                        type=input_data.get('type', ''),
-                        link=input_data.get('link'),
-                        localized_name=input_data.get('localized_name'),
-                        widget=input_data.get('widget'),
-                        shape=input_data.get('shape'),
-                        slot_index=input_data.get('slot_index', idx)
+                        name=input_dict.get('name', ''),
+                        type=input_dict.get('type', ''),
+                        link=input_dict.get('link'),
+                        localized_name=input_dict.get('localized_name'),
+                        widget=input_dict.get('widget'),
+                        shape=input_dict.get('shape'),
+                        slot_index=input_dict.get('slot_index', idx)
                     ))
 
         # Parse outputs
@@ -586,12 +587,13 @@ class WorkflowNode:
         if isinstance(raw_outputs, list):
             for idx, output_data in enumerate(raw_outputs):
                 if isinstance(output_data, dict):
+                    output_dict = cast(dict[str, Any], output_data)
                     outputs.append(NodeOutput(
-                        name=output_data.get('name', ''),
-                        type=output_data.get('type', ''),
-                        links=output_data.get('links'),
-                        localized_name=output_data.get('localized_name'),
-                        slot_index=output_data.get('slot_index', idx)
+                        name=output_dict.get('name', ''),
+                        type=output_dict.get('type', ''),
+                        links=output_dict.get('links'),
+                        localized_name=output_dict.get('localized_name'),
+                        slot_index=output_dict.get('slot_index', idx)
                     ))
 
         # Parse position and size
@@ -914,6 +916,11 @@ class WorkflowAnalysisStatus:
 
     # Installation status (for CLI display without pyproject access)
     uninstalled_nodes: list[str] = field(default_factory=list)  # Node IDs needing installation
+
+    # Manifest read-model freshness. True means the saved workflow analysis is
+    # ahead of the pyproject-backed dependency projection and should be captured
+    # before callers treat the environment snapshot as reproducible.
+    dependency_metadata_stale: bool = False
 
     @property
     def has_issues(self) -> bool:

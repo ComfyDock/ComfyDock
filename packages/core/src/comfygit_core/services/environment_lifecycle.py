@@ -318,9 +318,12 @@ def _collect_workflow_issues(
     path_sync_workflows: list[str] = []
     category_mismatch_workflows: list[str] = []
     download_intent_workflows: list[str] = []
+    stale_dependency_metadata_workflows: list[str] = []
 
     for workflow in workflow_status.analyzed_workflows:
         resolution = workflow.resolution
+        if workflow.dependency_metadata_stale:
+            stale_dependency_metadata_workflows.append(workflow.name)
         if (
             resolution.nodes_unresolved
             or resolution.nodes_ambiguous
@@ -458,6 +461,21 @@ def _collect_workflow_issues(
             action_ids=("sync_model_paths",),
         )
         builder.add_action("sync_model_paths", issue_ids=("model_path_mismatch",))
+
+    if stale_dependency_metadata_workflows:
+        builder.add_issue(
+            id="workflow_dependency_metadata_stale",
+            layer="manifest",
+            severity="warning",
+            message="Workflow dependency metadata is stale or missing from the manifest.",
+            affected_resources=stale_dependency_metadata_workflows,
+            source="WorkflowAnalysisStatus.dependency_metadata_stale",
+            action_ids=("refresh_workflow_capture",),
+        )
+        builder.add_action(
+            "refresh_workflow_capture",
+            issue_ids=("workflow_dependency_metadata_stale",),
+        )
 
     if download_intent_workflows:
         builder.add_issue(
@@ -900,6 +918,13 @@ _ACTION_DEFINITIONS: dict[
     "review_workflow_changes": (
         "Review workflow changes",
         "Review ComfyUI workflow file changes before snapshotting them.",
+        "manifest",
+        ("manifest", "snapshot"),
+        {},
+    ),
+    "refresh_workflow_capture": (
+        "Refresh workflow capture",
+        "Update tracked workflow dependency metadata from the saved workflow.",
         "manifest",
         ("manifest", "snapshot"),
         {},
