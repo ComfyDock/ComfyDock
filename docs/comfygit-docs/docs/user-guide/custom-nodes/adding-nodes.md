@@ -51,6 +51,9 @@ Use `--strict` when you want dependency conflicts to fail instead of being
 auto-resolved. Use `--resolve-with-overlays` when active overlays should
 participate in the install preflight.
 
+If a node installs but fails to import after restart, see
+[Custom node import failures](../../troubleshooting/custom-node-import-failures.md).
+
 ## Development Nodes
 
 If you are replacing an existing tracked node with a local checkout, prefer:
