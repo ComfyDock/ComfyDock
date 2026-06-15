@@ -237,7 +237,7 @@ class PyTorchBackendManager:
                 for pkg, version in versions.items()
                 if pkg in PYTORCH_CORE_PACKAGES
             ]
-            logger.info(f"Probed versions for backend override {backend_override}: {constraints}")
+            logger.debug(f"PyTorch constraints for backend override {backend_override}: {constraints}")
         elif not backend_override:
             # Use stored versions from .pytorch-backend file
             versions = self.get_versions()

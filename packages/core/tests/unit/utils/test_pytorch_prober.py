@@ -8,6 +8,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def clear_pytorch_probe_cache():
+    from comfygit_core.utils.pytorch_prober import clear_pytorch_probe_cache
+
+    clear_pytorch_probe_cache()
+    yield
+    clear_pytorch_probe_cache()
+
+
 def _contains_command_parts(cmd, *parts: str) -> bool:
     return all(part in [str(item) for item in cmd] for part in parts)
 
@@ -258,6 +267,51 @@ Would install 30 packages
         assert versions["torchvision"] == "0.24.1+cu128"
         assert versions["torchaudio"] == "2.9.1+cu128"
         assert backend == "cu128"
+
+    @pytest.mark.skipif(
+        "COMFYGIT_INTEGRATION" in __import__("os").environ,
+        reason="Probe tests use mocking that conflicts with integration environment"
+    )
+    def test_probe_caches_by_python_version_and_backend(self, monkeypatch, tmp_path):
+        """Repeated status checks should not re-run identical PyTorch probes."""
+        from comfygit_core.utils import pytorch_prober
+        from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
+
+        commands: list[list[str]] = []
+
+        def mock_run_command(cmd, *args, **kwargs):
+            commands.append([str(part) for part in cmd])
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = ""
+            if _contains_command_parts(cmd, "python", "find"):
+                result.stdout = "/path/to/cpython-3.12.11/bin/python"
+            elif _contains_command_parts(cmd, "venv"):
+                result.stdout = "Created venv"
+            elif _contains_command_parts(cmd, "pip", "install"):
+                result.stdout = """ + torch==2.9.1+cu128
+ + torchvision==0.24.1+cu128
+ + torchaudio==2.9.1+cu128
+"""
+            else:
+                result.stdout = ""
+            return result
+
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.tempfile.mkdtemp", lambda **_: str(probe_dir))
+        monkeypatch.setattr("comfygit_core.utils.pytorch_prober.shutil.rmtree", lambda *a, **k: None)
+
+        first_versions, first_backend = probe_pytorch_versions("3.12", "cu128")
+        first_versions["torch"] = "mutated"
+        second_versions, second_backend = probe_pytorch_versions("3.12", "cu128")
+
+        assert first_backend == "cu128"
+        assert second_backend == "cu128"
+        assert second_versions["torch"] == "2.9.1+cu128"
+        assert len([cmd for cmd in commands if _contains_command_parts(cmd, "pip", "install")]) == 1
 
     @pytest.mark.skipif(
         "COMFYGIT_INTEGRATION" in __import__("os").environ,

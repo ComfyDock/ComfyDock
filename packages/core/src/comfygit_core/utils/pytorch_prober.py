@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import tempfile
+from functools import lru_cache
 
 from ..logging.logging_config import get_logger
 from .common import run_command
@@ -126,6 +127,24 @@ def probe_pytorch_versions(
     Raises:
         PyTorchProbeError: If probing fails
     """
+    versions, resolved_backend = _probe_pytorch_versions_cached(python_version, backend)
+    return dict(versions), resolved_backend
+
+
+def clear_pytorch_probe_cache() -> None:
+    """Clear cached PyTorch probe results.
+
+    This is primarily useful for tests and long-running developer processes
+    that intentionally need to re-check newly published wheel versions.
+    """
+    _probe_pytorch_versions_cached.cache_clear()
+
+
+@lru_cache(maxsize=32)
+def _probe_pytorch_versions_cached(
+    python_version: str,
+    backend: str,
+) -> tuple[dict[str, str], str]:
     # Get exact Python version for consistent probing
     try:
         exact_py = get_exact_python_version(python_version)
