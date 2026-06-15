@@ -570,7 +570,9 @@ class TestRunBehavior:
         target_env.get_current_branch.return_value = "main"
         target_env.comfyui_path = tmp_path / "target-comfyui"
         target_env.comfyui_path.mkdir()
-        target_env.uv_manager.python_executable = tmp_path / "target-venv" / "bin" / "python"
+        target_python = tmp_path / "target-venv" / "bin" / "python"
+        target_env.get_runtime_python.return_value = target_python
+        target_env.ensure_torch_backend.return_value = _torch_selection("cpu")
         target_env.sync.return_value = MagicMock(success=True)
 
         metadata_dir = tmp_path / ".metadata"
@@ -617,6 +619,7 @@ class TestRunBehavior:
         mock_workspace.get_environment.assert_called_with("target-env", auto_sync=False)
         target_env.sync.assert_called_once()
         mock_popen.assert_called_once()
+        assert mock_popen.call_args.args[0] == [str(target_python), "main.py", "--cpu"]
         assert not (metadata_dir / ".switch_request.json").exists()
         assert not (metadata_dir / ".switch.lock").exists()
 

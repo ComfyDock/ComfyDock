@@ -143,6 +143,12 @@ class EnvironmentCommands:
             print("   Try setting it explicitly: cg env-config torch-backend set <backend>")
             sys.exit(1)
 
+    def _comfyui_args_for_backend(self, comfyui_args: list[str], backend: str) -> list[str]:
+        """Return ComfyUI launch args for the selected PyTorch backend."""
+        if backend == "cpu" and "--cpu" not in comfyui_args:
+            return ["--cpu", *comfyui_args]
+        return list(comfyui_args)
+
     def _show_legacy_manager_notice(self, env: Environment) -> None:
         """Show legacy manager notice if environment uses symlinked manager."""
         try:
@@ -582,14 +588,14 @@ class EnvironmentCommands:
         RESTART_EXIT_CODE = 42
         SWITCH_ENV_EXIT_CODE = 43
         env = self._get_env(args)
-        comfyui_args = args.args if hasattr(args, 'args') else []
-        if comfyui_args and comfyui_args[0] == "--":
-            comfyui_args = comfyui_args[1:]
+        base_comfyui_args = args.args if hasattr(args, 'args') else []
+        if base_comfyui_args and base_comfyui_args[0] == "--":
+            base_comfyui_args = base_comfyui_args[1:]
         no_sync = getattr(args, 'no_sync', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
         overlay_names = getattr(args, 'overlay', None) or []
-        supervisor_control = self._start_supervisor_control(comfyui_args)
+        supervisor_control = self._start_supervisor_control(base_comfyui_args)
         if supervisor_control:
             atexit.register(supervisor_control.stop)
 
@@ -597,23 +603,23 @@ class EnvironmentCommands:
             print("✗ Cannot use --overlay with --no-sync. Overlays require a sync to take effect.")
             sys.exit(1)
 
-        # Handle torch-backend: use override, read from file, or probe if missing
         torch_backend_override = getattr(args, 'torch_backend', None)
-        torch_backend, was_probed = self._get_or_probe_backend(env, torch_backend_override)
-
-        if torch_backend_override:
-            print(f"🔧 Using PyTorch backend override: {torch_backend}")
-        elif was_probed:
-            print(f"✓ Backend detected and saved: {torch_backend}")
-            print("   To change: cg env-config torch-backend set <backend>")
-        else:
-            print(f"🔧 Using PyTorch backend: {torch_backend}")
-
-        if torch_backend == "cpu" and "--cpu" not in comfyui_args:
-            comfyui_args = ["--cpu", *comfyui_args]
 
         switch_source_env = self._consume_startup_switch_request(env)
         while True:
+            # Manager-driven switches keep this `cg run` supervisor alive while
+            # replacing `env`, so derive backend-specific launch args per target.
+            torch_backend, was_probed = self._get_or_probe_backend(env, torch_backend_override)
+            comfyui_args = self._comfyui_args_for_backend(base_comfyui_args, torch_backend)
+
+            if torch_backend_override:
+                print(f"🔧 Using PyTorch backend override: {torch_backend}")
+            elif was_probed:
+                print(f"✓ Backend detected and saved: {torch_backend}")
+                print("   To change: cg env-config torch-backend set <backend>")
+            else:
+                print(f"🔧 Using PyTorch backend: {torch_backend}")
+
             current_branch = env.get_current_branch()
             branch_display = f" (on {current_branch})" if current_branch else " (detached HEAD)"
 
