@@ -53,7 +53,7 @@ class ModelSymlinkManager:
                 else:
                     # Wrong target - recreate
                     logger.info(
-                        f"Updating link target: {self._resolve_link()} → {self.global_models_path}"
+                        f"Updating link target: {self._resolve_link()} -> {self.global_models_path}"
                     )
                     self.models_link_path.unlink()
             else:
@@ -79,7 +79,7 @@ class ModelSymlinkManager:
         # Create platform-appropriate link
         create_platform_link(self.models_link_path, self.global_models_path, "models")
         logger.info(
-            f"Created model link: {self.models_link_path} → {self.global_models_path}"
+            f"Created model link: {self.models_link_path} -> {self.global_models_path}"
         )
 
     def validate_symlink(self) -> bool:

@@ -2727,7 +2727,7 @@ class Environment:
                 substituted = self.package_config.apply_substitution(pkg)
                 if substituted != pkg:
                     substitutions[pkg] = substituted
-                    logger.info(f"Package substitution: {pkg} → {substituted}")
+                    logger.info(f"Package substitution: {pkg} -> {substituted}")
                 transformed_packages.append(substituted)
             final_packages = transformed_packages
 

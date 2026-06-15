@@ -131,7 +131,7 @@ class UserContentSymlinkManager:
                     # Wrong target - recreate
                     logger.info(
                         f"Updating {name} link target: "
-                        f"{link_path.resolve()} → {target_path}"
+                        f"{link_path.resolve()} -> {target_path}"
                     )
                     link_path.unlink()
             else:
@@ -154,7 +154,7 @@ class UserContentSymlinkManager:
 
         # Create link
         create_platform_link(link_path, target_path, name)
-        logger.info(f"Created {name} link: {link_path} → {target_path}")
+        logger.info(f"Created {name} link: {link_path} -> {target_path}")
 
     def migrate_existing_data(self) -> dict[str, int]:
         """Migrate existing input/output directories to workspace-level storage.

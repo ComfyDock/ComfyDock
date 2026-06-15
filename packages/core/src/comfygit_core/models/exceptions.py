@@ -362,13 +362,13 @@ class DownloadErrorContext:
             if self.error_category == "auth_missing":
                 return (
                     f"HuggingFace model requires authentication (HTTP {self.http_status}). "
-                    f"Configure your token in Settings → API Credentials, or set the HF_TOKEN environment variable. "
+                    f"Configure your token in Settings -> API Credentials, or set the HF_TOKEN environment variable. "
                     f"Get your token from: https://huggingface.co/settings/tokens"
                 )
             elif self.error_category == "auth_invalid":
                 return (
                     f"HuggingFace authentication failed (HTTP {self.http_status}). "
-                    f"Your token may be invalid or expired. Update it in Settings → API Credentials, "
+                    f"Your token may be invalid or expired. Update it in Settings -> API Credentials, "
                     f"or check your HF_TOKEN environment variable. "
                     f"Get a new token from: https://huggingface.co/settings/tokens"
                 )

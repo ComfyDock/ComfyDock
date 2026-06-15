@@ -455,7 +455,7 @@ class NodeManager:
 
             # Mark as replacement — actual removal happens inside transactional section
             # so the snapshot captures pre-replacement state for proper rollback
-            logger.info(f"Replacing {node_info.name} {existing_node.version} → {node_info.version}")
+            logger.info(f"Replacing {node_info.name} {existing_node.version} -> {node_info.version}")
             is_replacement = True
 
         # Check for filesystem conflicts before proceeding
@@ -1940,7 +1940,7 @@ class NodeManager:
         result.old_version = current_version
         result.new_version = latest_version
         result.changed = True
-        result.message = f"Updated from {current_version} → {latest_version}"
+        result.message = f"Updated from {current_version} -> {latest_version}"
 
         logger.info(f"Updated registry node '{node_info.name}': {result.message}")
         return result
