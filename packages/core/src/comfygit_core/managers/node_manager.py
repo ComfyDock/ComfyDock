@@ -292,7 +292,11 @@ class NodeManager:
         # Add requirements if any
         if node_package.requirements:
             self.uv.add_requirements_with_sources(
-                node_package.requirements, group=group_name, no_sync=True, raw=True
+                node_package.requirements,
+                group=group_name,
+                manifest_only=True,
+                no_sync=True,
+                raw=True,
             )
 
         # Detect new sources after processing
@@ -779,6 +783,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=new_group,
+                    manifest_only=True,
                     frozen=True,
                     raw=True,
                 )
@@ -1223,6 +1228,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=group_name,
+                    manifest_only=True,
                     no_sync=True,
                     raw=True,
                 )
@@ -1780,7 +1786,10 @@ class NodeManager:
 
             if current_reqs:
                 self.uv.add_requirements_with_sources(
-                    current_reqs, group=group_name, no_sync=True
+                    current_reqs,
+                    group=group_name,
+                    manifest_only=True,
+                    no_sync=True,
                 )
 
             # Detect new sources

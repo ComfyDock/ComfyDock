@@ -458,6 +458,7 @@ class TestNodeManagerDependencyProvisioning:
         mock_uv.add_requirements_with_sources.assert_called_once_with(
             ["opencv-contrib-python-headless", "onnxruntime>=1.20"],
             group="test-node-abcd1234",
+            manifest_only=True,
             no_sync=True,
             raw=True,
         )

@@ -86,6 +86,12 @@ class EnvironmentOperationLock:
 
         try:
             self._file.seek(0)
+            try:
+                self._file.truncate()
+                self._file.flush()
+            except OSError:
+                pass
+
             if sys.platform == "win32":
                 import msvcrt
 

@@ -130,3 +130,45 @@ class TestScanRequirementsSubstitution:
             # ASSERT
             assert "opencv-contrib-python-headless>=4.5.3" in requirements
             assert "opencv-contrib-python-headless==4.8.0" in requirements
+
+    def test_scan_requirements_skips_false_environment_markers(self, cache_dir):
+        """SHOULD skip requirements whose environment marker does not match."""
+        # ARRANGE
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node_path = Path(tmpdir) / "marker-test-node"
+            node_path.mkdir()
+            (node_path / "requirements.txt").write_text(
+                "numpy\n"
+                "pynvml; python_version >= '3'\n"
+                "jetson-stats; python_version < '0'\n"
+            )
+
+            service = NodeLookupService(cache_path=cache_dir)
+
+            # ACT
+            requirements = service.scan_requirements(node_path)
+
+            # ASSERT
+            assert "numpy" in requirements
+            assert "pynvml; python_version >= '3'" in requirements
+            assert "jetson-stats; python_version < '0'" not in requirements
+
+    def test_scan_requirements_keeps_invalid_requirement_lines(self, cache_dir):
+        """SHOULD keep non-standard lines so downstream tooling can handle them."""
+        # ARRANGE
+        with tempfile.TemporaryDirectory() as tmpdir:
+            node_path = Path(tmpdir) / "nonstandard-test-node"
+            node_path.mkdir()
+            (node_path / "requirements.txt").write_text(
+                "--extra-index-url https://example.invalid/simple\n"
+                "numpy\n"
+            )
+
+            service = NodeLookupService(cache_path=cache_dir)
+
+            # ACT
+            requirements = service.scan_requirements(node_path)
+
+            # ASSERT
+            assert "--extra-index-url https://example.invalid/simple" in requirements
+            assert "numpy" in requirements

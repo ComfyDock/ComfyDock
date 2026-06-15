@@ -40,6 +40,7 @@ from ..repositories.model_repository import ModelRepository
 from ..services.model_downloader import ModelDownloader
 from ..services.registry_data_manager import RegistryDataManager
 from ..utils.environment_cleanup import (
+    DELETED_ENVIRONMENT_PREFIX,
     cleanup_partial_environment,
     is_environment_complete,
     remove_environment_directory,
@@ -524,6 +525,8 @@ class Workspace:
             return environments
 
         for env_dir in self.paths.environments.iterdir():
+            if env_dir.name.startswith(DELETED_ENVIRONMENT_PREFIX):
+                continue
             cec_path = env_dir / ".cec"
             if env_dir.is_dir() and cec_path.exists() and is_environment_complete(cec_path):
                 try:
@@ -612,7 +615,20 @@ class Workspace:
         env_path = self.paths.environments / name
 
         if env_path.exists():
-            raise CDEnvironmentExistsError(f"Environment '{name}' already exists")
+            cec_path = env_path / ".cec"
+            if is_environment_complete(cec_path):
+                raise CDEnvironmentExistsError(f"Environment '{name}' already exists")
+
+            logger.warning(
+                "Removing incomplete environment directory before recreating '%s': %s",
+                name,
+                env_path,
+            )
+            if not cleanup_partial_environment(env_path) or env_path.exists():
+                raise CDEnvironmentExistsError(
+                    f"Environment '{name}' has an incomplete leftover directory at {env_path}. "
+                    "Delete it manually or close processes using it before trying again."
+                )
 
         try:
             # Create the environment

@@ -12,6 +12,16 @@ from .redaction import redact_command, redact_sensitive_text
 logger = get_logger(__name__)
 
 
+def _write_stream_line(stream, line: str) -> None:
+    """Write a subprocess output line without letting console encoding fail work."""
+    try:
+        stream.write(line)
+    except UnicodeEncodeError:
+        encoding = getattr(stream, "encoding", None) or sys.getdefaultencoding() or "utf-8"
+        safe_line = line.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        stream.write(safe_line)
+
+
 def run_command(
     cmd: list[str],
     cwd: Path | None = None,
@@ -57,6 +67,8 @@ def run_command(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 bufsize=1,
             )
@@ -66,7 +78,7 @@ def run_command(
                 for line in process.stdout:
                     output_parts.append(line)
                     if not capture_output:
-                        sys.stdout.write(line)
+                        _write_stream_line(sys.stdout, line)
                         sys.stdout.flush()
                     stripped = line.rstrip("\r\n")
                     if stripped:
@@ -98,6 +110,8 @@ def run_command(
                 timeout=timeout,
                 capture_output=capture_output,
                 text=text,
+                encoding="utf-8" if text else None,
+                errors="replace" if text else None,
                 env=env
             )
 

@@ -299,6 +299,92 @@ class TestRunBehavior:
     """Test that run reads from file like sync does."""
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_supervisor_control_starts_by_default(self, mock_get_workspace, tmp_path, monkeypatch):
+        """Native cg run should expose restart-stable switch status/logs by default."""
+        from comfygit_cli import env_commands
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        starts = []
+
+        class FakeSwitchObserverServer:
+            def __init__(self, workspace_path, host, port, *, public_origin=None):
+                self.workspace_path = workspace_path
+                self.host = host
+                self.port = port
+                self.public_origin = public_origin
+
+            def start(self):
+                starts.append((self.workspace_path, self.host, self.port, self.public_origin))
+
+            def stop(self):
+                pass
+
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_PORT", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_HOST", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN", raising=False)
+        monkeypatch.setattr(env_commands, "SwitchObserverServer", FakeSwitchObserverServer)
+
+        mock_workspace = MagicMock()
+        mock_workspace.path = tmp_path
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        control = cmd._start_supervisor_control(["--listen", "0.0.0.0", "--port", "8191"])
+
+        assert control is not None
+        assert starts == [(tmp_path, "0.0.0.0", 8192, None)]
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_supervisor_control_passes_public_origin(self, mock_get_workspace, tmp_path, monkeypatch):
+        """Native cg run can advertise a browser-reachable supervisor proxy URL."""
+        from comfygit_cli import env_commands
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        starts = []
+
+        class FakeSwitchObserverServer:
+            def __init__(self, workspace_path, host, port, *, public_origin=None):
+                self.workspace_path = workspace_path
+                self.host = host
+                self.port = port
+                self.public_origin = public_origin
+
+            def start(self):
+                starts.append((self.workspace_path, self.host, self.port, self.public_origin))
+
+            def stop(self):
+                pass
+
+        monkeypatch.setenv(
+            "COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN",
+            "http://desktop-de51eqf.tailnet.ts.net:8192/",
+        )
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_PORT", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_HOST", raising=False)
+        monkeypatch.setattr(env_commands, "SwitchObserverServer", FakeSwitchObserverServer)
+
+        mock_workspace = MagicMock()
+        mock_workspace.path = tmp_path
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        control = cmd._start_supervisor_control(["--listen", "0.0.0.0", "--port", "8191"])
+
+        assert control is not None
+        assert starts == [(
+            tmp_path,
+            "0.0.0.0",
+            8192,
+            "http://desktop-de51eqf.tailnet.ts.net:8192/",
+        )]
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_uses_ensure_backend(self, mock_get_workspace):
         """Run should use ensure_backend() which handles both existing and missing backends."""
         from comfygit_cli.env_commands import EnvironmentCommands

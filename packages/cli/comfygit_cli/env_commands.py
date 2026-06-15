@@ -46,6 +46,8 @@ from .logging.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+DEFAULT_SUPERVISOR_CONTROL_PORT_SPAN = 20
+
 
 class EnvironmentCommands:
     """Handler for environment-specific commands - simplified for MVP."""
@@ -587,7 +589,7 @@ class EnvironmentCommands:
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
         overlay_names = getattr(args, 'overlay', None) or []
-        supervisor_control = self._start_supervisor_control()
+        supervisor_control = self._start_supervisor_control(comfyui_args)
         if supervisor_control:
             atexit.register(supervisor_control.stop)
 
@@ -682,28 +684,56 @@ class EnvironmentCommands:
 
             sys.exit(result.returncode)
 
-    def _start_supervisor_control(self) -> SwitchObserverServer | None:
+    def _start_supervisor_control(self, comfyui_args: list[str]) -> SwitchObserverServer | None:
         port_text = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_PORT")
-        if not port_text:
+        endpoint = resolve_comfyui_endpoint(comfyui_args)
+        explicit_port = port_text is not None
+
+        if port_text and port_text.lower() in {"0", "off", "false", "disabled"}:
             cleanup_supervisor_advertisement(self.workspace.path)
             return None
 
-        try:
-            port = int(port_text)
-        except ValueError:
-            print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
-            cleanup_supervisor_advertisement(self.workspace.path)
-            return None
+        if port_text:
+            try:
+                candidate_ports = [int(port_text)]
+            except ValueError:
+                print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
+                cleanup_supervisor_advertisement(self.workspace.path)
+                return None
+        else:
+            start_port = min(max(endpoint.port + 1, 1), 65535)
+            end_port = min(start_port + DEFAULT_SUPERVISOR_CONTROL_PORT_SPAN - 1, 65535)
+            candidate_ports = list(range(start_port, end_port + 1))
 
-        host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST", "127.0.0.1")
-        control = SwitchObserverServer(self.workspace.path, host, port)
-        try:
-            control.start()
-            return control
-        except OSError as exc:
-            print(f"⚠️  Could not start supervisor control server on {host}:{port}: {exc}")
-            control.stop()
-            return None
+        host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST") or endpoint.bind_host
+        public_origin = os.environ.get("COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN")
+        last_error: OSError | None = None
+        for port in candidate_ports:
+            control = SwitchObserverServer(
+                self.workspace.path,
+                host,
+                port,
+                public_origin=public_origin,
+            )
+            try:
+                control.start()
+                return control
+            except OSError as exc:
+                last_error = exc
+                control.stop()
+                if explicit_port:
+                    break
+                continue
+
+        if explicit_port:
+            print(f"⚠️  Could not start supervisor control server on {host}:{candidate_ports[0]}: {last_error}")
+        else:
+            print(
+                "⚠️  Could not start supervisor control server on "
+                f"{host}:{candidate_ports[0]}-{candidate_ports[-1]}: {last_error}"
+            )
+        cleanup_supervisor_advertisement(self.workspace.path)
+        return None
 
     def _append_switch_log(
         self,

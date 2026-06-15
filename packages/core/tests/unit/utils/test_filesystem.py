@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from comfygit_core.utils import filesystem
 
 
@@ -53,3 +55,20 @@ def test_rmtree_uses_onexc_on_windows_when_available(monkeypatch, tmp_path):
             },
         )
     ]
+
+
+def test_remove_readonly_handler_propagates_retry_failure(monkeypatch, tmp_path):
+    target = tmp_path / "locked-file"
+    target.write_text("locked")
+
+    monkeypatch.setattr("comfygit_core.utils.filesystem.os.chmod", lambda path, mode: None)
+
+    def fail_again(path):
+        raise PermissionError("still locked")
+
+    with pytest.raises(PermissionError, match="still locked"):
+        filesystem._handle_remove_readonly(
+            fail_again,
+            target,
+            (PermissionError, PermissionError("locked"), None),
+        )

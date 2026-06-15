@@ -57,6 +57,11 @@ class DependencyProbe:
         "torchvision",
         "torchaudio",
         "torchsde",
+        "uv",
+    }
+
+    ALWAYS_PROTECTED_PACKAGES: set[str] = {
+        "uv",
     }
 
     def __init__(
@@ -291,6 +296,11 @@ class DependencyProbe:
                 if new_v < old_v:
                     # Downgrade detected
                     result.downgraded[name] = (old_version, new_version)
+                    if self._is_protected(name):
+                        result.protected_changes.append(
+                            f"{name}: {old_version} -> {new_version}"
+                        )
+                        continue
                     constraint = self._version_to_constraint(name, new_version)
                     if constraint:
                         result.suggested_constraints.append(constraint)
@@ -338,7 +348,15 @@ class DependencyProbe:
     def _protected_packages(self) -> set[str]:
         """Return normalized protected packages from config or hardcoded fallback."""
         if self.package_config is not None:
-            return {self._normalize_name(name) for name in self.package_config.probe_protected_packages}
+            configured = {
+                self._normalize_name(name)
+                for name in self.package_config.probe_protected_packages
+            }
+            configured.update(
+                self._normalize_name(name)
+                for name in self.ALWAYS_PROTECTED_PACKAGES
+            )
+            return configured
 
         return {self._normalize_name(name) for name in self.PROTECTED_PACKAGES}
 
@@ -420,5 +438,13 @@ class DependencyProbe:
     def _cleanup(self) -> None:
         """Remove the probe venv."""
         if self.probe_venv.exists():
-            rmtree(self.probe_venv)
-            logger.debug(f"Cleaned up probe venv at {self.probe_venv}")
+            try:
+                rmtree(self.probe_venv)
+            except Exception as e:
+                logger.warning(
+                    "Could not clean up dependency probe venv at %s: %s",
+                    self.probe_venv,
+                    e,
+                )
+            else:
+                logger.debug(f"Cleaned up probe venv at {self.probe_venv}")

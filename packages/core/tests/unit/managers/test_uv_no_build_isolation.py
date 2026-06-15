@@ -90,3 +90,42 @@ def test_no_build_isolation_with_group_flag():
         assert "deepspeed" in packages
     finally:
         tmpdir.cleanup()
+
+
+def test_manifest_only_requirements_record_dependency_group_without_uv_add():
+    """Node dependency capture should not resolve through uv add before sync."""
+    tmpdir, manager, uv = _make_manager()
+    try:
+        manager.add_requirements_with_sources(
+            ["requests<2.33", "numpy"],
+            group="test-node-a1b2c3d4",
+            manifest_only=True,
+            no_sync=True,
+            raw=True,
+        )
+
+        uv.add.assert_not_called()
+        groups = manager.pyproject.dependencies.get_groups()
+        assert groups["test-node-a1b2c3d4"] == ["requests<2.33", "numpy"]
+    finally:
+        tmpdir.cleanup()
+
+
+def test_manifest_only_requirements_keeps_pep508_url_dependencies():
+    """PEP 508 URL dependencies can be stored directly in dependency groups."""
+    tmpdir, manager, uv = _make_manager()
+    try:
+        dependency = "demo @ https://example.invalid/demo-1.0.0-py3-none-any.whl"
+        manager.add_requirements_with_sources(
+            [dependency],
+            group="test-node-a1b2c3d4",
+            manifest_only=True,
+            no_sync=True,
+            raw=True,
+        )
+
+        uv.add.assert_not_called()
+        groups = manager.pyproject.dependencies.get_groups()
+        assert groups["test-node-a1b2c3d4"] == [dependency]
+    finally:
+        tmpdir.cleanup()

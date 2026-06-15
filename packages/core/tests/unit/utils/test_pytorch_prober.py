@@ -1,8 +1,15 @@
 """Tests for PyTorch version prober utilities."""
 
+import io
+import os
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+
+def _contains_command_parts(cmd, *parts: str) -> bool:
+    return all(part in [str(item) for item in cmd] for part in parts)
 
 
 class TestFindUvBinary:
@@ -69,6 +76,18 @@ class TestGetExactPythonVersion:
             version = get_exact_python_version("3.11.9")
             assert version == "3.11.9"
 
+    def test_parses_windows_uv_minor_version_output(self):
+        """Should parse uv's Windows cpython-X.Y selector output."""
+        from comfygit_core.utils.pytorch_prober import get_exact_python_version
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = r"C:\Users\Alex\AppData\Roaming\uv\python\cpython-3.11-windows-x86_64-none\python.exe"
+
+        with patch("comfygit_core.utils.pytorch_prober.run_command", return_value=mock_result):
+            version = get_exact_python_version("3.11")
+            assert version == "3.11"
+
     def test_raises_on_invalid_output(self):
         """Should raise error when can't parse version."""
         from comfygit_core.utils.pytorch_prober import PyTorchProbeError, get_exact_python_version
@@ -80,6 +99,20 @@ class TestGetExactPythonVersion:
         with patch("comfygit_core.utils.pytorch_prober.run_command", return_value=mock_result):
             with pytest.raises(PyTorchProbeError):
                 get_exact_python_version("3.12")
+
+
+def test_uv_command_env_removes_parent_uv_run_context(monkeypatch):
+    from comfygit_core.utils.pytorch_prober import _uv_command_env
+
+    monkeypatch.setenv("VIRTUAL_ENV", "/repo/.venv")
+    monkeypatch.setenv("UV_RUN_RECURSION_DEPTH", "1")
+    monkeypatch.setenv("UV", "/usr/bin/uv")
+
+    env = _uv_command_env()
+
+    assert "VIRTUAL_ENV" not in env
+    assert "UV_RUN_RECURSION_DEPTH" not in env
+    assert env["UV"] == "/usr/bin/uv"
 
 
 def test_run_command_streams_output_callback() -> None:
@@ -99,6 +132,29 @@ def test_run_command_streams_output_callback() -> None:
     assert result.returncode == 0
     assert lines == ["first", "second"]
     assert "first" in result.stdout
+
+
+def test_run_command_streaming_handles_narrow_stdout_encoding(monkeypatch) -> None:
+    from comfygit_core.utils.common import run_command
+
+    narrow_stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", narrow_stdout)
+
+    lines: list[str] = []
+    result = run_command(
+        [
+            sys.executable,
+            "-c",
+            "print('package \\u2192 dependency')",
+        ],
+        capture_output=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        output_callback=lines.append,
+    )
+
+    assert result.returncode == 0
+    assert lines == ["package → dependency"]
+    assert "package → dependency" in result.stdout
 
 
 class TestParseDryRunOutput:
@@ -173,13 +229,11 @@ class TestProbePyTorchVersions:
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-
-            if "uv python find" in cmd_str:
+            if _contains_command_parts(cmd, "python", "find"):
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "uv venv" in cmd_str:
+            elif _contains_command_parts(cmd, "venv"):
                 result.stdout = "Using CPython 3.12.11\nCreated venv"
-            elif "uv pip install" in cmd_str:
+            elif _contains_command_parts(cmd, "pip", "install"):
                 result.stdout = """Resolved 30 packages in 500ms
 Would install 30 packages
  + torch==2.9.1+cu128
@@ -218,13 +272,11 @@ Would install 30 packages
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-
-            if "uv python find" in cmd_str:
+            if _contains_command_parts(cmd, "python", "find"):
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "uv venv" in cmd_str:
+            elif _contains_command_parts(cmd, "venv"):
                 result.stdout = "Created venv"
-            elif "uv pip install" in cmd_str:
+            elif _contains_command_parts(cmd, "pip", "install"):
                 result.stdout = """ + torch==2.9.1+cu128
  + torchvision==0.24.1+cu128
  + torchaudio==2.9.1+cu128
@@ -261,13 +313,11 @@ Would install 30 packages
             result.returncode = 0
             result.stderr = ""
             result.stdout = ""
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-
-            if "uv python find" in cmd_str:
+            if _contains_command_parts(cmd, "python", "find"):
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "uv venv" in cmd_str:
+            elif _contains_command_parts(cmd, "venv"):
                 result.stdout = "Created venv"
-            elif "uv pip install" in cmd_str:
+            elif _contains_command_parts(cmd, "pip", "install"):
                 backend_arg = next(arg for arg in cmd if str(arg).startswith("--torch-backend="))
                 backend = backend_arg.split("=", 1)[1]
                 dry_run_backends.append(backend)
@@ -309,13 +359,11 @@ Would install 30 packages
             result = MagicMock()
             result.returncode = 0
             result.stderr = ""
-            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
-
-            if "uv python find" in cmd_str:
+            if _contains_command_parts(cmd, "python", "find"):
                 result.stdout = "/path/to/cpython-3.12.11/bin/python"
-            elif "uv venv" in cmd_str:
+            elif _contains_command_parts(cmd, "venv"):
                 result.stdout = "Created venv"
-            elif "uv pip install" in cmd_str:
+            elif _contains_command_parts(cmd, "pip", "install"):
                 result.stdout = " + torch==2.9.1+cu128"
             else:
                 result.stdout = ""
