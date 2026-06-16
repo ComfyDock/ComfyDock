@@ -228,6 +228,17 @@ local operation choice. The portable dependency group remains in
 `pyproject.toml` unless the user explicitly edits or removes that optional
 dependency intent.
 
+### CGSYNC-NODE-05 [LIVE]: Node acquisition tolerates registry and metadata outages
+Validation: TEST
+
+Explicit Git URL node installs should not require Comfy Registry or GitHub API
+metadata to be reachable before attempting installation; if metadata lookup is
+unavailable, core may derive a best-effort node name from the repository URL and
+let git clone prove whether the source is usable. Registry node installs should
+prefer registry artifacts and preserve registry manifest identity, but when a
+registry artifact download fails and repository metadata is available, core may
+fall back to cloning the repository for local acquisition.
+
 ## Local Configuration And Overlays
 
 ### CGSYNC-LOCAL-01 [LIVE]: Overlay materialization is disposable local dependency configuration

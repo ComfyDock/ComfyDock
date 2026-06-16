@@ -28,6 +28,16 @@ GIT_ACQUISITION_VERSION_ALIASES = {"nightly", "dev"}
 GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS = 300
 
 
+def _repository_name_from_url(url: str) -> str:
+    """Return a best-effort repository directory name from a git URL."""
+    candidate = url.rstrip("/").rsplit("/", 1)[-1]
+    if ":" in candidate:
+        candidate = candidate.rsplit(":", 1)[-1]
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    return candidate or "custom-node"
+
+
 def _is_valid_git_ref(version: str | None) -> bool:
     """Check if a version string is a valid git ref (tag, branch, or commit hash).
 
@@ -172,8 +182,19 @@ class NodeLookupService:
                         version=repo_info.latest_commit  # This will be the requested ref's commit
                     )
             except Exception as e:
-                logger.warning(f"Invalid git URL: {e}")
-                return None
+                logger.warning(
+                    "Could not query GitHub metadata for %s: %s. "
+                    "Falling back to direct git clone metadata.",
+                    base_identifier,
+                    e,
+                )
+
+            return NodeInfo(
+                name=_repository_name_from_url(base_identifier),
+                repository=base_identifier,
+                source="git",
+                version=requested_version,
+            )
 
         # Strategy: API first, cache fallback
         try:
@@ -310,8 +331,32 @@ class NodeLookupService:
                             f"Choose an explicit git install if repository acquisition is acceptable."
                         )
                         return None
-                    else:
+                    try:
                         download_and_extract_archive(node_info.download_url, temp_path)
+                    except Exception as artifact_error:
+                        if not node_info.repository:
+                            raise
+
+                        logger.warning(
+                            "Registry artifact download failed for '%s'; "
+                            "falling back to repository clone from %s: %s",
+                            node_info.name,
+                            node_info.repository,
+                            artifact_error,
+                        )
+                        if temp_path.exists():
+                            from ..utils.filesystem import rmtree
+
+                            rmtree(temp_path)
+                        ref = node_info.version if _is_valid_git_ref(node_info.version) else None
+                        git_clone(
+                            node_info.repository,
+                            temp_path,
+                            depth=1,
+                            ref=ref,
+                            timeout=GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS,
+                            token=self.get_git_token(),
+                        )
                 elif node_info.source == "git":
                     if not node_info.repository:
                         logger.error(f"No repository URL for git node '{node_info.name}'")
