@@ -941,7 +941,12 @@ class NodeManager:
         except Exception:
             return None
 
-    def remove_node(self, identifier: str, untrack_only: bool = False):
+    def remove_node(
+        self,
+        identifier: str,
+        untrack_only: bool = False,
+        skip_optional_overlays: bool = True,
+    ) -> NodeRemovalResult:
         """Remove a custom node by identifier or name (case-insensitive).
 
         Handles filesystem changes imperatively based on node type:
@@ -951,6 +956,8 @@ class NodeManager:
         Args:
             identifier: Node identifier or name
             untrack_only: If True, only remove from pyproject.toml without touching filesystem
+            skip_optional_overlays: If True, only apply required overlays during dependency sync.
+                                    If False, include active optional/local overlays.
 
         Returns:
             NodeRemovalResult: Details about the removal
@@ -1014,8 +1021,25 @@ class NodeManager:
             removed_sources = removed_node.dependency_sources or []
             self.pyproject.uv_config.cleanup_orphaned_sources(removed_sources)
 
-        # Sync Python environment to remove orphaned packages (quiet - users see our high-level messages)
-        self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+        sync_succeeded = True
+        sync_error: str | None = None
+        try:
+            # Sync Python environment to remove orphaned packages (quiet - users see our high-level messages)
+            self._sync_uv(
+                quiet=True,
+                all_groups=True,
+                pytorch_manager=self.pytorch_manager,
+                skip_optional_overlays=skip_optional_overlays,
+            )
+        except Exception as e:
+            sync_succeeded = False
+            sync_error = str(e)
+            logger.error(
+                "Removed node '%s', but post-removal dependency sync failed: %s",
+                actual_identifier,
+                e,
+                exc_info=True,
+            )
 
         logger.info(f"Removed node '{actual_identifier}' from tracking")
 
@@ -1023,7 +1047,10 @@ class NodeManager:
             identifier=actual_identifier,
             name=removed_node.name,
             source=removed_node.source,
-            filesystem_action=filesystem_action
+            filesystem_action=filesystem_action,
+            sync_succeeded=sync_succeeded,
+            sync_error=sync_error,
+            needs_sync=not sync_succeeded,
         )
 
     def _remove_untracked_node(self, node_name: str) -> NodeRemovalResult:

@@ -278,7 +278,19 @@ def test_node_operation_facades_delegate_to_node_manager(test_env, monkeypatch):
         True,
         target_version="1.2.3",
     )
-    remove_node.assert_called_once_with("some-node", untrack_only=False)
+    remove_node.assert_called_once_with(
+        "some-node",
+        untrack_only=False,
+        skip_optional_overlays=True,
+    )
+
+    remove_node.reset_mock()
+    assert test_env.remove_node("some-node", resolve_with_overlays=True) is removed
+    remove_node.assert_called_once_with(
+        "some-node",
+        untrack_only=False,
+        skip_optional_overlays=False,
+    )
 
 
 def test_mark_workflow_model_download_resolved_updates_manifest_tables(test_env, monkeypatch):

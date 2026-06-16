@@ -2050,6 +2050,13 @@ class EnvironmentCommands:
             if result.filesystem_action == "deleted":
                 print("   (cached globally, can reinstall)")
 
+        if getattr(result, "sync_succeeded", True) is False:
+            print("\n⚠️  Node was removed, but dependency sync still needs attention")
+            sync_error = getattr(result, "sync_error", None)
+            if sync_error:
+                print(f"   {sync_error}")
+            print(f"   Run 'cg -e {env.name} sync' after resolving the dependency issue")
+
         print(f"\nRun 'cg -e {env.name} status' to review changes")
 
     @with_env_logging("node prune")

@@ -1847,12 +1847,19 @@ class Environment:
         return success_count, failed
 
     @_requires_env_lock
-    def remove_node(self, identifier: str, untrack_only: bool = False) -> NodeRemovalResult:
+    def remove_node(
+        self,
+        identifier: str,
+        untrack_only: bool = False,
+        resolve_with_overlays: bool = False,
+    ) -> NodeRemovalResult:
         """Remove a custom node.
 
         Args:
             identifier: Node identifier or name
             untrack_only: If True, only remove from pyproject.toml without touching filesystem
+            resolve_with_overlays: If True, resolve post-removal sync with all active/extra
+                                   overlays. If False, node sync defaults to pytorch-only overlays.
 
         Returns:
             NodeRemovalResult: Details about the removal
@@ -1860,19 +1867,25 @@ class Environment:
         Raises:
             CDNodeNotFoundError: If node not found
         """
-        return self.node_manager.remove_node(identifier, untrack_only=untrack_only)
+        return self.node_manager.remove_node(
+            identifier,
+            untrack_only=untrack_only,
+            skip_optional_overlays=not resolve_with_overlays,
+        )
 
     @_requires_env_lock
     def remove_nodes_with_progress(
         self,
         node_ids: list[str],
-        callbacks: NodeInstallCallbacks | None = None
+        callbacks: NodeInstallCallbacks | None = None,
+        resolve_with_overlays: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Remove multiple nodes with callback support for progress tracking.
 
         Args:
             node_ids: List of node identifiers to remove
             callbacks: Optional callbacks for progress feedback
+            resolve_with_overlays: If True, resolve node removals with all overlays.
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1892,7 +1905,7 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.remove_node(node_id)
+                self.remove_node(node_id, resolve_with_overlays=resolve_with_overlays)
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)
