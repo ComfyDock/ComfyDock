@@ -504,6 +504,10 @@ class NodeManager:
                 probe = DependencyProbe(
                     cec_path=self.pyproject.path.parent,
                     workspace_path=self.resolution_tester.workspace_path,
+                    uv_binary=Path(self.uv.binary),
+                    overlay_manager=self.uv.overlay_manager,
+                    pytorch_manager=self.pytorch_manager,
+                    skip_optional_overlays=skip_optional_overlays,
                     package_config=self.package_config,
                 )
                 probe_result = probe.run(node_package.requirements)

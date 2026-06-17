@@ -316,10 +316,14 @@ class TestNodeManagerProbeMode:
         mock_resolution_tester = Mock()
         mock_resolution_tester.workspace_path = tmp_path / "workspace"
 
+        mock_uv = Mock()
+        mock_uv.overlay_manager = Mock(name="overlay_manager")
+        mock_uv.binary = "/usr/bin/uv"
+
         package_config = object()
         node_manager = NodeManager(
             mock_pyproject,
-            Mock(),
+            mock_uv,
             mock_node_lookup,
             mock_resolution_tester,
             custom_nodes_dir,
@@ -350,8 +354,35 @@ class TestNodeManagerProbeMode:
             node_manager.add_node("test-node", no_test=False, strict=False)
 
         assert captured["package_config"] is package_config
+        assert captured["uv_binary"] == Path("/usr/bin/uv")
+        assert captured["overlay_manager"] is node_manager.uv.overlay_manager
+        assert captured["pytorch_manager"] is None
+        assert captured["skip_optional_overlays"] is True
         assert "skipped protected requirements" in caplog.text
         assert node_manager.add_node_package.call_count == 1
+
+    def test_add_node_passes_overlay_resolution_mode_to_probe(self, tmp_path, monkeypatch):
+        """Manager overlay-aware installs should probe the overlay-aware graph too."""
+        node_manager, _ = self._make_probe_manager(tmp_path)
+        captured: dict = {}
+
+        class FakeProbe:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def run(self, requirements):
+                return ProbeResult(success=True)
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.DependencyProbe", FakeProbe)
+
+        node_manager.add_node(
+            "test-node",
+            no_test=False,
+            strict=False,
+            skip_optional_overlays=False,
+        )
+
+        assert captured["skip_optional_overlays"] is False
 
     def test_add_node_warns_instead_of_failing_on_protected_changes(self, tmp_path, monkeypatch, caplog):
         """protected_changes should log a warning and continue installation."""

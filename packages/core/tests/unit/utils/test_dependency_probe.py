@@ -2,8 +2,10 @@
 
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock
 
 from comfygit_core.configs.package_config import PackageConfigManager
+from comfygit_core.models.overlay import OverlayConfig
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,
@@ -98,6 +100,116 @@ class TestProbeVenvPath:
         assert probe_one.probe_venv != probe_two.probe_venv
         assert probe_one.probe_venv.name.startswith(".venv-probe-")
         assert probe_two.probe_venv.name.startswith(".venv-probe-")
+
+
+class TestProbeBaselineSync:
+    """Tests for syncing the probe venv to the current environment state."""
+
+    def test_sync_probe_uses_disposable_project_when_overlays_are_active(self, tmp_path, monkeypatch):
+        """Baseline probe sync should apply active overlays without copying lockfiles back."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        (cec_path / "pyproject.toml").write_text('[project]\nname = "test-env"\n')
+
+        overlay = OverlayConfig(
+            name=".local",
+            path=cec_path / "overlays" / ".local.toml",
+            is_local=True,
+        )
+        overlay_manager = Mock()
+        overlay_manager.collect_overlays.return_value = [overlay]
+        pytorch_manager = Mock()
+        pytorch_manager.has_backend.return_value = True
+        pytorch_manager.get_pytorch_config.return_value = {"constraints": ["torch==2.8.0+cu129"]}
+
+        uv_instances = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.sync_calls = []
+                uv_instances.append(self)
+
+            def sync(self, **kwargs):
+                self.sync_calls.append(kwargs)
+
+        disposable_instances = []
+
+        class FakeDisposableProject:
+            def __init__(self, pyproject, uv):
+                self.pyproject = pyproject
+                self.uv = uv
+                self.sync_calls = []
+                disposable_instances.append(self)
+
+            def sync(self, overlays, **kwargs):
+                self.sync_calls.append((overlays, kwargs))
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+        monkeypatch.setattr(
+            "comfygit_core.utils.dependency_probe.DisposableUvProject",
+            FakeDisposableProject,
+        )
+
+        probe = DependencyProbe(
+            cec_path=cec_path,
+            workspace_path=tmp_path / "workspace",
+            uv_binary=Path("/usr/bin/uv"),
+            overlay_manager=overlay_manager,
+            pytorch_manager=pytorch_manager,
+            skip_optional_overlays=False,
+        )
+
+        probe._sync_probe_to_current_state()
+
+        overlay_manager.collect_overlays.assert_called_once_with(
+            pytorch_config={"constraints": ["torch==2.8.0+cu129"]},
+            skip_optional=False,
+        )
+        assert len(disposable_instances) == 1
+        assert disposable_instances[0].uv.kwargs["project_env"] == probe.probe_venv
+        assert disposable_instances[0].sync_calls == [
+            ([overlay], {"all_groups": True, "copy_lock": False})
+        ]
+        assert uv_instances[0].sync_calls == []
+
+    def test_sync_probe_uses_direct_sync_without_overlays(self, tmp_path, monkeypatch):
+        """The no-overlay path should keep the previous direct uv sync behavior."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        (cec_path / "pyproject.toml").write_text('[project]\nname = "test-env"\n')
+
+        overlay_manager = Mock()
+        overlay_manager.collect_overlays.return_value = []
+
+        uv_instances = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.sync_calls = []
+                uv_instances.append(self)
+
+            def sync(self, **kwargs):
+                self.sync_calls.append(kwargs)
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+
+        probe = DependencyProbe(
+            cec_path=cec_path,
+            workspace_path=tmp_path / "workspace",
+            overlay_manager=overlay_manager,
+        )
+
+        probe._sync_probe_to_current_state()
+
+        overlay_manager.collect_overlays.assert_called_once_with(
+            pytorch_config=None,
+            skip_optional=False,
+        )
+        assert len(uv_instances) == 1
+        assert uv_instances[0].kwargs["project_env"] == probe.probe_venv
+        assert uv_instances[0].sync_calls == [{"all_groups": True}]
 
 
 class TestRequirementFiltering:

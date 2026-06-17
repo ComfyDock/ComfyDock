@@ -69,6 +69,8 @@ class EnvironmentGitOrchestrator:
         """
         from ..models.exceptions import CDEnvironmentError
 
+        discard_uncommitted = force
+
         # Check for uncommitted changes
         if not force:
             has_git_changes = self.git.has_uncommitted_changes()
@@ -88,6 +90,7 @@ class EnvironmentGitOrchestrator:
                     workflow_changes=has_workflow_changes
                 ):
                     raise CDEnvironmentError("Checkout cancelled by user")
+                discard_uncommitted = True
 
         # Snapshot old state
         old_nodes = self.pyproject.nodes.get_existing()
@@ -95,7 +98,7 @@ class EnvironmentGitOrchestrator:
         # Git checkout (restore both HEAD and working tree)
         from ..utils.git import _git
         _git(["checkout", "--force", ref], self.git.repo_path)
-        if force:
+        if discard_uncommitted:
             _git(["clean", "-fd"], self.git.repo_path)
 
         # Reload pyproject and sync environment
@@ -158,6 +161,8 @@ class EnvironmentGitOrchestrator:
         if mode == "hard":
             old_nodes = self.pyproject.nodes.get_existing()
             self.git.reset_to(ref, mode="hard")
+            from ..utils.git import _git
+            _git(["clean", "-fd"], self.git.repo_path)
             self._sync_environment_after_git(old_nodes)
             logger.info(f"Hard reset complete: HEAD now at {ref}")
         else:
@@ -223,32 +228,37 @@ class EnvironmentGitOrchestrator:
             create: Create branch if it doesn't exist
 
         Raises:
-            CDEnvironmentError: If uncommitted workflow changes would be overwritten
+            CDEnvironmentError: If uncommitted environment changes exist
         """
         from ..models.exceptions import CDEnvironmentError
 
-        # Check for uncommitted workflow changes
         preserve_uncommitted = False
 
         if not create:
+            has_git_changes = self.git.has_uncommitted_changes()
             status = self.workflow_manager.get_workflow_sync_status()
             has_workflow_changes = status.has_changes
 
-            if has_workflow_changes:
-                would_overwrite = self._would_overwrite_workflows(branch, status)
+            if has_git_changes or has_workflow_changes:
+                details = []
+                if has_git_changes:
+                    details.append("  • Git changes in .cec/")
+                if has_workflow_changes:
+                    workflow_names = status.new + status.modified + status.deleted
+                    details.append("  • Workflow changes in ComfyUI")
+                    details.extend(f"    - {wf}" for wf in workflow_names)
 
-                if would_overwrite:
-                    raise CDEnvironmentError(
-                        f"Cannot switch to branch '{branch}' with uncommitted workflow changes.\n"
-                        "Your changes to the following workflows would be overwritten:\n" +
-                        "\n".join(f"  • {wf}" for wf in status.new + status.modified) +
-                        "\n\nPlease commit your changes or use --force to discard them:\n"
-                        "  • Commit: cg commit -m '<message>'\n"
-                        "  • Force: cg switch <branch> --force"
-                    )
-                else:
-                    preserve_uncommitted = True
+                raise CDEnvironmentError(
+                    f"Cannot switch to branch '{branch}' with uncommitted changes.\n"
+                    + "\n".join(details)
+                    + "\n\nPlease commit your changes or discard them before switching:\n"
+                    "  • Commit: cg commit -m '<message>'\n"
+                    "  • Discard: cg reset --hard --yes\n"
+                    "  • Force checkout: cg checkout <branch> --force"
+                )
         else:
+            # Creating a branch starts from the current tree, so current
+            # uncommitted workflow edits are still the active working snapshot.
             preserve_uncommitted = True
 
         # Snapshot old state
@@ -258,7 +268,10 @@ class EnvironmentGitOrchestrator:
         self.git.switch_branch(branch, create)
 
         # Sync environment
-        self._sync_environment_after_git(old_nodes, preserve_uncommitted=preserve_uncommitted)
+        self._sync_environment_after_git(
+            old_nodes,
+            preserve_uncommitted=preserve_uncommitted,
+        )
 
         logger.info(f"Switched to branch '{branch}'")
 
@@ -318,50 +331,10 @@ class EnvironmentGitOrchestrator:
         self.uv.sync_project(
             all_groups=True,
             pytorch_manager=self.pytorch_manager,
-            skip_optional_overlays=True,
+            skip_optional_overlays=False,
             extras=extras,
             all_extras=all_extras,
         )
 
         # Restore workflows
         self.workflow_manager.restore_all_from_cec(preserve_uncommitted=preserve_uncommitted)
-
-    def _would_overwrite_workflows(self, target_branch: str, status) -> bool:
-        """Check if switching to target branch would overwrite uncommitted workflows.
-
-        Args:
-            target_branch: Branch name to check
-            status: Current workflow sync status
-
-        Returns:
-            True if any uncommitted workflow exists in target branch's .cec
-        """
-        from ..utils.git import _git
-
-        uncommitted = set(status.new + status.modified)
-        if not uncommitted:
-            return False
-
-        try:
-            result = _git(
-                ["ls-tree", "-r", "--name-only", target_branch, "workflows/"],
-                self.git.repo_path,
-                capture_output=True
-            )
-
-            target_workflows = set()
-            for line in result.stdout.strip().split('\n'):
-                if line.startswith('workflows/') and line.endswith('.json'):
-                    name = line[len('workflows/'):-len('.json')]
-                    target_workflows.add(name)
-
-            conflicts = uncommitted & target_workflows
-            if conflicts:
-                logger.debug(f"Conflicting workflows detected: {conflicts}")
-                return True
-
-            return False
-
-        except Exception as e:
-            logger.warning(f"Could not check target branch workflows: {e}")
-            return True

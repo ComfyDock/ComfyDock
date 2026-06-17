@@ -56,6 +56,35 @@ def test_execute_atomic_merge_runs_post_merge_sync(test_env, monkeypatch):
     assert isinstance(sync_calls[0]["old_nodes"], dict)
 
 
+def test_git_handoff_sync_includes_active_overlays(test_env, monkeypatch):
+    """Branch/checkout reconciliation should use the normal overlay-aware solve."""
+    env = test_env
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        env.node_manager,
+        "reconcile_nodes_for_rollback",
+        lambda old_nodes, new_nodes: None,
+    )
+    monkeypatch.setattr(
+        env.workflow_manager,
+        "restore_all_from_cec",
+        lambda preserve_uncommitted=False: {},
+    )
+
+    def _sync_project(**kwargs):
+        captured.update(kwargs)
+        return ""
+
+    monkeypatch.setattr(env.uv_manager, "sync_project", _sync_project)
+
+    env.git_orchestrator._sync_environment_after_git(old_nodes={})
+
+    assert captured["all_groups"] is True
+    assert captured["pytorch_manager"] is env.pytorch_manager
+    assert captured["skip_optional_overlays"] is False
+
+
 def test_revert_commit_rejects_concurrent_calls(test_env, monkeypatch):
     """Concurrent revert attempts should fail with environment lock error."""
     env = test_env

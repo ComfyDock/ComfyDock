@@ -289,14 +289,15 @@ and save that resolved backend locally. Explicit backend selections such as
 ### CGSYNC-LOCAL-04 [LIVE]: Overlay-aware uv resolution uses disposable project copies
 Validation: TEST
 
-Sync, run-preflight sync, pull reconciliation, materialization, and other
-overlay-aware uv resolution paths should build a disposable project copy before
-running uv with materialized local state. The disposable project should live under a
-gitignored environment-local scratch directory such as `.cec/.comfygit-tmp/`,
-and each new operation should remove stale transaction directories before
-creating a fresh one. Cleanup must only remove transaction directories old
-enough to be treated as abandoned; it must not delete another fresh disposable
-project that may belong to a concurrent status, planning, or sync path.
+Sync, run-preflight sync, pull reconciliation, materialization, dependency
+preflight probes, and other overlay-aware uv resolution paths should build a
+disposable project copy before running uv with materialized local state. The
+disposable project should live under a gitignored environment-local scratch
+directory such as `.cec/.comfygit-tmp/`, and each new operation should remove
+stale transaction directories before creating a fresh one. Cleanup must only
+remove transaction directories old enough to be treated as abandoned; it must
+not delete another fresh disposable project that may belong to a concurrent
+status, planning, or sync path.
 
 The project copy should include the files uv needs to resolve consistently:
 `pyproject.toml`, `.python-version`, `package_config.toml`, `.pytorch-backend`,
@@ -311,6 +312,11 @@ disposable project directory as the uv project root. If uv writes a lockfile, co
 may copy the resulting `uv.lock` back to `.cec/uv.lock` only because that lockfile
 is machine-local runtime state. The temporary `pyproject.toml` must never be
 copied back after sync/run.
+
+Read-only dependency preflight probes may also target a temporary probe venv
+through the disposable project root. Probe solves must not copy a generated
+lockfile back to the environment because the probe exists only to compare or
+infer dependency behavior before the real install path mutates state.
 
 Relative local path sources need explicit handling when copied into a temporary
 project root. Core should either persist local source paths as absolute paths or
@@ -392,12 +398,22 @@ the derived runtime so the local environment matches the checked-out commit.
 ### CGSYNC-GIT-04 [LIVE]: Git handoff operations reconcile node, package, and workflow state after tree changes
 Validation: TEST
 
-Checkout, hard reset, branch switch, merge, revert, and pull should reconcile
-derived environment state after changing tracked `.cec` state. Reconciliation
-should reset manifest readers, reconcile custom-node filesystem state, sync uv
-with local PyTorch/overlay materialization, and restore tracked workflows into ComfyUI.
-Branch switch may preserve uncommitted workflow edits only when the target branch
-does not overwrite them.
+Checkout, hard reset, existing-branch switch, merge, revert, and pull should
+reconcile derived environment state after changing tracked `.cec` state.
+Reconciliation should reset manifest readers, reconcile custom-node filesystem
+state, sync uv with local PyTorch/overlay materialization, and restore tracked
+workflows into ComfyUI.
+
+Existing-branch and commit checkouts are snapshot navigation. They should either
+block when the environment repository or ComfyUI workflow files have uncommitted
+changes, or run in an explicit destructive/force mode that discards those
+changes. After a successful snapshot navigation, ComfyUI workflow files should
+match the checked-out `.cec/workflows` tree exactly; workflow files absent from
+the checked-out snapshot should be removed from ComfyUI.
+
+Creating and switching to a new branch from the current tree is the exception:
+because the new branch starts from the current working tree, it may preserve
+current uncommitted workflow edits as the active working snapshot.
 
 ## Run Supervision
 
