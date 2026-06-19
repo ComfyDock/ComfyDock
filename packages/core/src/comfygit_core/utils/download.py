@@ -2,6 +2,7 @@
 
 import tarfile
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -10,6 +11,10 @@ from ..logging.logging_config import get_logger
 from .redaction import redact_sensitive_text, redact_url
 
 logger = get_logger(__name__)
+
+DEFAULT_DOWNLOAD_TIMEOUT_SECONDS = 60
+DEFAULT_DOWNLOAD_ATTEMPTS = 3
+DEFAULT_DOWNLOAD_RETRY_DELAY_SECONDS = 2
 
 
 def download_and_extract_archive(url: str, target_path: Path) -> None:
@@ -59,33 +64,60 @@ def download_file(url: str, suffix: str | None = None) -> Path:
     Raises:
         OSError: If download fails
     """
-    try:
-        if not suffix:
-            suffix = Path(url).suffix
+    if not suffix:
+        suffix = Path(url).suffix
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-            logger.info("Downloading from %s", redact_url(url))
+    last_error: Exception | None = None
+    for attempt in range(1, DEFAULT_DOWNLOAD_ATTEMPTS + 1):
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+                temp_path = Path(tmp_file.name)
+                logger.info(
+                    "Downloading from %s%s",
+                    redact_url(url),
+                    f" (attempt {attempt}/{DEFAULT_DOWNLOAD_ATTEMPTS})"
+                    if DEFAULT_DOWNLOAD_ATTEMPTS > 1
+                    else "",
+                )
 
-            with urllib.request.urlopen(url) as response:
-                # Read in chunks for large files
-                chunk_size = 8192
-                total_size = 0
+                with urllib.request.urlopen(url, timeout=DEFAULT_DOWNLOAD_TIMEOUT_SECONDS) as response:
+                    # Read in chunks for large files
+                    chunk_size = 8192
+                    total_size = 0
 
-                while True:
-                    chunk = response.read(chunk_size)
-                    if not chunk:
-                        break
-                    tmp_file.write(chunk)
-                    total_size += len(chunk)
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        tmp_file.write(chunk)
+                        total_size += len(chunk)
 
-            tmp_path = Path(tmp_file.name)
-            logger.debug(f"Downloaded {total_size / 1024:.1f} KB to {tmp_path}")
-            return tmp_path
+            logger.debug(f"Downloaded {total_size / 1024:.1f} KB to {temp_path}")
+            return temp_path
 
-    except Exception as e:
-        safe_error = redact_sensitive_text(e)
-        logger.error("Download failed: %s", safe_error)
-        raise OSError(f"Download failed: {safe_error}") from e
+        except Exception as e:
+            last_error = e
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    logger.warning(f"Failed to clean up temp file: {temp_path}")
+
+            safe_error = redact_sensitive_text(e)
+            logger.warning(
+                "Download attempt %s/%s failed for %s: %s",
+                attempt,
+                DEFAULT_DOWNLOAD_ATTEMPTS,
+                redact_url(url),
+                safe_error,
+            )
+            if attempt < DEFAULT_DOWNLOAD_ATTEMPTS:
+                time.sleep(DEFAULT_DOWNLOAD_RETRY_DELAY_SECONDS)
+
+    safe_error = redact_sensitive_text(last_error) if last_error else "unknown error"
+    logger.error("Download failed after %s attempts: %s", DEFAULT_DOWNLOAD_ATTEMPTS, safe_error)
+    raise OSError(f"Download failed after {DEFAULT_DOWNLOAD_ATTEMPTS} attempts: {safe_error}") from last_error
 
 
 def extract_archive(archive_path: Path, target_path: Path) -> None:

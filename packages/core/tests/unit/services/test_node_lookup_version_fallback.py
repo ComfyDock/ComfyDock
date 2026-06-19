@@ -50,6 +50,40 @@ class TestDownloadToCacheGitBehavior:
             assert result is None
             mock_git_clone.assert_not_called()
 
+    def test_registry_artifact_download_failure_falls_back_to_repository(self, cache_dir):
+        """CGSYNC-NODE-05: CDN failures can fall back to repository acquisition."""
+        node_info = NodeInfo(
+            name="ComfyUI-AKatz-Nodes",
+            registry_id="comfyui-akatz-nodes",
+            repository="https://github.com/akatz-ai/comfyui-akatz-nodes",
+            version="1.11.1",
+            download_url="https://cdn.comfy.org/akatz/comfyui-akatz-nodes/1.11.1/node.zip",
+            source="registry",
+        )
+
+        service = NodeLookupService(cache_path=cache_dir)
+
+        def fake_git_clone(_url, target_path, **_kwargs):
+            target_path.mkdir(parents=True)
+            (target_path / "__init__.py").write_text("# test node\n")
+
+        with (
+            patch(
+                "comfygit_core.utils.download.download_and_extract_archive",
+                side_effect=OSError("temporary DNS failure"),
+            ) as mock_download,
+            patch("comfygit_core.utils.git.git_clone", side_effect=fake_git_clone) as mock_git_clone,
+        ):
+            result = service.download_to_cache(node_info)
+
+            assert result is not None
+            assert (result / "__init__.py").exists()
+            mock_download.assert_called_once()
+            assert mock_download.call_args.args[0] == node_info.download_url
+            mock_git_clone.assert_called_once()
+            assert mock_git_clone.call_args.args[0] == node_info.repository
+            assert mock_git_clone.call_args.kwargs.get("ref") is None
+
     def test_git_clone_uses_ref_when_version_is_git_tag(self, cache_dir):
         """SHOULD use ref when version looks like a valid git tag (v1.11.1).
 

@@ -233,6 +233,15 @@ references and orphaned uv sources. Explicit removal of an untracked filesystem
 node may delete that directory, but normal sync without confirmed cleanup should
 warn rather than delete untracked nodes.
 
+### CGSPEC-NODE-06A [LIVE]: Post-removal sync failures are partial success
+Validation: TEST
+
+Node removal mutates manifest/filesystem state before the follow-up uv sync that
+removes orphaned packages. If that post-removal sync fails, core should report a
+typed partial result with `needs_sync=true` instead of raising an error that
+makes the already-applied removal look unapplied. Adapters should surface the
+node as removed and guide the user to resolve the dependency issue and sync.
+
 ### CGSPEC-NODE-07 [LIVE]: Development node links preserve portable manifest identity
 Validation: TEST
 

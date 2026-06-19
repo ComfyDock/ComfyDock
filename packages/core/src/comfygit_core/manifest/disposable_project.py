@@ -130,6 +130,7 @@ class DisposableUvProject:
         output_callback: Callable[[str], None] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        copy_lock: bool = True,
         **flags,
     ) -> str:
         temp_path, temp_pyproject = self.make_project()
@@ -144,7 +145,7 @@ class DisposableUvProject:
                 all_extras=all_extras,
                 **flags,
             )
-            if not flags.get("dry_run"):
+            if copy_lock and not flags.get("dry_run"):
                 self.copy_runtime_lock_from_disposable_project(temp_path)
             if flags.get("dry_run"):
                 return "\n".join(part for part in (result.stdout, result.stderr) if part)

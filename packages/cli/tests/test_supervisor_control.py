@@ -54,3 +54,27 @@ def test_supervisor_control_exposes_status_and_logs(tmp_path):
         server.stop()
 
     assert not (metadata_dir / SUPERVISOR_INFO_FILE).exists()
+
+
+def test_supervisor_control_advertises_public_origin(tmp_path):
+    metadata_dir = tmp_path / ".metadata"
+    metadata_dir.mkdir()
+
+    port = _free_port()
+    server = SwitchObserverServer(
+        tmp_path,
+        "127.0.0.1",
+        port,
+        kind="cg_run_supervisor",
+        public_origin="http://desktop-de51eqf.tailnet.ts.net:8192/",
+    )
+    try:
+        server.start()
+        info = json.loads((metadata_dir / SUPERVISOR_INFO_FILE).read_text())
+
+        assert info["kind"] == "cg_run_supervisor"
+        assert info["public_origin"] == "http://desktop-de51eqf.tailnet.ts.net:8192"
+    finally:
+        server.stop()
+
+    assert not (metadata_dir / SUPERVISOR_INFO_FILE).exists()

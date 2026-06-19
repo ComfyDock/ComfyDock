@@ -9,6 +9,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt install -y --no-install-recommends \
         ca-certificates \
         libegl1-mesa \
+        libegl1-mesa-dev \
+        libegl1 \
+        libglvnd-dev \
         libglvnd0 \
         git \
         build-essential \
@@ -16,6 +19,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         cmake \
         python3-dev \
         libgl1-mesa-glx \
+        libglx0 \
         libglib2.0-0 \
         ffmpeg \
         # Additional useful tools
@@ -23,7 +27,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         wget \
         jq && \
     mkdir -p /usr/share/glvnd/egl_vendor.d && \
-    echo '{"file_format_version":"1.0.0","ICD":{"library_path":"/usr/lib/x86_64-linux-gnu/libEGL_nvidia.so.0"}}' \
+    echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' \
         >/usr/share/glvnd/egl_vendor.d/10_nvidia.json && \
     apt-get autoremove -y && \
     apt-get autoclean && \
@@ -44,7 +48,7 @@ RUN umask 000 && \
 ENV NVIDIA_DRIVER_CAPABILITIES="all"
 ENV NVIDIA_VISIBLE_DEVICES="all"
 ENV MESA_D3D12_DEFAULT_ADAPTER_NAME="NVIDIA"
-ENV LD_LIBRARY_PATH=/usr/lib/wsl/lib
+ENV LD_LIBRARY_PATH="/usr/lib/wsl/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64"
 ENV WINDOW_BACKEND="headless"
 ENV DOCKER_RUNTIME="1"
 
@@ -70,7 +74,7 @@ COPY docker_startup_scripts/utils/*.py /usr/local/lib/comfygit/utils/
 COPY docker_startup_scripts/*.py /usr/local/bin/
 
 # Set up Python path to find our modules
-ENV PYTHONPATH="/usr/local/lib/comfygit:${PYTHONPATH}"
+ENV PYTHONPATH="/usr/local/lib/comfygit"
 ENV PYTHONUNBUFFERED=1
 
 # Create temporary virtual environment for script setup and make scripts executable

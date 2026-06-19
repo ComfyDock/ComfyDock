@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 
+from .constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from .lifecycle.comfyui_readiness import (
     ComfyUIEndpoint,
     is_comfyui_ready,
@@ -26,6 +27,7 @@ from .lifecycle.switch_observer import (
     read_supervisor_advertisement,
     read_switch_logs,
     read_switch_status,
+    write_supervisor_advertisement,
     write_switch_status,
 )
 
@@ -55,6 +57,7 @@ def create_uv_venv(
 
 
 __all__ = [
+    "ACTIVE_TORCH_BACKEND_OVERRIDE_ENV",
     "ComfyUIEndpoint",
     "SUPERVISOR_HEALTH_ROUTE",
     "SUPERVISOR_INFO_FILE",
@@ -76,5 +79,6 @@ __all__ = [
     "readiness_host_for_bind",
     "resolve_comfyui_endpoint",
     "wait_for_comfyui_ready",
+    "write_supervisor_advertisement",
     "write_switch_status",
 ]

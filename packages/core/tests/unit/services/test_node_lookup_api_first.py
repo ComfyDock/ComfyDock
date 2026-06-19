@@ -260,6 +260,26 @@ class TestNodeLookupAPIFirst:
         assert result.repository == "https://github.com/test/repo"
         assert not result.download_url
 
+    def test_find_git_url_falls_back_to_direct_clone_metadata_when_api_fails(self, cache_dir):
+        """CGSYNC-NODE-05: Git URL installs should not require GitHub API metadata."""
+        mock_github_client = MagicMock()
+        mock_github_client.get_repository_info.side_effect = OSError("temporary DNS failure")
+
+        service = NodeLookupService(cache_path=cache_dir)
+        service.github_client = mock_github_client
+
+        result = service.find_node("https://github.com/m1kep/comfyliterals@main")
+
+        mock_github_client.get_repository_info.assert_called_once_with(
+            "https://github.com/m1kep/comfyliterals",
+            ref="main",
+        )
+        assert result is not None
+        assert result.name == "comfyliterals"
+        assert result.repository == "https://github.com/m1kep/comfyliterals"
+        assert result.source == "git"
+        assert result.version == "main"
+
 
 class TestWorkspaceConfigNoPreferRegistryCache:
     """Test that prefer_registry_cache has been removed from WorkspaceConfig."""

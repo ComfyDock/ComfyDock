@@ -12,7 +12,6 @@ import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from comfygit_core.constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from comfygit_core.models import (
     CDDependencyConflictError,
     CDNodeConflictError,
@@ -20,6 +19,7 @@ from comfygit_core.models import (
     UVCommandError,
 )
 from comfygit_core.runtime import (
+    ACTIVE_TORCH_BACKEND_OVERRIDE_ENV,
     SwitchObserverServer,
     cleanup_supervisor_advertisement,
     cleanup_switch_status,
@@ -45,6 +45,8 @@ from .logging.environment_logger import with_env_logging
 from .logging.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_SUPERVISOR_CONTROL_PORT_SPAN = 20
 
 
 class EnvironmentCommands:
@@ -140,6 +142,12 @@ class EnvironmentCommands:
             print(f"✗ Error probing PyTorch backend: {e}")
             print("   Try setting it explicitly: cg env-config torch-backend set <backend>")
             sys.exit(1)
+
+    def _comfyui_args_for_backend(self, comfyui_args: list[str], backend: str) -> list[str]:
+        """Return ComfyUI launch args for the selected PyTorch backend."""
+        if backend == "cpu" and "--cpu" not in comfyui_args:
+            return ["--cpu", *comfyui_args]
+        return list(comfyui_args)
 
     def _show_legacy_manager_notice(self, env: Environment) -> None:
         """Show legacy manager notice if environment uses symlinked manager."""
@@ -580,14 +588,14 @@ class EnvironmentCommands:
         RESTART_EXIT_CODE = 42
         SWITCH_ENV_EXIT_CODE = 43
         env = self._get_env(args)
-        comfyui_args = args.args if hasattr(args, 'args') else []
-        if comfyui_args and comfyui_args[0] == "--":
-            comfyui_args = comfyui_args[1:]
+        base_comfyui_args = args.args if hasattr(args, 'args') else []
+        if base_comfyui_args and base_comfyui_args[0] == "--":
+            base_comfyui_args = base_comfyui_args[1:]
         no_sync = getattr(args, 'no_sync', False)
         extras = getattr(args, 'extra', None) or []
         all_extras = getattr(args, 'all_extras', False)
         overlay_names = getattr(args, 'overlay', None) or []
-        supervisor_control = self._start_supervisor_control()
+        supervisor_control = self._start_supervisor_control(base_comfyui_args)
         if supervisor_control:
             atexit.register(supervisor_control.stop)
 
@@ -595,23 +603,23 @@ class EnvironmentCommands:
             print("✗ Cannot use --overlay with --no-sync. Overlays require a sync to take effect.")
             sys.exit(1)
 
-        # Handle torch-backend: use override, read from file, or probe if missing
         torch_backend_override = getattr(args, 'torch_backend', None)
-        torch_backend, was_probed = self._get_or_probe_backend(env, torch_backend_override)
-
-        if torch_backend_override:
-            print(f"🔧 Using PyTorch backend override: {torch_backend}")
-        elif was_probed:
-            print(f"✓ Backend detected and saved: {torch_backend}")
-            print("   To change: cg env-config torch-backend set <backend>")
-        else:
-            print(f"🔧 Using PyTorch backend: {torch_backend}")
-
-        if torch_backend == "cpu" and "--cpu" not in comfyui_args:
-            comfyui_args = ["--cpu", *comfyui_args]
 
         switch_source_env = self._consume_startup_switch_request(env)
         while True:
+            # Manager-driven switches keep this `cg run` supervisor alive while
+            # replacing `env`, so derive backend-specific launch args per target.
+            torch_backend, was_probed = self._get_or_probe_backend(env, torch_backend_override)
+            comfyui_args = self._comfyui_args_for_backend(base_comfyui_args, torch_backend)
+
+            if torch_backend_override:
+                print(f"🔧 Using PyTorch backend override: {torch_backend}")
+            elif was_probed:
+                print(f"✓ Backend detected and saved: {torch_backend}")
+                print("   To change: cg env-config torch-backend set <backend>")
+            else:
+                print(f"🔧 Using PyTorch backend: {torch_backend}")
+
             current_branch = env.get_current_branch()
             branch_display = f" (on {current_branch})" if current_branch else " (detached HEAD)"
 
@@ -682,28 +690,56 @@ class EnvironmentCommands:
 
             sys.exit(result.returncode)
 
-    def _start_supervisor_control(self) -> SwitchObserverServer | None:
+    def _start_supervisor_control(self, comfyui_args: list[str]) -> SwitchObserverServer | None:
         port_text = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_PORT")
-        if not port_text:
+        endpoint = resolve_comfyui_endpoint(comfyui_args)
+        explicit_port = port_text is not None
+
+        if port_text and port_text.lower() in {"0", "off", "false", "disabled"}:
             cleanup_supervisor_advertisement(self.workspace.path)
             return None
 
-        try:
-            port = int(port_text)
-        except ValueError:
-            print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
-            cleanup_supervisor_advertisement(self.workspace.path)
-            return None
+        if port_text:
+            try:
+                candidate_ports = [int(port_text)]
+            except ValueError:
+                print(f"⚠️  Invalid COMFYGIT_SUPERVISOR_CONTROL_PORT={port_text!r}; supervisor control disabled")
+                cleanup_supervisor_advertisement(self.workspace.path)
+                return None
+        else:
+            start_port = min(max(endpoint.port + 1, 1), 65535)
+            end_port = min(start_port + DEFAULT_SUPERVISOR_CONTROL_PORT_SPAN - 1, 65535)
+            candidate_ports = list(range(start_port, end_port + 1))
 
-        host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST", "127.0.0.1")
-        control = SwitchObserverServer(self.workspace.path, host, port)
-        try:
-            control.start()
-            return control
-        except OSError as exc:
-            print(f"⚠️  Could not start supervisor control server on {host}:{port}: {exc}")
-            control.stop()
-            return None
+        host = os.environ.get("COMFYGIT_SUPERVISOR_CONTROL_HOST") or endpoint.bind_host
+        public_origin = os.environ.get("COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN")
+        last_error: OSError | None = None
+        for port in candidate_ports:
+            control = SwitchObserverServer(
+                self.workspace.path,
+                host,
+                port,
+                public_origin=public_origin,
+            )
+            try:
+                control.start()
+                return control
+            except OSError as exc:
+                last_error = exc
+                control.stop()
+                if explicit_port:
+                    break
+                continue
+
+        if explicit_port:
+            print(f"⚠️  Could not start supervisor control server on {host}:{candidate_ports[0]}: {last_error}")
+        else:
+            print(
+                "⚠️  Could not start supervisor control server on "
+                f"{host}:{candidate_ports[0]}-{candidate_ports[-1]}: {last_error}"
+            )
+        cleanup_supervisor_advertisement(self.workspace.path)
+        return None
 
     def _append_switch_log(
         self,
@@ -2013,6 +2049,13 @@ class EnvironmentCommands:
             print(f"✓ Node '{result.name}' removed from environment")
             if result.filesystem_action == "deleted":
                 print("   (cached globally, can reinstall)")
+
+        if getattr(result, "sync_succeeded", True) is False:
+            print("\n⚠️  Node was removed, but dependency sync still needs attention")
+            sync_error = getattr(result, "sync_error", None)
+            if sync_error:
+                print(f"   {sync_error}")
+            print(f"   Run 'cg -e {env.name} sync' after resolving the dependency issue")
 
         print(f"\nRun 'cg -e {env.name} status' to review changes")
 

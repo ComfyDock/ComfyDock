@@ -76,6 +76,7 @@ nav:
     - Serve API Reference: reference/serve-api.md
   - Troubleshooting:
     - Common Issues: troubleshooting/common-issues.md
+    - Custom Node Import Failures: troubleshooting/custom-node-import-failures.md
     - Dependency Conflicts: troubleshooting/dependency-conflicts.md
     - Missing Models: troubleshooting/missing-models.md
     - UV Errors: troubleshooting/uv-errors.md

@@ -1,7 +1,11 @@
 """Tests for dependency probe utilities."""
 
 from pathlib import Path
+from typing import cast
+from unittest.mock import Mock
 
+from comfygit_core.configs.package_config import PackageConfigManager
+from comfygit_core.models.overlay import OverlayConfig
 from comfygit_core.utils.dependency_probe import (
     DependencyProbe,
     ProbeResult,
@@ -98,6 +102,116 @@ class TestProbeVenvPath:
         assert probe_two.probe_venv.name.startswith(".venv-probe-")
 
 
+class TestProbeBaselineSync:
+    """Tests for syncing the probe venv to the current environment state."""
+
+    def test_sync_probe_uses_disposable_project_when_overlays_are_active(self, tmp_path, monkeypatch):
+        """Baseline probe sync should apply active overlays without copying lockfiles back."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        (cec_path / "pyproject.toml").write_text('[project]\nname = "test-env"\n')
+
+        overlay = OverlayConfig(
+            name=".local",
+            path=cec_path / "overlays" / ".local.toml",
+            is_local=True,
+        )
+        overlay_manager = Mock()
+        overlay_manager.collect_overlays.return_value = [overlay]
+        pytorch_manager = Mock()
+        pytorch_manager.has_backend.return_value = True
+        pytorch_manager.get_pytorch_config.return_value = {"constraints": ["torch==2.8.0+cu129"]}
+
+        uv_instances = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.sync_calls = []
+                uv_instances.append(self)
+
+            def sync(self, **kwargs):
+                self.sync_calls.append(kwargs)
+
+        disposable_instances = []
+
+        class FakeDisposableProject:
+            def __init__(self, pyproject, uv):
+                self.pyproject = pyproject
+                self.uv = uv
+                self.sync_calls = []
+                disposable_instances.append(self)
+
+            def sync(self, overlays, **kwargs):
+                self.sync_calls.append((overlays, kwargs))
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+        monkeypatch.setattr(
+            "comfygit_core.utils.dependency_probe.DisposableUvProject",
+            FakeDisposableProject,
+        )
+
+        probe = DependencyProbe(
+            cec_path=cec_path,
+            workspace_path=tmp_path / "workspace",
+            uv_binary=Path("/usr/bin/uv"),
+            overlay_manager=overlay_manager,
+            pytorch_manager=pytorch_manager,
+            skip_optional_overlays=False,
+        )
+
+        probe._sync_probe_to_current_state()
+
+        overlay_manager.collect_overlays.assert_called_once_with(
+            pytorch_config={"constraints": ["torch==2.8.0+cu129"]},
+            skip_optional=False,
+        )
+        assert len(disposable_instances) == 1
+        assert disposable_instances[0].uv.kwargs["project_env"] == probe.probe_venv
+        assert disposable_instances[0].sync_calls == [
+            ([overlay], {"all_groups": True, "copy_lock": False})
+        ]
+        assert uv_instances[0].sync_calls == []
+
+    def test_sync_probe_uses_direct_sync_without_overlays(self, tmp_path, monkeypatch):
+        """The no-overlay path should keep the previous direct uv sync behavior."""
+        cec_path = tmp_path / ".cec"
+        cec_path.mkdir()
+        (cec_path / "pyproject.toml").write_text('[project]\nname = "test-env"\n')
+
+        overlay_manager = Mock()
+        overlay_manager.collect_overlays.return_value = []
+
+        uv_instances = []
+
+        class FakeUV:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.sync_calls = []
+                uv_instances.append(self)
+
+            def sync(self, **kwargs):
+                self.sync_calls.append(kwargs)
+
+        monkeypatch.setattr("comfygit_core.utils.dependency_probe.UVCommand", FakeUV)
+
+        probe = DependencyProbe(
+            cec_path=cec_path,
+            workspace_path=tmp_path / "workspace",
+            overlay_manager=overlay_manager,
+        )
+
+        probe._sync_probe_to_current_state()
+
+        overlay_manager.collect_overlays.assert_called_once_with(
+            pytorch_config=None,
+            skip_optional=False,
+        )
+        assert len(uv_instances) == 1
+        assert uv_instances[0].kwargs["project_env"] == probe.probe_venv
+        assert uv_instances[0].sync_calls == [{"all_groups": True}]
+
+
 class TestRequirementFiltering:
     """Tests for protected requirement filtering in probe installs."""
 
@@ -171,11 +285,29 @@ class TestRequirementFiltering:
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
-            package_config=FakePackageConfig(),
+            package_config=cast(PackageConfigManager, FakePackageConfig()),
         )
 
         assert probe._is_protected("my-pkg")
         assert not probe._is_protected("torch")
+        assert probe._is_protected("uv")
+
+    def test_transitive_protected_downgrade_does_not_create_constraint(self, tmp_path):
+        """Transitive downgrades of protected packages must not become constraints."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+
+        result = probe._analyze(
+            before={"uv": "0.11.8", "numpy": "2.3.5"},
+            after={"uv": "0.7.22", "numpy": "2.2.6"},
+            failures=[],
+        )
+
+        assert result.protected_changes == ["uv: 0.11.8 -> 0.7.22"]
+        assert "uv<0.8" not in result.suggested_constraints
+        assert "numpy<2.3" in result.suggested_constraints
 
     def test_run_skips_protected_requirements_and_tracks_them(self, tmp_path, monkeypatch):
         """Protected requirements should be tracked and omitted from installs."""
@@ -237,6 +369,36 @@ class TestRequirementFiltering:
         assert result.install_failures == [failure_req]
         assert result.skipped_requirements == ["torch"]
         assert install_calls == [[failure_req]]
+
+    def test_run_does_not_fail_when_cleanup_fails(self, tmp_path, monkeypatch):
+        """Probe cleanup is best-effort because Windows can keep .pyd files locked."""
+        probe = DependencyProbe(
+            cec_path=tmp_path,
+            workspace_path=tmp_path / "workspace",
+        )
+        probe.probe_venv.mkdir(parents=True)
+        before = {"torch": "2.2.3"}
+        after = {"torch": "2.2.3", "requests": "2.32.4"}
+        install_calls: list[list[str]] = []
+
+        def fake_install(requirements):
+            install_calls.append(list(requirements))
+            return []
+
+        monkeypatch.setattr(probe, "_create_probe_venv", lambda: None)
+        monkeypatch.setattr(probe, "_sync_probe_to_current_state", lambda: None)
+        monkeypatch.setattr(probe, "_freeze_packages", lambda: before if not install_calls else after)
+        monkeypatch.setattr(probe, "_install_one_by_one", fake_install)
+        monkeypatch.setattr(
+            "comfygit_core.utils.dependency_probe.rmtree",
+            lambda _: (_ for _ in ()).throw(PermissionError("locked")),
+        )
+
+        result = probe.run(["requests>=2.0"])
+
+        assert result.success is True
+        assert result.added == {"requests": "2.32.4"}
+        assert install_calls == [["requests>=2.0"]]
 
 
 class TestAnalyzeDetectDowngrades:
@@ -327,8 +489,8 @@ class TestAnalyzeDetectDowngrades:
 class TestAnalyzeProtectedPackages:
     """Tests for protected package analyze compatibility behavior."""
 
-    def test_protected_changes_remain_empty_for_compatibility(self, tmp_path):
-        """protected_changes should remain empty in permissive probe mode."""
+    def test_protected_downgrade_is_tracked_without_constraint(self, tmp_path):
+        """Protected transitive downgrades should not become auto constraints."""
         probe = DependencyProbe(
             cec_path=tmp_path,
             workspace_path=tmp_path / "workspace",
@@ -341,7 +503,8 @@ class TestAnalyzeProtectedPackages:
         result = probe._analyze(before, after, failures)
 
         assert "torch" in result.downgraded
-        assert result.protected_changes == []
+        assert result.protected_changes == ["torch: 2.4.0 -> 2.3.0"]
+        assert not result.suggested_constraints
 
     def test_protected_package_downgrade_still_generates_constraint(self, tmp_path):
         """Downgrades discovered transitively still produce suggested constraints."""

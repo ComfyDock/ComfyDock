@@ -491,11 +491,11 @@ def format_conflict_report(analysis: ConflictAnalysis) -> str:
     if analysis.new_package_chains:
         lines.append("NEW package would install:")
         for chain in analysis.new_package_chains:
-            chain_str = " → ".join(chain.chain)
+            chain_str = " -> ".join(chain.chain)
             lines.append(f"  {chain_str}")
             if chain.constraint:
                 lines.append(
-                    f"  └─ {chain.constraint_source} requires: {chain.constraint}"
+                    f"  - {chain.constraint_source} requires: {chain.constraint}"
                 )
         lines.append("")
 

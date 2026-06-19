@@ -51,6 +51,9 @@ cg workflow resolve my-workflow
 If the node directory exists but is not tracked, either track it as development
 or remove/untrack it intentionally.
 
+If the node is installed but fails to import after restart, see
+[Custom node import failures](custom-node-import-failures.md).
+
 ## A Model Is Missing
 
 Rescan the index:

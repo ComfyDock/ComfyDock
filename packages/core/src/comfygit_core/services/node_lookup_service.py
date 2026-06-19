@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 from comfygit_core.models.exceptions import CDNodeNotFoundError, CDRegistryError
 from comfygit_core.models.shared import NodeInfo
 
@@ -24,6 +26,16 @@ logger = get_logger(__name__)
 
 GIT_ACQUISITION_VERSION_ALIASES = {"nightly", "dev"}
 GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS = 300
+
+
+def _repository_name_from_url(url: str) -> str:
+    """Return a best-effort repository directory name from a git URL."""
+    candidate = url.rstrip("/").rsplit("/", 1)[-1]
+    if ":" in candidate:
+        candidate = candidate.rsplit(":", 1)[-1]
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    return candidate or "custom-node"
 
 
 def _is_valid_git_ref(version: str | None) -> bool:
@@ -65,6 +77,35 @@ def _is_valid_git_ref(version: str | None) -> bool:
 def _is_explicit_git_acquisition_version(version: str | None) -> bool:
     """Return whether a registry version label means explicit git acquisition."""
     return (version or "").lower() in GIT_ACQUISITION_VERSION_ALIASES
+
+
+def _requirement_applies_to_current_environment(requirement: str) -> bool:
+    """Return whether a PEP 508 requirement applies to this interpreter/platform.
+
+    Requirement files can include environment markers, for example:
+    ``jetson-stats; platform_machine == 'aarch64'``. uv/pip skip those when the
+    marker is false; ComfyGit should do the same before adding node dependency
+    requirements to the managed manifest.
+    """
+    try:
+        parsed = Requirement(requirement)
+    except InvalidRequirement:
+        # Keep pip options, URL forms, and non-standard lines rather than
+        # guessing. Downstream install tooling can decide whether they are valid.
+        return True
+
+    if parsed.marker is None:
+        return True
+
+    try:
+        return bool(parsed.marker.evaluate())
+    except Exception as exc:
+        logger.debug(
+            "Could not evaluate requirement marker for '%s': %s",
+            requirement,
+            exc,
+        )
+        return True
 
 
 class NodeLookupService:
@@ -141,8 +182,19 @@ class NodeLookupService:
                         version=repo_info.latest_commit  # This will be the requested ref's commit
                     )
             except Exception as e:
-                logger.warning(f"Invalid git URL: {e}")
-                return None
+                logger.warning(
+                    "Could not query GitHub metadata for %s: %s. "
+                    "Falling back to direct git clone metadata.",
+                    base_identifier,
+                    e,
+                )
+
+            return NodeInfo(
+                name=_repository_name_from_url(base_identifier),
+                repository=base_identifier,
+                source="git",
+                version=requested_version,
+            )
 
         # Strategy: API first, cache fallback
         try:
@@ -225,7 +277,15 @@ class NodeLookupService:
         """
         deps = self.scanner.scan_node(node_path)
         if deps and deps.requirements:
-            requirements = deps.requirements
+            requirements: list[str] = []
+            for req in deps.requirements:
+                if _requirement_applies_to_current_environment(req):
+                    requirements.append(req)
+                else:
+                    logger.debug(
+                        "Skipping requirement with non-matching environment marker: %s",
+                        req,
+                    )
 
             # Apply package substitutions if config provided
             if package_config:
@@ -271,8 +331,32 @@ class NodeLookupService:
                             f"Choose an explicit git install if repository acquisition is acceptable."
                         )
                         return None
-                    else:
+                    try:
                         download_and_extract_archive(node_info.download_url, temp_path)
+                    except Exception as artifact_error:
+                        if not node_info.repository:
+                            raise
+
+                        logger.warning(
+                            "Registry artifact download failed for '%s'; "
+                            "falling back to repository clone from %s: %s",
+                            node_info.name,
+                            node_info.repository,
+                            artifact_error,
+                        )
+                        if temp_path.exists():
+                            from ..utils.filesystem import rmtree
+
+                            rmtree(temp_path)
+                        ref = node_info.version if _is_valid_git_ref(node_info.version) else None
+                        git_clone(
+                            node_info.repository,
+                            temp_path,
+                            depth=1,
+                            ref=ref,
+                            timeout=GIT_NODE_DOWNLOAD_TIMEOUT_SECONDS,
+                            token=self.get_git_token(),
+                        )
                 elif node_info.source == "git":
                     if not node_info.repository:
                         logger.error(f"No repository URL for git node '{node_info.name}'")

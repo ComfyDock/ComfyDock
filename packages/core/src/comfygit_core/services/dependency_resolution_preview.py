@@ -155,6 +155,7 @@ class DependencyResolutionPreviewService:
         uv_project.add_requirements_with_sources(
             node_package.requirements,
             group=group_name,
+            manifest_only=True,
             no_sync=True,
             raw=True,
         )

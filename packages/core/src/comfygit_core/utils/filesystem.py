@@ -36,8 +36,8 @@ def _handle_remove_readonly(func, path, exc_info):
         os.chmod(path, stat.S_IWRITE)
         time.sleep(0.05)  # Brief delay for handle release
         func(path)
-    except Exception:
-        pass  # Let rmtree handle final error
+    except Exception as e:
+        raise e
 
 
 def rmtree(path: Path, ignore_errors: bool = False) -> None:

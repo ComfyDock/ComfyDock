@@ -31,6 +31,7 @@ DEFAULT_PROBE_PROTECTED = [
     "torchvision",
     "torchaudio",
     "torchsde",
+    "uv",
 ]
 
 class PackageConfigManager:
