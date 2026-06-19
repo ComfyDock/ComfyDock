@@ -3,6 +3,7 @@
 import json
 from unittest.mock import Mock
 
+import pytest
 from comfygit_core.services.workflow_file_store import WorkflowFileStore
 
 
@@ -73,6 +74,51 @@ def test_copy_all_workflows_invalidates_modified_and_deleted_workflows(tmp_path)
     cache.invalidate.assert_any_call(env_name="test-env", workflow_name="changed")
     cache.invalidate.assert_any_call(env_name="test-env", workflow_name="deleted")
     assert cache.invalidate.call_count == 2
+
+
+def test_copy_workflow_captures_one_saved_workflow(tmp_path):
+    """A single saved workflow can be captured without touching other files."""
+    cache = Mock()
+    store = _store(tmp_path, workflow_cache=cache)
+
+    _write_json(store.comfyui_workflows / "draft.json", {"nodes": [{"id": 1}]})
+    _write_json(store.comfyui_workflows / "other.json", {"nodes": [{"id": 2}]})
+
+    result = store.copy_workflow("draft.json")
+
+    assert result == store.cec_workflows / "draft.json"
+    assert json.loads(result.read_text(encoding="utf-8")) == {"nodes": [{"id": 1}]}
+    assert not (store.cec_workflows / "other.json").exists()
+    cache.invalidate.assert_called_once_with(
+        env_name="test-env",
+        workflow_name="draft",
+    )
+
+
+def test_copy_workflow_preserves_dots_in_extensionless_workflow_names(tmp_path):
+    """Workflow names may contain dots that are not file extensions."""
+    cache = Mock()
+    store = _store(tmp_path, workflow_cache=cache)
+    name = "LTX-2.3_-_FML2V_First_Middle_Last_Frame_guider"
+
+    _write_json(store.comfyui_workflows / f"{name}.json", {"nodes": [{"id": 1}]})
+
+    result = store.copy_workflow(name)
+
+    assert result == store.cec_workflows / f"{name}.json"
+    assert result.exists()
+    cache.invalidate.assert_called_once_with(
+        env_name="test-env",
+        workflow_name=name,
+    )
+
+
+def test_copy_workflow_requires_saved_comfyui_file(tmp_path):
+    """Capturing a workflow must not invent tracked files that were never saved."""
+    store = _store(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        store.copy_workflow("missing")
 
 
 def test_restore_all_from_cec_removes_workflows_absent_from_tracked_storage(tmp_path):

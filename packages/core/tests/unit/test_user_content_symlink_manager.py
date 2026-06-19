@@ -1,5 +1,7 @@
 """Tests for UserContentSymlinkManager."""
 
+import logging
+
 import pytest
 from comfygit_core.managers.user_content_symlink_manager import UserContentSymlinkManager
 from comfygit_core.models.exceptions import CDEnvironmentError
@@ -66,6 +68,26 @@ class TestCreateSymlinks:
         assert is_link(manager.output_link)
         assert manager.input_link.resolve() == manager.input_target.resolve()
         assert manager.output_link.resolve() == manager.output_target.resolve()
+
+    def test_create_symlink_log_messages_are_windows_charmap_safe(self, manager, caplog):
+        """Windows ComfyUI may route logs through a cp1252 stream."""
+        manager.create_directories()
+
+        with caplog.at_level(
+            logging.INFO,
+            logger="comfygit_core.managers.user_content_symlink_manager",
+        ):
+            manager.create_symlinks()
+
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "comfygit_core.managers.user_content_symlink_manager"
+        ]
+
+        assert messages
+        for message in messages:
+            message.encode("cp1252")
 
     def test_is_idempotent(self, manager):
         """Test that calling create_symlinks multiple times is safe."""

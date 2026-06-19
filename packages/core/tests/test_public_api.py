@@ -50,6 +50,7 @@ def test_environment_public_git_facade_methods_are_available():
     assert callable(Environment.get_workflow_manifest_models)
     assert callable(Environment.get_workflow_custom_node_map)
     assert callable(Environment.get_readiness)
+    assert callable(Environment.get_lifecycle_status)
     assert callable(Environment.list_remotes)
     assert callable(Environment.add_remote)
     assert callable(Environment.remove_remote)
@@ -127,6 +128,7 @@ def test_common_adapter_types_are_public():
         CDWorkspaceNotFoundError,
         DependencyCriticality,
         DependencyGroupRemovalResult,
+        EnvironmentLifecycleStatus,
         EnvironmentManifestSnapshot,
         EnvironmentReadiness,
         EnvironmentStatus,
@@ -140,6 +142,11 @@ def test_common_adapter_types_are_public():
         ImportCallbacks,
         ManifestModel,
         ManifestWorkflowModel,
+        LifecycleAction,
+        LifecycleIssue,
+        LifecycleLayerSummary,
+        LifecycleOperationState,
+        LifecycleRuntimeState,
         ModelIndexSource,
         ModelIndexStats,
         ModelLocation,
@@ -190,6 +197,7 @@ def test_common_adapter_types_are_public():
     assert CDWorkspaceNotFoundError.__name__ == "CDWorkspaceNotFoundError"
     assert DependencyCriticality is not None
     assert DependencyGroupRemovalResult.__name__ == "DependencyGroupRemovalResult"
+    assert EnvironmentLifecycleStatus.__name__ == "EnvironmentLifecycleStatus"
     assert EnvironmentManifestSnapshot.__name__ == "EnvironmentManifestSnapshot"
     assert EnvironmentReadiness.__name__ == "EnvironmentReadiness"
     assert EnvironmentStatus.__name__ == "EnvironmentStatus"
@@ -202,6 +210,11 @@ def test_common_adapter_types_are_public():
     assert GitSyncStatus.__name__ == "GitSyncStatus"
     assert ManifestModel.__name__ == "ManifestModel"
     assert ManifestWorkflowModel.__name__ == "ManifestWorkflowModel"
+    assert LifecycleAction.__name__ == "LifecycleAction"
+    assert LifecycleIssue.__name__ == "LifecycleIssue"
+    assert LifecycleLayerSummary.__name__ == "LifecycleLayerSummary"
+    assert LifecycleOperationState.__name__ == "LifecycleOperationState"
+    assert LifecycleRuntimeState.__name__ == "LifecycleRuntimeState"
     assert ModelIndexSource.__name__ == "ModelIndexSource"
     assert ModelIndexStats.__name__ == "ModelIndexStats"
     assert ModelLocation.__name__ == "ModelLocation"

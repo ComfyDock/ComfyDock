@@ -299,6 +299,92 @@ class TestRunBehavior:
     """Test that run reads from file like sync does."""
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_supervisor_control_starts_by_default(self, mock_get_workspace, tmp_path, monkeypatch):
+        """Native cg run should expose restart-stable switch status/logs by default."""
+        from comfygit_cli import env_commands
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        starts = []
+
+        class FakeSwitchObserverServer:
+            def __init__(self, workspace_path, host, port, *, public_origin=None):
+                self.workspace_path = workspace_path
+                self.host = host
+                self.port = port
+                self.public_origin = public_origin
+
+            def start(self):
+                starts.append((self.workspace_path, self.host, self.port, self.public_origin))
+
+            def stop(self):
+                pass
+
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_PORT", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_HOST", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN", raising=False)
+        monkeypatch.setattr(env_commands, "SwitchObserverServer", FakeSwitchObserverServer)
+
+        mock_workspace = MagicMock()
+        mock_workspace.path = tmp_path
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        control = cmd._start_supervisor_control(["--listen", "0.0.0.0", "--port", "8191"])
+
+        assert control is not None
+        assert starts == [(tmp_path, "0.0.0.0", 8192, None)]
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_supervisor_control_passes_public_origin(self, mock_get_workspace, tmp_path, monkeypatch):
+        """Native cg run can advertise a browser-reachable supervisor proxy URL."""
+        from comfygit_cli import env_commands
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        starts = []
+
+        class FakeSwitchObserverServer:
+            def __init__(self, workspace_path, host, port, *, public_origin=None):
+                self.workspace_path = workspace_path
+                self.host = host
+                self.port = port
+                self.public_origin = public_origin
+
+            def start(self):
+                starts.append((self.workspace_path, self.host, self.port, self.public_origin))
+
+            def stop(self):
+                pass
+
+        monkeypatch.setenv(
+            "COMFYGIT_SUPERVISOR_PUBLIC_ORIGIN",
+            "http://desktop-de51eqf.tailnet.ts.net:8192/",
+        )
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_PORT", raising=False)
+        monkeypatch.delenv("COMFYGIT_SUPERVISOR_CONTROL_HOST", raising=False)
+        monkeypatch.setattr(env_commands, "SwitchObserverServer", FakeSwitchObserverServer)
+
+        mock_workspace = MagicMock()
+        mock_workspace.path = tmp_path
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        control = cmd._start_supervisor_control(["--listen", "0.0.0.0", "--port", "8191"])
+
+        assert control is not None
+        assert starts == [(
+            tmp_path,
+            "0.0.0.0",
+            8192,
+            "http://desktop-de51eqf.tailnet.ts.net:8192/",
+        )]
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_uses_ensure_backend(self, mock_get_workspace):
         """Run should use ensure_backend() which handles both existing and missing backends."""
         from comfygit_cli.env_commands import EnvironmentCommands
@@ -363,7 +449,45 @@ class TestRunBehavior:
         with pytest.raises(SystemExit):
             cmd.run(args)
 
-        mock_env.run.assert_called_once_with(["--cpu"])
+        mock_env.run.assert_called_once_with(["--cpu"], backend_override=None)
+
+    @patch('comfygit_cli.env_commands.get_workspace_or_exit')
+    def test_run_passes_runtime_backend_override_to_child(self, mock_get_workspace):
+        """Run should expose one-time backend overrides to the launched process only."""
+        from comfygit_cli.env_commands import EnvironmentCommands
+
+        mock_env = MagicMock()
+        mock_env.name = "test-env"
+        mock_env.get_current_branch.return_value = "main"
+        mock_env.ensure_torch_backend.return_value = _torch_selection("cu126")
+        mock_env.sync.return_value = MagicMock(success=True)
+        mock_env.run.return_value = MagicMock(returncode=0)
+
+        mock_workspace = MagicMock()
+        mock_workspace.get_active_environment.return_value = mock_env
+        mock_get_workspace.return_value = mock_workspace
+
+        cmd = EnvironmentCommands()
+        if 'workspace' in cmd.__dict__:
+            del cmd.__dict__['workspace']
+
+        args = argparse.Namespace(
+            target_env=None,
+            torch_backend="cu126",
+            no_sync=False,
+            args=[],
+            extra=[],
+            all_extras=False,
+            overlay=[],
+        )
+
+        with pytest.raises(SystemExit):
+            cmd.run(args)
+
+        mock_env.ensure_torch_backend.assert_not_called()
+        mock_env.sync.assert_called_once()
+        assert mock_env.sync.call_args.kwargs["backend_override"] == "cu126"
+        mock_env.run.assert_called_once_with([], backend_override="cu126")
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_does_not_duplicate_cpu_flag(self, mock_get_workspace):
@@ -395,7 +519,10 @@ class TestRunBehavior:
         with pytest.raises(SystemExit):
             cmd.run(args)
 
-        mock_env.run.assert_called_once_with(["--cpu", "--port", "8199"])
+        mock_env.run.assert_called_once_with(
+            ["--cpu", "--port", "8199"],
+            backend_override=None,
+        )
 
     @patch('comfygit_cli.env_commands.get_workspace_or_exit')
     def test_run_overlay_rejects_no_sync(self, mock_get_workspace):
@@ -443,7 +570,9 @@ class TestRunBehavior:
         target_env.get_current_branch.return_value = "main"
         target_env.comfyui_path = tmp_path / "target-comfyui"
         target_env.comfyui_path.mkdir()
-        target_env.uv_manager.python_executable = tmp_path / "target-venv" / "bin" / "python"
+        target_python = tmp_path / "target-venv" / "bin" / "python"
+        target_env.get_runtime_python.return_value = target_python
+        target_env.ensure_torch_backend.return_value = _torch_selection("cpu")
         target_env.sync.return_value = MagicMock(success=True)
 
         metadata_dir = tmp_path / ".metadata"
@@ -490,6 +619,7 @@ class TestRunBehavior:
         mock_workspace.get_environment.assert_called_with("target-env", auto_sync=False)
         target_env.sync.assert_called_once()
         mock_popen.assert_called_once()
+        assert mock_popen.call_args.args[0] == [str(target_python), "main.py", "--cpu"]
         assert not (metadata_dir / ".switch_request.json").exists()
         assert not (metadata_dir / ".switch.lock").exists()
 

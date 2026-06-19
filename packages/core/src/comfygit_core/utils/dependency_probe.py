@@ -21,6 +21,8 @@ from packaging.version import parse as parse_version
 
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
+from ..managers.pyproject_manager import PyprojectManager
+from ..manifest.disposable_project import DisposableUvProject
 from ..utils.dependency_parser import parse_dependency_string
 from ..utils.filesystem import rmtree
 
@@ -28,6 +30,8 @@ logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from ..configs.package_config import PackageConfigManager
+    from ..managers.overlay_manager import OverlayManager
+    from ..managers.pytorch_backend_manager import PyTorchBackendManager
 
 
 @dataclass
@@ -57,6 +61,11 @@ class DependencyProbe:
         "torchvision",
         "torchaudio",
         "torchsde",
+        "uv",
+    }
+
+    ALWAYS_PROTECTED_PACKAGES: set[str] = {
+        "uv",
     }
 
     def __init__(
@@ -64,9 +73,13 @@ class DependencyProbe:
         cec_path: Path,
         workspace_path: Path,
         *,
+        uv_binary: Path | None = None,
+        overlay_manager: OverlayManager | None = None,
+        pytorch_manager: PyTorchBackendManager | None = None,
         package_config: PackageConfigManager | None = None,
         python_version: str | None = None,
         torch_backend: str | None = None,
+        skip_optional_overlays: bool = False,
         keep_venv: bool = False,
     ):
         """Initialize the dependency probe.
@@ -84,6 +97,10 @@ class DependencyProbe:
         self.probe_venv = cec_path / f".venv-probe-{uuid4().hex}"
         self.uv_cache_path = workspace_path / "uv_cache"
         self.uv_python_path = workspace_path / "uv" / "python"
+        self.uv_binary = uv_binary
+        self.overlay_manager = overlay_manager
+        self.pytorch_manager = pytorch_manager
+        self.skip_optional_overlays = skip_optional_overlays
         self.keep_venv = keep_venv
         self.package_config = package_config
 
@@ -172,6 +189,7 @@ class DependencyProbe:
             rmtree(self.probe_venv)
 
         uv = UVCommand(
+            binary_path=self.uv_binary,
             cache_dir=self.uv_cache_path,
             python_install_dir=self.uv_python_path,
             cwd=self.cec_path,
@@ -183,6 +201,7 @@ class DependencyProbe:
     def _sync_probe_to_current_state(self) -> None:
         """Sync probe venv to match the current environment state."""
         uv = UVCommand(
+            binary_path=self.uv_binary,
             project_env=self.probe_venv,
             cache_dir=self.uv_cache_path,
             python_install_dir=self.uv_python_path,
@@ -190,8 +209,45 @@ class DependencyProbe:
             torch_backend=self.torch_backend,
         )
 
+        overlays = self._collect_probe_overlays()
+        if overlays:
+            pyproject = PyprojectManager(self.pyproject_path)
+            disposable_project = DisposableUvProject(pyproject, uv)
+            disposable_project.sync(
+                overlays,
+                all_groups=True,
+                copy_lock=False,
+            )
+            logger.debug("Synced probe venv to current state using overlay-aware disposable project")
+            return
+
         uv.sync(all_groups=True)
         logger.debug("Synced probe venv to current state")
+
+    def _collect_probe_overlays(self):
+        """Collect overlays for the probe baseline solve.
+
+        The probe must compare against the same effective dependency graph that
+        install/sync will use. Local overlays and PyTorch backend materialization
+        are applied to a disposable project, not the tracked manifest.
+        """
+        if self.overlay_manager is None:
+            return []
+
+        pytorch_config = None
+        if self.pytorch_manager is not None:
+            try:
+                if self.pytorch_manager.has_backend():
+                    pytorch_config = self.pytorch_manager.get_pytorch_config(
+                        python_version=self.python_version,
+                    )
+            except Exception as exc:
+                logger.debug("Could not collect PyTorch overlay for dependency probe: %s", exc)
+
+        return self.overlay_manager.collect_overlays(
+            pytorch_config=pytorch_config,
+            skip_optional=self.skip_optional_overlays,
+        )
 
     def _freeze_packages(self) -> dict[str, str]:
         """Get current installed packages from probe venv.
@@ -200,6 +256,7 @@ class DependencyProbe:
             Dict mapping normalized package names to versions
         """
         uv = UVCommand(
+            binary_path=self.uv_binary,
             cache_dir=self.uv_cache_path,
             python_install_dir=self.uv_python_path,
         )
@@ -229,6 +286,7 @@ class DependencyProbe:
         """
         failures = []
         uv = UVCommand(
+            binary_path=self.uv_binary,
             cache_dir=self.uv_cache_path,
             python_install_dir=self.uv_python_path,
         )
@@ -291,6 +349,11 @@ class DependencyProbe:
                 if new_v < old_v:
                     # Downgrade detected
                     result.downgraded[name] = (old_version, new_version)
+                    if self._is_protected(name):
+                        result.protected_changes.append(
+                            f"{name}: {old_version} -> {new_version}"
+                        )
+                        continue
                     constraint = self._version_to_constraint(name, new_version)
                     if constraint:
                         result.suggested_constraints.append(constraint)
@@ -338,7 +401,15 @@ class DependencyProbe:
     def _protected_packages(self) -> set[str]:
         """Return normalized protected packages from config or hardcoded fallback."""
         if self.package_config is not None:
-            return {self._normalize_name(name) for name in self.package_config.probe_protected_packages}
+            configured = {
+                self._normalize_name(name)
+                for name in self.package_config.probe_protected_packages
+            }
+            configured.update(
+                self._normalize_name(name)
+                for name in self.ALWAYS_PROTECTED_PACKAGES
+            )
+            return configured
 
         return {self._normalize_name(name) for name in self.PROTECTED_PACKAGES}
 
@@ -420,5 +491,13 @@ class DependencyProbe:
     def _cleanup(self) -> None:
         """Remove the probe venv."""
         if self.probe_venv.exists():
-            rmtree(self.probe_venv)
-            logger.debug(f"Cleaned up probe venv at {self.probe_venv}")
+            try:
+                rmtree(self.probe_venv)
+            except Exception as e:
+                logger.warning(
+                    "Could not clean up dependency probe venv at %s: %s",
+                    self.probe_venv,
+                    e,
+                )
+            else:
+                logger.debug(f"Cleaned up probe venv at {self.probe_venv}")

@@ -161,6 +161,15 @@ class TestPyprojectManifestDomainApi:
         assert node.pinned_commit == "abcde12345"
         assert snapshot.models["abc123"].sources == ["https://example.com/model.safetensors"]
 
+    def test_manifest_ensures_workflow_entry(self, temp_pyproject):
+        manager = PyprojectManager(temp_pyproject)
+
+        assert manager.manifest.ensure_workflow("txt2img_basic") is True
+        assert manager.manifest.ensure_workflow("txt2img_basic") is False
+
+        snapshot = manager.get_manifest_snapshot(force_reload=True)
+        assert snapshot.workflows["txt2img_basic"].path == "workflows/txt2img_basic.json"
+
 
 class TestWorkflowExecutionContractLoading:
     """Test workflow execution contracts load through the canonical model."""
@@ -261,12 +270,12 @@ class TestWorkflowExecutionContractLoading:
         }
 
     def test_execution_contract_serializes_large_numeric_bounds_as_toml_safe_strings(self, temp_pyproject):
-        import tomllib
         from comfygit_core.models.workflow_contract import (
             NamedWorkflowContract,
             WorkflowContractInput,
             WorkflowExecutionContract,
         )
+        from comfygit_core.utils.toml_compat import tomllib
 
         manager = PyprojectManager(temp_pyproject)
         large_uint64_bound = 18446744073709552000
@@ -309,7 +318,7 @@ class TestWorkflowExecutionContractLoading:
         assert loaded.to_public_schema()["inputs"][0]["max"] == large_uint64_bound
 
     def test_save_sanitizes_existing_raw_contract_numbers_for_uv(self, temp_pyproject):
-        import tomllib
+        from comfygit_core.utils.toml_compat import tomllib
 
         manager = PyprojectManager(temp_pyproject)
         large_uint64_bound = 18446744073709552000

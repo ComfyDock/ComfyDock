@@ -238,6 +238,7 @@ class TestNodeManagerWorkflowCleanup:
         return {
             "node_manager": node_manager,
             "pyproject": pyproject,
+            "uv": mock_uv,
             "custom_nodes_path": custom_nodes_path,
             "pyproject_path": pyproject_path,
         }
@@ -258,6 +259,32 @@ class TestNodeManagerWorkflowCleanup:
         nodes_list = workflow_data.get("nodes", [])
         assert "test-node" not in nodes_list
         assert "other-node" in nodes_list
+        node_manager_setup["uv"].sync_project.assert_called_once()
+        assert node_manager_setup["uv"].sync_project.call_args.kwargs["skip_optional_overlays"] is True
+
+    def test_remove_node_can_sync_with_optional_overlays(self, node_manager_setup):
+        """Manager-driven removals can resolve with active local/optional overlays."""
+        nm = node_manager_setup["node_manager"]
+
+        result = nm.remove_node("test-node", skip_optional_overlays=False)
+
+        assert result.identifier == "test-node"
+        node_manager_setup["uv"].sync_project.assert_called_once()
+        assert node_manager_setup["uv"].sync_project.call_args.kwargs["skip_optional_overlays"] is False
+
+    def test_remove_node_returns_partial_result_when_sync_fails(self, node_manager_setup):
+        """A post-removal sync error should not mask that the node was removed."""
+        nm = node_manager_setup["node_manager"]
+        pyproject = node_manager_setup["pyproject"]
+        node_manager_setup["uv"].sync_project.side_effect = RuntimeError("sync failed")
+
+        result = nm.remove_node("test-node")
+
+        assert result.identifier == "test-node"
+        assert result.sync_succeeded is False
+        assert result.sync_error == "sync failed"
+        assert result.needs_sync is True
+        assert "test-node" not in pyproject.nodes.get_existing()
 
 
 class TestRemoveUntrackedNode:

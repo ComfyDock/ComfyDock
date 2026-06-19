@@ -1,5 +1,6 @@
 """Tests for PyTorch overlay materialization."""
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -486,6 +487,34 @@ class TestSyncProjectWithPyTorchManager:
         assert "nvidia-cusparselt-cu12" in override_reinstall
         assert "nvidia-nvshmem-cu12" in override_reinstall
 
+    def test_sync_project_dry_run_does_not_force_pytorch_reinstall(self, temp_env):
+        """Dry-run status checks should not report synthetic PyTorch reinstall drift."""
+        from unittest.mock import MagicMock
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        pytorch_manager = PyTorchBackendManager(temp_env["cec_path"])
+
+        mock_result = MagicMock()
+        mock_result.stdout = "Audited packages\n"
+        mock_result.stderr = ""
+        mock_uv_command = MagicMock()
+        mock_uv_command.for_cwd.return_value = mock_uv_command
+        mock_uv_command.sync.return_value = mock_result
+
+        uv_manager = UVProjectManager(
+            uv_command=mock_uv_command,
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project(pytorch_manager=pytorch_manager, dry_run=True)
+
+        kwargs = mock_uv_command.sync.call_args.kwargs
+        assert kwargs["dry_run"] is True
+        assert "reinstall_package" not in kwargs
+
     def test_sync_project_leaves_tracked_pyproject_clean_on_sync_error(self, temp_env):
         """sync_project should leave tracked config clean when uv sync fails."""
         from unittest.mock import MagicMock
@@ -562,6 +591,80 @@ editable = true
         assert (temp_env["cec_path"] / "uv.lock").read_text(encoding="utf-8") == "# temp lock\n"
         assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
 
+    def test_overlay_dry_run_reports_stderr_without_copying_lock(self, temp_env):
+        """Dry-run overlay sync should expose uv's plan without mutating lock state."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        overlays_dir = temp_env["cec_path"] / "overlays"
+        overlays_dir.mkdir(exist_ok=True)
+        (overlays_dir / ".local.toml").write_text(
+            """
+[overlay]
+description = "Local package override"
+
+[sources.localpkg]
+path = "/tmp/localpkg"
+editable = true
+""".lstrip(),
+            encoding="utf-8",
+        )
+
+        runtime_lock = temp_env["cec_path"] / "uv.lock"
+        runtime_lock.write_text("# runtime lock\n", encoding="utf-8")
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                assert kwargs["dry_run"] is True
+                (self.cwd / "uv.lock").write_text("# temp dry-run lock\n", encoding="utf-8")
+                return SimpleNamespace(
+                    stdout="Would use project environment at: .venv\n",
+                    stderr="Would install 1 package\n",
+                )
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=PyprojectManager(temp_env["pyproject_path"]),
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        output = uv_manager.sync_project(dry_run=True)
+
+        assert "Would use project environment" in output
+        assert "Would install 1 package" in output
+        assert runtime_lock.read_text(encoding="utf-8") == "# runtime lock\n"
+        assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
+
+    def test_plain_dry_run_reports_stderr(self, temp_env):
+        """Dry-run sync should include uv stderr even without overlay materialization."""
+        from unittest.mock import MagicMock
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        pyproject = PyprojectManager(temp_env["pyproject_path"])
+        mock_result = MagicMock()
+        mock_result.stdout = "Resolved 10 packages\n"
+        mock_result.stderr = "Would update lockfile at: uv.lock\n"
+
+        mock_uv_command = MagicMock()
+        mock_uv_command.sync.return_value = mock_result
+
+        uv_manager = UVProjectManager(
+            uv_command=mock_uv_command,
+            pyproject_manager=pyproject,
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        output = uv_manager.sync_project(dry_run=True)
+
+        assert "Resolved 10 packages" in output
+        assert "Would update lockfile" in output
+
     def test_sync_project_removes_stale_disposable_projects(self, temp_env):
         """A previous interrupted sync should not poison the next resolution."""
         from types import SimpleNamespace
@@ -584,6 +687,9 @@ editable = true
         stale_path = temp_env["cec_path"] / ".comfygit-tmp" / "uv-project-stale"
         stale_path.mkdir(parents=True)
         (stale_path / "marker").write_text("stale", encoding="utf-8")
+        old_mtime = stale_path.stat().st_mtime - 7200
+        stale_path.touch()
+        os.utime(stale_path, (old_mtime, old_mtime))
 
         class FakeUVCommand:
             def for_cwd(self, cwd):
@@ -602,3 +708,33 @@ editable = true
 
         uv_manager.sync_project()
         assert not any((temp_env["cec_path"] / ".comfygit-tmp").glob("uv-project-*"))
+
+    def test_sync_project_preserves_fresh_disposable_projects(self, temp_env):
+        """Concurrent sync/status calls should not delete another active temp project."""
+        from types import SimpleNamespace
+
+        from comfygit_core.managers.uv_project_manager import UVProjectManager
+
+        fresh_path = temp_env["cec_path"] / ".comfygit-tmp" / "uv-project-active"
+        fresh_path.mkdir(parents=True)
+        (fresh_path / "pyproject.toml").write_text("[project]\nname = 'active'\n", encoding="utf-8")
+
+        class FakeUVCommand:
+            def for_cwd(self, cwd):
+                assert fresh_path.exists()
+                self.cwd = cwd
+                return self
+
+            def sync(self, *args, **kwargs):
+                assert fresh_path.exists()
+                return SimpleNamespace(stdout="")
+
+        uv_manager = UVProjectManager(
+            uv_command=FakeUVCommand(),
+            pyproject_manager=PyprojectManager(temp_env["pyproject_path"]),
+            overlay_manager=OverlayManager(temp_env["cec_path"]),
+        )
+
+        uv_manager.sync_project()
+
+        assert fresh_path.exists()

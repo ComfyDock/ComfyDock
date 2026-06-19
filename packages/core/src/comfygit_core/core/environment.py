@@ -7,13 +7,14 @@ import re
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from functools import cached_property, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from ..analyzers.ref_diff_analyzer import RefDiffAnalyzer
 from ..analyzers.status_scanner import StatusScanner
+from ..constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from ..factories.uv_factory import create_uv_for_environment
 from ..logging.logging_config import get_logger
 from ..managers.environment_git_orchestrator import EnvironmentGitOrchestrator
@@ -82,6 +83,11 @@ if TYPE_CHECKING:
         DependencyResolutionApplyResult,
         DependencyResolutionPreview,
     )
+    from ..models.lifecycle import (
+        EnvironmentLifecycleStatus,
+        LifecycleOperationState,
+        LifecycleRuntimeState,
+    )
     from ..models.manifest import (
         EnvironmentManifestSnapshot,
         ManifestWorkflowEntry,
@@ -107,6 +113,7 @@ if TYPE_CHECKING:
     from ..services.node_lookup_service import NodeLookupService
 
 logger = get_logger(__name__)
+UTC = timezone.utc
 
 
 def _workflow_api_prompt_relpath(workflow_name: str) -> Path:
@@ -582,8 +589,27 @@ class Environment:
     # Environment Management
     # =====================================================
 
+    def _get_active_torch_backend_override(self) -> str | None:
+        """Return the non-persistent backend override active for this process."""
+        backend = os.environ.get(ACTIVE_TORCH_BACKEND_OVERRIDE_ENV)
+        if not backend:
+            return None
+
+        if self.is_valid_torch_backend(backend):
+            return backend
+
+        logger.warning(
+            "Ignoring invalid %s=%r",
+            ACTIVE_TORCH_BACKEND_OVERRIDE_ENV,
+            backend,
+        )
+        return None
+
     def status(self) -> EnvironmentStatus:
         """Get environment sync and git status."""
+        git_status = self.git_manager.get_status(self.pyproject)
+        active_backend_override = self._get_active_torch_backend_override()
+
         # Each subsystem provides its complete status
         scanner = StatusScanner(
             comfyui_path=self.comfyui_path,
@@ -592,9 +618,10 @@ class Environment:
             pyproject=self.pyproject,
             pytorch_manager=self.pytorch_manager,
         )
-        comparison = scanner.get_full_comparison()
-
-        git_status = self.git_manager.get_status(self.pyproject)
+        comparison = scanner.get_full_comparison(
+            check_package_sync=git_status.has_dependency_changes,
+            backend_override=active_backend_override,
+        )
 
         workflow_status = self.workflow_manager.get_workflow_status()
 
@@ -607,6 +634,37 @@ class Environment:
             git_status=git_status,
             workflow_status=workflow_status,
             missing_models=missing_models
+        )
+
+    def get_lifecycle_status(
+        self,
+        *,
+        status: EnvironmentStatus | None = None,
+        include_readiness: bool = False,
+        runtime_state: LifecycleRuntimeState | None = None,
+        operation_state: LifecycleOperationState | None = None,
+    ) -> EnvironmentLifecycleStatus:
+        """Return composed lifecycle health and recommended actions.
+
+        This facade keeps adapters on the public Environment API. Core computes
+        manifest/filesystem/snapshot/workspace-index signals from existing
+        status/readiness paths; Manager or CLI may pass runtime/operation state
+        that only the adapter can observe.
+        """
+        from ..services.environment_lifecycle import (
+            build_lifecycle_status_from_environment_status,
+        )
+        from ..utils.git import git_rev_parse
+
+        readiness = self.get_readiness() if include_readiness else None
+        return build_lifecycle_status_from_environment_status(
+            status or self.status(),
+            environment_name=self.name,
+            workspace_path=str(self.workspace_paths.root),
+            current_commit=git_rev_parse(self.cec_path, "HEAD"),
+            readiness=readiness,
+            runtime_state=runtime_state,
+            operation_state=operation_state,
         )
 
     def get_manager_status(self) -> ManagerStatus:
@@ -652,7 +710,7 @@ class Environment:
                 is_legacy = True
                 # Try to read version from symlink target
                 try:
-                    import tomllib
+                    from ..utils.toml_compat import tomllib
                     target_pyproject = legacy_path / "pyproject.toml"
                     if target_pyproject.exists():
                         with open(target_pyproject, "rb") as f:
@@ -844,9 +902,8 @@ class Environment:
 
     def _register_existing_manager(self, manager_path: Path) -> None:
         """Register existing manager directory in pyproject.toml."""
-        import tomllib
-
         from ..constants import MANAGER_NODE_ID
+        from ..utils.toml_compat import tomllib
 
         # Detect version from manager's pyproject.toml
         version = None
@@ -961,6 +1018,10 @@ class Environment:
         """
         from ..services.environment_sync_coordinator import EnvironmentSyncCoordinator
 
+        effective_backend_override = (
+            backend_override or self._get_active_torch_backend_override()
+        )
+
         return EnvironmentSyncCoordinator(self).sync(
             dry_run=dry_run,
             model_strategy=model_strategy,
@@ -970,7 +1031,7 @@ class Environment:
             sync_callbacks=sync_callbacks,
             verbose=verbose,
             preserve_workflows=preserve_workflows,
-            backend_override=backend_override,
+            backend_override=effective_backend_override,
             overlay_names=overlay_names,
             extras=extras,
             all_extras=all_extras,
@@ -1469,10 +1530,9 @@ class Environment:
         Returns:
             MergeValidation with is_compatible flag and any conflicts
         """
-        import tomllib
-
         from ..merging.merge_validator import MergeValidator
         from ..utils.git import git_show
+        from ..utils.toml_compat import tomllib
 
         # Load configs from both branches
         pyproject_path = Path("pyproject.toml")
@@ -1509,12 +1569,11 @@ class Environment:
         Returns:
             MergeResult with success status and details
         """
-        import tomllib
-
         from ..merging.atomic_executor import AtomicMergeExecutor
         from ..merging.merge_validator import MergeValidator
         from ..models.merge_plan import MergePlan
         from ..utils.git import git_show
+        from ..utils.toml_compat import tomllib
 
         # Load configs to compute final workflow set
         pyproject_path = Path("pyproject.toml")
@@ -1599,11 +1658,18 @@ class Environment:
             raise
 
     # TODO wrap subprocess completed process instance
-    def run(self, args: list[str] | None = None) -> subprocess.CompletedProcess:
+    def run(
+        self,
+        args: list[str] | None = None,
+        *,
+        backend_override: str | None = None,
+    ) -> subprocess.CompletedProcess:
         """Run ComfyUI in this environment.
 
         Args:
             args: Arguments to pass to ComfyUI
+            backend_override: Non-persistent PyTorch backend override used for
+                this launched process.
 
         Returns:
             CompletedProcess
@@ -1618,6 +1684,8 @@ class Environment:
         child_env = os.environ.copy()
         child_env["COMFYGIT_ENV_NAME"] = self.name
         child_env["COMFYGIT_CG_RUN_SUPERVISOR"] = "1"
+        if backend_override:
+            child_env[ACTIVE_TORCH_BACKEND_OVERRIDE_ENV] = backend_override
 
         logger.info(f"Starting ComfyUI with: {' '.join(cmd)}")
         return run_command(
@@ -1779,12 +1847,19 @@ class Environment:
         return success_count, failed
 
     @_requires_env_lock
-    def remove_node(self, identifier: str, untrack_only: bool = False) -> NodeRemovalResult:
+    def remove_node(
+        self,
+        identifier: str,
+        untrack_only: bool = False,
+        resolve_with_overlays: bool = False,
+    ) -> NodeRemovalResult:
         """Remove a custom node.
 
         Args:
             identifier: Node identifier or name
             untrack_only: If True, only remove from pyproject.toml without touching filesystem
+            resolve_with_overlays: If True, resolve post-removal sync with all active/extra
+                                   overlays. If False, node sync defaults to pytorch-only overlays.
 
         Returns:
             NodeRemovalResult: Details about the removal
@@ -1792,19 +1867,25 @@ class Environment:
         Raises:
             CDNodeNotFoundError: If node not found
         """
-        return self.node_manager.remove_node(identifier, untrack_only=untrack_only)
+        return self.node_manager.remove_node(
+            identifier,
+            untrack_only=untrack_only,
+            skip_optional_overlays=not resolve_with_overlays,
+        )
 
     @_requires_env_lock
     def remove_nodes_with_progress(
         self,
         node_ids: list[str],
-        callbacks: NodeInstallCallbacks | None = None
+        callbacks: NodeInstallCallbacks | None = None,
+        resolve_with_overlays: bool = False,
     ) -> tuple[int, list[tuple[str, str]]]:
         """Remove multiple nodes with callback support for progress tracking.
 
         Args:
             node_ids: List of node identifiers to remove
             callbacks: Optional callbacks for progress feedback
+            resolve_with_overlays: If True, resolve node removals with all overlays.
 
         Returns:
             Tuple of (success_count, failed_nodes)
@@ -1824,7 +1905,7 @@ class Environment:
                 callbacks.on_node_start(node_id, idx + 1, len(node_ids))
 
             try:
-                self.remove_node(node_id)
+                self.remove_node(node_id, resolve_with_overlays=resolve_with_overlays)
                 success_count += 1
                 if callbacks and callbacks.on_node_complete:
                     callbacks.on_node_complete(node_id, True, None)
@@ -1897,6 +1978,16 @@ class Environment:
     def copy_workflows_to_manifest(self) -> dict[str, Path | str | None]:
         """Copy saved ComfyUI workflow files into tracked `.cec` workflow storage."""
         return self.workflow_manager.copy_all_workflows()
+
+    @_requires_env_lock
+    def capture_workflow(self, workflow_name: str) -> Path:
+        """Capture one saved workflow into the tracked working environment.
+
+        The workflow is copied from ComfyUI's saved workflow directory into
+        `.cec/workflows`, and best-effort dependency metadata is reconciled into
+        the manifest. This does not commit the snapshot or install dependencies.
+        """
+        return self.workflow_manager.capture_workflow(workflow_name)
 
     def get_workflow_status(self) -> DetailedWorkflowStatus:
         """Return analyzed workflow status without exposing the workflow manager."""
@@ -2379,7 +2470,13 @@ class Environment:
             config = edit.config
 
             for wf_analysis in workflow_status.analyzed_workflows:
-                if wf_analysis.sync_state in ("new", "modified"):
+                if (
+                    wf_analysis.sync_state in ("new", "modified")
+                    or self.workflow_manager.resolution_changes_manifest(
+                        wf_analysis.resolution,
+                        config=config,
+                    )
+                ):
                     # Apply resolution results to pyproject (in-memory mutations)
                     self.workflow_manager.apply_resolution(wf_analysis.resolution, config=config)
                     edit.mark_changed()
@@ -2486,7 +2583,6 @@ class Environment:
     # Workflow Contract Management
     # =====================================================
 
-    @_requires_env_lock
     def get_workflow_execution_contract(self, workflow_name: str) -> WorkflowExecutionContract | None:
         """Get the saved execution contract for a workflow."""
         return self.pyproject.workflows.get_execution_contract(workflow_name)
@@ -2644,7 +2740,7 @@ class Environment:
                 substituted = self.package_config.apply_substitution(pkg)
                 if substituted != pkg:
                     substitutions[pkg] = substituted
-                    logger.info(f"Package substitution: {pkg} → {substituted}")
+                    logger.info(f"Package substitution: {pkg} -> {substituted}")
                 transformed_packages.append(substituted)
             final_packages = transformed_packages
 

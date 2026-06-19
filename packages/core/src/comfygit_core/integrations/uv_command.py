@@ -36,7 +36,7 @@ class CommandResult:
 class UVCommand:
     """Pure wrapper around UV CLI commands. No business logic or pyproject.toml manipulation."""
 
-    DEFAULT_TIMEOUT = None  # no timeout
+    DEFAULT_TIMEOUT: int | None = None  # no timeout
 
     def __init__(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,6 +19,7 @@ class DisposableUvProject:
 
     TEMP_PROJECT_ROOT = ".comfygit-tmp"
     TEMP_PROJECT_PREFIX = "uv-project-"
+    STALE_TEMP_PROJECT_SECONDS = 60 * 60
 
     def __init__(self, pyproject: PyprojectManager, uv_command: UVCommand):
         self.pyproject = pyproject
@@ -36,8 +38,15 @@ class DisposableUvProject:
         if not temp_root.exists():
             return
 
+        now = time.time()
         for child in temp_root.iterdir():
-            if child.is_dir() and child.name.startswith(self.TEMP_PROJECT_PREFIX):
+            if not child.is_dir() or not child.name.startswith(self.TEMP_PROJECT_PREFIX):
+                continue
+            try:
+                age_seconds = now - child.stat().st_mtime
+            except OSError:
+                continue
+            if age_seconds >= self.STALE_TEMP_PROJECT_SECONDS:
                 shutil.rmtree(child, ignore_errors=True)
 
     def copy_project_runtime_inputs(self, target_path: Path) -> None:
@@ -121,6 +130,7 @@ class DisposableUvProject:
         output_callback: Callable[[str], None] | None = None,
         extras: list[str] | None = None,
         all_extras: bool = False,
+        copy_lock: bool = True,
         **flags,
     ) -> str:
         temp_path, temp_pyproject = self.make_project()
@@ -135,7 +145,10 @@ class DisposableUvProject:
                 all_extras=all_extras,
                 **flags,
             )
-            self.copy_runtime_lock_from_disposable_project(temp_path)
+            if copy_lock and not flags.get("dry_run"):
+                self.copy_runtime_lock_from_disposable_project(temp_path)
+            if flags.get("dry_run"):
+                return "\n".join(part for part in (result.stdout, result.stderr) if part)
             return result.stdout
         finally:
             shutil.rmtree(temp_path, ignore_errors=True)

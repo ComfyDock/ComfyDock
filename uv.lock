@@ -413,7 +413,7 @@ requires-dist = [
     { name = "argcomplete", specifier = ">=3.5.0" },
     { name = "comfygit-core", editable = "packages/core" },
     { name = "comfygit-studio", editable = "packages/studio-runtime" },
-    { name = "requests", specifier = ">=2.33.0" },
+    { name = "requests", specifier = ">=2.32.4" },
 ]
 
 [[package]]
@@ -441,7 +441,7 @@ requires-dist = [
     { name = "blake3", specifier = ">=0.3.3" },
     { name = "huggingface-hub", specifier = ">=0.11.0" },
     { name = "packaging", specifier = ">=16.2" },
-    { name = "requests", specifier = ">=2.33.0" },
+    { name = "requests", specifier = ">=2.32.4" },
     { name = "requirements-parser", specifier = ">=0.11.0" },
     { name = "tomlkit", specifier = ">=0.11.0" },
     { name = "uv", specifier = ">=0.11.8" },

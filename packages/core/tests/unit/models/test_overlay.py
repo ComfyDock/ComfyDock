@@ -84,6 +84,24 @@ def test_overlay_parses_minimal_file(tmp_path):
     assert overlay.is_empty() is True
 
 
+def test_overlay_accepts_utf8_bom(tmp_path):
+    path = tmp_path / ".local.toml"
+    path.write_bytes(
+        b"\xef\xbb\xbf"
+        + b"""
+[overlay]
+description = "machine local"
+kind = "local"
+"""
+    )
+
+    overlay = OverlayConfig.from_toml(path)
+
+    assert overlay.name == ".local"
+    assert overlay.description == "machine local"
+    assert overlay.kind == "local"
+
+
 def test_overlay_parses_dependencies_only(tmp_path):
     path = _write_overlay(
         tmp_path,

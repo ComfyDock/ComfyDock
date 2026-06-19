@@ -63,7 +63,6 @@ class PyprojectStore:
             and self._config_cache is not None
             and self._cache_mtime == current_mtime
         ):
-            logger.debug("[PYPROJECT CACHE HIT] Using cached config")
             return self._config_cache
 
         PyprojectStore._total_load_calls += 1

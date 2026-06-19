@@ -12,6 +12,7 @@ possible so refactors do not silently break common CLI flows.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -62,7 +63,7 @@ class CliJourney:
         self.external_uv_cache = root / "external-uv-cache"
         self.remote = root / "remote.git"
         self.records: list[CommandRecord] = []
-        self.cg_bin = os.environ.get("E2E_CG_BIN", "cg")
+        self.cg_cmd = _resolve_cg_command()
 
         self.uv_cache.mkdir(parents=True, exist_ok=True)
         self.external_uv_cache.mkdir(parents=True, exist_ok=True)
@@ -98,7 +99,7 @@ class CliJourney:
         timeout: int = 180,
     ) -> subprocess.CompletedProcess[str]:
         string_args = tuple(str(arg) for arg in args)
-        cmd = [self.cg_bin, *string_args]
+        cmd = [*self.cg_cmd, *string_args]
         proc = subprocess.Popen(
             cmd,
             cwd=Path(__file__).resolve().parents[4],
@@ -113,10 +114,7 @@ class CliJourney:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _stop_process(proc, force=True)
             stdout, stderr = proc.communicate(timeout=10)
 
         result = subprocess.CompletedProcess(
@@ -172,7 +170,7 @@ class CliJourney:
         transcript = self.root / "cg-smoke-transcript.txt"
         lines: list[str] = []
         for index, record in enumerate(self.records, 1):
-            lines.append(f"$ {self.cg_bin} {' '.join(record.args)}")
+            lines.append(f"$ {' '.join(self.cg_cmd)} {' '.join(record.args)}")
             lines.append(f"# exit {record.returncode}")
             if record.stdout:
                 lines.append("# stdout")
@@ -188,6 +186,12 @@ class CliJourney:
     def manifest(self, env_name: str = ENV_NAME):
         pyproject = self.workspace / "environments" / env_name / ".cec" / "pyproject.toml"
         return tomlkit.parse(pyproject.read_text())
+
+
+def _resolve_cg_command() -> tuple[str, ...]:
+    if cg_cmd := os.environ.get("E2E_CG_CMD"):
+        return tuple(shlex.split(cg_cmd, posix=os.name != "nt"))
+    return (os.environ.get("E2E_CG_BIN", "cg"),)
 
 
 @pytest.fixture
@@ -264,18 +268,50 @@ def _wait_for_comfyui(port: int, timeout: int = 160) -> bool:
 
 def _stop_process_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
     if proc.poll() is None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        _stop_process(proc, force=False)
     try:
-        return proc.communicate(timeout=12)
+        stdout, stderr = proc.communicate(timeout=12)
+        return stdout or "", stderr or ""
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        return proc.communicate(timeout=8)
+        _stop_process(proc, force=True)
+        stdout, stderr = proc.communicate(timeout=8)
+        return stdout or "", stderr or ""
+
+
+def _stop_process(proc: subprocess.Popen[str], *, force: bool) -> None:
+    if os.name == "nt":
+        if force:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return
+        proc.terminate()
+        return
+
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL if force else signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _stop_windows_comfyui_for_port(port: int) -> None:
+    if os.name != "nt":
+        return
+
+    script = (
+        "Get-CimInstance Win32_Process | "
+        f"Where-Object {{ $_.CommandLine -like '*main.py*' -and $_.CommandLine -like '*--port {port}*' }} | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def test_cli_local_authoring_journey(journey: CliJourney):
@@ -516,21 +552,30 @@ def test_cli_run_cpu_launches_comfyui(journey: CliJourney):
     """
     _bootstrap_workspace_and_env(journey)
     port = _free_port()
-    cmd = [journey.cg_bin, "run", "--no-sync", "--", "--port", str(port)]
-    proc = subprocess.Popen(
-        cmd,
-        cwd=Path(__file__).resolve().parents[4],
-        env=journey.env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    cmd = [*journey.cg_cmd, "run", "--no-sync", "--", "--port", str(port)]
+    stdout_path = journey.root / "cg-run.stdout.log"
+    stderr_path = journey.root / "cg-run.stderr.log"
+    with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr_file:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=Path(__file__).resolve().parents[4],
+            env=journey.env,
+            text=True,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            start_new_session=True,
+        )
 
-    try:
-        healthy = _wait_for_comfyui(port)
-    finally:
-        stdout, stderr = _stop_process_group(proc)
+        try:
+            healthy = _wait_for_comfyui(port)
+        finally:
+            _stop_process_group(proc)
+            _stop_windows_comfyui_for_port(port)
+
+    stdout = stdout_path.read_text(encoding="utf-8", errors="replace")
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace")
 
     combined = f"{stdout}\n{stderr}"
     if not healthy:

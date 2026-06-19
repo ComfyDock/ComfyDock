@@ -56,6 +56,9 @@ logs/
 # Local safety backups
 backups/
 
+# Dependency probe virtualenvs
+.venv-probe-*/
+
 # Python cache
 __pycache__/
 *.pyc

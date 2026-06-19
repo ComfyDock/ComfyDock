@@ -7,9 +7,11 @@ backend detection (CUDA, ROCm, CPU, etc.).
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
+from functools import lru_cache
 
 from ..logging.logging_config import get_logger
 from .common import run_command
@@ -39,6 +41,30 @@ def _find_uv_binary() -> str:
     raise PyTorchProbeError("uv is not installed")
 
 
+def _uv_command_env() -> dict[str, str]:
+    """Return a subprocess env for nested uv commands.
+
+    ComfyGit often runs from `uv run`, especially in development. Nested uv
+    commands should not inherit the parent uv-run virtualenv context when they
+    are creating or probing a separate environment.
+    """
+    env = os.environ.copy()
+    for key in ("VIRTUAL_ENV", "UV_RUN_RECURSION_DEPTH"):
+        env.pop(key, None)
+    return env
+
+
+def _format_failed_command(result) -> str:
+    parts = [f"exit code {result.returncode}"]
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if stdout:
+        parts.append(f"stdout: {stdout}")
+    if stderr:
+        parts.append(f"stderr: {stderr}")
+    return "; ".join(parts)
+
+
 def get_exact_python_version(requested_version: str) -> str:
     """Get exact Python version that uv would use.
 
@@ -52,23 +78,26 @@ def get_exact_python_version(requested_version: str) -> str:
         PyTorchProbeError: If version cannot be determined
     """
     uv = _find_uv_binary()
-    result = run_command([uv, "python", "find", requested_version])
+    result = run_command(
+        [uv, "python", "find", requested_version],
+        env=_uv_command_env(),
+    )
 
     if result.returncode != 0:
         raise PyTorchProbeError(
-            f"Could not find Python {requested_version}: {result.stderr}"
+            f"Could not find Python {requested_version}: {_format_failed_command(result)}"
         )
 
     # Parse output - looks like: /path/to/cpython-3.12.11-linux.../bin/python3.12
     output = result.stdout.strip()
 
     # Match cpython-X.Y.Z or python-X.Y.Z in path
-    match = re.search(r"(?:cpython|python)-(\d+\.\d+\.\d+)", output, re.IGNORECASE)
+    match = re.search(r"(?:cpython|python)-(\d+\.\d+(?:\.\d+)?)", output, re.IGNORECASE)
     if match:
         return match.group(1)
 
     # Also try pythonX.Y.Z format (some systems)
-    match = re.search(r"python(\d+\.\d+\.\d+)", output, re.IGNORECASE)
+    match = re.search(r"python(\d+\.\d+(?:\.\d+)?)", output, re.IGNORECASE)
     if match:
         return match.group(1)
 
@@ -98,6 +127,24 @@ def probe_pytorch_versions(
     Raises:
         PyTorchProbeError: If probing fails
     """
+    versions, resolved_backend = _probe_pytorch_versions_cached(python_version, backend)
+    return dict(versions), resolved_backend
+
+
+def clear_pytorch_probe_cache() -> None:
+    """Clear cached PyTorch probe results.
+
+    This is primarily useful for tests and long-running developer processes
+    that intentionally need to re-check newly published wheel versions.
+    """
+    _probe_pytorch_versions_cached.cache_clear()
+
+
+@lru_cache(maxsize=32)
+def _probe_pytorch_versions_cached(
+    python_version: str,
+    backend: str,
+) -> tuple[dict[str, str], str]:
     # Get exact Python version for consistent probing
     try:
         exact_py = get_exact_python_version(python_version)
@@ -116,11 +163,12 @@ def probe_pytorch_versions(
         venv_result = run_command(
             [uv, "venv", temp_dir, "--python", exact_py],
             timeout=PROBE_TIMEOUT,
+            env=_uv_command_env(),
         )
 
         if venv_result.returncode != 0:
             raise PyTorchProbeError(
-                f"Failed to create probe venv: {venv_result.stderr}"
+                f"Failed to create probe venv: {_format_failed_command(venv_result)}"
             )
 
         # 2. Run dry-run install with --torch-backend
@@ -193,6 +241,7 @@ def _run_torch_dry_run(
             "torch", "torchvision", "torchaudio",
         ],
         timeout=PROBE_TIMEOUT,
+        env=_uv_command_env(),
     )
 
 

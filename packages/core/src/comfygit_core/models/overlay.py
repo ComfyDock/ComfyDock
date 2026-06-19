@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import tomllib
 from packaging.utils import canonicalize_name
+
+from ..utils.toml_compat import tomllib
 
 ALLOWED_OVERLAY_KINDS = {"pytorch", "shared", "local"}
 ALLOWED_OVERLAY_REQUIRES = {"cuda", "rocm"}
@@ -55,9 +56,12 @@ def _as_list_of_strings(value: Any, field_name: str) -> list[str]:
         return []
     if not isinstance(value, list):
         raise ValueError(f"Overlay field '{field_name}' must be a list")
-    if not all(isinstance(item, str) for item in value):
-        raise ValueError(f"Overlay field '{field_name}' must contain only strings")
-    return list(value)
+    parsed: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"Overlay field '{field_name}' must contain only strings")
+        parsed.append(item)
+    return parsed
 
 
 def _as_list_of_dicts(value: Any, field_name: str) -> list[dict[str, Any]]:
@@ -122,10 +126,14 @@ class OverlayConfig:
         cls.validate_name(name)
 
         try:
-            with open(path, "rb") as f:
-                data = tomllib.load(f)
+            raw = path.read_bytes()
+            if raw.startswith(b"\xef\xbb\xbf"):
+                raw = raw[3:]
+            data = tomllib.loads(raw.decode("utf-8"))
         except FileNotFoundError:
             raise ValueError(f"Overlay file not found: {path}") from None
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Failed to decode overlay TOML {path}: {exc}") from exc
         except tomllib.TOMLDecodeError as exc:
             raise ValueError(f"Failed to parse overlay TOML {path}: {exc}") from exc
 

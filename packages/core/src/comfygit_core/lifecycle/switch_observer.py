@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ SUPERVISOR_INFO_FILE = ".supervisor_control.json"
 SWITCH_STATUS_ROUTE = "/v2/comfygit/switch_status"
 SWITCH_LOGS_ROUTE = "/v2/comfygit/switch_logs"
 SUPERVISOR_HEALTH_ROUTE = "/v2/comfygit/supervisor/health"
+UTC = timezone.utc
 
 
 def metadata_dir_for(workspace_path: Path) -> Path:
@@ -100,11 +101,15 @@ def write_supervisor_advertisement(
     port: int,
     *,
     kind: str = "cg_run_supervisor",
+    public_origin: str | None = None,
 ) -> None:
     metadata_dir = metadata_dir_for(workspace_path)
     metadata_dir.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {"host": host, "port": port, "kind": kind}
+    if public_origin:
+        payload["public_origin"] = public_origin.rstrip("/")
     (metadata_dir / SUPERVISOR_INFO_FILE).write_text(
-        json.dumps({"host": host, "port": port, "kind": kind}, indent=2),
+        json.dumps(payload, indent=2),
         encoding="utf-8",
     )
 
@@ -146,6 +151,7 @@ class SwitchObserverServer:
         port: int,
         *,
         kind: str = "cg_run_supervisor",
+        public_origin: str | None = None,
         post_handlers: dict[str, Callable[[], dict[str, Any]]] | None = None,
     ) -> None:
         self.workspace_path = workspace_path
@@ -153,6 +159,7 @@ class SwitchObserverServer:
         self.host = host
         self.port = port
         self.kind = kind
+        self.public_origin = public_origin.rstrip("/") if public_origin else None
         self.post_handlers = post_handlers or {}
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -170,7 +177,13 @@ class SwitchObserverServer:
             daemon=True,
         )
         self._thread.start()
-        write_supervisor_advertisement(self.workspace_path, self.host, self.port, kind=self.kind)
+        write_supervisor_advertisement(
+            self.workspace_path,
+            self.host,
+            self.port,
+            kind=self.kind,
+            public_origin=self.public_origin,
+        )
         self.append_log(f"Supervisor control server listening on {self.host}:{self.port}")
 
     def stop(self) -> None:

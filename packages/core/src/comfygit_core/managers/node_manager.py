@@ -292,7 +292,11 @@ class NodeManager:
         # Add requirements if any
         if node_package.requirements:
             self.uv.add_requirements_with_sources(
-                node_package.requirements, group=group_name, no_sync=True, raw=True
+                node_package.requirements,
+                group=group_name,
+                manifest_only=True,
+                no_sync=True,
+                raw=True,
             )
 
         # Detect new sources after processing
@@ -455,7 +459,7 @@ class NodeManager:
 
             # Mark as replacement — actual removal happens inside transactional section
             # so the snapshot captures pre-replacement state for proper rollback
-            logger.info(f"Replacing {node_info.name} {existing_node.version} → {node_info.version}")
+            logger.info(f"Replacing {node_info.name} {existing_node.version} -> {node_info.version}")
             is_replacement = True
 
         # Check for filesystem conflicts before proceeding
@@ -500,6 +504,10 @@ class NodeManager:
                 probe = DependencyProbe(
                     cec_path=self.pyproject.path.parent,
                     workspace_path=self.resolution_tester.workspace_path,
+                    uv_binary=Path(self.uv.binary),
+                    overlay_manager=self.uv.overlay_manager,
+                    pytorch_manager=self.pytorch_manager,
+                    skip_optional_overlays=skip_optional_overlays,
                     package_config=self.package_config,
                 )
                 probe_result = probe.run(node_package.requirements)
@@ -779,6 +787,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=new_group,
+                    manifest_only=True,
                     frozen=True,
                     raw=True,
                 )
@@ -936,7 +945,12 @@ class NodeManager:
         except Exception:
             return None
 
-    def remove_node(self, identifier: str, untrack_only: bool = False):
+    def remove_node(
+        self,
+        identifier: str,
+        untrack_only: bool = False,
+        skip_optional_overlays: bool = True,
+    ) -> NodeRemovalResult:
         """Remove a custom node by identifier or name (case-insensitive).
 
         Handles filesystem changes imperatively based on node type:
@@ -946,6 +960,8 @@ class NodeManager:
         Args:
             identifier: Node identifier or name
             untrack_only: If True, only remove from pyproject.toml without touching filesystem
+            skip_optional_overlays: If True, only apply required overlays during dependency sync.
+                                    If False, include active optional/local overlays.
 
         Returns:
             NodeRemovalResult: Details about the removal
@@ -1009,8 +1025,25 @@ class NodeManager:
             removed_sources = removed_node.dependency_sources or []
             self.pyproject.uv_config.cleanup_orphaned_sources(removed_sources)
 
-        # Sync Python environment to remove orphaned packages (quiet - users see our high-level messages)
-        self._sync_uv(quiet=True, all_groups=True, pytorch_manager=self.pytorch_manager)
+        sync_succeeded = True
+        sync_error: str | None = None
+        try:
+            # Sync Python environment to remove orphaned packages (quiet - users see our high-level messages)
+            self._sync_uv(
+                quiet=True,
+                all_groups=True,
+                pytorch_manager=self.pytorch_manager,
+                skip_optional_overlays=skip_optional_overlays,
+            )
+        except Exception as e:
+            sync_succeeded = False
+            sync_error = str(e)
+            logger.error(
+                "Removed node '%s', but post-removal dependency sync failed: %s",
+                actual_identifier,
+                e,
+                exc_info=True,
+            )
 
         logger.info(f"Removed node '{actual_identifier}' from tracking")
 
@@ -1018,7 +1051,10 @@ class NodeManager:
             identifier=actual_identifier,
             name=removed_node.name,
             source=removed_node.source,
-            filesystem_action=filesystem_action
+            filesystem_action=filesystem_action,
+            sync_succeeded=sync_succeeded,
+            sync_error=sync_error,
+            needs_sync=not sync_succeeded,
         )
 
     def _remove_untracked_node(self, node_name: str) -> NodeRemovalResult:
@@ -1100,6 +1136,18 @@ class NodeManager:
 
         expected_names = {info.name for info in expected_nodes.values()}
         untracked = set(existing_nodes.keys()) - expected_names
+
+        # A declared node with only a ".disabled" folder is not missing in the
+        # sense of needing a download. Re-enable it by restoring the declared
+        # directory name.
+        for node_info in expected_nodes.values():
+            node_path = self.custom_nodes_path / node_info.name
+            disabled_path = self.custom_nodes_path / f"{node_info.name}.disabled"
+            if node_path.exists() or not disabled_path.exists():
+                continue
+            disabled_path.rename(node_path)
+            existing_nodes[node_info.name] = node_path
+            logger.info(f"Re-enabled disabled node: {node_info.name}")
 
         if remove_extra:
             # ComfyUI's built-in files that should not be removed
@@ -1211,6 +1259,7 @@ class NodeManager:
                 self.uv.add_requirements_with_sources(
                     requirements,
                     group=group_name,
+                    manifest_only=True,
                     no_sync=True,
                     raw=True,
                 )
@@ -1716,7 +1765,7 @@ class NodeManager:
 
         # Update version from node's pyproject.toml
         try:
-            import tomllib
+            from ..utils.toml_compat import tomllib
             node_pyproject = node_path / "pyproject.toml"
             if node_pyproject.exists():
                 with open(node_pyproject, "rb") as f:
@@ -1768,7 +1817,10 @@ class NodeManager:
 
             if current_reqs:
                 self.uv.add_requirements_with_sources(
-                    current_reqs, group=group_name, no_sync=True
+                    current_reqs,
+                    group=group_name,
+                    manifest_only=True,
+                    no_sync=True,
                 )
 
             # Detect new sources
@@ -1928,7 +1980,7 @@ class NodeManager:
         result.old_version = current_version
         result.new_version = latest_version
         result.changed = True
-        result.message = f"Updated from {current_version} → {latest_version}"
+        result.message = f"Updated from {current_version} -> {latest_version}"
 
         logger.info(f"Updated registry node '{node_info.name}': {result.message}")
         return result

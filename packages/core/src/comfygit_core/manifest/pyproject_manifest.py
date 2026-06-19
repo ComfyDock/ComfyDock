@@ -113,6 +113,27 @@ class ManifestEdit:
         self.changed = True
         return True
 
+    def ensure_workflow(self, workflow_name: str) -> bool:
+        """Ensure a workflow manifest entry and relative workflow path exist."""
+        workflows = _ensure_table(self.config, "tool", "comfygit", "workflows")
+        workflow = workflows.get(workflow_name)
+
+        changed = False
+        if not isinstance(workflow, dict):
+            workflow = tomlkit.table()
+            workflows[workflow_name] = workflow
+            changed = True
+
+        expected_path = f"workflows/{workflow_name}.json"
+        if workflow.get("path") != expected_path:
+            workflow["path"] = expected_path
+            changed = True
+
+        if changed:
+            self.changed = True
+
+        return changed
+
     def register_node(self, identifier: str, node_info: NodeInfo) -> None:
         """Add or replace one custom-node manifest entry."""
         nodes = _ensure_table(self.config, "tool", "comfygit", "nodes")
@@ -242,6 +263,11 @@ class PyprojectManifest:
         """Remove a dependency group if present."""
         with self.edit() as edit:
             return edit.remove_dependency_group(group)
+
+    def ensure_workflow(self, workflow_name: str) -> bool:
+        """Ensure a workflow manifest entry and relative workflow path exist."""
+        with self.edit() as edit:
+            return edit.ensure_workflow(workflow_name)
 
     def register_node(self, identifier: str, node_info: NodeInfo) -> None:
         """Add or replace one custom-node manifest entry."""

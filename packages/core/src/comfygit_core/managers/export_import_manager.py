@@ -1,8 +1,9 @@
 """Export/Import manager for bundling and extracting environments."""
 from __future__ import annotations
 
+import shutil
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from ..logging.logging_config import get_logger
@@ -11,6 +12,55 @@ if TYPE_CHECKING:
     from .pyproject_manager import PyprojectManager
 
 logger = get_logger(__name__)
+
+
+def _tar_extractall_supports_filter(tar: tarfile.TarFile) -> bool:
+    """Return whether this Python version supports tar extraction filters."""
+    return "filter" in tar.extractall.__code__.co_varnames
+
+
+def _validate_tar_member(member: tarfile.TarInfo, target_root: Path) -> None:
+    """Validate a tar member before extraction on Python versions without filters."""
+    member_name = member.name
+    posix_path = PurePosixPath(member_name)
+    windows_path = PureWindowsPath(member_name)
+
+    if posix_path.is_absolute() or windows_path.is_absolute():
+        raise ValueError(f"Archive contains an absolute path: {member_name}")
+
+    if ".." in posix_path.parts or ".." in windows_path.parts:
+        raise ValueError(f"Archive contains an unsafe relative path: {member_name}")
+
+    if not (member.isfile() or member.isdir()):
+        raise ValueError(f"Archive contains an unsupported entry type: {member_name}")
+
+    destination = (target_root / member_name).resolve()
+    if destination != target_root and target_root not in destination.parents:
+        raise ValueError(f"Archive entry escapes target directory: {member_name}")
+
+
+def _safe_extractall(tar: tarfile.TarFile, target_path: Path) -> None:
+    """Extract a tarball using Python's data filter or a strict local fallback."""
+    if _tar_extractall_supports_filter(tar):
+        tar.extractall(target_path, filter="data")
+        return
+
+    target_root = target_path.resolve()
+    for member in tar.getmembers():
+        _validate_tar_member(member, target_root)
+
+    for member in tar.getmembers():
+        destination = target_root / member.name
+        if member.isdir():
+            destination.mkdir(parents=True, exist_ok=True)
+            continue
+
+        source = tar.extractfile(member)
+        if source is None:
+            raise ValueError(f"Archive file entry cannot be read: {member.name}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with source, destination.open("wb") as output:
+            shutil.copyfileobj(source, output)
 
 
 class ExportImportManager:
@@ -104,9 +154,9 @@ class ExportImportManager:
         # Create target directory
         target_cec_path.mkdir(parents=True)
 
-        # Extract tarball (use data filter for Python 3.14+ compatibility)
+        # Extract tarball with path traversal protections on all supported Python versions.
         with tarfile.open(tarball_path, "r:gz") as tar:
-            tar.extractall(target_cec_path, filter='data')
+            _safe_extractall(tar, target_cec_path)
 
         logger.info(f"Import extracted successfully to {target_cec_path}")
 

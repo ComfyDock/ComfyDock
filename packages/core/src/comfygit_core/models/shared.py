@@ -219,6 +219,9 @@ class NodeRemovalResult:
     name: str
     source: str  # 'development', 'registry', 'git'
     filesystem_action: str  # 'disabled', 'deleted'
+    sync_succeeded: bool = True
+    sync_error: str | None = None
+    needs_sync: bool = False
 
 
 @dataclass

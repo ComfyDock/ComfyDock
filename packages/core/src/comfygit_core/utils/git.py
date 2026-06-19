@@ -657,11 +657,18 @@ def git_checkout(repo_path: Path,
 # Status & Change Tracking
 # =============================================================================
 
-def git_status_porcelain(repo_path: Path) -> list[tuple[str, str, str]]:
+def git_status_porcelain(
+    repo_path: Path,
+    *,
+    check: bool = True,
+) -> list[tuple[str, str, str]]:
     """Get git status in porcelain format, parsed.
 
     Args:
         repo_path: Path to git repository
+        check: Whether to raise when git status fails. Use False only for
+            optional metadata probes where unavailable git status should degrade
+            to "unknown/clean" instead of surfacing as an operation failure.
 
     Returns:
         List of tuples: (index_status, working_status, filename)
@@ -669,7 +676,10 @@ def git_status_porcelain(repo_path: Path) -> list[tuple[str, str, str]]:
         - 'M' = modified, 'A' = added, 'D' = deleted
         - '?' = untracked, ' ' = unmodified
     """
-    result = _git(["status", "--porcelain"], repo_path)
+    result = _git(["status", "--porcelain"], repo_path, check=check)
+    if result.returncode != 0:
+        return []
+
     entries = []
 
     if result.stdout:

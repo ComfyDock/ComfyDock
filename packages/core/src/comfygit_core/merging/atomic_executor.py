@@ -123,7 +123,7 @@ class AtomicMergeExecutor:
         base_content = git_show(self.repo_path, "HEAD", pyproject_path)
         target_content = git_show(self.repo_path, plan.target_branch, pyproject_path)
 
-        import tomllib
+        from ..utils.toml_compat import tomllib
 
         base_config = tomllib.loads(base_content) if base_content else {}
         target_config = tomllib.loads(target_content) if target_content else {}

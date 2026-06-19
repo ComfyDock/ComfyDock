@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 from ..integrations.uv_command import UVCommand
 from ..logging.logging_config import get_logger
 from ..managers.overlay_manager import OverlayManager
@@ -236,21 +238,24 @@ class UVProjectManager:
         Returns:
             UV command stdout
         """
+        is_dry_run = bool(flags.get("dry_run"))
         pytorch_config = None
         if pytorch_manager:
             from ..constants import PYTORCH_CORE_PACKAGES, PYTORCH_PACKAGE_NAMES
 
-            # Force reinstall of PyTorch packages to ensure the correct backend is used.
-            # Backend overrides can change PyTorch's transitive NVIDIA wheel set, and
-            # reinstalling only torch/vision/audio can leave stale or partially-linked
-            # CUDA payloads in the venv.
-            reinstall_packages = PYTORCH_PACKAGE_NAMES if backend_override else PYTORCH_CORE_PACKAGES
-            flags['reinstall_package'] = sorted(reinstall_packages)
+            if not is_dry_run:
+                # Force reinstall of PyTorch packages to ensure the correct backend is used.
+                # Backend overrides can change PyTorch's transitive NVIDIA wheel set, and
+                # reinstalling only torch/vision/audio can leave stale or partially-linked
+                # CUDA payloads in the venv. Dry-run status checks must not request a
+                # reinstall, or uv will report synthetic package drift forever.
+                reinstall_packages = PYTORCH_PACKAGE_NAMES if backend_override else PYTORCH_CORE_PACKAGES
+                flags['reinstall_package'] = sorted(reinstall_packages)
 
             # When overriding backend, delete uv.lock to force complete re-resolution.
             # The lock file contains platform-specific PyTorch wheel pins that won't
             # work when switching backends (e.g., cu128 -> cpu has different wheels).
-            if backend_override:
+            if backend_override and not is_dry_run:
                 lock_file = self.pyproject.path.parent / "uv.lock"
                 if lock_file.exists():
                     lock_file.unlink()
@@ -285,6 +290,8 @@ class UVProjectManager:
             all_extras=all_extras,
             **flags,
         )
+        if is_dry_run:
+            return "\n".join(part for part in (result.stdout, result.stderr) if part)
         return result.stdout
 
     def lock_project(self, **flags) -> str:
@@ -305,12 +312,18 @@ class UVProjectManager:
         self,
         requirements: Path | list[str],
         group: str | None = None,
+        manifest_only: bool = False,
         **flags
     ) -> None:
         """Smart requirements.txt handler that coordinates UV and pyproject.toml."""
         logger.info("Adding requirements with sources...")
 
         categorized = self._categorize_requirements(requirements)
+
+        if manifest_only and group:
+            self._record_requirements_with_sources(categorized, group, **flags)
+            logger.info("Successfully recorded all requirements")
+            return
 
         # Create temp file with everything EXCEPT multi-URL packages
         tmp_path = None
@@ -340,6 +353,57 @@ class UVProjectManager:
         finally:
             if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
+
+    def _record_requirements_with_sources(self, categorized: dict, group: str, **flags) -> None:
+        """Record requirements in pyproject without invoking uv resolution.
+
+        Node install/update paths already run a full overlay-aware sync after
+        manifest mutation. Running ``uv add --no-sync`` first can still resolve
+        the real project without local overlays and reject otherwise valid node
+        requirements before sync gets a chance to apply the disposable project
+        materialization.
+        """
+        direct_lines = list(categorized["regular_lines"])
+        uv_normalized_lines = []
+
+        for line in categorized["git_urls"] + categorized["single_urls"]:
+            if self._is_pep508_requirement(line):
+                direct_lines.append(line)
+            else:
+                uv_normalized_lines.append(line)
+
+        if direct_lines:
+            self.pyproject.dependencies.add_to_group(group, direct_lines)
+
+        for package, urls_with_markers in categorized["multi_url_packages"].items():
+            self._add_url_sources_with_markers(package, urls_with_markers, group)
+
+        if not uv_normalized_lines:
+            return
+
+        logger.info(
+            "Falling back to uv add for %d non-PEP-508 requirement line(s)",
+            len(uv_normalized_lines),
+        )
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+                for line in uv_normalized_lines:
+                    tmp.write(line + "\n")
+                tmp_path = Path(tmp.name)
+
+            self.add_dependency(requirements_file=tmp_path, group=group, **flags)
+        finally:
+            if tmp_path and tmp_path.exists():
+                tmp_path.unlink()
+
+    @staticmethod
+    def _is_pep508_requirement(requirement: str) -> bool:
+        try:
+            Requirement(requirement)
+        except InvalidRequirement:
+            return False
+        return True
 
     def _categorize_requirements(self, requirements: Path | list[str]) -> dict:
         """Categorize requirements into UV-compatible and special handling categories."""

@@ -1,8 +1,9 @@
-"""Integration tests for git-like workflow preservation during branch operations.
+"""Integration tests for workflow preservation and snapshot materialization.
 
-Tests that uncommitted workflows are preserved during branch operations when safe,
-matching git's behavior where uncommitted changes carry over unless they would
-conflict with the target branch.
+Creating a new branch preserves current uncommitted workflow work because the
+new branch starts from the current tree. Existing branch/commit navigation is
+snapshot-strict: dirty state must be committed or discarded first, and the
+target snapshot is materialized exactly into ComfyUI.
 
 Reference: docs/contexts/plan/git-branch-workflow-preservation.md
 """
@@ -104,14 +105,10 @@ class TestCheckoutBranchPreservesUncommittedWorkflows:
 
 
 class TestSwitchBranchConflictDetection:
-    """Test that switch detects and blocks conflicting workflows (Phase 2)."""
+    """Test that existing-branch switches require clean snapshot state."""
 
-    def test_switch_preserves_when_safe(self, test_env):
-        """Switching branches should preserve uncommitted workflows when safe.
-
-        Safe scenario: uncommitted workflow doesn't exist in target branch.
-        This matches git behavior where uncommitted untracked files carry over.
-        """
+    def test_switch_blocks_uncommitted_new_workflow(self, test_env):
+        """Switching existing branches should not carry workflow drafts across snapshots."""
         # ARRANGE: Create two branches
         commit_workflow_to_cec(test_env, "committed_workflow", create_simple_workflow())
 
@@ -126,16 +123,9 @@ class TestSwitchBranchConflictDetection:
         status = test_env.status()
         assert "feature_workflow" in status.workflow.sync_status.new
 
-        # ACT: Switch back to main (safe - feature_workflow doesn't exist on main)
-        test_env.switch_branch("main")
-
-        # ASSERT: Uncommitted workflow preserved
-        feature_wf_path = test_env.comfyui_path / "user" / "default" / "workflows" / "feature_workflow.json"
-        assert feature_wf_path.exists(), "Safe uncommitted workflow should be preserved"
-
-        # Verify status shows it as uncommitted on main too
-        status = test_env.status()
-        assert "feature_workflow" in status.workflow.sync_status.new
+        # ACT & ASSERT: Switch back to main should be blocked until commit/discard.
+        with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
+            test_env.switch_branch("main")
 
     def test_switch_blocks_when_would_overwrite(self, test_env):
         """Switching should error when uncommitted workflow exists in target branch.
@@ -160,8 +150,8 @@ class TestSwitchBranchConflictDetection:
         status = test_env.status()
         assert "shared_workflow" in status.workflow.sync_status.modified
 
-        # ACT & ASSERT: Switch should error (would overwrite uncommitted changes)
-        with pytest.raises(CDEnvironmentError, match="uncommitted workflow changes"):
+        # ACT & ASSERT: Switch should error until the working snapshot is clean.
+        with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
             test_env.switch_branch("main")
 
         # Verify workflow still has modified version
@@ -193,8 +183,29 @@ class TestSwitchBranchConflictDetection:
         workflow_new["1"]["inputs"]["ckpt_name"] = "different_model.safetensors"
         save_workflow_to_comfyui(test_env, "test_workflow", workflow_new)
 
-        # ACT & ASSERT: Switch to main should error (would overwrite)
-        with pytest.raises(CDEnvironmentError, match="uncommitted workflow changes"):
+        # ACT & ASSERT: Switch to main should error until the working snapshot is clean.
+        with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
+            test_env.switch_branch("main")
+
+    def test_switch_blocks_captured_working_snapshot_changes(self, test_env):
+        """Save-time capture creates `.cec` changes, which must block branch switches."""
+        # ARRANGE: Create a branch from a clean snapshot.
+        test_env.git_manager.commit_all("initial")
+        test_env.create_branch("feature")
+        test_env.switch_branch("feature")
+
+        # Capture simulates Manager save handling: ComfyUI and .cec now match,
+        # but the environment repository has uncommitted tracked-state changes.
+        workflow = create_simple_workflow()
+        save_workflow_to_comfyui(test_env, "captured_workflow", workflow)
+        test_env.workflow_manager.capture_workflow("captured_workflow")
+
+        assert not test_env.workflow_manager.get_workflow_sync_status().has_changes
+        assert test_env.git_manager.has_uncommitted_changes()
+
+        # ACT & ASSERT: Existing-branch switch is blocked, even though file-level
+        # workflow sync appears clean.
+        with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
             test_env.switch_branch("main")
 
 
@@ -222,7 +233,7 @@ class TestRestoreAllFromCecParameter:
     def test_restore_with_preserve_true_keeps_uncommitted(self, test_env):
         """restore_all_from_cec(preserve_uncommitted=True) should keep uncommitted.
 
-        This is the new behavior - used for branch switches.
+        This mode is used when creating a new branch from the current tree.
         """
         # ARRANGE: Create uncommitted workflow
         workflow = create_simple_workflow()
@@ -373,8 +384,8 @@ class TestEdgeCases:
         # ASSERT: No errors
         assert test_env.get_current_branch() == "empty"
 
-    def test_switch_preserves_when_target_branch_empty(self, test_env):
-        """Uncommitted workflows preserved when switching to branch with no workflows."""
+    def test_switch_blocks_uncommitted_workflow_even_when_target_branch_empty(self, test_env):
+        """Uncommitted workflows are not carried to an existing empty branch."""
         # ARRANGE: Create empty feature branch
         test_env.git_manager.commit_all("initial")
         test_env.create_branch("feature")
@@ -383,12 +394,32 @@ class TestEdgeCases:
         # Create uncommitted workflow
         save_workflow_to_comfyui(test_env, "test", create_simple_workflow())
 
-        # ACT: Switch back to main (which is also empty)
-        test_env.switch_branch("main")
+        # ACT & ASSERT: Switch back to main is blocked until commit/discard.
+        with pytest.raises(CDEnvironmentError, match="uncommitted changes"):
+            test_env.switch_branch("main")
 
-        # ASSERT: Workflow preserved
+    def test_force_checkout_cleans_captured_workflow_absent_from_target(self, test_env):
+        """Force checkout should clean uncommitted `.cec` workflow files before restore."""
+        # ARRANGE: main starts empty; feature captures a workflow but does not commit it.
+        test_env.git_manager.commit_all("initial")
+        test_env.create_branch("feature")
+        test_env.switch_branch("feature")
+
+        save_workflow_to_comfyui(test_env, "test", create_simple_workflow())
+        test_env.workflow_manager.capture_workflow("test")
+
+        cec_path = test_env.cec_path / "workflows" / "test.json"
         wf_path = test_env.comfyui_path / "user" / "default" / "workflows" / "test.json"
-        assert wf_path.exists(), "Should preserve when target is empty"
+        assert cec_path.exists()
+        assert wf_path.exists()
+
+        # ACT: Manager's force-switch path uses checkout(..., force=True).
+        test_env.checkout("main", force=True)
+
+        # ASSERT: Uncommitted .cec file is cleaned, then ComfyUI is restored to
+        # the target snapshot and the workflow disappears there too.
+        assert not cec_path.exists()
+        assert not wf_path.exists()
 
     def test_create_branch_from_commit_preserves_uncommitted(self, test_env):
         """Creating branch from specific commit should preserve uncommitted."""

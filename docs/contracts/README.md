@@ -24,6 +24,9 @@ rather than every helper function:
   and `docs/specs/release-lifecycle.md`.
 - Create/sync/import/repair/git/run lifecycle behavior:
   `docs/specs/environment-sync-lifecycle.md`.
+- User-facing environment health layers, lifecycle action priority, and
+  manifest/filesystem/runtime/snapshot decision matrix:
+  `docs/specs/environment-lifecycle-status.md`.
 - Headless hydration behavior: `docs/specs/environment-materialization-lifecycle.md`.
 - Repeatable CLI end-to-end validation:
   `docs/specs/cli-smoke-validation.md`.

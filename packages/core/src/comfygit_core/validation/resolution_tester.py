@@ -264,13 +264,13 @@ class ResolutionTester:
             Formatted string for display
         """
         if result.success:
-            return "✓ No dependency conflicts detected"
+            return "OK: No dependency conflicts detected"
 
         lines = []
 
         # Show conflicts
         if result.conflicts:
-            lines.append("⚠️  Dependency conflicts detected:")
+            lines.append("WARNING: Dependency conflicts detected:")
 
             # Filter out the main error line if it's in conflicts
             display_conflicts = [
@@ -290,7 +290,7 @@ class ResolutionTester:
         if result.warnings:
             if lines:
                 lines.append("")
-            lines.append("⚠️ Warnings:")
+            lines.append("WARNING: Warnings:")
             for warning in result.warnings:
                 lines.append(f"  • {warning}")
 

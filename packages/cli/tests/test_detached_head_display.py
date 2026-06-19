@@ -24,6 +24,7 @@ sys.path.insert(0, str(core_src_path))
 from comfygit_core.models import (  # noqa: E402
     DetailedWorkflowStatus,
     EnvironmentComparison,
+    EnvironmentLifecycleStatus,
     EnvironmentStatus,
     GitStatus,
     WorkflowSyncStatus,
@@ -75,6 +76,7 @@ class TestDetachedHeadDisplay:
         )
 
         mock_env.status.return_value = clean_status
+        mock_env.get_lifecycle_status.return_value = EnvironmentLifecycleStatus()
 
         # Create command handler and mock its methods
         cmd = EnvironmentCommands()
@@ -139,6 +141,7 @@ class TestDetachedHeadDisplay:
         )
 
         mock_env.status.return_value = clean_status
+        mock_env.get_lifecycle_status.return_value = EnvironmentLifecycleStatus()
 
         cmd = EnvironmentCommands()
         cmd._get_env = Mock(return_value=mock_env)

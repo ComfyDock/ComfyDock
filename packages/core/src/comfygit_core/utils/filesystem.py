@@ -1,5 +1,6 @@
 """Filesystem manipulation utilities."""
 
+import inspect
 import os
 import platform
 import shutil
@@ -10,6 +11,17 @@ from pathlib import Path
 from ..logging.logging_config import get_logger
 
 logger = get_logger(__name__)
+_SUPPORTS_RMTREE_ONEXC = "onexc" in inspect.signature(shutil.rmtree).parameters
+
+
+def _windows_long_path(path: Path) -> str:
+    """Return a Windows long-path string for filesystem APIs."""
+    path_text = str(path.resolve())
+    if path_text.startswith("\\\\?\\"):
+        return path_text
+    if path_text.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + path_text.lstrip("\\")
+    return "\\\\?\\" + path_text
 
 
 def _handle_remove_readonly(func, path, exc_info):
@@ -24,8 +36,8 @@ def _handle_remove_readonly(func, path, exc_info):
         os.chmod(path, stat.S_IWRITE)
         time.sleep(0.05)  # Brief delay for handle release
         func(path)
-    except Exception:
-        pass  # Let rmtree handle final error
+    except Exception as e:
+        raise e
 
 
 def rmtree(path: Path, ignore_errors: bool = False) -> None:
@@ -42,7 +54,11 @@ def rmtree(path: Path, ignore_errors: bool = False) -> None:
         return
 
     if platform.system() == "Windows":
-        shutil.rmtree(path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
+        rmtree_path = _windows_long_path(path)
+        if _SUPPORTS_RMTREE_ONEXC:
+            shutil.rmtree(rmtree_path, ignore_errors=ignore_errors, onexc=_handle_remove_readonly)
+        else:
+            shutil.rmtree(rmtree_path, ignore_errors=ignore_errors, onerror=_handle_remove_readonly)
     else:
         shutil.rmtree(path, ignore_errors=ignore_errors)
 

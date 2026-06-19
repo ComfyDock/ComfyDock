@@ -14,6 +14,11 @@ from ..utils.workflow_hash import normalize_workflow
 logger = get_logger(__name__)
 
 
+def normalize_workflow_filename(name: str) -> str:
+    """Return a workflow filename stem, stripping only a trailing `.json` suffix."""
+    return name[:-5] if name.lower().endswith(".json") else name
+
+
 class WorkflowCacheInvalidator(Protocol):
     """Minimal cache invalidation protocol used by workflow file operations."""
 
@@ -112,6 +117,36 @@ class WorkflowFileStore:
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Error comparing workflows '{name}': {e}")
             return True
+
+    def copy_workflow(self, name: str) -> Path:
+        """Copy one saved ComfyUI workflow into tracked `.cec` storage.
+
+        Args:
+            name: Workflow name, with or without the `.json` suffix.
+
+        Returns:
+            Path to the tracked `.cec` workflow file.
+
+        Raises:
+            FileNotFoundError: If the saved ComfyUI workflow does not exist.
+        """
+        workflow_name = normalize_workflow_filename(name)
+        source = self.comfyui_workflows / f"{workflow_name}.json"
+        if not source.exists():
+            raise FileNotFoundError(
+                f"Workflow '{workflow_name}' not found in ComfyUI directory"
+            )
+
+        dest = self.cec_workflows / f"{workflow_name}.json"
+        was_modified = self.workflows_differ(workflow_name)
+        shutil.copy2(source, dest)
+        logger.debug(f"Copied workflow '{workflow_name}' to .cec")
+
+        if was_modified:
+            self._invalidate(workflow_name)
+            logger.debug(f"Invalidated cache for modified workflow '{workflow_name}'")
+
+        return dest
 
     def copy_all_workflows(self) -> dict[str, Path | str | None]:
         """Copy all ComfyUI workflow files into tracked `.cec` storage."""

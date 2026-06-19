@@ -1,6 +1,7 @@
 """Tests for environment operation lock decorators."""
 
 from comfygit_core.core.environment import Environment
+from comfygit_core.utils.environment_lock import EnvironmentOperationLock
 
 
 class _FakeLock:
@@ -42,3 +43,13 @@ def test_revert_commit_acquires_environment_lock():
     assert env._operation_lock.entered is True
     assert env._operation_lock.exited is True
     assert env.git_orchestrator.called_with == "abc123"
+
+
+def test_environment_operation_lock_clears_owner_file_on_release(tmp_path):
+    """Released lock files should not retain misleading stale owner PIDs."""
+    lock_path = tmp_path / ".comfygit.lock"
+
+    with EnvironmentOperationLock(lock_path):
+        assert lock_path.read_text(encoding="utf-8").strip()
+
+    assert lock_path.read_text(encoding="utf-8") == ""

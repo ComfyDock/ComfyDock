@@ -2,10 +2,14 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from comfygit_core.utils.environment_cleanup import (
     COMPLETION_MARKER,
+    DELETED_ENVIRONMENT_PREFIX,
     is_environment_complete,
     mark_environment_complete,
+    remove_environment_directory,
 )
 
 
@@ -63,3 +67,42 @@ class TestCompletionMarker:
 
             # Should still be complete
             assert is_environment_complete(cec_path)
+
+
+def test_remove_environment_directory_quarantines_when_directory_remains(monkeypatch, tmp_path):
+    env_path = tmp_path / "leftover-env"
+    env_path.mkdir()
+
+    monkeypatch.setattr(
+        "comfygit_core.utils.environment_cleanup.rmtree",
+        lambda path: None,
+    )
+
+    remove_environment_directory(env_path)
+
+    assert not env_path.exists()
+    quarantined = [
+        path for path in tmp_path.iterdir()
+        if path.name.startswith(DELETED_ENVIRONMENT_PREFIX)
+    ]
+    assert len(quarantined) == 1
+
+
+def test_remove_environment_directory_raises_when_delete_and_quarantine_fail(
+    monkeypatch,
+    tmp_path,
+):
+    env_path = tmp_path / "leftover-env"
+    env_path.mkdir()
+
+    monkeypatch.setattr(
+        "comfygit_core.utils.environment_cleanup.rmtree",
+        lambda path, **kwargs: (_ for _ in ()).throw(PermissionError("locked")),
+    )
+    monkeypatch.setattr(
+        "comfygit_core.utils.environment_cleanup._quarantine_environment_directory",
+        lambda path: (_ for _ in ()).throw(PermissionError("rename denied")),
+    )
+
+    with pytest.raises(PermissionError, match="files may be in use"):
+        remove_environment_directory(env_path)

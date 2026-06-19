@@ -246,7 +246,7 @@ class WorkflowCacheRepository:
         if from_version == to_version:
             return
 
-        logger.info(f"Migrating workflow cache schema v{from_version} → v{to_version}")
+        logger.info(f"Migrating workflow cache schema v{from_version} -> v{to_version}")
 
         # Drop and recreate (cache is ephemeral)
         self.sqlite.execute_write("DROP TABLE IF EXISTS workflow_cache")

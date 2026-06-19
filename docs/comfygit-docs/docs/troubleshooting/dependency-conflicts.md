@@ -59,3 +59,6 @@ change will not be represented in the manifest.
 
 Avoid destructive Git reset commands unless you intentionally want to discard
 local changes.
+
+If the conflict appears as a ComfyUI custom-node import failure after restart,
+see [Custom node import failures](custom-node-import-failures.md).

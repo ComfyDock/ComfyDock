@@ -127,11 +127,15 @@ class TestOptionalDependencyGroups:
 
         result = run_sync_with_mocked_uv(test_env, track_sync)
 
-        # ASSERT: Should have ONE sync call with all groups
-        assert len(sync_calls) == 1, f"Expected 1 sync call, got {len(sync_calls)}"
+        # ASSERT: Should have ONE install sync call with all groups. Sync may also
+        # perform overlay-aware dry-run probes that should not count as installs.
+        install_sync_calls = [call for call in sync_calls if not call.get("dry_run")]
+        assert len(install_sync_calls) == 1, (
+            f"Expected 1 install sync call, got {len(install_sync_calls)}"
+        )
 
         # The call should have all groups in a list
-        groups = sync_calls[0].get('group', [])
+        groups = install_sync_calls[0].get('group', [])
         assert isinstance(groups, list), "Group should be a list"
         assert set(groups) == {
             'comfygit-system',

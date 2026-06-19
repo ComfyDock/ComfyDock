@@ -103,6 +103,193 @@ class TestWorkflowSubgraphResolution:
             .has_status("resolved")
         )
 
+    def test_commit_captured_subgraph_workflow_writes_model_manifest(
+        self,
+        test_env,
+        test_workspace,
+    ):
+        """Commit should reconcile models even after save-time capture.
+
+        Save-time capture copies the workflow into `.cec/workflows` before
+        commit, making the workflow file appear synced. Commit still needs to
+        persist dependency metadata discovered inside subgraph nodes.
+        """
+        model_builder = ModelIndexBuilder(test_workspace)
+        model_builder.add_model(
+            filename="ltx-2.3-22b-distilled-fp8.safetensors",
+            relative_path="checkpoints",
+            category="checkpoints",
+        )
+        model_builder.index_all()
+
+        subgraph_id = "f9f61b10-b689-4d67-b4fa-0acc1d9b5390"
+        workflow_json = {
+            "id": "captured-subgraph-test",
+            "revision": 0,
+            "nodes": [
+                {
+                    "id": 129,
+                    "type": subgraph_id,
+                    "flags": {},
+                    "inputs": [],
+                    "outputs": [],
+                    "widgets_values": [],
+                }
+            ],
+            "links": [],
+            "definitions": {
+                "subgraphs": [
+                    {
+                        "id": subgraph_id,
+                        "name": "First-Last-Frame to Video",
+                        "nodes": [
+                            {
+                                "id": 127,
+                                "type": "CheckpointLoaderSimple",
+                                "flags": {},
+                                "inputs": [],
+                                "outputs": [],
+                                "properties": {
+                                    "models": [
+                                        {
+                                            "name": "ltx-2.3-22b-distilled-fp8.safetensors",
+                                            "url": (
+                                                "https://huggingface.co/Lightricks/LTX-2.3-fp8/"
+                                                "resolve/main/ltx-2.3-22b-distilled-fp8.safetensors"
+                                            ),
+                                            "directory": "checkpoints",
+                                        }
+                                    ]
+                                },
+                                "widgets_values": ["ltx-2.3-22b-distilled-fp8.safetensors"],
+                            }
+                        ],
+                        "links": [],
+                    }
+                ]
+            },
+            "config": {},
+            "version": 0.4,
+        }
+
+        simulate_comfyui_save_workflow(test_env, "captured_subgraph", workflow_json)
+        test_env.capture_workflow("captured_subgraph")
+
+        workflow_status = test_env.workflow_manager.get_workflow_status()
+        captured = next(
+            workflow for workflow in workflow_status.analyzed_workflows
+            if workflow.name == "captured_subgraph"
+        )
+        assert captured.sync_state == "synced"
+        assert captured.resolution.models_resolved
+        expected_hash = captured.resolution.models_resolved[0].resolved_model.hash
+
+        assertions = PyprojectAssertions(test_env)
+        (
+            assertions
+            .has_workflow("captured_subgraph")
+            .has_model_count(1)
+            .has_model_with_hash(expected_hash)
+            .has_model_with_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+            .has_status("resolved")
+        )
+        (
+            assertions
+            .has_global_model(expected_hash)
+            .has_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+        )
+
+        test_env.execute_commit(
+            workflow_status=workflow_status,
+            message="Add captured subgraph workflow",
+        )
+
+        assertions = PyprojectAssertions(test_env)
+        (
+            assertions
+            .has_workflow("captured_subgraph")
+            .has_model_count(1)
+            .has_model_with_hash(expected_hash)
+            .has_model_with_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+            .has_status("resolved")
+        )
+        (
+            assertions
+            .has_global_model(expected_hash)
+            .has_filename("ltx-2.3-22b-distilled-fp8.safetensors")
+        )
+        assert not test_env.workflow_manager.resolution_changes_manifest(
+            captured.resolution,
+            config=test_env.pyproject.load(),
+        )
+
+    def test_capture_subgraph_workflow_writes_download_intent_before_commit(
+        self,
+        test_env,
+    ):
+        """Capture should persist missing subgraph model source hints before commit."""
+        subgraph_id = "f9f61b10-b689-4d67-b4fa-0acc1d9b5390"
+        workflow_json = {
+            "id": "captured-subgraph-download-test",
+            "revision": 0,
+            "nodes": [
+                {
+                    "id": 129,
+                    "type": subgraph_id,
+                    "flags": {},
+                    "inputs": [],
+                    "outputs": [],
+                    "widgets_values": [],
+                }
+            ],
+            "links": [],
+            "definitions": {
+                "subgraphs": [
+                    {
+                        "id": subgraph_id,
+                        "name": "Downloadable Model Subgraph",
+                        "nodes": [
+                            {
+                                "id": 127,
+                                "type": "CheckpointLoaderSimple",
+                                "flags": {},
+                                "inputs": [],
+                                "outputs": [],
+                                "properties": {
+                                    "models": [
+                                        {
+                                            "name": "missing-ltx.safetensors",
+                                            "url": (
+                                                "https://huggingface.co/example/"
+                                                "resolve/main/missing-ltx.safetensors"
+                                            ),
+                                            "directory": "checkpoints",
+                                        }
+                                    ]
+                                },
+                                "widgets_values": ["missing-ltx.safetensors"],
+                            }
+                        ],
+                        "links": [],
+                    }
+                ]
+            },
+            "config": {},
+            "version": 0.4,
+        }
+
+        simulate_comfyui_save_workflow(test_env, "captured_download", workflow_json)
+        test_env.capture_workflow("captured_download")
+
+        models = test_env.pyproject.workflows.get_workflow_models("captured_download")
+        assert len(models) == 1
+        assert models[0].filename == "missing-ltx.safetensors"
+        assert models[0].status == "unresolved"
+        assert models[0].relative_path == "checkpoints/missing-ltx.safetensors"
+        assert models[0].sources == [
+            "https://huggingface.co/example/resolve/main/missing-ltx.safetensors"
+        ]
+
     def test_resolve_workflow_with_nested_subgraphs(self, test_env, test_workspace):
         """Workflow with nested subgraphs should extract all nodes."""
         # ARRANGE: Create model

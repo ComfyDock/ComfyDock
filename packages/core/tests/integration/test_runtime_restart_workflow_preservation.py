@@ -28,6 +28,43 @@ def save_workflow_to_comfyui(env, name: str, workflow_data: dict):
 class TestRuntimeRestartPreservesWorkflows:
     """Test that runtime restart syncs preserve uncommitted workflows."""
 
+    def test_capture_workflow_records_saved_workflow_as_working_snapshot(self, test_env):
+        """capture_workflow() should copy one saved workflow and ensure manifest path."""
+        workflow = create_simple_workflow()
+        save_workflow_to_comfyui(test_env, "captured_workflow", workflow)
+
+        tracked_path = test_env.capture_workflow("captured_workflow.json")
+
+        assert tracked_path == test_env.cec_path / "workflows" / "captured_workflow.json"
+        assert tracked_path.exists()
+        assert json.loads(tracked_path.read_text()) == workflow
+
+        snapshot = test_env.get_manifest_snapshot()
+        assert snapshot.workflows["captured_workflow"].path == (
+            "workflows/captured_workflow.json"
+        )
+
+    def test_capture_workflow_tracks_file_when_dependency_reconciliation_fails(self, test_env):
+        """A parse/resolution failure should not leave the captured file untracked."""
+        workflow_path = (
+            test_env.comfyui_path
+            / "user"
+            / "default"
+            / "workflows"
+            / "broken_workflow.json"
+        )
+        workflow_path.parent.mkdir(parents=True, exist_ok=True)
+        workflow_path.write_text("{not valid json")
+
+        tracked_path = test_env.capture_workflow("broken_workflow")
+
+        assert tracked_path == test_env.cec_path / "workflows" / "broken_workflow.json"
+        assert tracked_path.exists()
+        snapshot = test_env.get_manifest_snapshot()
+        assert snapshot.workflows["broken_workflow"].path == (
+            "workflows/broken_workflow.json"
+        )
+
     def test_sync_with_preserve_workflows_keeps_uncommitted_edits(self, test_env):
         """sync(preserve_workflows=True) should preserve uncommitted workflow edits.
 

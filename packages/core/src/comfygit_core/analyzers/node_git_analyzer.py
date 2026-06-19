@@ -67,7 +67,7 @@ def get_node_git_info(node_path: Path) -> GitInfo | None:
                 git_info.github_repo = github_match.group(2).replace(".git", "")
 
         # Check if there are uncommitted changes
-        status_entries = git_status_porcelain(node_path)
+        status_entries = git_status_porcelain(node_path, check=False)
         git_info.is_dirty = bool(status_entries)
 
         return git_info

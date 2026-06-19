@@ -293,7 +293,7 @@ class WorkflowResolutionFixer:
                     logger.info(f"Marked as optional: {widget_value}")
                 elif resolved.resolved_model:
                     logger.info(
-                        f"Resolved: {widget_value} → {resolved.resolved_model.filename}"
+                        f"Resolved: {widget_value} -> {resolved.resolved_model.filename}"
                     )
                 else:
                     logger.info(f"Marked as optional (unresolved): {widget_value}")
