@@ -12,7 +12,6 @@ import threading
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from comfygit_core.constants import ACTIVE_TORCH_BACKEND_OVERRIDE_ENV
 from comfygit_core.models import (
     CDDependencyConflictError,
     CDNodeConflictError,
@@ -20,6 +19,7 @@ from comfygit_core.models import (
     UVCommandError,
 )
 from comfygit_core.runtime import (
+    ACTIVE_TORCH_BACKEND_OVERRIDE_ENV,
     SwitchObserverServer,
     cleanup_supervisor_advertisement,
     cleanup_switch_status,
