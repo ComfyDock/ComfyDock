@@ -65,9 +65,11 @@ class UVConfigHandler(BaseHandler):
         if not constraints:
             return False
 
+        target_package = self._extract_package_name(package_name)
+
         # Find and remove constraint by package name
         for i, existing in enumerate(constraints):
-            if self._extract_package_name(existing) == package_name.lower():
+            if self._extract_package_name(existing) == target_package:
                 removed = constraints.pop(i)
                 logger.info(f"Removing constraint: {removed}")
                 config['tool']['uv']['constraint-dependencies'] = constraints

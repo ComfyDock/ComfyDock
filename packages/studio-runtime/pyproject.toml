@@ -1,12 +1,12 @@
 [project]
 name = "comfygit-studio"
-version = "0.5.0"
+version = "0.6.0"
 description = "ComfyGit Studio runtime - contract API and Studio serving adapters"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.13.4",
-    "comfygit-core==0.5.0",
+    "comfygit-core==0.6.0",
 ]
 
 [project.urls]
