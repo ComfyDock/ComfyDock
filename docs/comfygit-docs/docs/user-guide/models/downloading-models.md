@@ -50,12 +50,14 @@ cg workflow model add my-workflow \
 
 ## Authentication
 
-Configure provider tokens at the workspace level when needed:
+Configure provider credentials through a hidden prompt when needed:
 
 ```bash
-cg config --civitai-key "$CIVITAI_API_KEY"
+cg auth set civitai
+cg auth login huggingface
 ```
 
-Private Hugging Face or direct-download access depends on the URL and your local
-environment. Use URLs that the runtime can fetch non-interactively before relying
-on them for handoff.
+For non-interactive environments, use `CIVITAI_API_TOKEN`, `HF_TOKEN`, or another
+documented provider environment variable. Private Hugging Face or direct-download
+access still depends on the URL and account permissions. Use sources that the
+runtime can fetch non-interactively before relying on them for handoff.

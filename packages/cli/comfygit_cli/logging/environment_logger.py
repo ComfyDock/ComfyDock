@@ -6,10 +6,12 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from comfygit_core.security import redact_sensitive_mapping, redact_sensitive_text
+
 from .compressed_handler import CompressedDualHandler
+from .security import PrivateRotatingFileHandler, RedactingFormatter, harden_existing_logs
 
 
 class EnvironmentLogger:
@@ -26,7 +28,7 @@ class EnvironmentLogger:
     DETAILED_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
 
     _workspace_path: Path | None = None
-    _active_handler: RotatingFileHandler | None = None
+    _active_handler: logging.Handler | None = None
     _current_env: str | None = None
     _original_root_level: int | None = None
 
@@ -43,6 +45,7 @@ class EnvironmentLogger:
         if workspace_path and workspace_path.exists():
             logs_dir = workspace_path / "logs"
             logs_dir.mkdir(exist_ok=True)
+            harden_existing_logs(logs_dir)
 
     @classmethod
     def _add_env_handler(cls, env_name: str) -> logging.Handler | None:
@@ -80,7 +83,7 @@ class EnvironmentLogger:
         else:
             # Single file in directory
             log_file = log_dir / "full.log"
-            handler = RotatingFileHandler(
+            handler = PrivateRotatingFileHandler(
                 log_file,
                 maxBytes=cls.MAX_BYTES,
                 backupCount=cls.BACKUP_COUNT,
@@ -90,7 +93,7 @@ class EnvironmentLogger:
         handler.setLevel(logging.DEBUG)
 
         # Set formatter
-        formatter = logging.Formatter(cls.DETAILED_FORMAT)
+        formatter = RedactingFormatter(cls.DETAILED_FORMAT)
         handler.setFormatter(formatter)
 
         # Add a name to identify this handler
@@ -166,7 +169,7 @@ class EnvironmentLogger:
         logger.info(f"Started: {datetime.now().isoformat()}")
 
         # Log any context
-        for key, value in context.items():
+        for key, value in redact_sensitive_mapping(context).items():
             if value is not None:  # Only log non-None values
                 logger.info(f"{key}: {value}")
 
@@ -189,7 +192,7 @@ class EnvironmentLogger:
 
         except Exception as e:
             # Log the error
-            logger.error(f"Command '{command}' failed: {e}", exc_info=True)
+            logger.error("Command '%s' failed: %s", command, redact_sensitive_text(e), exc_info=True)
             raise
 
         finally:
@@ -236,7 +239,7 @@ class WorkspaceLogger:
     DETAILED_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
 
     _workspace_path: Path | None = None
-    _active_handler: RotatingFileHandler | None = None
+    _active_handler: logging.Handler | None = None
     _original_root_level: int | None = None
 
     @classmethod
@@ -252,6 +255,7 @@ class WorkspaceLogger:
         if workspace_path and workspace_path.exists():
             logs_dir = workspace_path / "logs" / "workspace"
             logs_dir.mkdir(parents=True, exist_ok=True)
+            harden_existing_logs(workspace_path / "logs")
 
     @classmethod
     def _add_workspace_handler(cls) -> logging.Handler | None:
@@ -286,7 +290,7 @@ class WorkspaceLogger:
         else:
             # Single file in directory (renamed to full.log for consistency)
             log_file = log_dir / "full.log"
-            handler = RotatingFileHandler(
+            handler = PrivateRotatingFileHandler(
                 log_file,
                 maxBytes=cls.MAX_BYTES,
                 backupCount=cls.BACKUP_COUNT,
@@ -296,7 +300,7 @@ class WorkspaceLogger:
         handler.setLevel(logging.DEBUG)
 
         # Set formatter
-        formatter = logging.Formatter(cls.DETAILED_FORMAT)
+        formatter = RedactingFormatter(cls.DETAILED_FORMAT)
         handler.setFormatter(formatter)
 
         # Add a name to identify this handler
@@ -369,7 +373,7 @@ class WorkspaceLogger:
         logger.info(f"Started: {datetime.now().isoformat()}")
 
         # Log any context
-        for key, value in context.items():
+        for key, value in redact_sensitive_mapping(context).items():
             if value is not None:  # Only log non-None values
                 logger.info(f"{key}: {value}")
 
@@ -392,7 +396,7 @@ class WorkspaceLogger:
 
         except Exception as e:
             # Log the error
-            logger.error(f"Command '{command}' failed: {e}", exc_info=True)
+            logger.error("Command '%s' failed: %s", command, redact_sensitive_text(e), exc_info=True)
             raise
 
         finally:
@@ -466,7 +470,9 @@ def with_env_logging(command_name: str, get_env_name: Callable | None = None, lo
             if log_args and hasattr(args, '__dict__'):
                 # Get all non-private attributes from args
                 # Prefix with 'arg_' to avoid conflicts with log_command parameters
-                args_dict = {f'arg_{k}': v for k, v in vars(args).items() if not k.startswith('_')}
+                args_dict = redact_sensitive_mapping(
+                    {f'arg_{k}': v for k, v in vars(args).items() if not k.startswith('_')}
+                )
                 context.update(args_dict)
 
             # Add/override with explicit log_context
@@ -531,7 +537,9 @@ def with_workspace_logging(command_name: str, log_args: bool = True, **log_conte
             if log_args and hasattr(args, '__dict__'):
                 # Get all non-private attributes from args
                 # Prefix with 'arg_' to avoid conflicts with log_command parameters
-                args_dict = {f'arg_{k}': v for k, v in vars(args).items() if not k.startswith('_')}
+                args_dict = redact_sensitive_mapping(
+                    {f'arg_{k}': v for k, v in vars(args).items() if not k.startswith('_')}
+                )
                 context.update(args_dict)
 
             # Add/override with explicit log_context

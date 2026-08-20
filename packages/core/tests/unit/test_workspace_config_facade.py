@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from comfygit_core import Workspace
+from comfygit_core.models import CredentialProvider, CredentialSource, MemoryCredentialStore
 
 
 def test_workspace_token_facades_persist_and_clear_values(monkeypatch, tmp_path):
@@ -16,7 +17,11 @@ def test_workspace_token_facades_persist_and_clear_values(monkeypatch, tmp_path)
     ):
         monkeypatch.delenv(env_name, raising=False)
 
-    workspace = Workspace.create(tmp_path / "workspace")
+    credential_store = MemoryCredentialStore()
+    workspace = Workspace.create(tmp_path / "workspace", credential_store=credential_store)
+    workspace.workspace_config_manager.credential_service.native_resolvers[
+        CredentialProvider.HUGGINGFACE
+    ] = lambda: None
 
     workspace.set_civitai_token("civitai-token")
     workspace.set_huggingface_token("hf-token")
@@ -25,6 +30,14 @@ def test_workspace_token_facades_persist_and_clear_values(monkeypatch, tmp_path)
     assert workspace.get_civitai_token() == "civitai-token"
     assert workspace.get_huggingface_token() == "hf-token"
     assert workspace.get_github_token() == "github-token"
+    assert workspace.get_credential_status(CredentialProvider.CIVITAI).source == (
+        CredentialSource.SECURE_STORE
+    )
+
+    config_text = workspace.paths.workspace_file.read_text()
+    assert "civitai-token" not in config_text
+    assert "hf-token" not in config_text
+    assert "github-token" not in config_text
 
     workspace.set_civitai_token(None)
     workspace.set_huggingface_token(None)
@@ -36,7 +49,10 @@ def test_workspace_token_facades_persist_and_clear_values(monkeypatch, tmp_path)
 
 
 def test_workspace_external_uv_cache_facade_persists_and_clears_path(tmp_path):
-    workspace = Workspace.create(tmp_path / "workspace")
+    workspace = Workspace.create(
+        tmp_path / "workspace",
+        credential_store=MemoryCredentialStore(),
+    )
     cache_path = tmp_path / "uv-cache"
 
     workspace.set_external_uv_cache(cache_path)
@@ -49,7 +65,10 @@ def test_workspace_external_uv_cache_facade_persists_and_clears_path(tmp_path):
 
 
 def test_workspace_config_file_is_owner_only_when_tokens_are_saved(tmp_path):
-    workspace = Workspace.create(tmp_path / "workspace")
+    workspace = Workspace.create(
+        tmp_path / "workspace",
+        credential_store=MemoryCredentialStore(),
+    )
 
     workspace.set_civitai_token("civitai-token")
 

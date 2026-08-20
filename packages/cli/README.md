@@ -186,10 +186,17 @@ cg import [PATH|URL]
 cg export [PATH]
   --allow-issues       Skip confirmation if models lack source URLs
 
-# Configuration
-cg config
-  --civitai-key KEY    Set CivitAI API key (empty string to clear)
-  --show               Show current configuration
+# Provider authentication (secrets never go in argv)
+cg auth status
+cg auth set civitai
+cg auth set huggingface
+cg auth set github
+cg auth login huggingface
+cg auth migrate
+cg auth clear PROVIDER
+
+# Nonsecret configuration
+cg config --show
 
 # Registry management
 cg registry status    # Show registry cache status
@@ -618,7 +625,9 @@ source ~/.bashrc  # or ~/.zshrc
 
 - `COMFYGIT_HOME` - Override default workspace location (`~/comfygit`)
 - `COMFYGIT_DEV_COMPRESS_LOGS` - Enable compressed logging (dev feature: `true`/`1`/`yes`)
-- `CIVITAI_API_KEY` - CivitAI API key (or use `cg config --civitai-key`)
+- `CIVITAI_API_TOKEN` / `CIVITAI_API_KEY` - CivitAI credential override
+- `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` - Hugging Face credential override
+- `GITHUB_TOKEN` / `GH_TOKEN` - GitHub credential override
 
 Example:
 ```bash

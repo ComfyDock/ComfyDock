@@ -1,12 +1,19 @@
 """Global workspace-level commands for ComfyGit CLI."""
 
 import argparse
+import getpass
 import sys
 from functools import cached_property
 from pathlib import Path
 
 from comfygit_core import Workspace
-from comfygit_core.models import CDWorkspaceNotFoundError, ImportCallbacks
+from comfygit_core.models import (
+    CDCredentialStoreError,
+    CDWorkspaceNotFoundError,
+    CredentialProvider,
+    CredentialSource,
+    ImportCallbacks,
+)
 
 from .cli_utils import get_workspace_optional, get_workspace_or_exit
 from .logging.environment_logger import WorkspaceLogger, with_workspace_logging
@@ -693,7 +700,7 @@ class GlobalCommands:
                 print("\nModels are saved as download intents - you can download them later with:")
                 print("   cg workflow resolve <workflow>")
                 print("\nIf you see 401 Unauthorized errors, add your Civitai API key:")
-                print("   cg config --civitai-key <your-token>")
+                print("   cg auth set civitai")
 
             def on_download_batch_start(self, count: int):
                 """Show batch download start."""
@@ -968,6 +975,8 @@ class GlobalCommands:
                 print("\n✗ Export cancelled")
                 sys.exit(1)
 
+        from comfygit_core.models import CDExportError
+
         try:
             tarball_path = env.export_environment(
                 output_path,
@@ -979,30 +988,24 @@ class GlobalCommands:
             print(f"\n✅ Export complete: {tarball_path.name} ({size_mb:.1f} MB)")
             print("\nShare this file to distribute your complete environment!")
 
+        except CDExportError as e:
+            print(f"✗ {str(e)}")
+
+            if e.context:
+                if e.context.uncommitted_workflows:
+                    print("\n📋 Uncommitted workflows:")
+                    for wf in e.context.uncommitted_workflows:
+                        print(f"  • {wf}")
+                    print("\n💡 Commit first:")
+                    print("   cg commit -m 'Pre-export checkpoint'")
+                elif e.context.uncommitted_git_changes:
+                    print("\n💡 Commit git changes first:")
+                    print("   cg commit -m 'Pre-export checkpoint'")
+                elif e.context.has_unresolved_issues:
+                    print("\n💡 Resolve workflow issues first:")
+                    print("   cg workflow resolve <workflow_name>")
+            sys.exit(1)
         except Exception as e:
-            # Handle CDExportError with rich context
-            from comfygit_core.models import CDExportError
-
-            if isinstance(e, CDExportError):
-                print(f"✗ {str(e)}")
-
-                # Show context-specific details
-                if e.context:
-                    if e.context.uncommitted_workflows:
-                        print("\n📋 Uncommitted workflows:")
-                        for wf in e.context.uncommitted_workflows:
-                            print(f"  • {wf}")
-                        print("\n💡 Commit first:")
-                        print("   cg commit -m 'Pre-export checkpoint'")
-                    elif e.context.uncommitted_git_changes:
-                        print("\n💡 Commit git changes first:")
-                        print("   cg commit -m 'Pre-export checkpoint'")
-                    elif e.context.has_unresolved_issues:
-                        print("\n💡 Resolve workflow issues first:")
-                        print("   cg workflow resolve <workflow_name>")
-                sys.exit(1)
-
-            # Generic error handling
             print(f"✗ Export failed: {e}")
             sys.exit(1)
 
@@ -1636,22 +1639,105 @@ class GlobalCommands:
 
     # === Config Management ===
 
-    @with_workspace_logging("config")
+    _AUTH_PROVIDERS = {
+        "civitai": (CredentialProvider.CIVITAI, "CivitAI", "set_civitai_token"),
+        "huggingface": (
+            CredentialProvider.HUGGINGFACE,
+            "Hugging Face",
+            "set_huggingface_token",
+        ),
+        "github": (CredentialProvider.GITHUB, "GitHub", "set_github_token"),
+    }
+
+    _AUTH_SOURCE_LABELS = {
+        CredentialSource.ENVIRONMENT: "environment",
+        CredentialSource.SECURE_STORE: "secure store",
+        CredentialSource.PROVIDER_NATIVE: "provider login",
+        CredentialSource.LEGACY_PLAINTEXT: "legacy plaintext; migration required",
+        CredentialSource.UNAVAILABLE: "secure storage unavailable",
+        CredentialSource.NONE: "not configured",
+    }
+
+    @with_workspace_logging("auth status", log_args=False)
+    def auth_status(self, args: argparse.Namespace) -> None:
+        """Show provider credential status without reading partial suffixes."""
+        print("Provider Authentication:\n")
+        for provider, label, _setter_name in self._AUTH_PROVIDERS.values():
+            status = self.workspace.get_credential_status(provider)
+            source = self._AUTH_SOURCE_LABELS[status.source]
+            state = "Configured" if status.configured else "Not configured"
+            print(f"  {label:<14} {state} ({source})")
+            if status.message and not status.storage_available:
+                print(f"  {'':<14} {status.message}")
+
+    @with_workspace_logging("auth set", log_args=False)
+    def auth_set(self, args: argparse.Namespace) -> None:
+        """Read and save a provider credential without placing it in argv."""
+        _provider, label, setter_name = self._AUTH_PROVIDERS[args.provider]
+        if args.token_stdin:
+            token = sys.stdin.readline().rstrip("\r\n")
+        else:
+            token = getpass.getpass(f"Enter {label} credential: ").strip()
+
+        if not token:
+            print("✗ Credential was empty; nothing was saved", file=sys.stderr)
+            raise SystemExit(1)
+
+        try:
+            getattr(self.workspace, setter_name)(token)
+        except CDCredentialStoreError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"✓ {label} credential saved")
+
+    @with_workspace_logging("auth clear", log_args=False)
+    def auth_clear(self, args: argparse.Namespace) -> None:
+        """Clear a saved provider credential."""
+        _provider, label, setter_name = self._AUTH_PROVIDERS[args.provider]
+        try:
+            getattr(self.workspace, setter_name)(None)
+        except CDCredentialStoreError as exc:
+            print(f"✗ {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"✓ {label} credential cleared")
+
+    @with_workspace_logging("auth login", log_args=False)
+    def auth_login(self, args: argparse.Namespace) -> None:
+        """Run a provider-native authentication flow."""
+        if args.provider != "huggingface":
+            print(f"✗ Provider-native login is not supported for {args.provider}", file=sys.stderr)
+            raise SystemExit(1)
+
+        from huggingface_hub import login
+
+        login(skip_if_logged_in=not args.force)
+        status = self.workspace.get_credential_status(CredentialProvider.HUGGINGFACE)
+        if status.configured:
+            print("✓ Hugging Face login configured")
+        else:
+            print("✗ Hugging Face login did not produce an active credential", file=sys.stderr)
+            raise SystemExit(1)
+
+    @with_workspace_logging("auth migrate", log_args=False)
+    def auth_migrate(self, args: argparse.Namespace) -> None:
+        """Migrate verified legacy credentials without exposing their values."""
+        result = self.workspace.migrate_credentials()
+        if result.migrated:
+            migrated = ", ".join(provider.value for provider in result.migrated)
+            print(f"✓ Migrated to secure storage: {migrated}")
+        if result.retained:
+            retained = ", ".join(provider.value for provider in result.retained)
+            print(f"⚠ Retained legacy credentials: {retained}", file=sys.stderr)
+        for error in result.errors:
+            print(f"  {error}", file=sys.stderr)
+        if result.retained or result.errors:
+            raise SystemExit(1)
+        if result.complete and not result.migrated:
+            print("✓ No legacy plaintext credentials require migration")
+
+    @with_workspace_logging("config", log_args=False)
     def config(self, args: argparse.Namespace) -> None:
         """Manage ComfyGit configuration settings."""
-        # Flag mode - direct operations
-        if hasattr(args, 'civitai_key') and args.civitai_key is not None:
-            self._set_civitai_key(args.civitai_key)
-            return
-
-        if hasattr(args, 'huggingface_token') and args.huggingface_token is not None:
-            self._set_huggingface_token(args.huggingface_token)
-            return
-
-        if hasattr(args, 'github_token') and args.github_token is not None:
-            self._set_github_token(args.github_token)
-            return
-
         if hasattr(args, 'uv_cache') and args.uv_cache is not None:
             self._set_uv_cache(args.uv_cache)
             return
@@ -1660,35 +1746,7 @@ class GlobalCommands:
             self._show_config()
             return
 
-        # Interactive mode - no flags provided
-        self._interactive_config()
-
-    def _set_civitai_key(self, key: str):
-        """Set Civitai API key."""
-        if key == "":
-            self.workspace.set_civitai_token(None)
-            print("✓ Civitai API key cleared")
-        else:
-            self.workspace.set_civitai_token(key)
-            print("✓ Civitai API key saved")
-
-    def _set_huggingface_token(self, token: str):
-        """Set Hugging Face token."""
-        if token == "":
-            self.workspace.set_huggingface_token(None)
-            print("✓ Hugging Face token cleared")
-        else:
-            self.workspace.set_huggingface_token(token)
-            print("✓ Hugging Face token saved")
-
-    def _set_github_token(self, token: str):
-        """Set GitHub token."""
-        if token == "":
-            self.workspace.set_github_token(None)
-            print("✓ GitHub token cleared")
-        else:
-            self.workspace.set_github_token(token)
-            print("✓ GitHub token saved")
+        self._show_config()
 
     def _set_uv_cache(self, path_str: str):
         """Set external UV cache path."""
@@ -1715,30 +1773,7 @@ class GlobalCommands:
         # Workspace path
         print(f"  Workspace Path:  {self.workspace.paths.root}")
 
-        # Civitai API Key
-        token = self.workspace.get_civitai_token()
-        if token:
-            # Mask key showing last 4 chars
-            masked = f"••••••••{token[-4:]}" if len(token) > 4 else "••••"
-            print(f"  Civitai API Key: {masked}")
-        else:
-            print("  Civitai API Key: Not set")
-
-        # Hugging Face token
-        huggingface_token = self.workspace.get_huggingface_token()
-        if huggingface_token:
-            masked = f"••••••••{huggingface_token[-4:]}" if len(huggingface_token) > 4 else "••••"
-            print(f"  Hugging Face:    {masked}")
-        else:
-            print("  Hugging Face:    Not set")
-
-        # GitHub token
-        github_token = self.workspace.get_github_token()
-        if github_token:
-            masked = f"••••••••{github_token[-4:]}" if len(github_token) > 4 else "••••"
-            print(f"  GitHub Token:    {masked}")
-        else:
-            print("  GitHub Token:    Not set")
+        print("  Provider Auth:   Run 'cg auth status'")
 
         # External UV cache
         uv_cache = self.workspace.get_external_uv_cache()
@@ -1746,64 +1781,6 @@ class GlobalCommands:
             print(f"  UV Cache:        {uv_cache}")
         else:
             print("  UV Cache:        Workspace-local (default)")
-
-    def _interactive_config(self):
-        """Interactive configuration menu."""
-        while True:
-            # Get current config
-            civitai_token = self.workspace.get_civitai_token()
-
-            # Display menu
-            print("\nComfyGit Configuration\n")
-
-            # Civitai key status
-            if civitai_token:
-                masked = f"••••••••{civitai_token[-4:]}" if len(civitai_token) > 4 else "••••"
-                print(f"  1. Civitai API Key: {masked}")
-            else:
-                print("  1. Civitai API Key: Not set")
-
-            # Options
-            print("\n  [1] Change setting  [c] Clear a setting  [q] Quit")
-            choice = input("Choice: ").strip().lower()
-
-            if choice == 'q':
-                break
-            elif choice == '1':
-                self._interactive_set_civitai_key()
-            elif choice == 'c':
-                self._interactive_clear_setting()
-            else:
-                print("  Invalid choice")
-
-    def _interactive_set_civitai_key(self):
-        """Interactive Civitai API key setup."""
-        print("\n🔑 Civitai API Key Setup")
-        print("   Get your key from: https://civitai.com/user/account")
-
-        key = input("\nEnter API key (or blank to cancel): ").strip()
-        if not key:
-            print("  Cancelled")
-            return
-
-        self.workspace.set_civitai_token(key)
-        print("✓ API key saved")
-
-    def _interactive_clear_setting(self):
-        """Clear a configuration setting."""
-        print("\nClear which setting?")
-        print("  1. Civitai API Key")
-        print("\n  [1] Clear setting  [c] Cancel")
-
-        choice = input("Choice: ").strip().lower()
-
-        if choice == "1":
-            self.workspace.set_civitai_token(None)
-            print("✓ Civitai API key cleared")
-        elif choice == "c" or choice == "":
-            print("  Cancelled")
-        else:
-            print("  Invalid choice")
 
     # === Orchestrator Management ===
 
@@ -1829,7 +1806,7 @@ class GlobalCommands:
                 "pid": pid,
             }
 
-            if is_running:
+            if is_running and pid is not None:
                 uptime = get_orchestrator_uptime(metadata_dir, pid)
                 if uptime:
                     status_data["uptime_seconds"] = int(uptime)
@@ -1854,6 +1831,10 @@ class GlobalCommands:
             print("\nOrchestrator is not running.")
             print("Start ComfyUI to launch the orchestrator automatically.")
             print("━" * 70)
+            return
+
+        if pid is None:
+            print("Orchestrator status is inconsistent: running without a PID.")
             return
 
         print(f"Running:        Yes (PID {pid})")
@@ -1954,6 +1935,10 @@ class GlobalCommands:
                 print(f"  (stale PID file exists: {pid})")
             return
 
+        if pid is None:
+            print("✗ Orchestrator status is inconsistent: running without a PID")
+            return
+
         # Check if mid-switch (warn user)
         switch_status = read_switch_status(metadata_dir)
         if switch_status:
@@ -2045,7 +2030,7 @@ class GlobalCommands:
                 return
 
         # Kill orchestrator if requested
-        if is_running and args.kill:
+        if is_running and args.kill and pid is not None:
             print(f"\n✓ Terminating orchestrator process {pid}")
             print("  (giving it a chance to shut down ComfyUI gracefully...)")
             # Use force=False to send SIGTERM first, allowing cleanup handlers to run

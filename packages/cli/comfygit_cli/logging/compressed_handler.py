@@ -4,6 +4,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from comfygit_core.security import harden_private_file
+
 from .log_compressor import LogCompressor
 
 
@@ -53,12 +55,18 @@ class CompressedDualHandler(RotatingFileHandler):
         # Open compressed.log
         self.compressed_path = log_dir / 'compressed.log'
         self.compressed_file = open(self.compressed_path, 'a', encoding=encoding)
+        harden_private_file(self.compressed_path)
 
         # Initialize compressor
         self.compressor = LogCompressor(compression_level=compression_level)
 
         # Write header to compressed log
         self._write_compressed_header(env_name, compression_level)
+
+    def _open(self):
+        stream = super()._open()
+        harden_private_file(Path(self.baseFilename))
+        return stream
 
     def _write_compressed_header(self, env_name: str, level: str) -> None:
         """Write header to compressed log file."""
@@ -124,6 +132,7 @@ class CompressedDualHandler(RotatingFileHandler):
 
         # Reopen compressed.log for new session
         self.compressed_file = open(self.compressed_path, 'a', encoding=self.encoding)
+        harden_private_file(self.compressed_path)
 
         # Create new compressor for new session
         self.compressor = LogCompressor(compression_level=self.compression_level)

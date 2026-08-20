@@ -6,6 +6,24 @@ from pathlib import Path
 import pytest
 from comfygit_core.core.environment import Environment
 
+
+@pytest.fixture(autouse=True)
+def isolate_machine_provider_credentials(monkeypatch):
+    """Prevent tests from reading developer-machine provider credentials."""
+    for name in (
+        "CIVITAI_API_TOKEN",
+        "CIVITAI_API_KEY",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        "comfygit_core.repositories.workspace_config_repository.get_huggingface_native_token",
+        lambda: None,
+    )
+
 # ============================================================================
 # Path Fixtures
 # ============================================================================

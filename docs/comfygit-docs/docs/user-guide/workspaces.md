@@ -78,21 +78,37 @@ Use `cg config --show` to see which workspace and shared settings are active:
 cg config --show
 ```
 
-The config output includes the workspace path, Civitai API key state, GitHub
-token state, and uv cache location.
-
-Set optional credentials with:
-
-```bash
-cg config --civitai-key YOUR_API_KEY
-cg config --github-token YOUR_GITHUB_TOKEN
-```
-
-Use an empty string to clear a value:
+The config output includes the workspace path and uv cache location. Provider
+authentication status is intentionally separate and never displays token
+suffixes:
 
 ```bash
-cg config --civitai-key ""
+cg auth status
 ```
+
+Set optional credentials through a hidden prompt:
+
+```bash
+cg auth set civitai
+cg auth set huggingface
+cg auth set github
+```
+
+Hugging Face can also use its provider-native browser login:
+
+```bash
+cg auth login huggingface
+```
+
+Clear a workspace credential or migrate older plaintext workspace values:
+
+```bash
+cg auth clear civitai
+cg auth migrate
+```
+
+Durable ComfyGit credentials are stored through the operating-system credential
+store. Environment variables remain available for headless and automated use.
 
 An external uv cache can reduce repeated downloads across environments:
 

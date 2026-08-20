@@ -13,6 +13,7 @@ PUBLIC_CORE_IMPORTS = {
     "comfygit_core.models",
     "comfygit_core.readiness",
     "comfygit_core.runtime",
+    "comfygit_core.security",
     "comfygit_core.workflow",
 }
 

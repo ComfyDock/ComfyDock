@@ -3923,7 +3923,7 @@ class EnvironmentCommands:
                     print(f"      • {m.filename}")
 
                 print("\n💡 Next:")
-                print("  Add Civitai API key: cg config --civitai-key <your-token>")
+                print("  Add Civitai API key: cg auth set civitai")
                 print(f"  Try again: cg workflow resolve \"{args.name}\"")
                 print("  Or commit anyway: cg commit -m \"...\" --allow-issues")
             else:

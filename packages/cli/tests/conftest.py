@@ -14,6 +14,7 @@ core_conftest = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core_conftest)
 
 # Re-export core fixtures
+isolate_machine_provider_credentials = core_conftest.isolate_machine_provider_credentials
 fixtures_dir = core_conftest.fixtures_dir
 workflow_fixtures = core_conftest.workflow_fixtures
 model_fixtures = core_conftest.model_fixtures
@@ -24,6 +25,7 @@ simulate_comfyui_save_workflow = core_conftest.simulate_comfyui_save_workflow
 load_workflow_fixture = core_conftest.load_workflow_fixture
 
 __all__ = [
+    'isolate_machine_provider_credentials',
     'fixtures_dir',
     'workflow_fixtures',
     'model_fixtures',

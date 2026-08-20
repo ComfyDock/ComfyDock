@@ -14,6 +14,24 @@ logger = get_logger(__name__)
 _SUPPORTS_RMTREE_ONEXC = "onexc" in inspect.signature(shutil.rmtree).parameters
 
 
+def harden_private_file(path: Path) -> bool:
+    """Best-effort owner-only permissions for a local sensitive file.
+
+    Returns ``True`` when owner-only POSIX permissions are in effect or when the
+    platform does not expose POSIX mode bits. Missing files return ``False``.
+    """
+    if not path.exists():
+        return False
+    if os.name == "nt":
+        return True
+    try:
+        path.chmod(0o600)
+    except OSError as exc:
+        logger.debug("Could not harden private file permissions for %s: %s", path, exc)
+        return False
+    return (path.stat().st_mode & 0o777) == 0o600
+
+
 def _windows_long_path(path: Path) -> str:
     """Return a Windows long-path string for filesystem APIs."""
     path_text = str(path.resolve())

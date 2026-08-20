@@ -59,6 +59,26 @@ class TestEnvironmentLogStructure:
         assert log_dir.exists()
         assert full_log.exists()
         assert not compressed_log.exists(), "compressed.log should not exist without env var"
+        if os.name != "nt":
+            assert full_log.stat().st_mode & 0o777 == 0o600
+
+    def test_environment_log_context_redacts_secret_fields(self, mock_workspace):
+        """Structured command context must never write provider credentials."""
+        from comfygit_cli.logging.environment_logger import EnvironmentLogger
+
+        EnvironmentLogger.set_workspace_path(mock_workspace)
+        with EnvironmentLogger.log_command(
+            "test-env",
+            "auth set",
+            arg_huggingface_token="hf_secret_value",
+            arg_name="safe-value",
+        ):
+            pass
+
+        contents = (mock_workspace / "logs" / "test-env" / "full.log").read_text()
+        assert "hf_secret_value" not in contents
+        assert "arg_huggingface_token: <redacted>" in contents
+        assert "arg_name: safe-value" in contents
 
     def test_environment_logs_with_compression(self, mock_workspace):
         """With env var, should create both full.log and compressed.log in directory."""
@@ -122,6 +142,8 @@ class TestWorkspaceLogStructure:
         assert log_dir.exists()
         assert full_log.exists()
         assert not compressed_log.exists(), "compressed.log should not exist without env var"
+        if os.name != "nt":
+            assert full_log.stat().st_mode & 0o777 == 0o600
 
     def test_workspace_logs_with_compression(self, mock_workspace):
         """With env var, workspace should create both full.log and compressed.log."""
@@ -197,3 +219,14 @@ class TestCompressedLogRotation:
 
         finally:
             os.environ.pop('COMFYGIT_DEV_COMPRESS_LOGS', None)
+
+
+def test_non_rotating_private_log_handler_uses_owner_only_permissions(tmp_path):
+    from comfygit_cli.logging.security import PrivateFileHandler
+
+    log_path = tmp_path / "private.log"
+    handler = PrivateFileHandler(log_path, encoding="utf-8")
+    handler.close()
+
+    if os.name != "nt":
+        assert log_path.stat().st_mode & 0o777 == 0o600

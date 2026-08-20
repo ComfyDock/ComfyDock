@@ -1,7 +1,15 @@
 """Provider auth and logging hardening tests."""
 
+import os
+
+from comfygit_core.utils.filesystem import harden_private_file
 from comfygit_core.utils.provider_urls import is_civitai_url, is_huggingface_url
-from comfygit_core.utils.redaction import redact_command, redact_url
+from comfygit_core.utils.redaction import (
+    redact_command,
+    redact_sensitive_mapping,
+    redact_sensitive_text,
+    redact_url,
+)
 
 
 def test_provider_url_detection_uses_hostname_not_url_substrings():
@@ -31,3 +39,42 @@ def test_redact_command_masks_common_token_flags():
         "git fetch --token <redacted> --depth 1"
     )
     assert redact_command(["tool", "--api-key=secret"]) == "tool --api-key=<redacted>"
+    assert redact_command(["cg", "config", "--huggingface-token", "secret"]) == (
+        "cg config --huggingface-token <redacted>"
+    )
+    assert redact_command(["cg", "config", "--civitai-key=secret"]) == (
+        "cg config --civitai-key=<redacted>"
+    )
+
+
+def test_redact_sensitive_text_masks_prefixed_argument_fields():
+    assert redact_sensitive_text("arg_huggingface_token: hf_secret") == (
+        "arg_huggingface_token: <redacted>"
+    )
+    assert redact_sensitive_text("arg_civitai_key=civitai_secret") == (
+        "arg_civitai_key=<redacted>"
+    )
+
+
+def test_redact_sensitive_mapping_removes_nested_secret_fields():
+    redacted = redact_sensitive_mapping({
+        "arg_name": "safe",
+        "arg_huggingface_token": "hf_secret",
+        "nested": {"authorization": "Bearer secret", "path": "/safe/path"},
+    })
+
+    assert redacted == {
+        "arg_name": "safe",
+        "arg_huggingface_token": "<redacted>",
+        "nested": {"authorization": "<redacted>", "path": "/safe/path"},
+    }
+
+
+def test_harden_private_file_sets_owner_only_permissions(tmp_path):
+    path = tmp_path / "credentials.json"
+    path.write_text("{}")
+    path.chmod(0o644)
+
+    assert harden_private_file(path)
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600

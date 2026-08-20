@@ -421,20 +421,25 @@ must not be written into the portable environment manifest. Manifest entries
 should store repository URLs and refs; each machine, browser user, or deployment
 provider supplies its own credentials.
 
-### CGSPEC-LOCAL-02B [LIVE]: Provider API credentials are workspace-local and permission-hardened
+### CGSPEC-LOCAL-02B [LIVE]: Provider API credentials are workspace-local and securely resolved
 Validation: TEST
 
 CivitAI, Hugging Face, and future model/download provider API credentials may be
 workspace-local acquisition configuration when backend model search or download
-work needs durable machine-local access. They may be stored in the workspace
-configuration file or supplied by environment variables, but they must not be
-written into environment manifests, export bundles, model source metadata, or
-workflow artifacts. Workspace credential files should be created with
-owner-only permissions where the platform supports them, and UI surfaces should
-describe that storage honestly instead of claiming server-side credentials are
-never persisted. Git remote personal access tokens are governed by
-`CGSPEC-LOCAL-02A` because they represent the calling user's git identity rather
-than shared model-provider acquisition configuration.
+work needs durable machine-local access. Raw credentials should be resolved from
+caller-scoped input, environment variables, an injected secure credential store,
+or provider-native authentication rather than serialized into the nonsecret
+workspace metadata. They must not be written into environment manifests, export
+bundles, model source metadata, workflow artifacts, command arguments, or logs.
+
+Existing plaintext workspace credentials require a loss-safe migration: secure
+storage must be written and verified before the corresponding plaintext value is
+removed. If secure storage is unavailable, the legacy value remains intact and
+the adapter reports that migration is incomplete. UI surfaces should report only
+whether a credential is configured and its active source. Git remote personal
+access tokens are governed by `CGSPEC-LOCAL-02A` because they represent the
+calling user's git identity rather than shared model-provider acquisition
+configuration.
 
 ### CGSPEC-LOCAL-03 [LIVE]: ComfyGit-managed resolver floors are tracked policy
 Validation: TEST

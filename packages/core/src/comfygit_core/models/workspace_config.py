@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(repr=False)
 class APICredentials:
-    """Secure storage for external API credentials."""
+    """Legacy plaintext credentials retained only for loss-safe migration."""
     civitai_token: str | None = None
     huggingface_token: str | None = None
     github_token: str | None = None
@@ -63,6 +63,7 @@ class WorkspaceConfig:
     active_environment: str
     created_at: str
     global_model_directory: ModelDirectory | None
+    workspace_id: str | None = None
     api_credentials: APICredentials | None = None
     external_uv_cache: str | None = None  # Optional external UV cache path for dev/testing
 
@@ -74,6 +75,7 @@ class WorkspaceConfig:
             active_environment=data["active_environment"],
             created_at=data["created_at"],
             global_model_directory=ModelDirectory.from_dict(data["global_model_directory"]) if data.get("global_model_directory") else None,
+            workspace_id=data.get("workspace_id"),
             api_credentials=APICredentials.from_dict(data.get("api_credentials")) if data.get("api_credentials") else None,
             external_uv_cache=data.get("external_uv_cache"),
         )
@@ -85,6 +87,7 @@ class WorkspaceConfig:
             "active_environment": instance.active_environment,
             "created_at": instance.created_at,
             "global_model_directory": ModelDirectory.to_dict(instance.global_model_directory) if instance.global_model_directory else None,
+            "workspace_id": instance.workspace_id,
             "api_credentials": instance.api_credentials.to_dict() if instance.api_credentials else None,
             "external_uv_cache": instance.external_uv_cache,
         }

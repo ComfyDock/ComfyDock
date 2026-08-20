@@ -16,6 +16,12 @@ from comfygit_core.repositories.workspace_config_repository import WorkspaceConf
 from ..analyzers.model_scanner import ModelScanner
 from ..factories.environment_factory import EnvironmentFactory
 from ..logging.logging_config import get_logger
+from ..models.credentials import (
+    CredentialMigrationResult,
+    CredentialProvider,
+    CredentialStatus,
+    CredentialStore,
+)
 from ..models.exceptions import (
     CDEnvironmentExistsError,
     CDEnvironmentNotFoundError,
@@ -195,16 +201,22 @@ class Workspace:
     # Current workspace schema version (v2 = per-environment manager)
     CURRENT_SCHEMA_VERSION = 2
 
-    def __init__(self, paths: WorkspacePaths):
+    def __init__(self, paths: WorkspacePaths, credential_store: CredentialStore | None = None):
         """Initialize workspace with validated paths.
 
         Args:
             paths: Validated WorkspacePaths instance
         """
         self.paths = paths
+        self._credential_store = credential_store
 
     @classmethod
-    def open(cls, path: Path | None = None) -> "Workspace":
+    def open(
+        cls,
+        path: Path | None = None,
+        *,
+        credential_store: CredentialStore | None = None,
+    ) -> "Workspace":
         """Open an existing workspace.
 
         This is the public discovery entry point for callers. It delegates to
@@ -213,17 +225,27 @@ class Workspace:
         """
         from ..factories.workspace_factory import WorkspaceFactory
 
-        return WorkspaceFactory.find(path)
+        return WorkspaceFactory.find(path, credential_store=credential_store)
 
     @classmethod
-    def create(cls, path: Path | None = None) -> "Workspace":
+    def create(
+        cls,
+        path: Path | None = None,
+        *,
+        credential_store: CredentialStore | None = None,
+    ) -> "Workspace":
         """Create a new workspace on disk and return it."""
         from ..factories.workspace_factory import WorkspaceFactory
 
-        return WorkspaceFactory.create(path)
+        return WorkspaceFactory.create(path, credential_store=credential_store)
 
     @classmethod
-    def from_path(cls, path: Path) -> "Workspace":
+    def from_path(
+        cls,
+        path: Path,
+        *,
+        credential_store: CredentialStore | None = None,
+    ) -> "Workspace":
         """Construct a workspace object when the caller already has a root path.
 
         Normal callers should prefer ``Workspace.open(path)`` or
@@ -231,18 +253,23 @@ class Workspace:
         contexts that infer the workspace root from runtime state and need to
         wrap that resolved root without exposing ``WorkspacePaths``.
         """
-        return cls(WorkspacePaths(path))
+        return cls(WorkspacePaths(path), credential_store=credential_store)
 
     @classmethod
-    def open_or_create(cls, path: Path | None = None) -> "Workspace":
+    def open_or_create(
+        cls,
+        path: Path | None = None,
+        *,
+        credential_store: CredentialStore | None = None,
+    ) -> "Workspace":
         """Open an existing workspace, or create it if it does not exist."""
         from ..factories.workspace_factory import WorkspaceFactory
         from ..models.exceptions import CDWorkspaceNotFoundError
 
         try:
-            return WorkspaceFactory.find(path)
+            return WorkspaceFactory.find(path, credential_store=credential_store)
         except CDWorkspaceNotFoundError:
-            return WorkspaceFactory.create(path)
+            return WorkspaceFactory.create(path, credential_store=credential_store)
 
     @classmethod
     def default_root(cls, path: Path | None = None) -> Path:
@@ -380,7 +407,8 @@ class Workspace:
     def workspace_config_manager(self) -> WorkspaceConfigRepository:
         return WorkspaceConfigRepository(
             self.paths.workspace_file,
-            default_models_path=self.paths.models
+            default_models_path=self.paths.models,
+            credential_store=self._credential_store,
         )
 
     def get_civitai_token(self) -> str | None:
@@ -388,7 +416,7 @@ class Workspace:
         return self.workspace_config_manager.get_civitai_token()
 
     def set_civitai_token(self, token: str | None) -> None:
-        """Set or clear the persisted Civitai token."""
+        """Set or clear the workspace CivitAI credential in secure storage."""
         self.workspace_config_manager.set_civitai_token(token)
 
     def get_huggingface_token(self) -> str | None:
@@ -396,7 +424,7 @@ class Workspace:
         return self.workspace_config_manager.get_huggingface_token()
 
     def set_huggingface_token(self, token: str | None) -> None:
-        """Set or clear the persisted Hugging Face token."""
+        """Set or clear the workspace Hugging Face credential in secure storage."""
         self.workspace_config_manager.set_huggingface_token(token)
 
     def get_github_token(self) -> str | None:
@@ -404,8 +432,16 @@ class Workspace:
         return self.workspace_config_manager.get_github_token()
 
     def set_github_token(self, token: str | None) -> None:
-        """Set or clear the persisted GitHub token."""
+        """Set or clear the workspace GitHub credential in secure storage."""
         self.workspace_config_manager.set_github_token(token)
+
+    def get_credential_status(self, provider: CredentialProvider) -> CredentialStatus:
+        """Return secret-free provider authentication status."""
+        return self.workspace_config_manager.get_credential_status(provider)
+
+    def migrate_credentials(self) -> CredentialMigrationResult:
+        """Migrate verified legacy plaintext credentials into secure storage."""
+        return self.workspace_config_manager.migrate_credentials()
 
     def get_external_uv_cache(self) -> Path | None:
         """Return the configured external UV cache path, if one is set."""
@@ -1066,9 +1102,8 @@ class Workspace:
             OSError: If workspace metadata cannot be read
         """
         try:
-            with open(self.paths.workspace_file, encoding='utf-8') as f:
-                metadata = json.load(f)
-                active_name = metadata.get("active_environment")
+            metadata = self.workspace_config_manager.load()
+            active_name = metadata.active_environment
 
             if active_name:
                 try:
@@ -1109,18 +1144,9 @@ class Workspace:
                 ) from None
 
         try:
-            # Read existing metadata
-            metadata = {}
-            if self.paths.workspace_file.exists():
-                with open(self.paths.workspace_file, encoding='utf-8') as f:
-                    metadata = json.load(f)
-
-            # Update active environment
-            metadata["active_environment"] = name
-
-            # Write back
-            with open(self.paths.workspace_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, indent=2)
+            metadata = self.workspace_config_manager.load()
+            metadata.active_environment = name or ""
+            self.workspace_config_manager.save(metadata)
 
         except PermissionError as e:
             raise PermissionError("Cannot set active environment: insufficient permissions") from e

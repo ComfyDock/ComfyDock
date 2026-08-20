@@ -1,25 +1,54 @@
 import json
 import os
 from datetime import datetime
-from functools import cached_property
 from pathlib import Path
+from uuid import uuid4
 
 from comfygit_core.models.exceptions import ComfyDockError
 
 from ..logging.logging_config import get_logger
-from ..models.workspace_config import APICredentials, ModelDirectory, WorkspaceConfig
+from ..models.credentials import (
+    CredentialMigrationResult,
+    CredentialProvider,
+    CredentialStatus,
+    CredentialStore,
+)
+from ..models.workspace_config import ModelDirectory, WorkspaceConfig
+from ..services.credential_service import CredentialService, get_huggingface_native_token
+from ..utils.filesystem import harden_private_file
+from .credential_store import KeyringCredentialStore
 
 logger = get_logger(__name__)
 
 
 class WorkspaceConfigRepository:
 
-    def __init__(self, config_file: Path, default_models_path: Path | None = None):
+    _LEGACY_FIELDS = {
+        CredentialProvider.CIVITAI: "civitai_token",
+        CredentialProvider.HUGGINGFACE: "huggingface_token",
+        CredentialProvider.GITHUB: "github_token",
+    }
+
+    def __init__(
+        self,
+        config_file: Path,
+        default_models_path: Path | None = None,
+        credential_store: CredentialStore | None = None,
+    ):
         self.config_file_path = config_file
         self._default_models_path = default_models_path
+        harden_private_file(config_file)
+        self.credential_service = CredentialService(
+            self,
+            credential_store or KeyringCredentialStore(),
+            native_resolvers={
+                CredentialProvider.HUGGINGFACE: get_huggingface_native_token,
+            },
+        )
 
-    @cached_property
+    @property
     def config_file(self) -> WorkspaceConfig:
+        """Load current metadata without retaining stale secret-bearing state."""
         return self._load_or_fail()
 
     def _load_or_fail(self) -> WorkspaceConfig:
@@ -65,21 +94,46 @@ class WorkspaceConfigRepository:
         data_dict = WorkspaceConfig.to_dict(data)
         self.config_file_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.config_file_path.with_suffix(".tmp")
-        with temp_path.open("w", encoding='utf-8') as f:
+        descriptor = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
             json.dump(data_dict, f, indent=2)
-        self._harden_config_file_permissions(temp_path)
+        harden_private_file(temp_path)
         temp_path.replace(self.config_file_path)  # Atomic on POSIX
-        self._harden_config_file_permissions(self.config_file_path)
+        harden_private_file(self.config_file_path)
 
-    @staticmethod
-    def _harden_config_file_permissions(path: Path) -> None:
-        """Best-effort owner-only permissions for local credential config files."""
-        if os.name == "nt":
+    def ensure_workspace_id(self) -> str:
+        """Return a stable nonsecret identifier used to scope secure credentials."""
+        data = self.load()
+        if data.workspace_id:
+            return data.workspace_id
+        data.workspace_id = str(uuid4())
+        self.save(data)
+        return data.workspace_id
+
+    def get_legacy_credentials(self) -> dict[CredentialProvider, str]:
+        """Return plaintext credentials that still require secure migration."""
+        credentials = self.load().api_credentials
+        if credentials is None:
+            return {}
+        return {
+            provider: value
+            for provider, field_name in self._LEGACY_FIELDS.items()
+            if (value := getattr(credentials, field_name))
+        }
+
+    def get_legacy_credential(self, provider: CredentialProvider) -> str | None:
+        return self.get_legacy_credentials().get(provider)
+
+    def clear_legacy_credentials(self, providers: tuple[CredentialProvider, ...]) -> None:
+        """Remove verified legacy values from workspace metadata atomically."""
+        data = self.load()
+        if data.api_credentials is None:
             return
-        try:
-            path.chmod(0o600)
-        except OSError as e:
-            logger.debug("Could not harden workspace config permissions for %s: %s", path, e)
+        for provider in providers:
+            setattr(data.api_credentials, self._LEGACY_FIELDS[provider], None)
+        if not data.api_credentials.to_dict():
+            data.api_credentials = None
+        self.save(data)
 
     def set_models_directory(self, path: Path):
         logger.info(f"Setting models directory to {path}")
@@ -115,99 +169,55 @@ class WorkspaceConfigRepository:
         self.save(data)
 
     def set_civitai_token(self, token: str | None):
-        """Set or clear CivitAI API token."""
-        data = self.config_file
+        """Set or clear a CivitAI credential in secure storage."""
         if token:
-            if not data.api_credentials:
-                data.api_credentials = APICredentials(civitai_token=token)
-            else:
-                data.api_credentials.civitai_token = token
+            self.credential_service.set(CredentialProvider.CIVITAI, token)
             logger.info("CivitAI API token configured")
         else:
-            if data.api_credentials:
-                data.api_credentials.civitai_token = None
+            self.credential_service.clear(CredentialProvider.CIVITAI)
             logger.info("CivitAI API token cleared")
-        self.save(data)
 
     def get_civitai_token(self) -> str | None:
-        """Get CivitAI API token from config or environment."""
-        # Priority: environment variable > config file
-        env_token = os.environ.get("CIVITAI_API_TOKEN")
-        if env_token:
-            logger.debug("Using CivitAI token from environment")
-            return env_token
-
-        data = self.config_file
-        if data.api_credentials and data.api_credentials.civitai_token:
-            logger.debug("Using CivitAI token from config")
-            return data.api_credentials.civitai_token
-
-        return None
+        """Resolve a CivitAI credential from environment or secure storage."""
+        return self.credential_service.resolve(CredentialProvider.CIVITAI)
 
     def set_huggingface_token(self, token: str | None):
-        """Set or clear HuggingFace API token."""
-        data = self.config_file
+        """Set or clear a Hugging Face credential in secure storage."""
         if token:
-            if not data.api_credentials:
-                data.api_credentials = APICredentials(huggingface_token=token)
-            else:
-                data.api_credentials.huggingface_token = token
+            self.credential_service.set(CredentialProvider.HUGGINGFACE, token)
             logger.info("HuggingFace API token configured")
         else:
-            if data.api_credentials:
-                data.api_credentials.huggingface_token = None
+            self.credential_service.clear(CredentialProvider.HUGGINGFACE)
             logger.info("HuggingFace API token cleared")
-        self.save(data)
 
     def get_huggingface_token(self) -> str | None:
-        """Get HuggingFace API token from config or environment.
+        """Resolve Hugging Face auth from environment, secure store, or provider login.
 
-        Priority: HF_TOKEN env > HUGGING_FACE_HUB_TOKEN env > config file
+        Priority: environment > workspace secure store > active Hugging Face login.
         """
-        # Priority: environment variable > config file
-        env_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-        if env_token:
-            logger.debug("Using HuggingFace token from environment")
-            return env_token
-
-        data = self.config_file
-        if data.api_credentials and data.api_credentials.huggingface_token:
-            logger.debug("Using HuggingFace token from config")
-            return data.api_credentials.huggingface_token
-
-        return None
+        return self.credential_service.resolve(CredentialProvider.HUGGINGFACE)
 
     def set_github_token(self, token: str | None):
-        """Set or clear GitHub API token."""
-        data = self.config_file
+        """Set or clear a GitHub credential in secure machine-local storage."""
         if token:
-            if not data.api_credentials:
-                data.api_credentials = APICredentials(github_token=token)
-            else:
-                data.api_credentials.github_token = token
+            self.credential_service.set(CredentialProvider.GITHUB, token)
             logger.info("GitHub API token configured")
         else:
-            if data.api_credentials:
-                data.api_credentials.github_token = None
+            self.credential_service.clear(CredentialProvider.GITHUB)
             logger.info("GitHub API token cleared")
-        self.save(data)
 
     def get_github_token(self) -> str | None:
-        """Get GitHub API token from config or environment.
+        """Resolve GitHub auth from environment or workspace secure storage.
 
-        Priority: GITHUB_TOKEN env > GH_TOKEN env > config file
+        Standard git credential helpers remain available when no token is returned.
         """
-        env_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        if env_token:
-            logger.debug("Using GitHub token from environment")
-            return env_token
+        return self.credential_service.resolve(CredentialProvider.GITHUB)
 
-        data = self.config_file
-        if data.api_credentials and data.api_credentials.github_token:
-            logger.debug("Using GitHub token from config")
-            return data.api_credentials.github_token
+    def get_credential_status(self, provider: CredentialProvider) -> CredentialStatus:
+        return self.credential_service.status(provider)
 
-        return None
+    def migrate_credentials(self) -> CredentialMigrationResult:
+        return self.credential_service.migrate_legacy_credentials()
 
     def get_external_uv_cache(self) -> Path | None:
         """Get external UV cache path if configured."""

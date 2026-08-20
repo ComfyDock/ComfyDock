@@ -1,9 +1,10 @@
 """Logging configuration for ComfyUI Environment Capture."""
 
 import logging
-import logging.handlers
 import sys
 from pathlib import Path
+
+from .security import PrivateFileHandler, PrivateRotatingFileHandler, RedactingFormatter
 
 # Default log format
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -48,7 +49,7 @@ def setup_logging(
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(console_log_level)
     console_format = SIMPLE_FORMAT if simple_format else LOG_FORMAT
-    console_handler.setFormatter(logging.Formatter(console_format))
+    console_handler.setFormatter(RedactingFormatter(console_format))
     root_logger.addHandler(console_handler)
 
     # File handler (if specified)
@@ -59,7 +60,7 @@ def setup_logging(
 
         if use_rotation:
             # Use rotating file handler
-            file_handler = logging.handlers.RotatingFileHandler(
+            file_handler = PrivateRotatingFileHandler(
                 log_file,
                 maxBytes=max_bytes,
                 backupCount=backup_count,
@@ -67,10 +68,10 @@ def setup_logging(
             )
         else:
             # Use regular file handler
-            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler = PrivateFileHandler(log_file, encoding='utf-8')
 
         file_handler.setLevel(file_log_level)  # Use specified file log level
-        file_handler.setFormatter(logging.Formatter(DETAILED_FORMAT))
+        file_handler.setFormatter(RedactingFormatter(DETAILED_FORMAT))
         root_logger.addHandler(file_handler)
 
         # Log the start of a new session

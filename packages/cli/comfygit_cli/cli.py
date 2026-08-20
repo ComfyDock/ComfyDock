@@ -386,14 +386,46 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     registry_update_parser = registry_subparsers.add_parser("update", help="Update registry data from GitHub")
     registry_update_parser.set_defaults(func=global_cmds.registry_update)
 
-    # Config management - now with subcommands
+    # Provider authentication. Secret values are read from a hidden prompt or stdin,
+    # never from argv.
+    auth_parser = subparsers.add_parser("auth", help="Manage provider authentication")
+    auth_subparsers = auth_parser.add_subparsers(dest="auth_command", help="Authentication commands")
+    auth_parser.set_defaults(func=_make_help_func(auth_parser))
+
+    auth_status_parser = auth_subparsers.add_parser("status", help="Show provider authentication status")
+    auth_status_parser.set_defaults(func=global_cmds.auth_status)
+
+    auth_set_parser = auth_subparsers.add_parser("set", help="Save a provider credential")
+    auth_set_parser.add_argument("provider", choices=("civitai", "huggingface", "github"))
+    auth_set_parser.add_argument(
+        "--token-stdin",
+        action="store_true",
+        help="Read the credential from one line on standard input instead of a hidden prompt",
+    )
+    auth_set_parser.set_defaults(func=global_cmds.auth_set)
+
+    auth_clear_parser = auth_subparsers.add_parser("clear", help="Clear a saved provider credential")
+    auth_clear_parser.add_argument("provider", choices=("civitai", "huggingface", "github"))
+    auth_clear_parser.set_defaults(func=global_cmds.auth_clear)
+
+    auth_login_parser = auth_subparsers.add_parser(
+        "login",
+        help="Authenticate through a provider-native login flow",
+    )
+    auth_login_parser.add_argument("provider", choices=("huggingface",))
+    auth_login_parser.add_argument("--force", action="store_true", help="Force a new provider login")
+    auth_login_parser.set_defaults(func=global_cmds.auth_login)
+
+    auth_migrate_parser = auth_subparsers.add_parser(
+        "migrate",
+        help="Migrate verified legacy plaintext credentials into secure storage",
+    )
+    auth_migrate_parser.set_defaults(func=global_cmds.auth_migrate)
+
+    # Nonsecret workspace configuration.
     config_parser = subparsers.add_parser("config", help="Manage configuration settings")
     config_parser.add_subparsers(dest="config_command", help="Configuration commands")
 
-    # Legacy flags - still supported at root level for backward compatibility
-    config_parser.add_argument("--civitai-key", type=str, help="Set Civitai API key (use empty string to clear)")
-    config_parser.add_argument("--huggingface-token", type=str, help="Set Hugging Face token for gated model downloads (use empty string to clear)")
-    config_parser.add_argument("--github-token", type=str, help="Set GitHub token for private git repository access (use empty string to clear)")
     config_parser.add_argument("--uv-cache", type=str, help="Set external UV cache path (use empty string to clear)")
     config_parser.add_argument("--show", action="store_true", help="Show current configuration")
     config_parser.set_defaults(func=global_cmds.config)

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 SENSITIVE_QUERY_KEYS = {
@@ -25,9 +26,27 @@ SENSITIVE_QUERY_KEYS = {
 }
 
 _INLINE_TOKEN_PATTERN = re.compile(
-    r"(?i)\b(authorization|bearer|token|api[_-]?key|client[_-]?secret)"
+    r"(?i)\b([a-z0-9]*(?:[_-][a-z0-9]+)*[_-]?"
+    r"(?:authorization|bearer|token|api[_-]?key|client[_-]?secret|password|credential|key)"
+    r"(?:[_-][a-z0-9]+)*)"
     r"(\s*[:=]\s*|\s+)[^\s,'\")]+"
 )
+_SENSITIVE_FIELD_SEGMENTS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "bearer",
+    "client_secret",
+    "credential",
+    "credentials",
+    "key",
+    "password",
+    "secret",
+    "signature",
+    "token",
+}
 _SENSITIVE_FLAG_NAMES = {
     "--access-token",
     "--api-key",
@@ -35,8 +54,10 @@ _SENSITIVE_FLAG_NAMES = {
     "--auth",
     "--authorization",
     "--client-secret",
+    "--civitai-key",
     "--github-token",
     "--hf-token",
+    "--huggingface-token",
     "--password",
     "--secret",
     "--token",
@@ -74,6 +95,38 @@ def redact_sensitive_text(value: object) -> str:
         return f"{match.group(1)}{match.group(2)}<redacted>"
 
     return _INLINE_TOKEN_PATTERN.sub(_replace, text)
+
+
+def is_sensitive_field_name(name: object) -> bool:
+    """Return whether a structured field name denotes secret-bearing data."""
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
+    if normalized in _SENSITIVE_FIELD_SEGMENTS:
+        return True
+    parts = set(normalized.split("_"))
+    return bool(parts & {"auth", "authorization", "credential", "credentials", "key", "password", "secret", "token"})
+
+
+def redact_sensitive_value(value: Any) -> Any:
+    """Recursively redact secret-bearing values while preserving safe structure."""
+    if isinstance(value, Mapping):
+        return redact_sensitive_mapping({str(key): item for key, item in value.items()})
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_value(item) for item in value)
+    if isinstance(value, list):
+        return [redact_sensitive_value(item) for item in value]
+    if isinstance(value, set):
+        return {redact_sensitive_value(item) for item in value}
+    if isinstance(value, str):
+        return redact_sensitive_text(value)
+    return value
+
+
+def redact_sensitive_mapping(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of a mapping with sensitive fields fully removed."""
+    return {
+        key: "<redacted>" if is_sensitive_field_name(key) else redact_sensitive_value(value)
+        for key, value in values.items()
+    }
 
 
 def redact_command(cmd: Iterable[object]) -> str:

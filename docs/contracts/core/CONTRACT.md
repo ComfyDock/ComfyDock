@@ -46,7 +46,8 @@ and other deliberately documented facade modules such as readiness, workflow,
 runtime, assets, git, and imports. Importable implementation packages such as
 managers, repositories, analyzers, resolvers, integrations, configs, caching,
 and generic utils are internal unless they are re-exported through a public
-facade.
+facade. Shared adapter-safe redaction and private-file helpers are exposed
+through `comfygit_core.security`.
 
 Model files may contain both public and internal dataclasses. A model type is
 public only when it is exported from `comfygit_core.models` or another documented
@@ -144,15 +145,49 @@ provider. String containment in the full URL is not sufficient. Query strings,
 paths, redirects, and arbitrary user-provided URLs must not cause CivitAI,
 Hugging Face, GitHub, or future provider credentials to be sent to another host.
 
-### CGCORE-AUTH-03 [PARTIAL]: Local credential files are hardened and redacted
+### CGCORE-AUTH-03 [LIVE]: Credential persistence and logs are hardened
 Validation: MIXED
 
-Workspace-local credential storage should be treated as sensitive local
-configuration: files containing provider tokens should be created with
-owner-only permissions where the platform supports POSIX permissions, and logs
-should redact token-like values, authorization headers, signed URL query
-parameters, and provider tokens. This remains partial until all credential
-persistence and logging paths route through shared hardening helpers.
+Credential-bearing local state must be treated as sensitive configuration.
+Files that may contain provider tokens and logs that may contain authentication
+context should be created with owner-only permissions where the platform
+supports POSIX permissions. Logging adapters must omit or redact secret-bearing
+argument fields, token-like values, authorization headers, signed URL query
+parameters, and provider credentials before a record reaches any handler.
+
+Workspace discovery and CLI logging proactively harden existing sensitive files,
+and CLI logging applies shared structured redaction plus a final redacting
+formatter rather than relying only on call-site string cleanup.
+
+### CGCORE-AUTH-04 [LIVE]: Durable credentials use injected secure stores
+Validation: MIXED
+
+Core should resolve durable workspace credentials through an injected credential
+store instead of serializing raw token values into `workspace.json`. Desktop
+adapters should use an operating-system-backed credential store when available;
+headless and hosted adapters may inject their own secret provider or use runtime
+environment variables. Failure to access secure storage must be explicit and
+must not silently fall back to plaintext persistence.
+
+Credential resolution should have documented precedence and expose typed status
+that reports whether a provider is configured and which source is active without
+returning or partially displaying the secret. Hugging Face resolution should
+honor the active provider-native `huggingface_hub` login when no explicit,
+environment, or workspace-secure credential overrides it.
+
+Legacy plaintext credentials may be migrated only after the destination store
+successfully writes and reads back the same value. Partial migration must retain
+every unverified legacy value so an unavailable or locked credential backend
+cannot cause credential loss.
+
+### CGCORE-AUTH-05 [LIVE]: Adapter secret input avoids argv and normal logs
+Validation: TEST
+
+CLI and other adapters should accept new provider credentials through hidden
+interactive input, standard input, provider-native login, or caller-scoped API
+requests. They must not require raw secret values in command-line arguments,
+render secrets or partial secret suffixes in status output, or include secret
+fields in normal command logging context.
 
 ## Portable Environment Contract
 

@@ -27,6 +27,12 @@ class CDWorkspaceError(ComfyDockError):
     """Workspace-related errors."""
     pass
 
+
+class CDCredentialStoreError(CDWorkspaceError):
+    """Secure provider credential storage is unavailable or failed verification."""
+
+    pass
+
 # ===================================================
 # Environment exceptions
 # ===================================================
@@ -342,13 +348,13 @@ class DownloadErrorContext:
                 return (
                     f"CivitAI model requires authentication (HTTP {self.http_status}). "
                     "No API key found. Get your key from https://civitai.com/user/account "
-                    "and add it with: cg config --civitai-key <your-key>"
+                    "and add it with: cg auth set civitai"
                 )
             elif self.error_category == "auth_invalid":
                 return (
                     f"CivitAI authentication failed (HTTP {self.http_status}). "
                     "Your API key may be invalid or expired. "
-                    "Update it with: cg config --civitai-key <your-key>"
+                    "Update it with: cg auth set civitai"
                 )
             elif self.error_category == "forbidden":
                 return (
@@ -362,14 +368,15 @@ class DownloadErrorContext:
             if self.error_category == "auth_missing":
                 return (
                     f"HuggingFace model requires authentication (HTTP {self.http_status}). "
-                    f"Configure your token in Settings -> API Credentials, or set the HF_TOKEN environment variable. "
+                    f"Run 'cg auth login huggingface', save a workspace credential with "
+                    f"'cg auth set huggingface', or set the HF_TOKEN environment variable. "
                     f"Get your token from: https://huggingface.co/settings/tokens"
                 )
             elif self.error_category == "auth_invalid":
                 return (
                     f"HuggingFace authentication failed (HTTP {self.http_status}). "
-                    f"Your token may be invalid or expired. Update it in Settings -> API Credentials, "
-                    f"or check your HF_TOKEN environment variable. "
+                    f"Your token may be invalid or expired. Run 'cg auth login huggingface --force', "
+                    f"update the workspace credential, or check your HF_TOKEN environment variable. "
                     f"Get a new token from: https://huggingface.co/settings/tokens"
                 )
             elif self.error_category == "not_found":

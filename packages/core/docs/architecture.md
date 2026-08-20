@@ -41,7 +41,7 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 |--------|---------|--------------|
 | **core/** | Public API | Workspace (multi-env), Environment (single env) |
 | **models/** | Public typed contracts | Exported data classes, protocols, exceptions with context |
-| **readiness.py**, **workflow.py**, **runtime.py**, **assets.py**, **git.py** | Public facades | Reusable domain helpers promoted for adapters |
+| **readiness.py**, **workflow.py**, **runtime.py**, **assets.py**, **git.py**, **security.py** | Public facades | Reusable domain helpers promoted for adapters |
 | **managers/** | Orchestration | Environment orchestrators (Git, Model), Resource managers (Node, Workflow, Model symlinks), Config managers (PyProject, UV, PyTorch backend) |
 | **manifest/** | Internal manifest abstraction | Pyproject-backed store, section handlers, edit helpers, overlay materialization, migration cleanup |
 | **analyzers/** | Analysis | Parse workflows/git/status; classify nodes |

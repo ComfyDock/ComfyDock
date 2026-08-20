@@ -2,6 +2,7 @@
 
 import json
 
+from comfygit_core.models import CredentialProvider, CredentialSource, MemoryCredentialStore
 from comfygit_core.models.workspace_config import APICredentials, WorkspaceConfig
 from comfygit_core.repositories.workspace_config_repository import WorkspaceConfigRepository
 
@@ -38,7 +39,7 @@ def test_get_github_token_prefers_environment(monkeypatch, tmp_path):
     _write_workspace_config(config_file, api_credentials={"github_token": "config-token"})
     monkeypatch.setenv("GITHUB_TOKEN", "env-token")
 
-    repo = WorkspaceConfigRepository(config_file)
+    repo = WorkspaceConfigRepository(config_file, credential_store=MemoryCredentialStore())
 
     assert repo.get_github_token() == "env-token"
 
@@ -49,21 +50,25 @@ def test_get_github_token_uses_gh_token_fallback(monkeypatch, tmp_path):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.setenv("GH_TOKEN", "gh-token")
 
-    repo = WorkspaceConfigRepository(config_file)
+    repo = WorkspaceConfigRepository(config_file, credential_store=MemoryCredentialStore())
 
     assert repo.get_github_token() == "gh-token"
 
 
-def test_set_github_token_persists_and_clears(tmp_path):
+def test_set_github_token_uses_secure_store_and_clears_legacy_json(tmp_path):
     config_file = tmp_path / "workspace.json"
     _write_workspace_config(config_file)
-    repo = WorkspaceConfigRepository(config_file)
+    store = MemoryCredentialStore()
+    repo = WorkspaceConfigRepository(config_file, credential_store=store)
 
     repo.set_github_token("saved-token")
     assert repo.get_github_token() == "saved-token"
 
     saved = json.loads(config_file.read_text())
-    assert saved["api_credentials"]["github_token"] == "saved-token"
+    assert saved["api_credentials"] is None
+    assert repo.get_credential_status(CredentialProvider.GITHUB).source == (
+        CredentialSource.SECURE_STORE
+    )
 
     repo.set_github_token(None)
     assert repo.get_github_token() is None

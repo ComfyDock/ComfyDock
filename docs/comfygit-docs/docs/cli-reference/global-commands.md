@@ -14,9 +14,14 @@ These commands operate at the workspace level or create new environments. Use
 cg init [path] [--models-dir PATH] [--yes]
 cg list
 cg config --show
-cg config --civitai-key KEY
-cg config --github-token TOKEN
 cg config --uv-cache PATH
+cg auth status
+cg auth set civitai [--token-stdin]
+cg auth set huggingface [--token-stdin]
+cg auth set github [--token-stdin]
+cg auth login huggingface [--force]
+cg auth migrate
+cg auth clear PROVIDER
 ```
 
 ## Create, Import, Export, Materialize
