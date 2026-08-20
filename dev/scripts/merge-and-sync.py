@@ -9,10 +9,9 @@ If PR_NUMBER is not provided, will attempt to find open PR for current branch.
 After merging, syncs by pulling main and merging it back into the original branch.
 """
 
+import json
 import subprocess
 import sys
-import json
-from pathlib import Path
 
 
 def run(cmd: str, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
@@ -111,9 +110,9 @@ def sync_branches(original_branch: str, base_branch: str = "main"):
     result = run(f"git merge {base_branch}", check=False, capture=False)
 
     if result.returncode != 0:
-        print(f"✗ Merge conflict detected!")
-        print(f"  Please resolve conflicts manually and run:")
-        print(f"    git merge --continue")
+        print("✗ Merge conflict detected!")
+        print("  Please resolve conflicts manually and run:")
+        print("    git merge --continue")
         print(f"    git push origin {original_branch}")
         sys.exit(1)
 
@@ -174,14 +173,14 @@ def main():
 
         if not pr_number:
             print(f"ℹ No open PR found for branch: {original_branch}")
-            print(f"  Skipping merge step, proceeding directly to sync...")
+            print("  Skipping merge step, proceeding directly to sync...")
             print()
 
     print(f"Branch: {original_branch}")
     if pr_number:
         print(f"PR: #{pr_number}")
     else:
-        print(f"PR: None (assuming already merged)")
+        print("PR: None (assuming already merged)")
     print()
 
     # Merge PR if found

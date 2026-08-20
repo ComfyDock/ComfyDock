@@ -12,7 +12,7 @@ from typing import Any
 cli_path = Path(__file__).parent.parent.parent.parent / "packages" / "cli"
 sys.path.insert(0, str(cli_path))
 
-from comfygit_cli.cli import create_parser
+from comfygit_cli.cli import create_parser  # noqa: E402
 
 
 def get_subcommand_help(parser, command_name: str) -> dict[str, Any]:
@@ -140,7 +140,7 @@ def generate_command_section(cmd_info: dict[str, Any], level: int = 2) -> list[s
     # Subcommands
     if cmd_info['subcommands']:
         lines.append(f"{heading}# Subcommands\n")
-        for subcmd_name, subcmd_info in cmd_info['subcommands'].items():
+        for _subcmd_name, subcmd_info in cmd_info['subcommands'].items():
             lines.extend(generate_command_section(subcmd_info, level + 1))
 
     return lines

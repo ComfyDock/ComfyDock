@@ -224,7 +224,7 @@ def save_requirements_txt(requirements: dict[str, str], system_info: dict, comfy
     req_path = Path("comfyui_requirements.txt")
 
     with open(req_path, 'w', encoding='utf-8') as f:
-        f.write("# ComfyUI Migration Requirements\n")
+        f.write("# ComfyUI Environment Requirements\n")
         f.write(f"# Generated from: {comfyui_path}\n")
         f.write(f"# Python version: {system_info.get('python_version')}\n")
         if system_info.get('cuda_version'):
@@ -232,7 +232,7 @@ def save_requirements_txt(requirements: dict[str, str], system_info: dict, comfy
         if system_info.get('torch_version'):
             f.write(f"# PyTorch version: {system_info.get('torch_version')}\n")
         f.write("\n")
-        f.write("# NOTE: PyTorch packages are handled separately in comfyui_migration.json\n")
+        f.write("# NOTE: PyTorch packages are managed by ComfyGit local runtime configuration\n")
         f.write("# Install with: pip install -r comfyui_requirements.txt\n")
         f.write("\n")
 

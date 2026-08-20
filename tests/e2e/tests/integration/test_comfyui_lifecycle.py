@@ -19,7 +19,6 @@ from contextlib import contextmanager
 import pytest
 import requests
 
-
 # Use a port that won't conflict with dev (8188-8190) or other tests
 COMFYUI_TEST_PORT = 18188
 STARTUP_TIMEOUT = 120  # seconds - first run can be slow

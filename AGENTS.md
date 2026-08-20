@@ -18,7 +18,7 @@ work.
 | `docs/contracts/` | Active truth-layer contracts. Highest-precedence behavioral guarantees. |
 | `docs/specs/` | Active truth-layer lifecycle, manifest, and dependency semantics. |
 | `docs/comfygit-docs/` | Public user documentation site. Do not treat as active architecture truth. |
-| `docker/`, `tests/` | Runtime images and cross-package tests. |
+| `tests/` | Cross-package and end-to-end tests. |
 
 ## Truth Layer
 
@@ -190,6 +190,11 @@ CLI package. This ordering matters because `comfygit-studio` pins
 back to workspace members, lockstep versioning, tests, build targets, or publish
 workflows. Hosted deployment belongs to ComfyGit Cloud; local/manual serving
 belongs to `cg serve`.
+
+The legacy `docker/base` image and migration startup scripts are also retired.
+Container consumers should own their Dockerfiles and hydrate environments with
+`cg materialize`; do not restore the old migration-JSON runtime without a new
+truth-layer contract and an active product requirement.
 
 Manager release ordering is separate and dependent on this repo. After
 `comfygit-core==<version>` and `comfygit-studio==<version>` are published on
