@@ -3,7 +3,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from comfygit_core.utils.environment_cleanup import (
     COMPLETION_MARKER,
     DELETED_ENVIRONMENT_PREFIX,
