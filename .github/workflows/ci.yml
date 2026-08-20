@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Core and CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install workspace
+        run: uv sync --all-packages
+
+      - name: Check versions and lockfile
+        run: |
+          make check-versions
+          uv lock --check
+
+      - name: Lint packages
+        run: make lint
+
+      - name: Test core, Studio runtime, and CLI
+        run: uv run pytest packages/core/tests packages/studio-runtime/tests packages/cli/tests -q
+
+  studio:
+    name: Studio build and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/studio/package-lock.json
+
+      - name: Install Studio dependencies
+        run: npm --prefix packages/studio ci
+
+      - name: Audit Studio dependencies
+        run: npm --prefix packages/studio audit --audit-level=high
+
+      - name: Build and verify bundled Studio assets
+        run: |
+          npm --prefix packages/studio run build
+          python3 dev/scripts/sync-studio-static.py
+          git diff --exit-code -- packages/studio-runtime/comfygit_studio/static
+
+      - name: Build Python release artifacts
+        run: |
+          uv build --package comfygit-core --no-sources
+          uv build --package comfygit-studio --no-sources
+          uv build --package comfygit --no-sources
