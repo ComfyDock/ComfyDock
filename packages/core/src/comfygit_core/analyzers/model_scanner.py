@@ -208,7 +208,13 @@ class ModelScanner:
                 continue
 
             try:
-                if not file_path.is_file() or file_path.is_symlink():
+                # Model libraries commonly use file symlinks to share large
+                # weights between ComfyUI installations or expose a loader's
+                # expected filename as an alias. ``Path.stat()`` and the hash
+                # reader intentionally follow a valid file symlink, while the
+                # indexed location remains the alias path under ``models/``.
+                # Broken links and links to directories still fail is_file().
+                if not file_path.is_file():
                     skipped_not_file += 1
                     continue
 

@@ -65,6 +65,17 @@ def _format_failed_command(result) -> str:
     return "; ".join(parts)
 
 
+def _detect_nvidia_torch_backend() -> str | None:
+    """Choose a CUDA wheel backend no newer than the installed driver supports."""
+    result = run_command(["nvidia-smi"], timeout=10)
+    if result.returncode != 0:
+        return None
+    match = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", result.stdout or "")
+    if match is None:
+        return None
+    return f"cu{match.group(1)}{match.group(2)}"
+
+
 def get_exact_python_version(requested_version: str) -> str:
     """Get exact Python version that uv would use.
 
@@ -171,18 +182,26 @@ def _probe_pytorch_versions_cached(
                 f"Failed to create probe venv: {_format_failed_command(venv_result)}"
             )
 
-        # 2. Run dry-run install with --torch-backend
+        # 2. Run dry-run install with --torch-backend. uv's ``auto`` mode may
+        # select the newest published CUDA wheel rather than the newest wheel
+        # supported by the installed NVIDIA driver. Pin to the driver's CUDA
+        # compatibility ceiling when nvidia-smi provides one.
+        probe_backend = backend
+        if backend == "auto":
+            probe_backend = _detect_nvidia_torch_backend() or backend
+
         dry_run_result = _run_torch_dry_run(
             uv=uv,
             temp_dir=temp_dir,
-            backend=backend,
+            backend=probe_backend,
         )
 
         if dry_run_result.returncode != 0:
             original_stderr = dry_run_result.stderr
             if backend == "auto":
                 logger.warning(
-                    "Auto PyTorch backend probe failed; falling back to CPU backend. "
+                    f"Auto PyTorch backend probe ({probe_backend}) failed; "
+                    "falling back to CPU backend. "
                     f"Original error: {original_stderr}"
                 )
                 dry_run_result = _run_torch_dry_run(

@@ -1064,3 +1064,16 @@ class WorkflowManager:
             result,
             callbacks,
         )
+
+    def execute_manifest_downloads(
+        self,
+        workflow_name: str,
+        models,
+        callbacks: BatchDownloadCallbacks | None = None,
+    ) -> list[DownloadResult]:
+        """Download manual model declarations not discoverable from the graph."""
+        return self._workflow_model_downloads.execute_manifest_downloads(
+            workflow_name,
+            models,
+            callbacks,
+        )

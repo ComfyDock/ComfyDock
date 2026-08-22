@@ -180,7 +180,16 @@ class WorkflowManifestReconciler:
             record_global_models=False,
         )
 
-        if self._workflow_model_signature(existing_workflow_models) != self._workflow_model_signature(
+        # Manual dependencies intentionally do not come from graph analysis.
+        # Compare only graph-derived entries here; otherwise any workflow that
+        # declares a model for an opaque custom loader is reported as stale on
+        # every status scan even after a successful capture/materialization.
+        existing_graph_models = [
+            model
+            for model in existing_workflow_models
+            if not self.manual_model_policy.is_manual_workflow_model(model)
+        ]
+        if self._workflow_model_signature(existing_graph_models) != self._workflow_model_signature(
             expected_workflow_models
         ):
             return True

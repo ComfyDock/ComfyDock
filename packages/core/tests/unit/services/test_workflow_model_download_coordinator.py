@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import Mock
 
+from comfygit_core.models.manifest import ManifestWorkflowModel
 from comfygit_core.models.shared import ModelWithLocation
 from comfygit_core.models.workflow import (
     BatchDownloadCallbacks,
@@ -50,6 +51,7 @@ class FakeSourceLookup:
 class FakeDependencyUpdater:
     error: Exception | None = None
     calls: list[tuple[str, WorkflowNodeWidgetRef, str]] = field(default_factory=list)
+    filename_calls: list[tuple[str, str, str]] = field(default_factory=list)
 
     def mark_download_resolved_by_reference(
         self,
@@ -60,6 +62,18 @@ class FakeDependencyUpdater:
         if self.error:
             raise self.error
         self.calls.append((workflow_name, reference, model_hash))
+
+    def mark_download_resolved_by_filename(
+        self,
+        workflow_name: str,
+        *,
+        filename: str,
+        model_hash: str,
+    ) -> bool:
+        if self.error:
+            raise self.error
+        self.filename_calls.append((workflow_name, filename, model_hash))
+        return True
 
 
 def _model(model_hash: str = "abc123") -> ModelWithLocation:
@@ -236,3 +250,99 @@ def test_download_success_manifest_update_failure_returns_failed_result_and_comp
         "manifest update failed",
     )
     callback_mocks.batch_complete.assert_called_once_with(0, 1)
+
+
+def test_downloads_manifest_only_manual_model_and_updates_by_filename():
+    downloader = FakeDownloader(
+        Path("/models"),
+        result=ModelDownloadResult(success=True, model=_model("manual-download")),
+    )
+    dependencies = FakeDependencyUpdater()
+    coordinator = WorkflowModelDownloadCoordinator(
+        downloader=downloader,
+        model_sources=FakeSourceLookup(),
+        dependencies=dependencies,
+    )
+    callback_mocks = _callbacks()
+    model = ManifestWorkflowModel(
+        hash="manual-download",
+        filename="model.safetensors",
+        category="checkpoints",
+        criticality="required",
+        status="unresolved",
+        nodes=[],
+        sources=["https://example.com/model.safetensors"],
+        relative_path="checkpoints/model.safetensors",
+        declared_by="manual",
+    )
+
+    results = coordinator.execute_manifest_downloads(
+        "flow",
+        [model],
+        callback_mocks.callbacks,
+    )
+
+    assert len(results) == 1
+    assert results[0].success is True
+    assert downloader.requests[0].target_path == Path("/models/checkpoints/model.safetensors")
+    assert dependencies.filename_calls == [
+        ("flow", "model.safetensors", "manual-download")
+    ]
+    callback_mocks.batch_complete.assert_called_once_with(1, 1)
+
+
+def test_manifest_download_rejects_hash_mismatch():
+    downloader = FakeDownloader(
+        Path("/models"),
+        result=ModelDownloadResult(success=True, model=_model("actual-hash")),
+    )
+    dependencies = FakeDependencyUpdater()
+    coordinator = WorkflowModelDownloadCoordinator(
+        downloader=downloader,
+        model_sources=FakeSourceLookup(),
+        dependencies=dependencies,
+    )
+    model = ManifestWorkflowModel(
+        hash="expected-hash",
+        filename="model.safetensors",
+        category="checkpoints",
+        criticality="required",
+        status="unresolved",
+        nodes=[],
+        sources=["https://example.com/model.safetensors"],
+        relative_path="checkpoints/model.safetensors",
+        declared_by="manual",
+    )
+
+    results = coordinator.execute_manifest_downloads("flow", [model])
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert results[0].error == (
+        "Downloaded model hash mismatch for model.safetensors: "
+        "expected expected-hash, found actual-hash"
+    )
+    assert dependencies.filename_calls == []
+
+
+def test_manifest_downloads_ignore_graph_entries():
+    downloader = FakeDownloader(Path("/models"))
+    coordinator = WorkflowModelDownloadCoordinator(
+        downloader=downloader,
+        model_sources=FakeSourceLookup(),
+        dependencies=FakeDependencyUpdater(),
+    )
+    graph_model = ManifestWorkflowModel(
+        filename="graph.safetensors",
+        category="checkpoints",
+        criticality="required",
+        status="unresolved",
+        nodes=[_reference("graph.safetensors")],
+        sources=["https://example.com/graph.safetensors"],
+        relative_path="checkpoints/graph.safetensors",
+    )
+
+    results = coordinator.execute_manifest_downloads("flow", [graph_model])
+
+    assert results == []
+    assert downloader.requests == []

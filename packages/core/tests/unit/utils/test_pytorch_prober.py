@@ -110,6 +110,21 @@ class TestGetExactPythonVersion:
                 get_exact_python_version("3.12")
 
 
+def test_detect_nvidia_torch_backend_uses_driver_cuda_ceiling(monkeypatch):
+    from comfygit_core.utils.pytorch_prober import _detect_nvidia_torch_backend
+
+    result = MagicMock(
+        returncode=0,
+        stdout="Driver Version: 570.211.01     CUDA Version: 12.8",
+    )
+    monkeypatch.setattr(
+        "comfygit_core.utils.pytorch_prober.run_command",
+        lambda *_args, **_kwargs: result,
+    )
+
+    assert _detect_nvidia_torch_backend() == "cu128"
+
+
 def test_uv_command_env_removes_parent_uv_run_context(monkeypatch):
     from comfygit_core.utils.pytorch_prober import _uv_command_env
 
@@ -349,6 +364,50 @@ Would install 30 packages
         versions, backend = probe_pytorch_versions("3.12", "auto")
 
         assert backend == "cu128"  # Auto-detected from version suffix
+        assert versions["torch"] == "2.9.1+cu128"
+
+    def test_probe_with_auto_caps_cuda_backend_to_driver(self, monkeypatch, tmp_path):
+        """Auto should not install a CUDA wheel newer than the driver ceiling."""
+        from comfygit_core.utils import pytorch_prober
+        from comfygit_core.utils.pytorch_prober import probe_pytorch_versions
+
+        dry_run_backends: list[str] = []
+
+        def mock_run_command(cmd, *args, **kwargs):
+            result = MagicMock(returncode=0, stderr="", stdout="")
+            if cmd == ["nvidia-smi"]:
+                result.stdout = "Driver Version: 570.211.01 CUDA Version: 12.8"
+            elif _contains_command_parts(cmd, "python", "find"):
+                result.stdout = "/path/to/cpython-3.12.11/bin/python"
+            elif _contains_command_parts(cmd, "venv"):
+                result.stdout = "Created venv"
+            elif _contains_command_parts(cmd, "pip", "install"):
+                backend_arg = next(
+                    str(arg) for arg in cmd if str(arg).startswith("--torch-backend=")
+                )
+                dry_run_backends.append(backend_arg.split("=", 1)[1])
+                result.stdout = """ + torch==2.9.1+cu128
+ + torchvision==0.24.1+cu128
+ + torchaudio==2.9.1+cu128
+"""
+            return result
+
+        probe_dir = tmp_path / "probe"
+        probe_dir.mkdir()
+        monkeypatch.setattr(pytorch_prober, "run_command", mock_run_command)
+        monkeypatch.setattr(
+            "comfygit_core.utils.pytorch_prober.tempfile.mkdtemp",
+            lambda **_: str(probe_dir),
+        )
+        monkeypatch.setattr(
+            "comfygit_core.utils.pytorch_prober.shutil.rmtree",
+            lambda *args, **kwargs: None,
+        )
+
+        versions, backend = probe_pytorch_versions("3.12", "auto")
+
+        assert dry_run_backends == ["cu128"]
+        assert backend == "cu128"
         assert versions["torch"] == "2.9.1+cu128"
 
     @pytest.mark.skipif(

@@ -21,6 +21,7 @@ from .model_downloader import (
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
+    from ..models.manifest import ManifestWorkflowModel
     from ..models.shared import ModelWithLocation
     from ..models.workflow import WorkflowNodeWidgetRef
 
@@ -57,6 +58,16 @@ class WorkflowModelDependencyUpdateProtocol(Protocol):
         model_hash: str,
     ) -> None:
         """Mark a workflow model download intent as resolved."""
+        ...
+
+    def mark_download_resolved_by_filename(
+        self,
+        workflow_name: str,
+        *,
+        filename: str,
+        model_hash: str,
+    ) -> bool:
+        """Mark a manifest-only workflow model download intent as resolved."""
         ...
 
 
@@ -189,6 +200,108 @@ class WorkflowModelDownloadCoordinator:
 
         return results
 
+    def execute_manifest_downloads(
+        self,
+        workflow_name: str,
+        models: list[ManifestWorkflowModel],
+        callbacks: BatchDownloadCallbacks | None = None,
+    ) -> list[WorkflowDownloadResult]:
+        """Download manual declarations that opaque custom loaders cannot expose."""
+        intents = [
+            model
+            for model in models
+            if model.declared_by == "manual"
+            and model.status == "unresolved"
+            and bool(model.sources)
+            and bool(model.relative_path)
+        ]
+        if not intents:
+            return []
+
+        if callbacks and callbacks.on_batch_start:
+            callbacks.on_batch_start(len(intents))
+
+        results: list[WorkflowDownloadResult] = []
+        for idx, model in enumerate(intents, 1):
+            filename = model.filename
+            source_url = model.sources[0]
+            target_path = Path(model.relative_path or filename)
+            if callbacks and callbacks.on_file_start:
+                callbacks.on_file_start(filename, idx, len(intents))
+
+            existing = self.model_sources.find_by_source_url(source_url)
+            if existing is not None:
+                update_error = self._manifest_hash_error(model, existing.hash)
+                if update_error is None:
+                    update_error = self._mark_manifest_download_resolved(
+                        workflow_name,
+                        filename=filename,
+                        model_hash=existing.hash,
+                    )
+                success = update_error is None
+                if callbacks and callbacks.on_file_complete:
+                    callbacks.on_file_complete(filename, success, update_error)
+                results.append(
+                    WorkflowDownloadResult(
+                        success=success,
+                        filename=filename,
+                        model=existing if success else None,
+                        error=update_error,
+                        reused=success,
+                    )
+                )
+                continue
+
+            download_result = self._download_one(
+                workflow_name,
+                source_url=source_url,
+                target_path=target_path,
+                callbacks=callbacks,
+            )
+            update_error = None
+            if download_result.success and download_result.model:
+                update_error = self._manifest_hash_error(
+                    model,
+                    download_result.model.hash,
+                )
+                if update_error is None:
+                    update_error = self._mark_manifest_download_resolved(
+                        workflow_name,
+                        filename=filename,
+                        model_hash=download_result.model.hash,
+                    )
+
+            success = download_result.success and update_error is None
+            error = update_error or download_result.error
+            if callbacks and callbacks.on_file_complete:
+                callbacks.on_file_complete(filename, success, error)
+            results.append(
+                WorkflowDownloadResult(
+                    success=success,
+                    filename=filename,
+                    model=download_result.model if success else None,
+                    error=error if not success else None,
+                )
+            )
+
+        if callbacks and callbacks.on_batch_complete:
+            success_count = sum(1 for item in results if item.success)
+            callbacks.on_batch_complete(success_count, len(results))
+
+        return results
+
+    @staticmethod
+    def _manifest_hash_error(
+        model: ManifestWorkflowModel,
+        actual_hash: str,
+    ) -> str | None:
+        if model.hash and model.hash != actual_hash:
+            return (
+                f"Downloaded model hash mismatch for {model.filename}: "
+                f"expected {model.hash}, found {actual_hash}"
+            )
+        return None
+
     def _download_one(
         self,
         workflow_name: str,
@@ -223,6 +336,29 @@ class WorkflowModelDownloadCoordinator:
         except Exception as exc:
             logger.warning(
                 "Downloaded model was indexed but workflow manifest update failed: %s",
+                exc,
+            )
+            return str(exc)
+        return None
+
+    def _mark_manifest_download_resolved(
+        self,
+        workflow_name: str,
+        *,
+        filename: str,
+        model_hash: str,
+    ) -> str | None:
+        try:
+            changed = self.dependencies.mark_download_resolved_by_filename(
+                workflow_name,
+                filename=filename,
+                model_hash=model_hash,
+            )
+            if not changed:
+                return f"Workflow model download intent not found: {filename}"
+        except Exception as exc:
+            logger.warning(
+                "Downloaded model was indexed but manual workflow manifest update failed: %s",
                 exc,
             )
             return str(exc)

@@ -298,6 +298,12 @@ class NodeManager:
                 no_sync=True,
                 raw=True,
             )
+        else:
+            # An empty group is still meaningful: it records that this exact
+            # node revision was inspected and has no Python requirements.
+            # Capturing it at add time keeps a subsequent materialization from
+            # mutating an otherwise reproducible source manifest during sync.
+            self.pyproject.dependencies.add_to_group(group_name, [])
 
         # Detect new sources after processing
         current_sources = self.pyproject.uv_config.get_source_names()

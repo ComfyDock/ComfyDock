@@ -62,3 +62,25 @@ def test_materialize_passes_runtime_defaults_to_workspace(tmp_path: Path) -> Non
     assert kwargs["replace"] is False
     assert kwargs["set_active"] is False
     assert kwargs["callbacks"] is not None
+
+
+def test_materialize_workspace_setup_creates_explicit_models_directory(
+    tmp_path: Path,
+) -> None:
+    global_cmds = GlobalCommands()
+    workspace = MagicMock()
+    workspace.path = tmp_path / "workspace"
+    models_dir = tmp_path / "new" / "models"
+
+    with patch(
+        "comfygit_cli.global_commands.Workspace.open",
+        return_value=workspace,
+    ):
+        result = global_cmds._get_or_create_workspace_at(
+            workspace.path,
+            models_dir,
+        )
+
+    assert result is workspace
+    assert models_dir.is_dir()
+    workspace.set_models_directory.assert_called_once_with(models_dir.resolve())

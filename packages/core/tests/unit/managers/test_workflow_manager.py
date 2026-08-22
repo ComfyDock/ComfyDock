@@ -313,6 +313,40 @@ def test_resolution_changes_manifest_flags_malformed_node_metadata(workflow_mana
     assert workflow_manager.resolution_changes_manifest(resolution, config=config)
 
 
+def test_resolution_changes_manifest_ignores_manual_model_dependencies(workflow_manager):
+    """Opaque custom-loader declarations are not stale graph metadata."""
+    from comfygit_core.models.manifest import ManifestWorkflowModel
+    from comfygit_core.models.workflow import ResolutionResult
+
+    manual_model = ManifestWorkflowModel(
+        hash="manual-hash",
+        filename="manual.safetensors",
+        category="custom_loader",
+        criticality="required",
+        status="resolved",
+        nodes=[],
+        relative_path="custom_loader/manual.safetensors",
+        declared_by="manual",
+    )
+    workflow_manager.pyproject.workflows.get_workflow_models.return_value = [manual_model]
+    resolution = ResolutionResult(workflow_name="demo")
+    config = {
+        "tool": {
+            "comfygit": {
+                "workflows": {
+                    "demo": {
+                        "path": "workflows/demo.json",
+                        "nodes": [],
+                    }
+                },
+                "models": {},
+            }
+        }
+    }
+
+    assert not workflow_manager.resolution_changes_manifest(resolution, config=config)
+
+
 def test_consensus_custom_node_map_reuses_installed_mappings(workflow_manager):
     """New workflows should reuse unambiguous mappings from existing workflows."""
     from comfygit_core.models.shared import NodeInfo

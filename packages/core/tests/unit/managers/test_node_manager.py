@@ -12,7 +12,7 @@ from comfygit_core.models.exceptions import (
     CDEnvironmentError,
     CDNodeConflictError,
 )
-from comfygit_core.models.shared import NodeInfo
+from comfygit_core.models.shared import NodeInfo, NodePackage
 from comfygit_core.utils.dependency_probe import ProbeResult
 from comfygit_core.utils.git import is_github_url
 
@@ -129,6 +129,39 @@ class TestNodeManager:
         # Verify .disabled was removed
         assert not disabled_dir.exists()
         assert not (custom_nodes_dir / "test-node.disabled").exists()
+
+    def test_add_node_package_records_empty_dependency_group(self):
+        """Requirement-free nodes should materialize without manifest drift."""
+        mock_pyproject = Mock()
+        mock_pyproject.nodes.get_existing.return_value = {}
+        mock_pyproject.nodes.generate_group_name.return_value = "test-node-abcd1234"
+        mock_pyproject.uv_config.get_source_names.side_effect = [set(), set()]
+
+        node_manager = NodeManager(
+            mock_pyproject,
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+        )
+        package = NodePackage(
+            node_info=NodeInfo(
+                name="test-node",
+                registry_id="test-node",
+                source="registry",
+            ),
+            requirements=[],
+        )
+
+        node_manager.add_node_package(package)
+
+        mock_pyproject.dependencies.add_to_group.assert_called_once_with(
+            "test-node-abcd1234",
+            [],
+        )
+        node_manager.uv.add_requirements_with_sources.assert_not_called()
+        mock_pyproject.nodes.add.assert_called_once_with(package.node_info, "test-node")
 
 
 class TestNodeManagerDevLink:

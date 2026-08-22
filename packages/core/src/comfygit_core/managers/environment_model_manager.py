@@ -372,7 +372,14 @@ class EnvironmentModelManager:
                         models[idx].status = "unresolved"
                         models[idx].sources = global_model.sources
                         models[idx].relative_path = global_model.relative_path
-                        models[idx].hash = None
+                        # Manual declarations are the only portable identity
+                        # available for opaque custom loaders. Preserve their
+                        # expected hash so direct manifest downloads can reject
+                        # an upstream file that does not match the captured
+                        # environment. Graph-derived intents continue to clear
+                        # the hash and are resolved through widget references.
+                        if models[idx].declared_by != "manual":
+                            models[idx].hash = None
                         models_modified = True
                         has_download_intents = True
                         if models[idx].criticality == "required":

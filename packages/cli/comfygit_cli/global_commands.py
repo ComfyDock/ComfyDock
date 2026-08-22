@@ -100,6 +100,7 @@ class GlobalCommands:
         WorkspaceLogger.set_workspace_path(workspace.path)
 
         if models_dir is not None:
+            models_dir.mkdir(parents=True, exist_ok=True)
             workspace.set_models_directory(models_dir.resolve())
 
         return workspace

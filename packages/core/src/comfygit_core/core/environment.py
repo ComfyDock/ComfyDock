@@ -3290,6 +3290,11 @@ class Environment:
 
         for workflow_name in workflows_to_resolve:
             try:
+                manifest_downloads = self.workflow_manager.execute_manifest_downloads(
+                    workflow_name,
+                    self.pyproject.workflows.get_workflow_models(workflow_name),
+                    download_callbacks,
+                )
                 result = self.resolve_workflow(
                     name=workflow_name,
                     model_strategy=AutoModelStrategy(),
@@ -3298,10 +3303,11 @@ class Environment:
                 )
 
                 # Track successful vs failed downloads from actual download results
-                successful_downloads = sum(1 for dr in result.download_results if dr.success)
+                all_downloads = [*manifest_downloads, *result.download_results]
+                successful_downloads = sum(1 for dr in all_downloads if dr.success)
                 failed_downloads = [
                     (workflow_name, dr.filename)
-                    for dr in result.download_results
+                    for dr in all_downloads
                     if not dr.success
                 ]
 
