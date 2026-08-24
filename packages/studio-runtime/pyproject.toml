@@ -5,7 +5,7 @@ description = "ComfyGit Studio runtime - contract API and Studio serving adapter
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.3",
     "comfygit-core==0.7.0",
 ]
 
