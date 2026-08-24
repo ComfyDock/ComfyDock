@@ -1020,6 +1020,24 @@ class TestSystemUVDependency:
 class TestUVConfigFormatting:
     """Test that UV config operations produce consistent TOML formatting."""
 
+    def test_remove_constraint_accepts_full_package_spec(self, temp_pyproject):
+        """Removing a constraint should accept the same full spec used to add it."""
+        manager = PyprojectManager(temp_pyproject)
+
+        manager.uv_config.add_constraint("requests>=2.32.4")
+
+        assert manager.uv_config.remove_constraint("requests>=2.32.4") is True
+        assert manager.uv_config.get_constraints() == []
+
+    def test_remove_constraint_accepts_package_name(self, temp_pyproject):
+        """Removing a constraint by package name should remove the matching spec."""
+        manager = PyprojectManager(temp_pyproject)
+
+        manager.uv_config.add_constraint("requests>=2.32.4")
+
+        assert manager.uv_config.remove_constraint("requests") is True
+        assert manager.uv_config.get_constraints() == []
+
     def test_add_index_produces_array_of_tables_format(self, temp_pyproject):
         """Test that add_index produces [[tool.uv.index]] format, not inline array.
 
