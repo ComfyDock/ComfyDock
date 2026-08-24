@@ -238,6 +238,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Report typed workspace model, environment, and storage inventory",
     )
     inventory_parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
+    inventory_parser.add_argument("--storage", action="store_true", help="Measure environment, cache, input/output, and model storage")
     inventory_parser.set_defaults(func=global_cmds.inventory)
 
     # update - Update ComfyGit CLI (self-update)

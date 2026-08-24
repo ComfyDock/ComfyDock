@@ -302,6 +302,15 @@ class ModelLocation:
     last_seen: int
     id: int | None = None
     base_directory: str | None = None
+    observation_state: str | None = None
+    present: bool | None = None
+    changed: bool | None = None
+    is_symlink: bool | None = None
+    symlink_target: str | None = None
+    target_present: bool | None = None
+    independently_usable: bool | None = None
+    observed_size: int | None = None
+    observed_mtime: float | None = None
 
     def validate(self) -> None:
         """Validate model location."""
@@ -321,7 +330,21 @@ class ModelLocation:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        result = asdict(self)
+        for key in (
+            "observation_state",
+            "present",
+            "changed",
+            "is_symlink",
+            "symlink_target",
+            "target_present",
+            "independently_usable",
+            "observed_size",
+            "observed_mtime",
+        ):
+            if result[key] is None:
+                result.pop(key)
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'ModelLocation':
@@ -334,6 +357,15 @@ class ModelLocation:
             filename=data["filename"],
             mtime=data["mtime"],
             last_seen=data["last_seen"],
+            observation_state=data.get("observation_state"),
+            present=data.get("present"),
+            changed=data.get("changed"),
+            is_symlink=data.get("is_symlink"),
+            symlink_target=data.get("symlink_target"),
+            target_present=data.get("target_present"),
+            independently_usable=data.get("independently_usable"),
+            observed_size=data.get("observed_size"),
+            observed_mtime=data.get("observed_mtime"),
         )
 
 

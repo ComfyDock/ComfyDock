@@ -422,6 +422,10 @@ class Workspace:
         """Return the configured Civitai token, honoring environment overrides."""
         return self.workspace_config_manager.get_civitai_token()
 
+    def get_workspace_id(self) -> str | None:
+        """Return the stable workspace id without creating or mutating one."""
+        return self.workspace_config_manager.load().workspace_id
+
     def set_civitai_token(self, token: str | None) -> None:
         """Set or clear the workspace CivitAI credential in secure storage."""
         self.workspace_config_manager.set_civitai_token(token)
@@ -1302,11 +1306,13 @@ class Workspace:
         """Remove one source URL from a model in the workspace index."""
         return self.model_repository.remove_source(model_hash, source_url)
 
-    def get_resource_inventory(self) -> WorkspaceInventory:
+    def get_resource_inventory(self, *, include_storage: bool = False) -> WorkspaceInventory:
         """Return typed model/environment/storage inventory for adapters."""
         from ..services.resource_inventory import WorkspaceResourceInventoryService
 
-        return WorkspaceResourceInventoryService(self).get_inventory()
+        return WorkspaceResourceInventoryService(self).get_inventory(
+            include_storage=include_storage
+        )
 
     def get_model_inventory(self) -> tuple[ModelInventoryEntry, ...]:
         """Return every indexed model grouped across physical locations."""
@@ -1314,12 +1320,18 @@ class Workspace:
 
         return WorkspaceResourceInventoryService(self).get_model_inventory()
 
-    def get_environment_inventory(self, name: str) -> EnvironmentInventory:
+    def get_environment_inventory(
+        self,
+        name: str,
+        *,
+        include_storage: bool = False,
+    ) -> EnvironmentInventory:
         """Return manifest and storage inventory for one environment."""
         from ..services.resource_inventory import WorkspaceResourceInventoryService
 
         return WorkspaceResourceInventoryService(self).get_environment_inventory(
-            self.get_environment(name, auto_sync=False)
+            self.get_environment(name, auto_sync=False),
+            include_storage=include_storage,
         )
 
     def plan_model_deletion(

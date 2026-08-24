@@ -7,8 +7,8 @@ from typing import Any
 
 from .shared import ModelLocation
 
-RESOURCE_INVENTORY_SCHEMA_VERSION = 1
-MODEL_DELETION_PLAN_SCHEMA_VERSION = 1
+RESOURCE_INVENTORY_SCHEMA_VERSION = 2
+MODEL_DELETION_PLAN_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,18 @@ class ModelSource:
     def has_immutable_revision(self) -> bool:
         return bool(self.resolved_revision)
 
+    @property
+    def is_reproducible(self) -> bool:
+        """Return whether this source can address the exact provider artifact."""
+        if self.type == "huggingface":
+            return bool(self.repo_id and self.path_in_repo and self.resolved_revision)
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         return {
             **asdict(self),
             "has_immutable_revision": self.has_immutable_revision,
+            "is_reproducible": self.is_reproducible,
         }
 
 
@@ -57,6 +65,7 @@ class EnvironmentDependency:
 class StorageSummary:
     """Physical storage observations for one materialized environment."""
 
+    measured: bool = False
     environment_bytes: int = 0
     venv_bytes: int = 0
     comfyui_bytes: int = 0
@@ -106,8 +115,16 @@ class ModelInventoryEntry:
         return bool(self.blake3_hash or self.sha256_hash)
 
     @property
-    def has_recovery_source(self) -> bool:
+    def source_hint_available(self) -> bool:
         return bool(self.sources)
+
+    @property
+    def immutable_source_available(self) -> bool:
+        return any(source.is_reproducible for source in self.sources)
+
+    @property
+    def recovery_complete(self) -> bool:
+        return self.has_strong_hash and self.immutable_source_available
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -120,7 +137,10 @@ class ModelInventoryEntry:
             "sources": [source.to_dict() for source in self.sources],
             "referencing_environments": list(self.referencing_environments),
             "has_strong_hash": self.has_strong_hash,
-            "has_recovery_source": self.has_recovery_source,
+            "source_hint_available": self.source_hint_available,
+            "strong_hash_available": self.has_strong_hash,
+            "immutable_source_available": self.immutable_source_available,
+            "recovery_complete": self.recovery_complete,
         }
 
 
@@ -129,6 +149,8 @@ class WorkspaceInventory:
     """Combined public inventory document for adapter serialization."""
 
     workspace_path: str
+    workspace_id: str | None
+    observed_at: str
     models_directory: str
     models: tuple[ModelInventoryEntry, ...]
     environments: tuple[EnvironmentInventory, ...]
@@ -138,6 +160,8 @@ class WorkspaceInventory:
             "schema_version": RESOURCE_INVENTORY_SCHEMA_VERSION,
             "kind": "workspace_inventory",
             "workspace_path": self.workspace_path,
+            "workspace_id": self.workspace_id,
+            "observed_at": self.observed_at,
             "models_directory": self.models_directory,
             "models": [model.to_dict() for model in self.models],
             "environments": [environment.to_dict() for environment in self.environments],
@@ -154,6 +178,9 @@ class ModelDeletionPlan:
     potential_reclaim_bytes: int
     selection_explicit: bool
     delete_all_locations: bool
+    source_hint_available: bool
+    strong_hash_available: bool
+    immutable_source_available: bool
     recovery_complete: bool
     blockers: tuple[str, ...]
     warnings: tuple[str, ...]
@@ -172,6 +199,9 @@ class ModelDeletionPlan:
             "potential_reclaim_bytes": self.potential_reclaim_bytes,
             "selection_explicit": self.selection_explicit,
             "delete_all_locations": self.delete_all_locations,
+            "source_hint_available": self.source_hint_available,
+            "strong_hash_available": self.strong_hash_available,
+            "immutable_source_available": self.immutable_source_available,
             "recovery_complete": self.recovery_complete,
             "blockers": list(self.blockers),
             "warnings": list(self.warnings),

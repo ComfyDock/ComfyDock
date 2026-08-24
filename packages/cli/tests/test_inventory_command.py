@@ -9,7 +9,14 @@ def test_inventory_parser_accepts_json():
     args = create_parser().parse_args(["inventory", "--json"])
 
     assert args.json_output is True
+    assert args.storage is False
     assert args.func.__name__ == "inventory"
+
+
+def test_inventory_parser_accepts_explicit_storage_measurement():
+    args = create_parser().parse_args(["inventory", "--storage"])
+
+    assert args.storage is True
 
 
 def test_inventory_json_uses_typed_core_projection(test_workspace, capsys):
@@ -19,7 +26,7 @@ def test_inventory_json_uses_typed_core_projection(test_workspace, capsys):
     commands.inventory(argparse.Namespace(json_output=True))
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["kind"] == "workspace_inventory"
     assert payload["workspace_path"] == str(test_workspace.path)
     assert payload["models_directory"] == str(test_workspace.get_models_directory())

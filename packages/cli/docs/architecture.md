@@ -84,7 +84,9 @@ $ cg -e production node add comfygit-manager
 
 **Workspace model inventory and reclaim:**
 
-- `cg inventory [--json]` serializes the typed core workspace inventory.
+- `cg inventory [--json] [--storage]` serializes the typed core workspace
+  inventory; recursive storage measurement is explicit rather than part of the
+  lightweight default.
 - `cg model index list --json` serializes typed model entries without reading
   repository rows in the CLI.
 - `cg model delete IDENTIFIER` is a dry run by default. Mutation requires

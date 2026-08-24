@@ -51,6 +51,7 @@ def test_model_delete_removes_files_and_index_entries(test_workspace, capsys):
         model_hash,
         "huggingface",
         "https://huggingface.co/example/model/resolve/main/delete-me.safetensors",
+        metadata={"resolved_revision": "c" * 40},
     )
 
     commands = GlobalCommands()

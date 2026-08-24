@@ -460,7 +460,9 @@ class GlobalCommands:
     def inventory(self, args: argparse.Namespace) -> None:
         """Render typed workspace resource inventory."""
         try:
-            inventory = self.workspace.get_resource_inventory()
+            inventory = self.workspace.get_resource_inventory(
+                include_storage=bool(getattr(args, "storage", False))
+            )
             if args.json_output:
                 print(json.dumps(inventory.to_dict(), indent=2, sort_keys=True))
                 return
@@ -476,7 +478,10 @@ class GlobalCommands:
                 print(f"     Manifest: {environment.manifest_sha256[:12]}...")
                 print(f"     Models: {len(environment.model_dependencies)}")
                 print(f"     Custom nodes: {len(environment.custom_node_dependencies)}")
-                print(f"     Environment storage: {format_size(environment.storage.environment_bytes)}")
+                if environment.storage.measured:
+                    print(f"     Environment storage: {format_size(environment.storage.environment_bytes)}")
+                else:
+                    print("     Environment storage: not measured (use --storage)")
         except Exception as exc:
             logger.error("Failed to build workspace inventory: %s", exc)
             print(f"✗ Failed to build inventory: {exc}", file=sys.stderr)
@@ -1591,6 +1596,9 @@ class GlobalCommands:
             print(f"    • [{location.id}] {location.full_path or location.relative_path}")
         print(f"  Remaining copies: {len(plan.remaining_locations)}")
         print(f"  Referencing environments: {', '.join(plan.model.referencing_environments) or 'none'}")
+        print(f"  Source hint: {'yes' if plan.source_hint_available else 'no'}")
+        print(f"  Strong hash: {'yes' if plan.strong_hash_available else 'no'}")
+        print(f"  Immutable source: {'yes' if plan.immutable_source_available else 'no'}")
         print(f"  Recovery proof: {'complete' if plan.recovery_complete else 'incomplete'}")
         if plan.blockers:
             print(f"  Blockers: {', '.join(plan.blockers)}")

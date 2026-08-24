@@ -355,8 +355,13 @@ public `Workspace` facade. Model inventory should report short and strong
 hashes, size, category, every indexed physical location, structured source
 records, and referencing ComfyGit environments. Environment inventory should
 report manifest identity, ComfyUI/Python revisions, model and custom-node
-dependencies, and storage summaries without coupling to an external product's
-project or experiment hierarchy.
+dependencies, and optional storage summaries without coupling to an external
+product's project or experiment hierarchy. Workspace inventory should include
+the stable workspace id and observation timestamp.
+
+Each indexed location should carry observed state such as present, missing,
+changed, or dangling symlink. A symlink is not an independent remaining copy
+when its target is one of the selected deletion locations.
 
 Stable inventory models should provide explicit `to_dict()` serialization for
 CLI, Manager, Cloud, and other adapter boundaries. Adapters must not reconstruct
@@ -378,9 +383,9 @@ Validation: TEST
 Core should produce a typed model deletion plan before mutating files or index
 state. The plan should identify exact candidate locations, potential reclaimable
 bytes, remaining copies, referencing ComfyGit environments, available recovery
-sources, source/hash completeness, and blockers. Planning is read-only and may
-preview all locations, but execution requires an explicit location selection or
-an explicit all-locations choice.
+sources, separate source-hint/strong-hash/immutable-source signals, and
+blockers. Planning is read-only and may preview all locations, but execution
+requires an explicit location selection or an explicit all-locations choice.
 
 ### CGCORE-DEL-02 [LIVE]: Model deletion is location-specific and explicitly applied
 Validation: TEST

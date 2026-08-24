@@ -6,6 +6,8 @@ import hashlib
 import os
 import re
 from collections import defaultdict
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -101,21 +103,31 @@ class WorkspaceResourceInventoryService:
         self._shared_cache_bytes: int | None = None
         self._shared_models_bytes: int | None = None
 
-    def get_inventory(self) -> WorkspaceInventory:
+    def get_inventory(self, *, include_storage: bool = False) -> WorkspaceInventory:
         environments = tuple(
-            self.get_environment_inventory(environment)
+            self.get_environment_inventory(
+                environment,
+                include_storage=include_storage,
+            )
             for environment in self.workspace.list_environments()
         )
         references, manifest_sources = self._manifest_resource_maps()
         models = self._model_inventory(references, manifest_sources)
         return WorkspaceInventory(
             workspace_path=str(self.workspace.path),
+            workspace_id=self.workspace.get_workspace_id(),
+            observed_at=datetime.now(timezone.utc).isoformat(),
             models_directory=str(self.workspace.get_models_directory()),
             models=models,
             environments=environments,
         )
 
-    def get_environment_inventory(self, environment: Environment) -> EnvironmentInventory:
+    def get_environment_inventory(
+        self,
+        environment: Environment,
+        *,
+        include_storage: bool = False,
+    ) -> EnvironmentInventory:
         snapshot = environment.get_manifest_snapshot()
         manifest_path = environment.get_manifest_path()
         manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
@@ -154,22 +166,26 @@ class WorkspaceResourceInventoryService:
             for identifier, node in sorted(snapshot.nodes.items())
         )
 
-        workspace_paths = environment.workspace_paths
-        if self._shared_cache_bytes is None:
-            self._shared_cache_bytes = _directory_size(workspace_paths.cache) + _directory_size(
-                environment.workspace.get_external_uv_cache() or (workspace_paths.root / "uv_cache")
+        storage = StorageSummary()
+        if include_storage:
+            workspace_paths = environment.workspace_paths
+            if self._shared_cache_bytes is None:
+                self._shared_cache_bytes = _directory_size(workspace_paths.cache) + _directory_size(
+                    environment.workspace.get_external_uv_cache()
+                    or (workspace_paths.root / "uv_cache")
+                )
+            if self._shared_models_bytes is None:
+                self._shared_models_bytes = _directory_size(environment.global_models_path)
+            storage = StorageSummary(
+                measured=True,
+                environment_bytes=_directory_size(environment.path),
+                venv_bytes=_directory_size(environment.venv_path),
+                comfyui_bytes=_directory_size(environment.comfyui_path),
+                input_bytes=_directory_size(workspace_paths.input / environment.name),
+                output_bytes=_directory_size(workspace_paths.output / environment.name),
+                shared_cache_bytes=self._shared_cache_bytes,
+                shared_models_bytes=self._shared_models_bytes,
             )
-        if self._shared_models_bytes is None:
-            self._shared_models_bytes = _directory_size(environment.global_models_path)
-        storage = StorageSummary(
-            environment_bytes=_directory_size(environment.path),
-            venv_bytes=_directory_size(environment.venv_path),
-            comfyui_bytes=_directory_size(environment.comfyui_path),
-            input_bytes=_directory_size(workspace_paths.input / environment.name),
-            output_bytes=_directory_size(workspace_paths.output / environment.name),
-            shared_cache_bytes=self._shared_cache_bytes,
-            shared_models_bytes=self._shared_models_bytes,
-        )
         return EnvironmentInventory(
             name=environment.name,
             path=str(environment.path),
@@ -227,21 +243,26 @@ class WorkspaceResourceInventoryService:
         if changed_locations:
             blockers.append("selected_location_changed")
 
-        recovery_complete = entry.has_strong_hash and entry.has_recovery_source
-        present_remaining = tuple(
-            location for location in remaining if self._location_present(location)
+        independently_usable_remaining = tuple(
+            location
+            for location in remaining
+            if self._remaining_location_independently_usable(location, targets)
         )
-        if not present_remaining and not recovery_complete:
+        source_hint_available = entry.source_hint_available
+        strong_hash_available = entry.has_strong_hash
+        immutable_source_available = entry.immutable_source_available
+        recovery_complete = strong_hash_available and immutable_source_available
+        if not independently_usable_remaining and not recovery_complete:
             blockers.append("final_copy_lacks_recovery_proof")
-        if len(present_remaining) != len(remaining):
-            warnings.append("remaining_index_contains_missing_locations")
+        if len(independently_usable_remaining) != len(remaining):
+            warnings.append("remaining_index_contains_unusable_locations")
         if entry.referencing_environments:
             blockers.append("referenced_by_environments")
         if any(
-            source.type == "huggingface" and not source.has_immutable_revision
+            source.type == "huggingface" and not source.is_reproducible
             for source in entry.sources
         ):
-            warnings.append("huggingface_revision_not_immutable")
+            warnings.append("huggingface_source_not_reproducible")
         warnings.append("potential_reclaim_bytes_is_an_estimate")
 
         return ModelDeletionPlan(
@@ -251,6 +272,9 @@ class WorkspaceResourceInventoryService:
             potential_reclaim_bytes=self._potential_reclaim_bytes(targets),
             selection_explicit=selection_explicit,
             delete_all_locations=all_locations,
+            source_hint_available=source_hint_available,
+            strong_hash_available=strong_hash_available,
+            immutable_source_available=immutable_source_available,
             recovery_complete=recovery_complete,
             blockers=tuple(dict.fromkeys(blockers)),
             warnings=tuple(dict.fromkeys(warnings)),
@@ -309,6 +333,10 @@ class WorkspaceResourceInventoryService:
             for source in self.workspace.get_model_sources(model_hash):
                 parsed_source = _source_from_index(source)
                 sources[(parsed_source.type, parsed_source.url)] = parsed_source
+            locations = tuple(
+                self._observe_location(model, location)
+                for location in self.workspace.get_model_locations(model_hash)
+            )
             entries.append(
                 ModelInventoryEntry(
                     short_hash=model.hash,
@@ -316,7 +344,7 @@ class WorkspaceResourceInventoryService:
                     category=model.category,
                     blake3_hash=model.blake3_hash,
                     sha256_hash=model.sha256_hash,
-                    locations=tuple(self.workspace.get_model_locations(model_hash)),
+                    locations=locations,
                     sources=tuple(sorted(sources.values(), key=lambda item: (item.type, item.url))),
                     referencing_environments=tuple(sorted(references.get(model_hash, set()))),
                 )
@@ -340,6 +368,8 @@ class WorkspaceResourceInventoryService:
 
     @staticmethod
     def _location_changed(entry: ModelInventoryEntry, location: ModelLocation) -> bool:
+        if location.changed is not None:
+            return location.changed
         if not location.full_path:
             return True
         path = Path(location.full_path)
@@ -350,11 +380,82 @@ class WorkspaceResourceInventoryService:
         return stat.st_size != entry.file_size or abs(stat.st_mtime - location.mtime) > 1.0
 
     @staticmethod
-    def _location_present(location: ModelLocation) -> bool:
-        if not location.full_path:
+    def _remaining_location_independently_usable(
+        location: ModelLocation,
+        targets: tuple[ModelLocation, ...],
+    ) -> bool:
+        if not location.independently_usable:
             return False
+        if not location.is_symlink or not location.symlink_target:
+            return True
+        selected_regular_paths = {
+            str(Path(target.full_path).resolve(strict=False))
+            for target in targets
+            if target.full_path and not target.is_symlink
+        }
+        return (
+            str(Path(location.symlink_target).resolve(strict=False)) not in selected_regular_paths
+        )
+
+    @staticmethod
+    def _observe_location(
+        entry: ModelWithLocation,
+        location: ModelLocation,
+    ) -> ModelLocation:
+        if not location.full_path:
+            return replace(
+                location,
+                observation_state="missing",
+                present=False,
+                changed=False,
+                independently_usable=False,
+            )
         path = Path(location.full_path)
-        return path.exists() or path.is_symlink()
+        is_symlink = path.is_symlink()
+        symlink_target = None
+        if is_symlink:
+            try:
+                symlink_target = str(path.resolve(strict=False))
+            except OSError:
+                symlink_target = None
+        if not path.exists():
+            return replace(
+                location,
+                observation_state="dangling_symlink" if is_symlink else "missing",
+                present=False,
+                changed=False,
+                is_symlink=is_symlink,
+                symlink_target=symlink_target,
+                target_present=False if is_symlink else None,
+                independently_usable=False,
+            )
+        try:
+            observed = path.stat()
+        except OSError:
+            return replace(
+                location,
+                observation_state="missing",
+                present=False,
+                changed=False,
+                is_symlink=is_symlink,
+                symlink_target=symlink_target,
+                independently_usable=False,
+            )
+        changed = (
+            observed.st_size != entry.file_size or abs(observed.st_mtime - location.mtime) > 1.0
+        )
+        return replace(
+            location,
+            observation_state="changed" if changed else "present",
+            present=True,
+            changed=changed,
+            is_symlink=is_symlink,
+            symlink_target=symlink_target,
+            target_present=True if is_symlink else None,
+            independently_usable=not changed,
+            observed_size=observed.st_size,
+            observed_mtime=observed.st_mtime,
+        )
 
     @staticmethod
     def _location_path_safe(location: ModelLocation) -> bool:
