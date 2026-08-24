@@ -34,6 +34,11 @@ def test_workspace_public_constructors_are_available():
     assert callable(Workspace.set_external_uv_cache)
     assert callable(Workspace.suggest_model_download_path)
     assert callable(Workspace.download_model_request)
+    assert callable(Workspace.get_resource_inventory)
+    assert callable(Workspace.get_model_inventory)
+    assert callable(Workspace.get_environment_inventory)
+    assert callable(Workspace.plan_model_deletion)
+    assert callable(Workspace.apply_model_deletion_plan)
 
 
 def test_environment_public_git_facade_methods_are_available():
@@ -338,3 +343,27 @@ def test_model_index_public_models_round_trip_to_public_json_shape():
         "total_locations": 2,
         "total_sources": 3,
     }
+
+
+def test_resource_inventory_contract_types_are_public():
+    from comfygit_core.models import (
+        EnvironmentDependency,
+        EnvironmentInventory,
+        ModelDeletionApplyResult,
+        ModelDeletionPlan,
+        ModelInventoryEntry,
+        ModelSource,
+        StorageSummary,
+        WorkspaceInventory,
+    )
+
+    assert all((
+        EnvironmentDependency,
+        EnvironmentInventory,
+        ModelDeletionApplyResult,
+        ModelDeletionPlan,
+        ModelInventoryEntry,
+        ModelSource,
+        StorageSummary,
+        WorkspaceInventory,
+    ))

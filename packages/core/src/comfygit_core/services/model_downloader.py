@@ -411,7 +411,11 @@ class ModelDownloader:
             self.repository.add_source(
                 model_hash=short_hash,
                 source_type="huggingface",
-                source_url=request.url
+                source_url=request.url,
+                metadata=self._huggingface_source_metadata(
+                    local_dir=Path(local_dir),
+                    parsed=parsed,
+                ),
             )
 
             model = ModelWithLocation(
@@ -440,6 +444,29 @@ class ModelDownloader:
                 error=user_message,
                 error_context=error_context
             )
+
+    @staticmethod
+    def _huggingface_source_metadata(local_dir: Path, parsed) -> dict[str, str]:
+        """Return nonsecret structured provenance from a successful local-dir download."""
+        metadata = {
+            "repo_id": parsed.repo_id,
+            "repo_type": "model",
+            "revision": parsed.revision or "main",
+            "path_in_repo": parsed.path_in_repo,
+        }
+        try:
+            from huggingface_hub._local_folder import read_download_metadata
+
+            download_metadata = read_download_metadata(local_dir, parsed.path_in_repo)
+            if download_metadata is not None:
+                metadata["resolved_revision"] = download_metadata.commit_hash
+                metadata["etag"] = download_metadata.etag
+        except (ImportError, OSError, ValueError, TypeError):
+            logger.debug(
+                "Hugging Face local download metadata unavailable for %s",
+                parsed.path_in_repo,
+            )
+        return {key: value for key, value in metadata.items() if value}
 
     def download(
         self,

@@ -82,6 +82,18 @@ $ cg -e production node add comfygit-manager
 - `GlobalCommands` - init, import, export, search, list, model downloads
 - `CompletionCommands` - Shell completion setup (bash, zsh, fish)
 
+**Workspace model inventory and reclaim:**
+
+- `cg inventory [--json]` serializes the typed core workspace inventory.
+- `cg model index list --json` serializes typed model entries without reading
+  repository rows in the CLI.
+- `cg model delete IDENTIFIER` is a dry run by default. Mutation requires
+  `--apply` plus `--location-id` or `--all-locations`; JSON output wraps the
+  same typed core plan/result.
+- External project or experiment claims are deliberately not CLI/core policy.
+  Callers may apply their own authorization before invoking the explicit core
+  apply method.
+
 **Core Integration**:
 - `Workspace.open()` / `Workspace.open_or_create()` - Discovers or initializes workspace state through the public core API
 - `Environment.add_node()` / `remove_node()` / `sync_workflow()` / etc. - Delegated operations

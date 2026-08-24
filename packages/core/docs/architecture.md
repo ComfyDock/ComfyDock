@@ -79,6 +79,10 @@ ComfyGit Core is a **library-first Python package** providing environment manage
 - `Workspace.create()` - Create new workspace with validation
 - `Workspace.open_or_create()` - Setup-friendly load-or-create entry point
 - `Workspace.list_environments()` / `get_environment()` - List/get environments
+- `Workspace.get_resource_inventory()` / `get_model_inventory()` - Typed model,
+  environment, source, and storage inventory for adapters
+- `Workspace.plan_model_deletion()` / `apply_model_deletion_plan()` - Dry-run-first,
+  location-specific model reclaim with conservative blockers
 - `Workspace.get_schema_version()` / `is_legacy_schema()` - Check workspace version
 - `Workspace.upgrade_schema_if_needed()` - Migrate to current schema
 

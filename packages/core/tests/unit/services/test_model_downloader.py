@@ -591,6 +591,38 @@ class TestModelDownloader:
 class TestModelDownloaderHuggingFaceFallback:
     """Tests for HuggingFace tqdm_class graceful degradation."""
 
+    def test_hf_source_metadata_records_resolved_immutable_revision(self, tmp_path):
+        from comfygit_core.services.huggingface_url import ParsedHuggingFaceUrl
+        from huggingface_hub._local_folder import write_download_metadata
+
+        filename = "subdir/model.safetensors"
+        model_path = tmp_path / filename
+        model_path.parent.mkdir(parents=True)
+        model_path.write_bytes(b"model")
+        write_download_metadata(
+            tmp_path,
+            filename,
+            commit_hash="c" * 40,
+            etag="etag-value",
+        )
+        parsed = ParsedHuggingFaceUrl(
+            kind="file",
+            repo_id="user/model",
+            path_in_repo=filename,
+            revision="main",
+        )
+
+        metadata = ModelDownloader._huggingface_source_metadata(tmp_path, parsed)
+
+        assert metadata == {
+            "repo_id": "user/model",
+            "repo_type": "model",
+            "revision": "main",
+            "path_in_repo": filename,
+            "resolved_revision": "c" * 40,
+            "etag": "etag-value",
+        }
+
     @patch('comfygit_core.services.model_downloader.hf_hub_download')
     @patch('comfygit_core.services.model_downloader.parse_huggingface_url')
     def test_hf_download_uses_local_dir_mode(self, mock_parse, mock_hf_download, tmp_path):

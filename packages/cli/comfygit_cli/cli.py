@@ -233,6 +233,13 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     analyze_parser.set_defaults(func=global_cmds.analyze)
 
+    inventory_parser = subparsers.add_parser(
+        "inventory",
+        help="Report typed workspace model, environment, and storage inventory",
+    )
+    inventory_parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
+    inventory_parser.set_defaults(func=global_cmds.inventory)
+
     # update - Update ComfyGit CLI (self-update)
     update_parser = subparsers.add_parser("update", help="Update ComfyGit CLI")
     update_parser.add_argument("--check", action="store_true", help="Check for updates without upgrading")
@@ -333,6 +340,7 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     # model index list
     model_index_list_parser = model_index_subparsers.add_parser("list", help="List all indexed models")
     model_index_list_parser.add_argument("--duplicates", action="store_true", help="Show only models with multiple locations")
+    model_index_list_parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
     model_index_list_parser.set_defaults(func=global_cmds.model_index_list)
 
     # model index show
@@ -370,7 +378,14 @@ def _add_global_commands(subparsers: argparse._SubParsersAction) -> None:
     # model delete
     model_delete_parser = model_subparsers.add_parser("delete", help="Delete model files and clean index entries")
     model_delete_parser.add_argument("identifier", help="Model hash, hash prefix, filename, or path")
-    model_delete_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+    deletion_target = model_delete_parser.add_mutually_exclusive_group()
+    deletion_target.add_argument("--location-id", type=int, help="Delete one indexed location id")
+    deletion_target.add_argument("--all-locations", action="store_true", help="Explicitly target every indexed location")
+    model_delete_parser.add_argument("--apply", action="store_true", help="Apply the deletion plan; default is dry-run")
+    model_delete_parser.add_argument("--allow-referenced", action="store_true", help="Allow deletion despite ComfyGit environment references")
+    model_delete_parser.add_argument("--allow-incomplete-recovery", action="store_true", help="Allow final-copy deletion without source/hash recovery proof")
+    model_delete_parser.add_argument("--json", action="store_true", dest="json_output", help="Emit machine-readable JSON")
+    model_delete_parser.add_argument("-y", "--yes", action="store_true", help="Compatibility alias for --apply --all-locations")
     model_delete_parser.set_defaults(func=global_cmds.model_delete)
 
     # Registry management subcommands

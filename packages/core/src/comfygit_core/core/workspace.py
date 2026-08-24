@@ -34,6 +34,13 @@ from ..models.materialization import (
     MaterializeSourceType,
     ModelMaterializationStrategy,
 )
+from ..models.resource_inventory import (
+    EnvironmentInventory,
+    ModelDeletionApplyResult,
+    ModelDeletionPlan,
+    ModelInventoryEntry,
+    WorkspaceInventory,
+)
 from ..models.shared import (
     ModelDeleteResult,
     ModelDetails,
@@ -1294,6 +1301,106 @@ class Workspace:
     def remove_indexed_model_source(self, model_hash: str, source_url: str) -> bool:
         """Remove one source URL from a model in the workspace index."""
         return self.model_repository.remove_source(model_hash, source_url)
+
+    def get_resource_inventory(self) -> WorkspaceInventory:
+        """Return typed model/environment/storage inventory for adapters."""
+        from ..services.resource_inventory import WorkspaceResourceInventoryService
+
+        return WorkspaceResourceInventoryService(self).get_inventory()
+
+    def get_model_inventory(self) -> tuple[ModelInventoryEntry, ...]:
+        """Return every indexed model grouped across physical locations."""
+        from ..services.resource_inventory import WorkspaceResourceInventoryService
+
+        return WorkspaceResourceInventoryService(self).get_model_inventory()
+
+    def get_environment_inventory(self, name: str) -> EnvironmentInventory:
+        """Return manifest and storage inventory for one environment."""
+        from ..services.resource_inventory import WorkspaceResourceInventoryService
+
+        return WorkspaceResourceInventoryService(self).get_environment_inventory(
+            self.get_environment(name, auto_sync=False)
+        )
+
+    def plan_model_deletion(
+        self,
+        identifier: str,
+        *,
+        location_id: int | None = None,
+        all_locations: bool = False,
+    ) -> ModelDeletionPlan:
+        """Build a non-destructive, location-aware model deletion plan."""
+        from ..services.resource_inventory import WorkspaceResourceInventoryService
+
+        return WorkspaceResourceInventoryService(self).plan_model_deletion(
+            identifier,
+            location_id=location_id,
+            all_locations=all_locations,
+        )
+
+    def apply_model_deletion_plan(
+        self,
+        plan: ModelDeletionPlan,
+        *,
+        allow_referenced: bool = False,
+        allow_incomplete_recovery: bool = False,
+    ) -> ModelDeletionApplyResult:
+        """Revalidate and apply only the explicit locations in ``plan``."""
+        if not plan.selection_explicit:
+            raise ValueError("Model deletion requires an explicit location selection")
+        location_id = None
+        if not plan.delete_all_locations:
+            if len(plan.target_locations) != 1 or plan.target_locations[0].id is None:
+                raise ValueError("Location-specific deletion requires exactly one indexed location id")
+            location_id = int(plan.target_locations[0].id)
+
+        current = self.plan_model_deletion(
+            plan.model.short_hash,
+            location_id=location_id,
+            all_locations=plan.delete_all_locations,
+        )
+        planned_signature = [
+            (location.id, location.base_directory, location.relative_path, location.mtime)
+            for location in plan.target_locations
+        ]
+        current_signature = [
+            (location.id, location.base_directory, location.relative_path, location.mtime)
+            for location in current.target_locations
+        ]
+        if planned_signature != current_signature:
+            raise ValueError("Model locations changed after the deletion plan was created")
+
+        ignored_blockers = set()
+        if allow_referenced:
+            ignored_blockers.add("referenced_by_environments")
+        if allow_incomplete_recovery:
+            ignored_blockers.add("final_copy_lacks_recovery_proof")
+        blockers = [blocker for blocker in current.blockers if blocker not in ignored_blockers]
+        if blockers:
+            raise ValueError(f"Model deletion plan is blocked: {', '.join(blockers)}")
+
+        legacy_result = ModelDeleteResult(
+            model_hash=current.model.short_hash,
+            filename=current.model.locations[0].filename if current.model.locations else current.model.short_hash,
+        )
+        for location in current.target_locations:
+            self._delete_indexed_model_location(location, legacy_result)
+
+        self.model_repository.clear_orphaned_models()
+        self.model_repository.clear_orphaned_model_sources()
+        remaining_locations = len(self.model_repository.get_locations(current.model.short_hash))
+        return ModelDeletionApplyResult(
+            model_hash=current.model.short_hash,
+            deleted_paths=tuple(legacy_result.deleted_paths),
+            missing_paths=tuple(legacy_result.missing_paths),
+            errors=tuple(legacy_result.errors),
+            remaining_locations=remaining_locations,
+            reference_override=allow_referenced and "referenced_by_environments" in current.blockers,
+            recovery_override=(
+                allow_incomplete_recovery
+                and "final_copy_lacks_recovery_proof" in current.blockers
+            ),
+        )
 
     def ensure_model_hashes(self, identifier: str) -> "ModelDetails":
         """Compute and store missing full hashes for an indexed local model.

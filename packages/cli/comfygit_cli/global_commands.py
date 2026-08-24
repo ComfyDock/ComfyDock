@@ -2,6 +2,7 @@
 
 import argparse
 import getpass
+import json
 import sys
 from functools import cached_property
 from pathlib import Path
@@ -454,6 +455,32 @@ class GlobalCommands:
                     f"  • {item['type']}: {item['name']} - "
                     f"{item['suggestion']} ({item['next_action']})"
                 )
+
+    @with_workspace_logging("inventory")
+    def inventory(self, args: argparse.Namespace) -> None:
+        """Render typed workspace resource inventory."""
+        try:
+            inventory = self.workspace.get_resource_inventory()
+            if args.json_output:
+                print(json.dumps(inventory.to_dict(), indent=2, sort_keys=True))
+                return
+
+            print("📦 Workspace Resource Inventory")
+            print(f"   Workspace: {inventory.workspace_path}")
+            print(f"   Models directory: {inventory.models_directory}")
+            print(f"   Models: {len(inventory.models)}")
+            print(f"   Environments: {len(inventory.environments)}")
+            for environment in inventory.environments:
+                print(f"\n   {environment.name}")
+                print(f"     ComfyUI: {environment.comfyui_revision or 'unknown'}")
+                print(f"     Manifest: {environment.manifest_sha256[:12]}...")
+                print(f"     Models: {len(environment.model_dependencies)}")
+                print(f"     Custom nodes: {len(environment.custom_node_dependencies)}")
+                print(f"     Environment storage: {format_size(environment.storage.environment_bytes)}")
+        except Exception as exc:
+            logger.error("Failed to build workspace inventory: %s", exc)
+            print(f"✗ Failed to build inventory: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     def debug(self, args: argparse.Namespace) -> None:
         """Show application debug logs with smart environment detection."""
@@ -1023,6 +1050,13 @@ class GlobalCommands:
         logger.info("Listing all indexed models")
 
         try:
+            if getattr(args, "json_output", False):
+                models = self.workspace.get_model_inventory()
+                if args.duplicates:
+                    models = tuple(model for model in models if len(model.locations) > 1)
+                print(json.dumps([model.to_dict() for model in models], indent=2, sort_keys=True))
+                return
+
             # Get all models from the index
             models = self.workspace.list_models()
 
@@ -1489,72 +1523,79 @@ class GlobalCommands:
 
     @with_workspace_logging("model delete")
     def model_delete(self, args: argparse.Namespace) -> None:
-        """Delete model files from disk and clean their index entries."""
+        """Plan model deletion by default and apply only explicit selections."""
         identifier = args.identifier
-        logger.info(f"Deleting model: '{identifier}'")
+        apply = bool(getattr(args, "apply", False) or getattr(args, "yes", False))
+        all_locations = bool(getattr(args, "all_locations", False) or getattr(args, "yes", False))
+        location_id = getattr(args, "location_id", None)
+        logger.info("Planning model deletion: '%s'", identifier)
 
         try:
-            details = self.workspace.get_model_details(identifier)
-        except KeyError:
-            print(f"✗ Model not found: {identifier}", file=sys.stderr)
-            sys.exit(1)
-        except ValueError as exc:
-            print(f"✗ {exc}", file=sys.stderr)
-            print("  Use a full hash or a more specific filename.", file=sys.stderr)
-            sys.exit(1)
+            plan = self.workspace.plan_model_deletion(
+                identifier,
+                location_id=location_id,
+                all_locations=all_locations,
+            )
         except Exception as exc:
-            logger.error(f"Failed to load model details for '{identifier}': {exc}")
-            print(f"✗ Failed to load model details: {exc}", file=sys.stderr)
+            logger.error("Failed to plan model deletion '%s': %s", identifier, exc)
+            print(f"✗ Failed to plan deletion: {exc}", file=sys.stderr)
             sys.exit(1)
 
-        model = details.model
-        locations = details.all_locations
-
-        print(f"Delete model: {model.filename}")
-        print(f"  Hash: {model.hash}")
-        print(f"  Size: {format_size(model.file_size)}")
-        print(f"  Locations: {len(locations)}")
-        for location in locations:
-            if location.full_path:
-                print(f"    • {location.full_path}")
+        if not apply:
+            if getattr(args, "json_output", False):
+                print(json.dumps({"mode": "dry-run", "plan": plan.to_dict()}, indent=2, sort_keys=True))
             else:
-                print(f"    • {location.relative_path or 'unknown'}")
-
-        if not args.yes:
-            choice = input("\nDelete these model file(s) and clean index entries? [y/N]: ").strip().lower()
-            if choice not in {"y", "yes"}:
-                print("Delete cancelled")
-                return
+                self._render_model_deletion_plan(plan)
+                print("\nDry run only. Use --apply with --location-id or --all-locations to delete.")
+            return
 
         try:
-            result = self.workspace.delete_model(identifier)
+            result = self.workspace.apply_model_deletion_plan(
+                plan,
+                allow_referenced=bool(getattr(args, "allow_referenced", False)),
+                allow_incomplete_recovery=bool(getattr(args, "allow_incomplete_recovery", False)),
+            )
         except Exception as exc:
-            logger.error(f"Failed to delete model '{identifier}': {exc}")
-            print(f"✗ Delete failed: {exc}", file=sys.stderr)
+            logger.error("Failed to apply model deletion '%s': %s", identifier, exc)
+            if getattr(args, "json_output", False):
+                print(json.dumps({"mode": "apply", "plan": plan.to_dict(), "error": str(exc)}, indent=2, sort_keys=True))
+            else:
+                self._render_model_deletion_plan(plan)
+                print(f"\n✗ Delete blocked: {exc}", file=sys.stderr)
             sys.exit(1)
 
-        if result.deleted_paths:
-            print(f"\n✓ Deleted {len(result.deleted_paths)} file(s):")
-            for path in result.deleted_paths:
-                print(f"  • {path}")
-        else:
-            print("\nNo files were deleted from disk.")
-
+        if getattr(args, "json_output", False):
+            print(json.dumps({"mode": "apply", "plan": plan.to_dict(), "result": result.to_dict()}, indent=2, sort_keys=True))
+            return
+        self._render_model_deletion_plan(plan)
+        print(f"\n✓ Deleted {len(result.deleted_paths)} selected location(s)")
+        for deleted_path in result.deleted_paths:
+            print(f"  • {deleted_path}")
         if result.missing_paths:
-            print(f"\nCleaned {len(result.missing_paths)} stale index location(s):")
-            for path in result.missing_paths:
-                print(f"  • {path}")
-
+            print(f"  Missing/stale locations cleaned: {len(result.missing_paths)}")
         if result.remaining_locations:
-            print(f"\nRemaining indexed locations: {result.remaining_locations}")
-
+            print(f"  Remaining indexed locations: {result.remaining_locations}")
         if result.errors:
-            print("\nDelete completed with errors:", file=sys.stderr)
             for error in result.errors:
                 print(f"  • {error.get('path', '')}: {error.get('error', 'unknown error')}", file=sys.stderr)
             sys.exit(1)
 
-        print("\n✓ Model index cleaned")
+    @staticmethod
+    def _render_model_deletion_plan(plan) -> None:
+        print(f"Model deletion plan: {plan.model.short_hash}")
+        print(f"  Category: {plan.model.category}")
+        print(f"  File size: {format_size(plan.model.file_size)}")
+        print(f"  Potential reclaim: {format_size(plan.potential_reclaim_bytes)}")
+        print(f"  Selected locations: {len(plan.target_locations)}")
+        for location in plan.target_locations:
+            print(f"    • [{location.id}] {location.full_path or location.relative_path}")
+        print(f"  Remaining copies: {len(plan.remaining_locations)}")
+        print(f"  Referencing environments: {', '.join(plan.model.referencing_environments) or 'none'}")
+        print(f"  Recovery proof: {'complete' if plan.recovery_complete else 'incomplete'}")
+        if plan.blockers:
+            print(f"  Blockers: {', '.join(plan.blockers)}")
+        if plan.warnings:
+            print(f"  Warnings: {', '.join(plan.warnings)}")
 
     def _add_source_direct(self, env, identifier: str, url: str):
         """Direct mode: add source to specific model."""

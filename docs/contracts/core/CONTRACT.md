@@ -347,6 +347,54 @@ paths rather than retained as a fallback.
 
 ## Dependency Reproducibility
 
+### CGCORE-INV-01 [LIVE]: Workspace inventory is typed and adapter-safe
+Validation: TEST
+
+Core should expose typed workspace model and environment inventory through the
+public `Workspace` facade. Model inventory should report short and strong
+hashes, size, category, every indexed physical location, structured source
+records, and referencing ComfyGit environments. Environment inventory should
+report manifest identity, ComfyUI/Python revisions, model and custom-node
+dependencies, and storage summaries without coupling to an external product's
+project or experiment hierarchy.
+
+Stable inventory models should provide explicit `to_dict()` serialization for
+CLI, Manager, Cloud, and other adapter boundaries. Adapters must not reconstruct
+inventory by reading repository tables or raw manifest TOML directly.
+
+### CGCORE-INV-02 [LIVE]: Hugging Face sources expose immutable provenance
+Validation: TEST
+
+Hugging Face model sources should expose repository id, repository type,
+requested revision, resolved immutable revision, path within the repository,
+original source URL, and provider metadata when known. A moving branch such as
+`main` is not itself an immutable revision. Downloads should retain the resolved
+commit returned by Hugging Face local-download metadata without persisting
+credentials.
+
+### CGCORE-DEL-01 [LIVE]: Model deletion begins with a non-destructive plan
+Validation: TEST
+
+Core should produce a typed model deletion plan before mutating files or index
+state. The plan should identify exact candidate locations, potential reclaimable
+bytes, remaining copies, referencing ComfyGit environments, available recovery
+sources, source/hash completeness, and blockers. Planning is read-only and may
+preview all locations, but execution requires an explicit location selection or
+an explicit all-locations choice.
+
+### CGCORE-DEL-02 [LIVE]: Model deletion is location-specific and explicitly applied
+Validation: TEST
+
+Core should support deleting selected indexed model locations rather than always
+deleting every copy. Execution must consume or revalidate an explicit typed plan,
+refuse incomplete recovery proof or active environment references by default,
+and return a typed result. Callers may provide separately authorized override
+policy, but core must never infer external project or experiment authorization.
+
+CLI deletion should default to dry-run presentation. Machine-readable output
+must serialize the same core plan/result instead of implementing parallel CLI
+policy.
+
 ### CGCORE-DEP-01 [LIVE]: Python package state is resolved through uv
 Validation: TEST
 

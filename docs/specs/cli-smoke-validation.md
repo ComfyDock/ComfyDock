@@ -30,6 +30,8 @@ and collaboration path through public CLI commands:
 - workspace initialization and configuration display
 - model directory selection, model index sync, model lookup, and stale-location
   cleanup after switching model directories
+- machine-readable workspace/model inventory, deletion dry-run with no file
+  mutation, and explicit location-specific deletion inside the isolated fixture
 - environment creation, active-environment selection, sync, status, repair,
   manifest display, and doctor checks
 - local torch backend configuration and default optional extras
